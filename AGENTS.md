@@ -45,3 +45,27 @@ for manual cleanup (expects an events-empty DB for its code assertions).
 
 The app must stay first-class with an empty database: zero vendors and zero
 items is the normal starting state, not an error.
+
+## Phase 2 — Books
+
+Migration `books_views_and_master_edit_grants` added the `bills` and
+`item_purchase_history` views (SELECT-granted) plus column-level UPDATE for
+`kb_app` on exactly: vendors (name, gstin, phone, payment_terms, supplies,
+status) and items (name, brand, gst_rate, yield_pct, par_level,
+conversion_factor, stock_unit, opening_rate, status), and INSERT on payments.
+Nothing else is updatable — vendor/item `code`, `category`, `purchase_unit`
+are deliberately locked (shown in the UI as locked-with-reason, never hidden),
+and events stay INSERT-only.
+
+Corrections are VOIDs: one transaction inserting a reversal purchase
+(negative goods/gst/transport, `reverses_id` set, bill_no = original +
+`-VOID`, same bill_date so months cancel cleanly) plus negative-qty lines.
+`bills.is_voided` / `is_reversal` drive the badges.
+
+Retire, never delete: `status = 'inactive'` is the only removal path for
+masters.
+
+**Deliberately deferred — do not add casually:** gst_rate write-back on bill
+save. The UPDATE grant exists, but the mechanic waits for per-line GST entry
+(a future phase). Until then `items.gst_rate` is reference-only metadata
+edited on the item page.

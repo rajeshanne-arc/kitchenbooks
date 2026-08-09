@@ -6,3 +6,9 @@ export const inputCls = `w-full ${numCls}`
 
 export const selectCls =
   'w-full rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-[15px] text-stone-900 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-600/20'
+
+export const cardCls = 'rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5'
+
+export const fieldLabelCls = 'mb-1 block text-xs font-medium text-stone-500'
+
+export const sectionHeadCls = 'text-xs font-medium uppercase tracking-wide text-stone-500'

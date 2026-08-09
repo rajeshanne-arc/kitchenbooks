@@ -26,11 +26,9 @@ export default async function Home() {
 
   return (
     <main className="pb-36">
-      <header className="mx-auto max-w-2xl px-4 pb-5 pt-8 sm:px-6">
-        <p className="text-[13px] font-semibold tracking-tight text-emerald-700">
-          KitchenBooks <span className="font-normal text-stone-400">· {restaurantName}</span>
-        </p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight text-stone-900">New purchase bill</h1>
+      <header className="mx-auto max-w-2xl px-4 pb-5 pt-6 sm:px-6">
+        <h1 className="text-2xl font-bold tracking-tight text-stone-900">New purchase bill</h1>
+        <p className="mt-0.5 text-sm text-stone-400">{restaurantName}</p>
       </header>
       <BillEntry categories={categories} units={units} />
     </main>

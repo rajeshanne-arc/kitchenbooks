@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import type { SavedBill } from '@/lib/types'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 
@@ -94,6 +95,12 @@ export default function SaveReveal({ saved, onAgain }: { saved: SavedBill; onAga
       >
         Enter another bill
       </button>
+      <Link
+        href={`/books/bills/${purchase.id}`}
+        className="block text-center text-sm font-medium text-emerald-700 hover:underline"
+      >
+        See it in Books →
+      </Link>
     </div>
   )
 }

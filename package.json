@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "smoke": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke.ts"
+    "smoke": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke.ts",
+    "smoke:books": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-books.ts"
   },
   "dependencies": {
     "next": "16.3.0",

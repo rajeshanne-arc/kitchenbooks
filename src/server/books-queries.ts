@@ -1,0 +1,164 @@
+// Read side of Books. Derived numbers always come from the named views:
+// bills (totals, line_count, is_voided/is_reversal), vendor_dues (balances),
+// item_rates (prefill), item_purchase_history (history). Raw event columns
+// (e.g. purchases.reverses_id for linking) may be read directly — they are
+// facts, not recomputations.
+import 'server-only'
+import { sql } from '@/lib/db'
+import type {
+  BillLine,
+  BillRow,
+  DuesSnap,
+  ItemDetail,
+  ItemHistoryRow,
+  ItemListRow,
+  PaymentRow,
+  VendorDetail,
+  VendorListRow,
+} from '@/lib/types'
+
+const BILL_SELECT = `
+  select b.id, b.bill_date::text as bill_date, b.bill_no,
+         b.vendor_id, b.vendor_code, b.vendor_name,
+         b.goods_total::text as goods_total, b.gst_total::text as gst_total,
+         b.transport::text as transport, b.bill_total::text as bill_total,
+         b.line_count::int as line_count, b.is_reversal, b.is_voided,
+         b.entered_by, b.created_at::text as created_at, p.reverses_id
+  from bills b
+  join purchases p on p.id = b.id`
+
+export async function listBills(restaurantId: string, limit = 300): Promise<BillRow[]> {
+  return sql<BillRow[]>`
+    ${sql.unsafe(BILL_SELECT)}
+    where b.restaurant_id = ${restaurantId}
+    order by b.bill_date desc, b.created_at desc
+    limit ${limit}`
+}
+
+export async function getBill(restaurantId: string, id: string): Promise<BillRow | null> {
+  const rows = await sql<BillRow[]>`
+    ${sql.unsafe(BILL_SELECT)}
+    where b.restaurant_id = ${restaurantId} and b.id = ${id}`
+  return rows[0] ?? null
+}
+
+export async function getBillLines(purchaseId: string): Promise<BillLine[]> {
+  return sql<BillLine[]>`
+    select pl.id, pl.item_id, i.code as item_code, i.name as item_name, i.purchase_unit,
+           pl.qty::text as qty, pl.rate::text as rate, pl.amount::text as amount,
+           pl.gst_amount::text as gst_amount, pl.transport_alloc::text as transport_alloc,
+           pl.landed::text as landed
+    from purchase_lines pl
+    join items i on i.id = pl.item_id
+    where pl.purchase_id = ${purchaseId}
+    order by i.code asc, pl.id asc`
+}
+
+/** The reversal bill that voids this one, if any */
+export async function getVoidedBy(purchaseId: string): Promise<{ id: string; bill_no: string | null } | null> {
+  const rows = await sql<{ id: string; bill_no: string | null }[]>`
+    select id, bill_no from purchases where reverses_id = ${purchaseId} limit 1`
+  return rows[0] ?? null
+}
+
+export async function getVendorBills(restaurantId: string, vendorId: string): Promise<BillRow[]> {
+  return sql<BillRow[]>`
+    ${sql.unsafe(BILL_SELECT)}
+    where b.restaurant_id = ${restaurantId} and b.vendor_id = ${vendorId}
+    order by b.bill_date desc, b.created_at desc
+    limit 200`
+}
+
+export async function listVendors(restaurantId: string, q: string): Promise<VendorListRow[]> {
+  const like = `%${q}%`
+  return sql<VendorListRow[]>`
+    select v.id, v.code, v.name, c.name as category_name, v.status,
+           coalesce(d.balance, 0)::text as balance
+    from vendors v
+    join categories c on c.code = v.primary_category
+    left join vendor_dues d on d.vendor_id = v.id
+    where v.restaurant_id = ${restaurantId}
+      and (v.name ilike ${like} or v.code ilike ${like})
+    order by v.status asc, v.code asc`
+}
+
+export async function getVendorDetail(restaurantId: string, id: string): Promise<VendorDetail | null> {
+  const rows = await sql<VendorDetail[]>`
+    select v.id, v.code, v.name, v.primary_category, c.name as category_name,
+           v.supplies, v.gstin, v.phone, v.payment_terms, v.status, v.created_at::text as created_at,
+           coalesce(d.balance, 0)::text as balance,
+           coalesce(d.purchased, 0)::text as purchased,
+           coalesce(d.paid, 0)::text as paid
+    from vendors v
+    join categories c on c.code = v.primary_category
+    left join vendor_dues d on d.vendor_id = v.id
+    where v.restaurant_id = ${restaurantId} and v.id = ${id}`
+  return rows[0] ?? null
+}
+
+export async function getVendorPayments(vendorId: string): Promise<PaymentRow[]> {
+  return sql<PaymentRow[]>`
+    select id, paid_date::text as paid_date, amount::text as amount, mode, note,
+           created_at::text as created_at
+    from payments
+    where vendor_id = ${vendorId}
+    order by paid_date desc, created_at desc
+    limit 200`
+}
+
+export async function getDues(vendorId: string): Promise<DuesSnap> {
+  const rows = await sql<DuesSnap[]>`
+    select coalesce(d.balance, 0)::text as balance,
+           coalesce(d.purchased, 0)::text as purchased,
+           coalesce(d.paid, 0)::text as paid
+    from vendors v
+    left join vendor_dues d on d.vendor_id = v.id
+    where v.id = ${vendorId}`
+  return rows[0] ?? { balance: '0', purchased: '0', paid: '0' }
+}
+
+export async function listItems(restaurantId: string, q: string): Promise<ItemListRow[]> {
+  const like = `%${q}%`
+  return sql<ItemListRow[]>`
+    select i.id, i.code, i.name, c.name as category_name, i.purchase_unit, i.status,
+           r.prefill_rate::text as prefill_rate
+    from items i
+    join categories c on c.code = i.category
+    left join item_rates r on r.item_id = i.id
+    where i.restaurant_id = ${restaurantId}
+      and (i.name ilike ${like} or i.code ilike ${like})
+    order by i.status asc, i.code asc`
+}
+
+export async function getItemDetail(restaurantId: string, id: string): Promise<ItemDetail | null> {
+  const rows = await sql<ItemDetail[]>`
+    select i.id, i.code, i.name, i.category, c.name as category_name,
+           i.purchase_unit, pu.name as purchase_unit_name,
+           i.stock_unit, su.name as stock_unit_name,
+           i.conversion_factor::text as conversion_factor,
+           i.opening_rate::text as opening_rate,
+           i.gst_rate::text as gst_rate,
+           i.yield_pct::text as yield_pct,
+           i.par_level::text as par_level,
+           i.brand, i.status, i.created_at::text as created_at,
+           r.prefill_rate::text as prefill_rate,
+           r.last_rate::text as last_rate,
+           r.last_rate_date::text as last_rate_date
+    from items i
+    join categories c on c.code = i.category
+    join units pu on pu.code = i.purchase_unit
+    left join units su on su.code = i.stock_unit
+    left join item_rates r on r.item_id = i.id
+    where i.restaurant_id = ${restaurantId} and i.id = ${id}`
+  return rows[0] ?? null
+}
+
+export async function getItemHistory(restaurantId: string, itemId: string): Promise<ItemHistoryRow[]> {
+  return sql<ItemHistoryRow[]>`
+    select h.purchase_id, h.bill_date::text as bill_date, h.bill_no, h.vendor_name,
+           h.qty::text as qty, h.rate::text as rate, h.amount::text as amount, h.landed::text as landed
+    from item_purchase_history h
+    where h.restaurant_id = ${restaurantId} and h.item_id = ${itemId}
+    order by h.bill_date desc, h.purchase_id desc
+    limit 100`
+}
