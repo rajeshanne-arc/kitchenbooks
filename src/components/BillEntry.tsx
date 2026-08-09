@@ -16,7 +16,7 @@ import { saveBill } from '@/server/save-bill'
 import VendorPicker from './VendorPicker'
 import ItemPicker from './ItemPicker'
 import SaveReveal from './SaveReveal'
-import { inputCls } from './ui'
+import { inputCls, numCls } from './ui'
 
 type Line = { key: number; item: ItemSel | null; qty: string; rate: string; prefillRate: string | null }
 
@@ -334,7 +334,7 @@ function LineRow({
           placeholder="Qty"
           value={line.qty}
           onChange={(e) => patch({ qty: sanitizeAmount(e.target.value) })}
-          className={`${inputCls} w-24`}
+          className={`${numCls} w-24`}
         />
         {unitName !== null && <span className="text-sm text-stone-500">{unitName}</span>}
         <span className="text-stone-400">×</span>
@@ -347,7 +347,7 @@ function LineRow({
             placeholder="Rate"
             value={line.rate}
             onChange={(e) => patch({ rate: sanitizeAmount(e.target.value) })}
-            className={`${inputCls} w-32 pl-7`}
+            className={`${numCls} w-32 pl-7`}
           />
         </div>
         {deviates && (
