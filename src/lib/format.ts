@@ -11,9 +11,10 @@ export function todayLocal(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-/** Postgres timestamptz::text -> '9 Aug 2026, 8:54 pm' in IST */
+/** Postgres timestamptz::text -> '9 Aug 2026, 8:54 pm' in IST. Postgres emits
+ * '2026-08-09 16:23:45.1+00'; JS Date needs the 'T' and a full '+00:00' offset. */
 export const fmtDateTime = (ts: string): string =>
-  new Date(ts.replace(' ', 'T')).toLocaleString('en-IN', {
+  new Date(ts.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')).toLocaleString('en-IN', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
