@@ -205,7 +205,6 @@ const ItemSchema = z.object({
   name: z.string().trim().min(1).max(120),
   brand: z.string().trim().max(80),
   gstRate: z.union([z.literal(''), numStr(2)]),
-  yieldPct: numStr(2),
   parLevel: z.union([z.literal(''), numStr(3)]),
   conversionFactor: numStr(4),
   stockUnit: z.string().trim().max(16),
@@ -218,8 +217,6 @@ export async function updateItem(id: string, raw: UpdateItemInput): Promise<Upda
     if (!UUID.test(id)) throw new BooksError('Malformed item id')
     const input = ItemSchema.parse(raw)
 
-    const yieldNum = Number(input.yieldPct)
-    if (!(yieldNum > 0 && yieldNum <= 100)) throw new BooksError('Yield must be between 0 and 100')
     const convNum = Number(input.conversionFactor)
     if (!(convNum > 0)) throw new BooksError('Conversion factor must be more than zero')
     if (input.gstRate !== '' && Number(input.gstRate) > 100) throw new BooksError('GST rate is a percentage — 100 max')
@@ -238,7 +235,6 @@ export async function updateItem(id: string, raw: UpdateItemInput): Promise<Upda
         name = ${input.name},
         brand = ${trimmedOrNull(input.brand)},
         gst_rate = ${input.gstRate === '' ? null : input.gstRate}::numeric,
-        yield_pct = ${input.yieldPct}::numeric,
         par_level = ${input.parLevel === '' ? null : input.parLevel}::numeric,
         conversion_factor = ${input.conversionFactor}::numeric,
         stock_unit = ${input.stockUnit === '' ? null : input.stockUnit},

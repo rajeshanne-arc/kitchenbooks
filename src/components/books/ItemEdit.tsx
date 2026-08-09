@@ -13,7 +13,6 @@ export default function ItemEdit({ item, units }: { item: ItemDetail; units: Uni
   const [name, setName] = useState(item.name)
   const [brand, setBrand] = useState(item.brand ?? '')
   const [gstRate, setGstRate] = useState(item.gst_rate ?? '')
-  const [yieldPct, setYieldPct] = useState(item.yield_pct)
   const [parLevel, setParLevel] = useState(item.par_level ?? '')
   const [conversionFactor, setConversionFactor] = useState(item.conversion_factor)
   const [stockUnit, setStockUnit] = useState(item.stock_unit ?? '')
@@ -24,13 +23,8 @@ export default function ItemEdit({ item, units }: { item: ItemDetail; units: Uni
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
-  const yieldNum = num(yieldPct)
   const convNum = num(conversionFactor)
-  const canSave =
-    !busy &&
-    name.trim() !== '' &&
-    yieldNum !== null && yieldNum > 0 && yieldNum <= 100 &&
-    convNum !== null && convNum > 0
+  const canSave = !busy && name.trim() !== '' && convNum !== null && convNum > 0
 
   const touch = () => setSaved(false)
 
@@ -44,7 +38,6 @@ export default function ItemEdit({ item, units }: { item: ItemDetail; units: Uni
         name: name.trim(),
         brand: brand.trim(),
         gstRate: gstRate.trim(),
-        yieldPct: yieldPct.trim(),
         parLevel: parLevel.trim(),
         conversionFactor: conversionFactor.trim(),
         stockUnit,
@@ -55,7 +48,6 @@ export default function ItemEdit({ item, units }: { item: ItemDetail; units: Uni
         setName(res.item.name)
         setBrand(res.item.brand ?? '')
         setGstRate(res.item.gst_rate ?? '')
-        setYieldPct(res.item.yield_pct)
         setParLevel(res.item.par_level ?? '')
         setConversionFactor(res.item.conversion_factor)
         setStockUnit(res.item.stock_unit ?? '')
@@ -106,18 +98,6 @@ export default function ItemEdit({ item, units }: { item: ItemDetail; units: Uni
               className={inputCls}
             />
             <span className="mt-1 block text-xs text-stone-500">reference only for now — per-line GST entry comes later</span>
-          </label>
-          <label className="block">
-            <span className={fieldLabelCls}>Yield %</span>
-            <input
-              inputMode="decimal"
-              value={yieldPct}
-              onChange={(e) => { setYieldPct(clean(e.target.value)); touch() }}
-              className={inputCls}
-            />
-            <span className="mt-1 block text-xs text-stone-500">
-              100 means nothing is lost in prep — bone-in chicken used boneless is nearer 70.
-            </span>
           </label>
           <label className="block">
             <span className={fieldLabelCls}>Par level</span>

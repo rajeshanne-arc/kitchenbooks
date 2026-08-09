@@ -209,7 +209,6 @@ export type UpdateItemInput = {
   name: string
   brand: string
   gstRate: string
-  yieldPct: string
   parLevel: string
   conversionFactor: string
   stockUnit: string
@@ -235,3 +234,156 @@ export type PaymentResult =
 
 export type UpdateVendorResult = { ok: true; vendor: VendorDetail } | { ok: false; error: string }
 export type UpdateItemResult = { ok: true; item: ItemDetail } | { ok: false; error: string }
+
+// ---------- Store actions (phase 3) ----------
+
+export type Section = {
+  id: string
+  code: string
+  name: string
+  sort_order: number
+  status: 'active' | 'inactive'
+}
+
+/** Typeahead hit for issue/wastage forms — existing items only, costs hidden */
+export type IssuableItemHit = {
+  id: string
+  code: string
+  name: string
+  category_name: string
+  purchase_unit: string
+  unit_name: string
+  /** numeric::text from stock_on_hand */
+  on_hand_qty: string
+  /** item_costs.issue_cost is non-null — issuable */
+  has_cost: boolean
+}
+
+/** One row of the stock_on_hand view (+ item status) */
+export type StockRow = {
+  item_id: string
+  code: string
+  name: string
+  category_name: string
+  purchase_unit: string
+  status: 'active' | 'inactive'
+  purchased_qty: string
+  issued_qty: string
+  wasted_qty: string
+  on_hand_qty: string
+  issue_cost: string | null
+  on_hand_value: string
+}
+
+export type SectionMonthRow = Section & {
+  /** section_consumption.consumed_value for the month; '0' when absent */
+  consumed_value: string
+}
+
+export type IssueDetail = {
+  id: string
+  issue_date: string
+  section_id: string
+  section_code: string
+  section_name: string
+  note: string | null
+  reverses_id: string | null
+  entered_by: string | null
+  created_at: string
+  is_reversal: boolean
+  is_voided: boolean
+  line_count: number
+  total_value: string
+}
+
+export type IssueLineRow = {
+  id: string
+  item_id: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  qty: string
+  unit_cost: string
+  value: string
+}
+
+export type WastageDetail = {
+  id: string
+  waste_date: string
+  item_id: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  qty: string
+  unit_cost: string
+  value: string
+  reason: string
+  note: string | null
+  reverses_id: string | null
+  entered_by: string | null
+  created_at: string
+  is_reversal: boolean
+  is_voided: boolean
+}
+
+/** Chronological store log: issues and wastage in one list */
+export type StoreLogRow = {
+  kind: 'issue' | 'wastage'
+  id: string
+  date: string
+  created_at: string
+  is_reversal: boolean
+  is_voided: boolean
+  value: string
+  // issue rows
+  section_code?: string
+  section_name?: string
+  line_count?: number
+  // wastage rows
+  item_name?: string
+  qty?: string
+  purchase_unit?: string
+  reason?: string
+}
+
+/** stock_on_hand snapshot for reveals */
+export type StockSnap = {
+  item_id: string
+  code: string
+  name: string
+  purchase_unit: string
+  on_hand_qty: string
+  on_hand_value: string
+}
+
+export type ChecklistRow = { id: string; code: string; name: string; sort_order: number; issues_today: number }
+
+export type SaveIssueInput = {
+  issueDate: string
+  sectionId: string
+  lines: { itemId: string; qty: string }[]
+}
+
+export type SaveIssueResult =
+  | { ok: true; issue: IssueDetail; lines: IssueLineRow[]; stock: StockSnap[] }
+  | { ok: false; error: string }
+
+export type SaveWastageInput = {
+  wasteDate: string
+  itemId: string
+  qty: string
+  reason: string
+  note: string
+}
+
+export type SaveWastageResult =
+  | { ok: true; wastage: WastageDetail; stock: StockSnap }
+  | { ok: false; error: string }
+
+export type VoidIssueResult =
+  | { ok: true; original: IssueDetail; reversal: IssueDetail; stock: StockSnap[]; monthValue: string }
+  | { ok: false; error: string }
+
+export type VoidWastageResult =
+  | { ok: true; original: WastageDetail; reversal: WastageDetail; stock: StockSnap }
+  | { ok: false; error: string }

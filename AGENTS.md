@@ -69,3 +69,32 @@ masters.
 save. The UPDATE grant exists, but the mechanic waits for per-line GST entry
 (a future phase). Until then `items.gst_rate` is reference-only metadata
 edited on the item page.
+
+## Phase 3 — Store actions (consumption spine)
+
+Migration `consumption_spine_sections_issues_wastage` added `sections`
+(8 seeded, uuid ids, issues reference `section_id`), `issues` + `issue_lines`
+(`value` GENERATED qty × unit_cost), `wastage` (flat, same value mechanics),
+and views `item_costs` (issue_cost = weighted-average landed/qty over all
+purchase lines, falling back to opening_rate), `stock_on_hand`, and
+`section_consumption` (monthly). kb_app: INSERT on the three event tables;
+sections column-UPDATE on name/sort_order/status only (no UI yet).
+
+**The cost rule.** `unit_cost` on issue/wastage rows is snapshotted from
+`item_costs.issue_cost` server-side at save, full precision. The store
+manager never sees or types a cost — no rate field exists on those screens.
+**Voids copy each original line's `unit_cost` EXACTLY** (SQL
+`insert … select -qty, unit_cost`); never re-snapshot, or a rate change
+between entry and void leaves a residue in section_consumption.
+
+Issues/wastage typeahead over EXISTING items only — an issue cannot invent
+an item; the empty state says "enter the bill first". Items with NULL
+issue_cost are un-issuable until a bill exists.
+
+Negative stock is shown loudly (red, "a bill is probably missing"), never
+hidden or clamped.
+
+**items.yield_pct is retired from the UI** (column stays, reserved): recipes
+will state GROSS quantities (what is taken from the store, trim included), so
+trim yield lives in the recipe quantities themselves; batch yield is a
+sub-recipe's output quantity. Do not resurface an item-level yield field.

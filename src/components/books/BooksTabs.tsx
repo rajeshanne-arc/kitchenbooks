@@ -5,6 +5,9 @@ import { usePathname } from 'next/navigation'
 
 const TABS = [
   { href: '/books/bills' as const, label: 'Bills' },
+  { href: '/books/store' as const, label: 'Store log' },
+  { href: '/books/stock' as const, label: 'Stock' },
+  { href: '/books/sections' as const, label: 'Sections' },
   { href: '/books/vendors' as const, label: 'Vendors' },
   { href: '/books/items' as const, label: 'Items' },
 ]
@@ -12,7 +15,7 @@ const TABS = [
 export default function BooksTabs() {
   const pathname = usePathname()
   return (
-    <nav className="mt-3 flex gap-6 border-b border-stone-200">
+    <nav className="-mx-4 mt-3 flex gap-5 overflow-x-auto whitespace-nowrap border-b border-stone-200 px-4 sm:mx-0 sm:px-0">
       {TABS.map((t) => {
         const active = pathname.startsWith(t.href)
         return (

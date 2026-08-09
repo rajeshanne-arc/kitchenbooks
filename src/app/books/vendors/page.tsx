@@ -30,7 +30,7 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
                 all.
               </p>
               <Link
-                href="/"
+                href="/bill"
                 className="mt-5 inline-block rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
               >
                 Enter a bill

@@ -6,7 +6,9 @@ import { usePathname } from 'next/navigation'
 export default function TopNav() {
   const pathname = usePathname()
   const links = [
-    { href: '/' as const, label: 'New bill', active: pathname === '/' },
+    { href: '/bill' as const, label: 'New bill', active: pathname.startsWith('/bill') },
+    { href: '/issue' as const, label: 'Issue', active: pathname.startsWith('/issue') },
+    { href: '/wastage' as const, label: 'Wastage', active: pathname.startsWith('/wastage') },
     { href: '/books/bills' as const, label: 'Books', active: pathname.startsWith('/books') },
   ]
   return (
@@ -15,12 +17,12 @@ export default function TopNav() {
         <Link href="/" className="text-[15px] font-bold tracking-tight text-emerald-800">
           KitchenBooks
         </Link>
-        <nav className="flex gap-1">
+        <nav className="flex gap-0.5 sm:gap-1">
           {links.map((l) => (
             <Link
               key={l.href}
               href={l.href}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+              className={`rounded-lg px-2 py-1.5 text-[13px] font-medium sm:px-2.5 sm:text-sm ${
                 l.active ? 'bg-emerald-700 text-white' : 'text-stone-600 hover:bg-stone-100'
               }`}
             >

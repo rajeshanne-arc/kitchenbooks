@@ -87,7 +87,6 @@ async function main() {
     name: item.name,
     brand: 'Zz Farm',
     gstRate: '',
-    yieldPct: '70',
     parLevel: '5',
     conversionFactor: item.conversion_factor,
     stockUnit: item.stock_unit ?? '',
@@ -95,9 +94,7 @@ async function main() {
     status: 'active',
   })
   assert.ok(upd.ok, `updateItem failed: ${upd.ok === false ? upd.error : ''}`)
-  assert.equal(upd.item.yield_pct, '70')
   const persisted = await getItemDetail(restaurant.id, itemId)
-  assert.equal(persisted?.yield_pct, '70')
   assert.equal(persisted?.par_level, '5')
   assert.equal(persisted?.brand, 'Zz Farm')
 
