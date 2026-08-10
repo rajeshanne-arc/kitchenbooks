@@ -387,3 +387,120 @@ export type VoidIssueResult =
 export type VoidWastageResult =
   | { ok: true; original: WastageDetail; reversal: WastageDetail; stock: StockSnap }
   | { ok: false; error: string }
+
+// ---------- Recipes (phase 4) ----------
+
+/** dish_costs view row (+ section sort for grouping) */
+export type DishCostRow = {
+  recipe_id: string
+  code: string
+  name: string
+  section_code: string
+  section_name: string
+  section_sort: number
+  dish_cost: string
+  selling_price: string | null
+  food_cost_pct: string | null
+  uncosted_lines: number
+  status: 'active' | 'inactive'
+}
+
+/** recipe_costs view row for subs (+ status from recipes) */
+export type SubCostRow = {
+  recipe_id: string
+  code: string
+  name: string
+  output_qty: string
+  output_unit: string
+  total_cost: string
+  cost_per_output_unit: string
+  uncosted_lines: number
+  status: 'active' | 'inactive'
+}
+
+export type RecipeDetail = {
+  id: string
+  code: string
+  name: string
+  kind: 'dish' | 'sub'
+  section_id: string | null
+  section_code: string | null
+  section_name: string | null
+  output_qty: string
+  output_unit: string
+  output_unit_name: string
+  selling_price: string | null
+  status: 'active' | 'inactive'
+  created_at: string
+  // live from recipe_costs / dish_costs
+  total_cost: string
+  cost_per_output_unit: string
+  uncosted_lines: number
+  food_cost_pct: string | null
+}
+
+export type RecipeLineRow = {
+  id: string
+  component_item_id: string | null
+  component_recipe_id: string | null
+  component_code: string
+  component_name: string
+  is_sub: boolean
+  qty: string
+  unit: string
+  /** live: item_costs.issue_cost or sub's recipe_costs.cost_per_output_unit; null when unpriced */
+  unit_cost: string | null
+  line_cost: string | null
+  uncosted: boolean
+  /** for sub components: how many of ITS lines are uncosted */
+  sub_uncosted_lines: number
+}
+
+export type ComponentHit =
+  | {
+      kind: 'item'
+      id: string
+      code: string
+      name: string
+      category_name: string
+      purchase_unit: string
+      unit_name: string
+      has_cost: boolean
+    }
+  | {
+      kind: 'sub'
+      id: string
+      code: string
+      name: string
+      output_unit: string
+      unit_name: string
+    }
+
+export type CreateRecipeInput = {
+  kind: 'dish' | 'sub'
+  name: string
+  sectionId: string
+  outputQty: string
+  outputUnit: string
+  sellingPrice: string
+}
+
+export type CreateRecipeResult = { ok: true; id: string; code: string } | { ok: false; error: string }
+
+export type UpdateRecipeInput = {
+  name: string
+  outputQty: string
+  outputUnit: string
+  sellingPrice: string
+  status: 'active' | 'inactive'
+}
+
+export type RecipeMutationResult =
+  | { ok: true; recipe: RecipeDetail; lines: RecipeLineRow[] }
+  | { ok: false; error: string }
+
+export type AddLineInput = {
+  recipeId: string
+  component: { kind: 'item'; id: string } | { kind: 'sub'; id: string }
+  qty: string
+}

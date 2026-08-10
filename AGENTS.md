@@ -98,3 +98,39 @@ hidden or clamped.
 will state GROSS quantities (what is taken from the store, trim included), so
 trim yield lives in the recipe quantities themselves; batch yield is a
 sub-recipe's output quantity. Do not resurface an item-level yield field.
+
+## Phase 4 — Recipes (gross quantities, live costing)
+
+Migration `recipes_gross_quantities_live_costing` added `recipes` (kind
+dish|sub; dish requires `section_id`; `selling_price` dish-only;
+`output_qty`/`output_unit` — a sub's output IS its batch yield) and
+`recipe_lines` (component_item_id XOR component_recipe_id, qty > 0), plus
+views `recipe_costs` (recursive expansion, depth-capped at 12,
+`uncosted_lines` honesty column) and `dish_costs` (section join,
+`food_cost_pct`).
+
+**Dish codes carry the section** — CH-001, TD-014 — the same seven codes as
+issues and labour; that join is the product's spine. A dish is coded by
+picking its section; the app assigns `<SECTION>-<next 3-digit per
+restaurant+section>` in-transaction. Subs are `SUB-###`.
+
+**Costs are LIVE, never stored.** recipe_costs/dish_costs read
+item_costs.issue_cost at query time; a rate change on bills moves every
+recipe cost with no re-cost step. Never cache or write a recipe cost.
+Uncosted ingredients price at 0 with `uncosted_lines > 0` — UIs must show
+the honesty message instead of a confident wrong number. Monthly dish-cost
+snapshots (the photograph rule) are deliberately a LATER phase — do not add
+snapshot tables casually.
+
+**The gross rule, verbatim and load-bearing** (top of every lines editor):
+"Enter what you take from the store, including what gets trimmed away."
+If a chef writes net quantities, costs understate silently.
+
+**The DELETE exception.** `recipe_lines` carries the system's only DELETE
+grant: recipes are masters and lines are editable detail — removing an
+ingredient from a card is normal chef editing, not history erasure. Nothing
+else may ever gain DELETE.
+
+**Cycle guard is server-side**: before inserting a sub component, walk the
+component graph (recursive CTE) and refuse loops. The view's depth cap is
+blast-radius control, not the guard.
