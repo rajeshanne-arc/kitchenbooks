@@ -172,3 +172,82 @@ details arrive with the login phase").
 Rajesh's Labour sheet and supersedes every earlier extract — never seed
 staff from any file in the repo or a transcript; import arrives when Rajesh
 provides the corrected master.
+
+## Phase 6 — Sales (the Petpooja mirror)
+
+Migration `sales_cash_counts_snapshots` (also phases 7–8): `pos_fetches`,
+`pos_orders`, `pos_lines`, `pos_item_map`, views `latest_fetches`,
+`sales_current`, `sales_by_day`, `sales_by_section`, `unmapped_pos_items`,
+and `section_costs` regained sales + margin.
+
+**Credentials are env vars in Vercel, names exactly:** `PP_APP_KEY`,
+`PP_APP_SECRET`, `PP_ACCESS_TOKEN`, `PP_REST_ID` (Sensitive — write-only).
+Values come from Rajesh directly into Vercel, NEVER through chat or the
+repo; local dev has none, so the adapter (`src/server/petpooja.ts`, endpoint
+`/V1/thirdparty/generic_get_orders/`) refuses loudly and smoke uses fixture
+payloads.
+
+Hard-won API facts, each from a real bug — do not relearn them:
+- Get Orders returns TWO days (D and D-1). Filter on `order_date ==
+  business_date`. Never assume T+1.
+- Order IDs restart daily: every key is (business_date, pos_order_id);
+  duplicate ids within one payload are skipped and counted on the fetch.
+- **STATUS IS A WHITELIST:** 'Success' → revenue; 'Cancelled' → cancelled;
+  'Complimentary' → complimentary; ANYTHING ELSE → unknown — surfaced
+  loudly, never banked. C-prefixed order ids are a secondary comp signal;
+  status wins, every disagreement is logged in pos_fetches.note.
+- Comps: out of the money, IN orders and covers — already encoded in
+  sales_by_day; never re-derive client-side.
+
+A fetch is an EVENT: one pos_fetches row + orders + lines in one
+transaction; a re-fetch is a NEW fetch and the latest wins
+(latest_fetches) — nothing is ever edited. Mapping points a POS item at a
+DISH (the dish carries the section); pos_item_map upsert rides the only
+UPDATE grants (recipe_id, item_name). The mapping queue is ordered by
+revenue desc — the top rows are half the money.
+
+## Phase 7 — Cash (the cashier's close)
+
+Tables `cash_vouchers`, `other_income`, `day_closes` (INSERT-only), views
+`day_close_current` (latest filing per date wins, corrected marker),
+`day_close_ladder`, `owners_owed`; `settings` key `first_opening_cash`.
+
+**PAID BY is load-bearing:** owner-funded vouchers NEVER touch the drawer
+math — day_close_ladder already filters `paid_by = 'cashier'`; do not
+re-add them in code. Owner money opens a debt in owners_owed; the
+reimbursement is itself a cashier voucher, category `owner_reimbursement`
+— one log, netted, lands on that day's ladder for free. An owner-paid
+reimbursement is refused as nonsense. Owner names come from pickers
+(prior entries + optional settings `owner_names` CSV) — free text breaks
+the netting on "Asheel" vs "Asheel Sir".
+
+Other income: a quantity requires its unit (oil is litres — FSSAI expects
+the reconciliation).
+
+**Day close:** the cashier types ONLY extra-in, handed-over (+ to whom),
+counted cash and the bank block. Opening is resolved server-side and
+photographed into the row at save: previous day's COUNTED cash
+(day_close_current), first day from `first_opening_cash` (Set Opening is
+one-time — refuses once any close exists). **HARD STOP:** date D refuses
+to save while D-1 has no close — the error names the missing date. A
+shortage belongs to the day it happened. Re-filing inserts a new row that
+wins; difference is red whenever non-zero.
+
+## Phase 8 — Counts + snapshots (the photograph rule)
+
+Tables `stock_counts`, `stock_count_lines` (book_qty + unit_cost FROZEN
+server-side inside the save transaction from stock_on_hand / item_costs;
+variance_qty/value are GENERATED — insert with explicit column lists),
+`dish_cost_snapshots`; view `count_variances`.
+
+Counts are blind (book qty hidden until save) and counted 0 is a real
+count. Variances read the STORED generated columns, worst shortage first,
+negative loud. A count never moves stock. **The first-count warning is
+COMPUTED, never asserted:** days = today − first live (non-voided) issue
+date + 1; under 14 → banner "book stock has only N days of consumption
+behind it; variance will mostly measure missing bills, not theft" — warn,
+never block.
+
+**Photograph the menu each month-end** (button on Recipes): copies today's
+dish_costs verbatim into dish_cost_snapshots, one photograph per day —
+live costs rewrite history, photographs don't.

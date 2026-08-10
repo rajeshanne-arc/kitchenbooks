@@ -2,6 +2,9 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getMasters, getRestaurant } from '@/server/queries'
 import { getRecipeDetail, getRecipeLines } from '@/server/recipes-queries'
+import { getQtySold } from '@/server/sales-queries'
+import { monthStartIST } from '@/server/store-queries'
+import { formatMoneyString } from '@/lib/money'
 import RecipeEditor from '@/components/recipes/RecipeEditor'
 import { RetiredBadge } from '@/components/books/Badges'
 
@@ -16,7 +19,12 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
   const recipe = await getRecipeDetail(restaurant.id, id)
   if (!recipe) notFound()
 
-  const [lines, { units }] = await Promise.all([getRecipeLines(id), getMasters()])
+  const [lines, { units }, sold] = await Promise.all([
+    getRecipeLines(id),
+    getMasters(),
+    recipe.kind === 'dish' ? getQtySold(restaurant.id, monthStartIST()) : Promise.resolve([]),
+  ])
+  const soldRow = sold.find((s) => s.recipe_id === id) ?? null
 
   return (
     <div className="mt-4">
@@ -38,6 +46,13 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
           )}
         </span>
       </div>
+      {soldRow !== null && (
+        <p className="mt-2 text-sm text-stone-600">
+          Sold this month: <span className="font-semibold tabular-nums">{soldRow.qty_sold}</span> ·{' '}
+          {formatMoneyString(soldRow.sales_value)}{' '}
+          <span className="text-xs text-stone-400">from mapped POS lines, latest fetches</span>
+        </p>
+      )}
       <RecipeEditor key={recipe.id} initialRecipe={recipe} initialLines={lines} units={units} />
     </div>
   )

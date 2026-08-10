@@ -1,8 +1,13 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { listDishCosts, listSubCosts } from '@/server/recipes-queries'
+import { getQtySold } from '@/server/sales-queries'
+import { listSnapshots } from '@/server/counts-queries'
+import { monthStartIST } from '@/server/store-queries'
 import { formatMoneyString } from '@/lib/money'
 import { RetiredBadge } from '@/components/books/Badges'
+import SnapshotButton from '@/components/counts/SnapshotButton'
+import { fmtDate } from '@/lib/format'
 import { sectionHeadCls } from '@/components/ui'
 import type { DishCostRow } from '@/lib/types'
 
@@ -18,7 +23,13 @@ function UncostedPill({ n }: { n: number }) {
 
 export default async function RecipesPage() {
   const restaurant = await getRestaurant()
-  const [dishes, subs] = await Promise.all([listDishCosts(restaurant.id), listSubCosts(restaurant.id)])
+  const [dishes, subs, sold, snapshots] = await Promise.all([
+    listDishCosts(restaurant.id),
+    listSubCosts(restaurant.id),
+    getQtySold(restaurant.id, monthStartIST()),
+    listSnapshots(restaurant.id),
+  ])
+  const soldByRecipe = new Map(sold.map((s) => [s.recipe_id, s]))
 
   const bySection = new Map<string, { name: string; rows: DishCostRow[] }>()
   for (const d of dishes) {
@@ -74,6 +85,11 @@ export default async function RecipesPage() {
                         </code>
                         <span className="truncate text-[15px] font-medium text-stone-900">{d.name}</span>
                         {d.status === 'inactive' && <RetiredBadge />}
+                        {soldByRecipe.has(d.recipe_id) && (
+                          <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] tabular-nums text-stone-500">
+                            × {soldByRecipe.get(d.recipe_id)!.qty_sold} this month
+                          </span>
+                        )}
                       </span>
                       <span className="shrink-0 text-right">
                         {d.uncosted_lines > 0 ? (
@@ -143,9 +159,37 @@ export default async function RecipesPage() {
           )}
         </>
       )}
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className={sectionHeadCls}>Photographs</h2>
+          <SnapshotButton />
+        </div>
+        {snapshots.length === 0 ? (
+          <p className="mt-1 text-sm text-stone-500">
+            None yet. Live costs rewrite history — a month-end photograph keeps what the menu cost that day.
+          </p>
+        ) : (
+          <ul className="mt-1 divide-y divide-stone-100">
+            {snapshots.map((s) => (
+              <li key={s.snap_date}>
+                <Link
+                  href={`/books/snapshots/${s.snap_date}`}
+                  className="flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 hover:bg-stone-50"
+                >
+                  <span className="text-[15px] font-medium text-stone-900">{fmtDate(s.snap_date)}</span>
+                  <span className="text-xs text-stone-500">
+                    {s.dishes} {s.dishes === 1 ? 'dish' : 'dishes'} →
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <p className="text-xs text-stone-400">
         Costed live at today’s weighted-average purchase costs · recipe_costs / dish_costs. No re-cost button exists —
-        none is needed.
+        none is needed. Photographs freeze a month-end copy in dish_cost_snapshots.
       </p>
     </section>
   )

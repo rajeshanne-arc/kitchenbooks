@@ -9,7 +9,8 @@ export default function TopNav() {
     { href: '/bill' as const, label: 'Bill', active: pathname.startsWith('/bill') },
     { href: '/issue' as const, label: 'Issue', active: pathname.startsWith('/issue') },
     { href: '/wastage' as const, label: 'Wastage', active: pathname.startsWith('/wastage') },
-    { href: '/attendance' as const, label: 'Attendance', active: pathname.startsWith('/attendance') },
+    { href: '/attendance' as const, label: 'Attend.', active: pathname.startsWith('/attendance') },
+    { href: '/cash' as const, label: 'Cash', active: pathname.startsWith('/cash') },
     { href: '/books/bills' as const, label: 'Books', active: pathname.startsWith('/books') },
   ]
   return (

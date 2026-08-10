@@ -76,13 +76,17 @@ export async function getDaySheet(restaurantId: string, date: string): Promise<D
     ${sql.unsafe(ROSTER_ORDER)}`
 }
 
-/** Per-section costs for one month, honest zeros for quiet sections. */
+/** Per-section costs for one month, honest zeros for quiet sections. Sales
+ * and margin come straight from section_costs (fed by mapped POS lines);
+ * the '—' row carries both unassigned labour and unmapped sales — loud. */
 export async function getSectionCosts(restaurantId: string, monthStart: string): Promise<SectionCostRow[]> {
   const rows = await sql<SectionCostRow[]>`
     select s.code as section_code, s.name as section_name, s.dept_group,
            coalesce(sc.consumption, 0)::text as consumption,
            coalesce(sc.labour, 0)::text as labour,
            coalesce(sc.total_cost, 0)::text as total_cost,
+           coalesce(sc.sales, 0)::text as sales,
+           coalesce(sc.margin, 0)::text as margin,
            coalesce(l.unassigned_marks, 0)::int as unassigned_marks,
            coalesce(l.unsalaried_marks, 0)::int as unsalaried_marks
     from sections s
@@ -96,6 +100,7 @@ export async function getSectionCosts(restaurantId: string, monthStart: string):
   const unassigned = await sql<SectionCostRow[]>`
     select sc.section_code, sc.section_name, null as dept_group,
            sc.consumption::text as consumption, sc.labour::text as labour, sc.total_cost::text as total_cost,
+           sc.sales::text as sales, sc.margin::text as margin,
            coalesce(l.unassigned_marks, 0)::int as unassigned_marks,
            coalesce(l.unsalaried_marks, 0)::int as unsalaried_marks
     from section_costs sc

@@ -581,6 +581,241 @@ export type SectionCostRow = {
   consumption: string
   labour: string
   total_cost: string
+  sales: string
+  margin: string
   unassigned_marks: number
   unsalaried_marks: number
 }
+
+// ---------- Sales (phase 6) ----------
+
+export type StatusClass = 'revenue' | 'cancelled' | 'complimentary' | 'unknown'
+
+export type SalesDayRow = {
+  business_date: string
+  orders: number
+  covers: number
+  revenue: string
+  cash_revenue: string
+  comps: number
+  comp_value: string
+  cancelled: number
+  unknown_status: number
+  fetch_count: number
+  last_fetched_at: string
+}
+
+export type UnknownOrderRow = {
+  business_date: string
+  pos_order_id: string
+  status_raw: string
+  channel: string | null
+  order_total: string | null
+}
+
+export type FetchDayResult =
+  | {
+      ok: true
+      fetchId: string
+      businessDate: string
+      apiOrderCount: number
+      insertedOrders: number
+      skippedOtherDates: number
+      duplicateIds: number
+      compDisagreements: number
+      note: string | null
+      day: SalesDayRow | null
+      unknownOrders: UnknownOrderRow[]
+    }
+  | { ok: false; error: string }
+
+export type UnmappedPosItem = {
+  pos_item_id: string
+  item_name: string | null
+  qty: string
+  revenue: string
+}
+
+export type PosMapRow = {
+  id: string
+  pos_item_id: string
+  item_name: string | null
+  recipe_id: string | null
+  recipe_code: string | null
+  recipe_name: string | null
+  section_code: string | null
+}
+
+export type DishOption = { id: string; code: string; name: string; section_code: string }
+
+export type MapItemResult = { ok: true; map: PosMapRow; unmappedLeft: number } | { ok: false; error: string }
+
+export type QtySoldRow = { recipe_id: string; qty_sold: string; sales_value: string }
+
+// ---------- Cash (phase 7) ----------
+
+export type PaidBy = 'cashier' | 'owner'
+
+export type VoucherRow = {
+  id: string
+  voucher_date: string
+  amount: string
+  paid_to: string
+  paid_by: PaidBy
+  owner_name: string | null
+  category: string
+  note: string | null
+  created_at: string
+}
+
+export type SaveVoucherInput = {
+  date: string
+  amount: string
+  paidTo: string
+  paidBy: PaidBy
+  ownerName: string
+  category: string
+  note: string
+}
+
+export type SaveVoucherResult = { ok: true; voucher: VoucherRow } | { ok: false; error: string }
+
+export type OtherIncomeRow = {
+  id: string
+  income_date: string
+  item: string
+  qty: string | null
+  unit: string | null
+  amount: string
+  buyer: string | null
+  received_by: string | null
+  created_at: string
+}
+
+export type SaveOtherIncomeInput = {
+  date: string
+  item: string
+  qty: string
+  unit: string
+  amount: string
+  buyer: string
+  receivedBy: string
+}
+
+export type SaveOtherIncomeResult = { ok: true; income: OtherIncomeRow } | { ok: false; error: string }
+
+export type OwnerOwedRow = {
+  person: string
+  paid_from_pocket: string
+  reimbursed: string
+  balance: string
+}
+
+/** One rung short of saving: everything the cashier does NOT type, read
+ * server-side so the close form can show the ladder before the save. */
+export type ClosePrefill =
+  | {
+      ok: true
+      date: string
+      opening: string
+      openingSource: 'previous counted' | 'first_opening_cash' | 'first day (re-file)'
+      posCash: string
+      otherIncome: string
+      cashierVouchers: string
+      priorFilings: number
+      anyCloses: boolean
+    }
+  | { ok: false; blocked: 'no_opening' | 'missing_prev'; missingDate: string | null; anyCloses: boolean; error: string }
+
+export type DayCloseLadderRow = {
+  close_date: string
+  opening_cash: string
+  pos_cash: string
+  other_income: string
+  extra_cash_in: string
+  cashier_vouchers: string
+  handed_over: string
+  handed_to: string | null
+  expected_cash: string
+  cash_counted: string
+  difference: string
+  bank_settled: string | null
+  entered_by: string | null
+  created_at: string
+  filings: number
+}
+
+export type CloseDayInput = {
+  date: string
+  extraCashIn: string
+  handedOver: string
+  handedTo: string
+  cashCounted: string
+  bankSettled: string
+  note: string
+}
+
+export type CloseDayResult = { ok: true; ladder: DayCloseLadderRow } | { ok: false; error: string }
+
+export type SetOpeningResult = { ok: true; value: string } | { ok: false; error: string }
+
+// ---------- Counts + snapshots (phase 8) ----------
+
+export type CountableItem = {
+  id: string
+  code: string
+  name: string
+  purchase_unit: string
+  unit_name: string
+  category_name: string
+}
+
+export type SaveCountInput = {
+  countDate: string
+  note: string
+  lines: { itemId: string; countedQty: string }[]
+}
+
+export type CountVarianceRow = {
+  item_id: string
+  code: string
+  name: string
+  purchase_unit: string
+  counted_qty: string
+  book_qty: string
+  unit_cost: string
+  variance_qty: string
+  variance_value: string
+}
+
+export type CountHeader = {
+  id: string
+  count_date: string
+  note: string | null
+  created_at: string
+  line_count: number
+  total_variance_value: string
+}
+
+export type SaveCountResult =
+  | { ok: true; count: CountHeader; variances: CountVarianceRow[]; historyDays: number }
+  | { ok: false; error: string }
+
+export type SnapshotGroup = {
+  snap_date: string
+  dishes: number
+  created_at: string
+}
+
+export type SnapshotRow = {
+  code: string | null
+  name: string | null
+  section_code: string | null
+  dish_cost: string | null
+  selling_price: string | null
+  food_cost_pct: string | null
+}
+
+export type PhotographResult =
+  | { ok: true; snapDate: string; dishes: number }
+  | { ok: false; error: string }
