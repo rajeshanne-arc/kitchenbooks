@@ -29,7 +29,7 @@ export function monthStartIST(): string {
 
 export async function getSections(restaurantId: string): Promise<Section[]> {
   return sql<Section[]>`
-    select id, code, name, sort_order, status
+    select id, code, name, sort_order, status, dept_group
     from sections
     where restaurant_id = ${restaurantId} and status = 'active'
     order by sort_order asc`

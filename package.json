@@ -10,7 +10,8 @@
     "smoke": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke.ts",
     "smoke:books": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-books.ts",
     "smoke:store": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-store.ts",
-    "smoke:recipes": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-recipes.ts"
+    "smoke:recipes": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-recipes.ts",
+    "smoke:labour": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-labour.ts"
   },
   "dependencies": {
     "next": "16.3.0",

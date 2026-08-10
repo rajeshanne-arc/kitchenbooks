@@ -134,3 +134,41 @@ else may ever gain DELETE.
 **Cycle guard is server-side**: before inserting a sub component, walk the
 component graph (recursive CTE) and refuse loops. The view's depth cap is
 blast-radius control, not the guard.
+
+## Phase 5 — Labour (org units, staff, attendance)
+
+Migration `labour_org_units_staff_attendance`: `sections` is now the unified
+org-unit table (16 units, `dept_group` ∈ Management|Support|Kitchen|Service|
+Bar) — the same row that codes a dish and receives an issue now posts a
+staff member. `staff` (code `E###` flat, zero-padded, PERMANENT — a move is
+one field, never a new identity; column-granted edits, retire-never-delete),
+`attendance` (INSERT-only event stream), views `attendance_current` (latest
+row per staff per day wins — corrections are new rows, history never
+hidden), `labour_cost_by_section` and `section_costs`.
+
+**The pay law lives in the view, follow it, don't restate it in code:**
+present = 1, half = 0.5, off = 1 (off is PAID — a stated assumption),
+leave and absent = 0, divided by the real days of that month. Contract
+staff are excluded entirely ("billed by their vendor"). `unassigned_marks`
+and `unsalaried_marks` are honesty columns — surface them whenever
+non-zero, same law as uncosted_lines.
+
+**The roster order is computed, never stored**: dept_group in fixed order
+(Management, Support, Kitchen, Service, Bar), then section sort_order, then
+grade L1→L7, then name. Unassigned renders LAST and loud. Nothing is ever
+renumbered.
+
+**PIN gate** (`src/proxy.ts`): everything behind a shared PIN from env
+`KB_PIN`, cookie per device, fail-closed. This is the MINIMUM DOOR, not the
+auth phase — roles/login come later.
+
+**Deliberately excluded this phase — do not add casually:** payroll runs,
+advances, and salary payments (unproven in the sheets; money movement waits
+for real auth), and aadhaar/pan/bank columns (no such columns exist until
+real auth — the form must not collect what the DB refuses; say "ID and bank
+details arrive with the login phase").
+
+**Staff import: build nothing.** The corrected staff master lives in
+Rajesh's Labour sheet and supersedes every earlier extract — never seed
+staff from any file in the repo or a transcript; import arrives when Rajesh
+provides the corrected master.

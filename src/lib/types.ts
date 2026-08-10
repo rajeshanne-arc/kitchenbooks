@@ -237,12 +237,15 @@ export type UpdateItemResult = { ok: true; item: ItemDetail } | { ok: false; err
 
 // ---------- Store actions (phase 3) ----------
 
+export type DeptGroup = 'Management' | 'Support' | 'Kitchen' | 'Service' | 'Bar'
+
 export type Section = {
   id: string
   code: string
   name: string
   sort_order: number
   status: 'active' | 'inactive'
+  dept_group: DeptGroup
 }
 
 /** Typeahead hit for issue/wastage forms — existing items only, costs hidden */
@@ -503,4 +506,81 @@ export type AddLineInput = {
   recipeId: string
   component: { kind: 'item'; id: string } | { kind: 'sub'; id: string }
   qty: string
+}
+
+// ---------- Labour (phase 5) ----------
+
+export type EmploymentType = 'full_time' | 'trainee' | 'contract'
+export type Grade = 'L1' | 'L2' | 'L3' | 'L4' | 'L5' | 'L6' | 'L7'
+export type PayMode = 'account' | 'cash'
+export type AttendanceStatus = 'present' | 'half' | 'off' | 'leave' | 'absent'
+
+export type StaffRow = {
+  id: string
+  code: string
+  name: string
+  designation: string | null
+  section_id: string | null
+  section_code: string | null
+  section_name: string | null
+  dept_group: DeptGroup | null
+  section_sort: number | null
+  grade: Grade | null
+  employment_type: EmploymentType
+  base_salary: string | null
+  pay_mode: PayMode | null
+  joined: string | null
+  left_date: string | null
+  reports_to: string | null
+  reports_to_name: string | null
+  phone: string | null
+  status: 'active' | 'inactive'
+  created_at: string
+}
+
+/** '' means null for the nullable fields */
+export type StaffInput = {
+  name: string
+  designation: string
+  sectionId: string
+  grade: string
+  employmentType: EmploymentType
+  baseSalary: string
+  payMode: string
+  joined: string
+  leftDate: string
+  reportsTo: string
+  phone: string
+  status: 'active' | 'inactive'
+}
+
+export type StaffMutationResult = { ok: true; staff: StaffRow } | { ok: false; error: string }
+
+export type AttendanceHistoryRow = { status: AttendanceStatus; created_at: string }
+
+export type DaySheetRow = {
+  staff_id: string
+  code: string
+  name: string
+  designation: string | null
+  section_name: string | null
+  dept_group: DeptGroup | null
+  employment_type: EmploymentType
+  effective: AttendanceStatus | null
+  history: AttendanceHistoryRow[]
+}
+
+export type SaveAttendanceResult =
+  | { ok: true; inserted: number; sheet: DaySheetRow[] }
+  | { ok: false; error: string }
+
+export type SectionCostRow = {
+  section_code: string
+  section_name: string
+  dept_group: DeptGroup | null
+  consumption: string
+  labour: string
+  total_cost: string
+  unassigned_marks: number
+  unsalaried_marks: number
 }

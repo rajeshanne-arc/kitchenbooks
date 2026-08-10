@@ -48,6 +48,13 @@ export default async function Home() {
           Record wastage
           <span className="mt-0.5 block text-xs font-normal text-stone-400">spoilage, prep errors…</span>
         </Link>
+        <Link
+          href="/attendance"
+          className={`${tileCls} border-stone-200 bg-white text-stone-900 hover:border-emerald-400`}
+        >
+          Attendance
+          <span className="mt-0.5 block text-xs font-normal text-stone-400">who’s in today</span>
+        </Link>
         <Link href="/bill" className={`${tileCls} border-stone-200 bg-white text-stone-900 hover:border-emerald-400`}>
           New purchase bill
           <span className="mt-0.5 block text-xs font-normal text-stone-400">goods coming in</span>

@@ -9,6 +9,7 @@ const TABS = [
   { href: '/books/store' as const, label: 'Store log' },
   { href: '/books/stock' as const, label: 'Stock' },
   { href: '/books/sections' as const, label: 'Sections' },
+  { href: '/books/staff' as const, label: 'Staff' },
   { href: '/books/vendors' as const, label: 'Vendors' },
   { href: '/books/items' as const, label: 'Items' },
 ]
