@@ -819,3 +819,96 @@ export type SnapshotRow = {
 export type PhotographResult =
   | { ok: true; snapDate: string; dishes: number }
   | { ok: false; error: string }
+
+// ---------- Kitchen (phase 9) ----------
+
+export type ClosingRow = {
+  id: string
+  section_id: string
+  section_code: string
+  section_name: string
+  close_date: string
+  closing_value: string
+  note: string | null
+  entered_by: string | null
+  created_at: string
+  filings: number
+}
+
+export type SaveClosingInput = { date: string; sectionId: string; value: string; note: string }
+export type SaveClosingResult = { ok: true; closing: ClosingRow } | { ok: false; error: string }
+
+export type ClosingChecklistRow = {
+  section_id: string
+  code: string
+  name: string
+  closing_value: string | null
+  filings: number
+  entered_by: string | null
+}
+
+export type KitchenWastageRow = {
+  id: string
+  waste_date: string
+  section_id: string
+  section_code: string
+  section_name: string
+  item_id: string | null
+  item_name: string | null
+  qty: string | null
+  purchase_unit: string | null
+  value: string
+  reason: string
+  note: string | null
+  reverses_id: string | null
+  is_reversal: boolean
+  is_voided: boolean
+  entered_by: string | null
+  created_at: string
+}
+
+export type SaveKitchenWastageInput = {
+  date: string
+  sectionId: string
+  value: string
+  reason: string
+  itemId: string
+  qty: string
+  note: string
+}
+export type SaveKitchenWastageResult = { ok: true; wastage: KitchenWastageRow } | { ok: false; error: string }
+export type VoidKitchenWastageResult =
+  | { ok: true; original: KitchenWastageRow; reversal: KitchenWastageRow }
+  | { ok: false; error: string }
+
+// ---------- Identities (phase 10) ----------
+
+export type AppUserRow = {
+  id: string
+  username: string
+  display_name: string
+  role: 'owner' | 'manager' | 'chef' | 'store' | 'cashier'
+  staff_id: string | null
+  staff_name: string | null
+  staff_code: string | null
+  status: 'active' | 'inactive'
+  created_at: string
+}
+
+export type LoginResult = { ok: true; role: string } | { ok: false; error: string }
+export type SetupResult = { ok: true; username: string } | { ok: false; error: string }
+export type UserMutationResult = { ok: true; user: AppUserRow } | { ok: false; error: string }
+export type ResetPasswordResult = { ok: true } | { ok: false; error: string }
+
+export type FoodCostRow = {
+  section_code: string
+  section_name: string
+  has_activity: boolean
+  opening_value: string
+  issued_value: string
+  ending_value: string | null
+  kitchen_wastage: string
+  consumed_total: string | null
+  sales_value: string | null
+  food_cost_pct: string | null
+}

@@ -11,6 +11,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { enteredBy } from '@/server/current-user'
 import { getCount, getCountVariances, getIssueHistoryDays } from '@/server/counts-queries'
 import { todayIST } from '@/server/store-queries'
 import { parseQty } from '@/lib/money'
@@ -63,13 +64,14 @@ export async function saveCount(raw: SaveCountInput): Promise<SaveCountResult> {
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       const [count] = await tx<{ id: string }[]>`
-        insert into stock_counts (restaurant_id, count_date, note)
-        values (${rid}, ${input.countDate}, ${input.note === '' ? null : input.note})
+        insert into stock_counts (restaurant_id, count_date, note, entered_by)
+        values (${rid}, ${input.countDate}, ${input.note === '' ? null : input.note}, ${by})
         returning id`
 
       for (const [i, l] of input.lines.entries()) {

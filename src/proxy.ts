@@ -1,45 +1,47 @@
-// The minimum door. Salaries live behind this URL now, so the open URL
-// expires as acceptable: everything requires the KB_PIN once per device
-// (cookie), entered on /pin. This is NOT the roles/login phase — that
-// arrives later; this is a single shared PIN from the environment.
+// The door, with names on keys now. The shared-PIN era is over: every
+// request needs a valid signed session cookie, and the role in it must be
+// allowed the path (src/lib/roles.ts is the matrix; actions re-check
+// against the database). Fail closed: no secret configured means nothing
+// is served. /setup is public but creates only the FIRST owner, gated by
+// the bootstrap code — after that it refuses forever.
 import { NextResponse, type NextRequest } from 'next/server'
+import { SESSION_COOKIE, verifySession } from '@/lib/session'
+import { canAccess, type Role, ALL_ROLES } from '@/lib/roles'
 
-const PUBLIC_PATHS = ['/pin', '/api/pin']
-
-let cached: { pin: string; token: string } | null = null
-
-async function gateToken(pin: string): Promise<string> {
-  const data = new TextEncoder().encode(`kitchenbooks-gate:${pin}`)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-}
+const PUBLIC_PATHS = ['/login', '/setup', '/manifest.webmanifest', '/icon.svg', '/apple-icon.svg']
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
   if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next()
 
-  const pin = process.env.KB_PIN
-  if (!pin) {
-    // fail closed: no PIN configured means nothing is served
-    return new NextResponse('KB_PIN is not configured', { status: 503 })
-  }
-  if (cached === null || cached.pin !== pin) {
-    cached = { pin, token: await gateToken(pin) }
+  const secret = process.env.KB_SESSION_SECRET
+  if (!secret) {
+    // fail closed: no secret configured means nothing is served
+    return new NextResponse('KB_SESSION_SECRET is not configured', { status: 503 })
   }
 
-  if (request.cookies.get('kb_gate')?.value === cached.token) {
-    return NextResponse.next()
+  const payload = await verifySession(request.cookies.get(SESSION_COOKIE)?.value, secret)
+  if (!payload || !ALL_ROLES.includes(payload.r as Role)) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'not signed in' }, { status: 401 })
+    }
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    url.search = pathname === '/' ? '' : `?next=${encodeURIComponent(pathname)}`
+    return NextResponse.redirect(url)
   }
 
-  if (pathname.startsWith('/api/')) {
-    return NextResponse.json({ error: 'locked — enter the PIN at /pin' }, { status: 401 })
+  if (!canAccess(payload.r as Role, pathname)) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'your role cannot use this' }, { status: 403 })
+    }
+    const url = request.nextUrl.clone()
+    url.pathname = '/denied'
+    url.search = `?path=${encodeURIComponent(pathname)}`
+    return NextResponse.redirect(url)
   }
-  const url = request.nextUrl.clone()
-  url.pathname = '/pin'
-  url.search = ''
-  return NextResponse.redirect(url)
+
+  return NextResponse.next()
 }
 
 export const config = {

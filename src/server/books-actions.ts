@@ -14,6 +14,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { enteredBy } from '@/server/current-user'
 import { getBill, getDues, getItemDetail, getVendorDetail } from '@/server/books-queries'
 import { parseMoney, paiseToString } from '@/lib/money'
 import type {
@@ -63,6 +64,7 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
       where p.id = ${purchaseId}`
     const duesBefore = before[0]?.balance ?? null
 
+    const by = await enteredBy()
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<
@@ -79,8 +81,8 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
 
       const revBillNo = orig.bill_no ? `${orig.bill_no}-VOID` : `VOID-${orig.id.slice(0, 8)}`
       const [rev] = await tx<{ id: string }[]>`
-        insert into purchases (restaurant_id, bill_date, vendor_id, bill_no, goods_total, gst_total, transport, reverses_id)
-        select restaurant_id, bill_date, vendor_id, ${revBillNo}, -goods_total, -gst_total, -transport, id
+        insert into purchases (restaurant_id, bill_date, vendor_id, bill_no, goods_total, gst_total, transport, reverses_id, entered_by)
+        select restaurant_id, bill_date, vendor_id, ${revBillNo}, -goods_total, -gst_total, -transport, id, ${by}
         from purchases where id = ${purchaseId}
         returning id`
       await tx`
@@ -144,9 +146,9 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
     const [payment] = await sql<
       { id: string; paid_date: string; amount: string; mode: string | null; note: string | null; created_at: string }[]
     >`
-      insert into payments (restaurant_id, paid_date, vendor_id, amount, mode, note)
+      insert into payments (restaurant_id, paid_date, vendor_id, amount, mode, note, entered_by)
       values (${rid}, ${input.paidDate}, ${input.vendorId}, ${paiseToString(amountPaise)}::numeric,
-              ${input.mode === '' ? null : input.mode}, ${input.note === '' ? null : input.note})
+              ${input.mode === '' ? null : input.mode}, ${input.note === '' ? null : input.note}, ${await enteredBy()})
       returning id, paid_date::text as paid_date, amount::text as amount, mode, note, created_at::text as created_at`
     if (!payment) throw new BooksError('Payment insert could not be verified')
 

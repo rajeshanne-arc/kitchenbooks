@@ -9,6 +9,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { enteredBy } from '@/server/current-user'
 import { getDaySheet, getStaffDetail } from '@/server/labour-queries'
 import type {
   AttendanceStatus,
@@ -169,6 +170,7 @@ export async function saveAttendance(raw: {
     assertRealDate(input.date, 'Attendance date')
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    const by = await enteredBy()
 
     const inserted = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -193,8 +195,9 @@ export async function saveAttendance(raw: {
         att_date: input.date,
         staff_id: m.staffId,
         status: m.status,
+        entered_by: by,
       }))
-      await tx`insert into attendance ${tx(rows, 'restaurant_id', 'att_date', 'staff_id', 'status')}`
+      await tx`insert into attendance ${tx(rows, 'restaurant_id', 'att_date', 'staff_id', 'status', 'entered_by')}`
       return rows.length
     })
 

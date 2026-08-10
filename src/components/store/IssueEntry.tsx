@@ -12,6 +12,7 @@ import { parseQty, formatMoneyString } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, numCls, sectionHeadCls } from '@/components/ui'
 import IssueItemPicker from './IssueItemPicker'
+import { useLang } from '@/components/useLang'
 
 type Line = { key: number; item: IssuableItemHit | null; qty: string }
 const newLine = (key: number): Line => ({ key, item: null, qty: '' })
@@ -27,6 +28,7 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
   const [sectionId, setSectionId] = useState('')
   const [lines, setLines] = useState<Line[]>([newLine(1)])
   const [nextKey, setNextKey] = useState(2)
+  const { label } = useLang()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveIssueResult, { ok: true }> | null>(null)
@@ -157,7 +159,7 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
       <section className={cardCls}>
         <div className="grid gap-4 sm:grid-cols-[11rem_1fr]">
           <label className="block">
-            <span className={fieldLabelCls}>Date</span>
+            <span className={fieldLabelCls}>{label('date')}</span>
             <input
               type="date"
               value={issueDate}
@@ -166,7 +168,7 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
             />
           </label>
           <div>
-            <span className={fieldLabelCls}>Section</span>
+            <span className={fieldLabelCls}>{label('section')}</span>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {sections.map((s) => (
                 <button
@@ -243,7 +245,7 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
         disabled={!canSave}
         className="w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
       >
-        {saving ? 'Saving…' : 'Save issue'}
+        {saving ? label('saving') : label('save_issue')}
       </button>
       <p className="text-center text-xs text-stone-400">
         Costs are attached automatically from purchase history — nothing to type.

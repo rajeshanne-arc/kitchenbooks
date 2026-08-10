@@ -14,9 +14,13 @@
     "smoke:labour": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-labour.ts",
     "smoke:sales": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-sales.ts",
     "smoke:cash": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-cash.ts",
-    "smoke:counts": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-counts.ts"
+    "smoke:counts": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-counts.ts",
+    "smoke:kitchen": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-kitchen.ts",
+    "smoke:auth": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-auth.ts",
+    "smoke:dashboard": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-dashboard.ts"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "next": "16.3.0",
     "postgres": "^3.4.9",
     "react": "19.2.8",
@@ -26,6 +30,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

@@ -11,10 +11,12 @@ import { parseQty, formatMoneyString } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls } from '@/components/ui'
 import IssueItemPicker from './IssueItemPicker'
+import { useLang } from '@/components/useLang'
 
 const REASONS = ['Spoilage', 'Overproduction', 'Prep error', 'Expired', 'Other']
 
 export default function WastageEntry() {
+  const { label } = useLang()
   const [wasteDate, setWasteDate] = useState(todayLocal)
   const [item, setItem] = useState<IssuableItemHit | null>(null)
   const [qty, setQty] = useState('')
@@ -112,7 +114,7 @@ export default function WastageEntry() {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
-              <span className={fieldLabelCls}>Date</span>
+              <span className={fieldLabelCls}>{label('date')}</span>
               <input
                 type="date"
                 value={wasteDate}
@@ -121,7 +123,7 @@ export default function WastageEntry() {
               />
             </label>
             <label className="block">
-              <span className={fieldLabelCls}>Quantity</span>
+              <span className={fieldLabelCls}>{label('quantity')}</span>
               <div className="flex items-center gap-2">
                 <input
                   inputMode="decimal"
@@ -135,11 +137,11 @@ export default function WastageEntry() {
             </label>
           </div>
           <div>
-            <span className={fieldLabelCls}>Item</span>
+            <span className={fieldLabelCls}>{label('item')}</span>
             <IssueItemPicker value={item} onPick={setItem} onClear={() => setItem(null)} />
           </div>
           <label className="block">
-            <span className={fieldLabelCls}>Reason</span>
+            <span className={fieldLabelCls}>{label('reason')}</span>
             <input
               list="wastage-reasons"
               value={reason}
@@ -155,7 +157,7 @@ export default function WastageEntry() {
             </datalist>
           </label>
           <label className="block">
-            <span className={fieldLabelCls}>Note</span>
+            <span className={fieldLabelCls}>{label('note')}</span>
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -179,7 +181,7 @@ export default function WastageEntry() {
         disabled={!canSave}
         className="w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
       >
-        {saving ? 'Saving…' : 'Record wastage'}
+        {saving ? label('saving') : label('record_wastage')}
       </button>
       <p className="text-center text-xs text-stone-400">
         The cost is attached automatically from purchase history — the reveal will show what this waste is worth.

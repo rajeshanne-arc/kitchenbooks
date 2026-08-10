@@ -10,6 +10,7 @@ import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ClosePrefill, CloseDayResult, DayCloseLadderRow } from '@/lib/types'
 import { closeDay, setFirstOpening } from '@/server/cash-actions'
+import { buildCloseText, whatsappUrl } from '@/lib/share'
 import { decimalStringToPaise, formatPaise, formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls } from '@/components/ui'
@@ -74,7 +75,15 @@ function SetOpening({ onDone }: { onDone: () => void }) {
   )
 }
 
-export default function DayClose({ defaultDate, initialPrefill }: { defaultDate: string; initialPrefill: ClosePrefill }) {
+export default function DayClose({
+  defaultDate,
+  initialPrefill,
+  restaurantName,
+}: {
+  defaultDate: string
+  initialPrefill: ClosePrefill
+  restaurantName: string
+}) {
   const router = useRouter()
   const [date, setDate] = useState(defaultDate)
   const [prefill, setPrefill] = useState<ClosePrefill | null>(initialPrefill)
@@ -222,10 +231,18 @@ export default function DayClose({ defaultDate, initialPrefill }: { defaultDate:
           <p className="mt-2 text-sm text-stone-600">Bank settled: {formatMoneyString(saved.bank_settled)}</p>
         )}
         <p className="mt-1 text-xs text-stone-400">read back from day_close_ladder</p>
+        <a
+          href={whatsappUrl(buildCloseText(restaurantName, saved))}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 block w-full rounded-xl bg-[#25D366] py-3 text-center text-[15px] font-semibold text-white shadow-sm hover:brightness-95"
+        >
+          Share on WhatsApp
+        </a>
         <button
           type="button"
           onClick={startAnother}
-          className="mt-3 w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
+          className="mt-2 w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
         >
           Close another day
         </button>

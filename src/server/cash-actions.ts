@@ -12,6 +12,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { enteredBy } from '@/server/current-user'
 import {
   getClosePrefill,
   getLadderDay,
@@ -84,6 +85,7 @@ export async function saveOtherIncome(raw: SaveOtherIncomeInput): Promise<SaveOt
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -92,11 +94,11 @@ export async function saveOtherIncome(raw: SaveOtherIncomeInput): Promise<SaveOt
         if (!unit[0]) throw new CashError('Unknown unit')
       }
       const [row] = await tx<{ id: string }[]>`
-        insert into other_income (restaurant_id, income_date, item, qty, unit, amount, buyer, received_by)
+        insert into other_income (restaurant_id, income_date, item, qty, unit, amount, buyer, received_by, entered_by)
         values (${rid}, ${input.date}, ${input.item}, ${input.qty === '' ? null : input.qty},
                 ${input.unit === '' ? null : input.unit}, ${input.amount},
                 ${input.buyer === '' ? null : cleanName(input.buyer)},
-                ${input.receivedBy === '' ? null : cleanName(input.receivedBy)})
+                ${input.receivedBy === '' ? null : cleanName(input.receivedBy)}, ${by})
         returning id`
       return { id: row.id }
     })
@@ -138,14 +140,15 @@ export async function saveVoucher(raw: SaveVoucherInput): Promise<SaveVoucherRes
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string }[]>`
-        insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note)
+        insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by)
         values (${rid}, ${input.date}, ${input.amount}, ${cleanName(input.paidTo)}, ${input.paidBy},
                 ${input.paidBy === 'owner' ? cleanName(input.ownerName) : null}, ${category},
-                ${input.note === '' ? null : input.note})
+                ${input.note === '' ? null : input.note}, ${by})
         returning id`
       return { id: row.id }
     })
@@ -214,6 +217,7 @@ export async function closeDay(raw: CloseDayInput): Promise<CloseDayResult> {
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    const by = await enteredBy()
 
     await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -222,14 +226,14 @@ export async function closeDay(raw: CloseDayInput): Promise<CloseDayResult> {
       if (!prefill.ok) throw new CashError(prefill.error)
       await tx`
         insert into day_closes (restaurant_id, close_date, opening_cash, extra_cash_in,
-                                handed_over, handed_to, cash_counted, bank_settled, note)
+                                handed_over, handed_to, cash_counted, bank_settled, note, entered_by)
         values (${rid}, ${input.date}, ${prefill.opening},
                 ${input.extraCashIn === '' ? '0' : input.extraCashIn},
                 ${input.handedOver === '' ? '0' : input.handedOver},
                 ${handed > 0 ? cleanName(input.handedTo) : null},
                 ${input.cashCounted},
                 ${input.bankSettled === '' ? null : input.bankSettled},
-                ${input.note === '' ? null : input.note})`
+                ${input.note === '' ? null : input.note}, ${by})`
     })
 
     const ladder = await getLadderDay(rid, input.date)

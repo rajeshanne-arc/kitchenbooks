@@ -12,6 +12,7 @@ import { saveCount } from '@/server/counts-actions'
 import { decimalStringToPaise, formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls } from '@/components/ui'
+import { useLang } from '@/components/useLang'
 
 export function FirstCountWarning({ days }: { days: number }) {
   if (days >= 14) return null
@@ -25,6 +26,7 @@ export function FirstCountWarning({ days }: { days: number }) {
 }
 
 export default function CountEntry({ items, historyDays }: { items: CountableItem[]; historyDays: number }) {
+  const { label } = useLang()
   const [countDate, setCountDate] = useState(todayLocal)
   const [note, setNote] = useState('')
   const [filter, setFilter] = useState('')
@@ -122,16 +124,16 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
       <section className={cardCls}>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className={fieldLabelCls}>Count date</span>
+            <span className={fieldLabelCls}>{label('count_date')}</span>
             <input type="date" value={countDate} onChange={(e) => setCountDate(e.target.value)} className={`${numCls} w-full`} />
           </label>
           <label className="block">
-            <span className={fieldLabelCls}>Note</span>
+            <span className={fieldLabelCls}>{label('note')}</span>
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
           </label>
         </div>
         <label className="mt-3 block">
-          <span className={fieldLabelCls}>Filter items</span>
+          <span className={fieldLabelCls}>{label('filter_items')}</span>
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="type to narrow the list" className={inputCls} />
         </label>
         <p className="mt-3 text-xs text-stone-400">
@@ -179,7 +181,7 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
         disabled={!canSave}
         className="w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
       >
-        {saving ? 'Saving…' : `Save count (${filled.length} ${filled.length === 1 ? 'item' : 'items'})`}
+        {saving ? label('saving') : `${label('save_count')} (${filled.length})`}
       </button>
     </div>
   )

@@ -2,26 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { booksTabsFor, type Role } from '@/lib/roles'
 
-const TABS = [
-  { href: '/books/bills' as const, label: 'Bills' },
-  { href: '/books/sales' as const, label: 'Sales' },
-  { href: '/books/cash' as const, label: 'Cash' },
-  { href: '/books/recipes' as const, label: 'Recipes' },
-  { href: '/books/store' as const, label: 'Store log' },
-  { href: '/books/stock' as const, label: 'Stock' },
-  { href: '/books/counts' as const, label: 'Counts' },
-  { href: '/books/sections' as const, label: 'Sections' },
-  { href: '/books/staff' as const, label: 'Staff' },
-  { href: '/books/vendors' as const, label: 'Vendors' },
-  { href: '/books/items' as const, label: 'Items' },
-]
-
-export default function BooksTabs() {
+export default function BooksTabs({ role }: { role: Role }) {
   const pathname = usePathname()
+  const tabs = booksTabsFor(role)
   return (
     <nav className="-mx-4 mt-3 flex gap-5 overflow-x-auto whitespace-nowrap border-b border-stone-200 px-4 sm:mx-0 sm:px-0">
-      {TABS.map((t) => {
+      {tabs.map((t) => {
         const active = pathname.startsWith(t.href)
         return (
           <Link

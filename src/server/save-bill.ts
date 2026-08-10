@@ -10,6 +10,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { enteredBy } from '@/server/current-user'
 import {
   allocateTransport,
   lineValueMicro,
@@ -111,6 +112,7 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
       for (const u of unitCodes) if (!found.some((f) => f.code === u)) throw new BillError(`Unknown unit “${u}”`)
     }
 
+    const by = await enteredBy()
     const saved = await sql.begin(async (tx) => {
       // One writer per restaurant at a time keeps V-CAT-NN / CAT-NNN series race-free.
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -190,9 +192,10 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
       }
 
       const [purchase] = await tx<{ id: string }[]>`
-        insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, gst_total, transport)
+        insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, gst_total, transport, entered_by)
         values (${rid}, ${input.billDate}, ${vendorId},
-                ${goodsTotal}::numeric, ${paiseToString(gstPaise)}::numeric, ${paiseToString(transportPaise)}::numeric)
+                ${goodsTotal}::numeric, ${paiseToString(gstPaise)}::numeric, ${paiseToString(transportPaise)}::numeric,
+                ${by})
         returning id`
 
       const lineRows = input.lines.map((l, i) => ({

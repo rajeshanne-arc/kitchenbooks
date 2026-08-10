@@ -12,6 +12,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { enteredBy } from '@/server/current-user'
 import {
   getIssue,
   getIssueLines,
@@ -70,6 +71,7 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -96,8 +98,8 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
       }
 
       const [issue] = await tx<{ id: string }[]>`
-        insert into issues (restaurant_id, issue_date, section_id)
-        values (${rid}, ${input.issueDate}, ${input.sectionId})
+        insert into issues (restaurant_id, issue_date, section_id, entered_by)
+        values (${rid}, ${input.issueDate}, ${input.sectionId}, ${by})
         returning id`
 
       const lineRows = input.lines.map((l) => ({
@@ -142,6 +144,7 @@ export async function saveWastage(raw: SaveWastageInput): Promise<SaveWastageRes
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -155,9 +158,9 @@ export async function saveWastage(raw: SaveWastageInput): Promise<SaveWastageRes
         throw new StoreError(`“${rows[0].name}” has no cost on record — enter its purchase bill first`)
       }
       const [w] = await tx<{ id: string }[]>`
-        insert into wastage (restaurant_id, waste_date, item_id, qty, unit_cost, reason, note)
+        insert into wastage (restaurant_id, waste_date, item_id, qty, unit_cost, reason, note, entered_by)
         values (${rid}, ${input.wasteDate}, ${input.itemId}, ${input.qty.trim()}, ${rows[0].issue_cost},
-                ${input.reason}, ${input.note === '' ? null : input.note})
+                ${input.reason}, ${input.note === '' ? null : input.note}, ${by})
         returning id`
       return { wastageId: w.id }
     })
@@ -178,6 +181,7 @@ export async function voidIssue(issueId: string): Promise<VoidIssueResult> {
     if (!UUID.test(issueId)) throw new StoreError('Malformed issue id')
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -194,8 +198,8 @@ export async function voidIssue(issueId: string): Promise<VoidIssueResult> {
         select count(*)::int as n from issue_lines where issue_id = ${issueId}`
 
       const [rev] = await tx<{ id: string }[]>`
-        insert into issues (restaurant_id, issue_date, section_id, reverses_id)
-        select restaurant_id, issue_date, section_id, id
+        insert into issues (restaurant_id, issue_date, section_id, reverses_id, entered_by)
+        select restaurant_id, issue_date, section_id, id, ${by}
         from issues where id = ${issueId}
         returning id`
       // Copy each original line's unit_cost EXACTLY — never re-snapshot.
@@ -241,6 +245,7 @@ export async function voidWastage(wastageId: string): Promise<VoidWastageResult>
     if (!UUID.test(wastageId)) throw new StoreError('Malformed wastage id')
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -253,8 +258,8 @@ export async function voidWastage(wastageId: string): Promise<VoidWastageResult>
 
       // Negative twin with the original's unit_cost copied exactly.
       const [rev] = await tx<{ id: string }[]>`
-        insert into wastage (restaurant_id, waste_date, item_id, qty, unit_cost, reason, note, reverses_id)
-        select restaurant_id, waste_date, item_id, -qty, unit_cost, reason, 'void', id
+        insert into wastage (restaurant_id, waste_date, item_id, qty, unit_cost, reason, note, reverses_id, entered_by)
+        select restaurant_id, waste_date, item_id, -qty, unit_cost, reason, 'void', id, ${by}
         from wastage where id = ${wastageId}
         returning id`
       return { revId: rev.id, itemId: orig.item_id }

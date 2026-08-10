@@ -24,7 +24,7 @@ export default async function CashPage() {
         <p className="mt-0.5 text-sm text-stone-400">{restaurant.name} — the cashier’s day</p>
       </header>
       <div className="space-y-4">
-        <DayClose defaultDate={today} initialPrefill={prefill} />
+        <DayClose defaultDate={today} initialPrefill={prefill} restaurantName={restaurant.name} />
         <VoucherForm ownerNames={ownerNames} categories={categories} />
         <OtherIncomeForm units={units} />
       </div>

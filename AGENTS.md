@@ -251,3 +251,63 @@ never block.
 **Photograph the menu each month-end** (button on Recipes): copies today's
 dish_costs verbatim into dish_cost_snapshots, one photograph per day —
 live costs rewrite history, photographs don't.
+
+## Phase 9 — Kitchen truth (closings, wastage, food cost)
+
+Migration `kitchen_truth_and_identities` (also phase 10): `kitchen_closings`
++ `kitchen_closing_current`, `kitchen_wastage`, views `section_food_cost`
+and `missing_closes`, table `app_users`.
+
+**Closing is VALUE per section, never item quantities** — onions became
+gravy; value survives transformation, quantity does not. Latest row per
+(section, date) wins; a correction is a re-file wearing the corrected
+marker. Zero is a real closing. Closable sections = dept_group Kitchen +
+Bar. Kitchen wastage: the rupee VALUE is required and chef-stated; item +
+qty are optional detail, always as a pair; voids are negative twins
+copying value and qty exactly.
+
+**The pending-closing law lives in the view — never fill it in code:**
+section_food_cost states consumed_total (opening + issued − closing) ONLY
+when the month has an ending closing, and food_cost_pct only when mapped
+sales exist. Before that the UI says "pending closing" / "no sales", never
+a confident wrong number.
+
+## Phase 10 — Identities & roles (the PIN era is over)
+
+`app_users`: roles owner|manager|chef|store|cashier, bcrypt password_hash,
+column-granted updates, retire-never-delete (no DELETE grant). Sessions:
+signed httpOnly cookie, 30 days, HMAC over `KB_SESSION_SECRET` (32 random
+bytes; set in Vercel + .env.local; NEVER printed anywhere). The proxy
+(src/proxy.ts) enforces the ROLE MATRIX in `src/lib/roles.ts` — fail
+closed, unknown paths deny for everyone; actions re-check the DB via
+getSessionUser, so retiring or re-roling a user bites on their next
+action, not next month. A denied route names who to ask.
+
+Matrix (managers get everything below owner; owners also get Users +
+snapshots): store = bill/issues/wastage/counts + Books bills/stock/
+vendors/items; chef = kitchen/recipes + Books stock/sections/food-cost;
+cashier = cash + Books sales/cash; attendance = manager+owner only.
+
+**Bootstrap**: /setup creates the FIRST owner exactly once, gated by the
+bootstrap code — the current KB_PIN env value, typed by Rajesh at the
+screen, never through chat. After the first login works, DELETE KB_PIN
+from Vercel; /setup refuses forever once any user exists, and the last
+active owner can be neither retired nor demoted. `entered_by` on all
+eleven event tables is the session username; voids stamp the voider.
+Login errors stay generic and cost a small delay.
+
+## Phase 11 — Owner dashboard + polish
+
+/dashboard (manager + owner): TEN question cards, each backed by a named
+view, each drilling to its source — never a chart for its own sake.
+Unmapped-POS is an ACTION card; unknown statuses, negative stock, missing
+closes and cash differences are red, never hidden.
+
+Polish contracts: `formatPaise` is THE money formatter (Indian grouping —
+₹1,04,500 never ₹104,500); PWA manifest + /icon.svg are public paths in
+the proxy; the WhatsApp day-close summary comes from src/lib/share.ts
+(plain text, the whole ladder); toasts via components/Toasts on saves
+that have no reveal screen; the en/te dictionary in src/lib/i18n.ts
+covers LABELS ONLY on the five staff-facing forms (Issue, store Wastage,
+Kitchen closing, Kitchen wastage, Count) — adding Hindi later is adding
+data, not code. Nav is matrix-filtered: you only see what you can open.
