@@ -13,6 +13,7 @@ const LADDER_SELECT = `
          l.opening_cash::text as opening_cash,
          l.pos_cash::text as pos_cash,
          l.other_income::text as other_income,
+         l.off_book_cash::text as off_book_cash,
          l.extra_cash_in::text as extra_cash_in,
          l.cashier_vouchers::text as cashier_vouchers,
          l.handed_over::text as handed_over,
@@ -60,6 +61,7 @@ export async function getClosePrefill(restaurantId: string, date: string): Promi
       pos_cash: string
       other_income: string
       cashier_vouchers: string
+      off_book_cash: string
     }[]
   >`
     select
@@ -79,13 +81,17 @@ export async function getClosePrefill(restaurantId: string, date: string): Promi
         where restaurant_id = ${restaurantId} and income_date = ${date}::date), '0') as other_income,
       coalesce((select sum(amount)::text from cash_vouchers
         where restaurant_id = ${restaurantId} and voucher_date = ${date}::date
-          and paid_by = 'cashier'), '0') as cashier_vouchers`
+          and paid_by = 'cashier'), '0') as cashier_vouchers,
+      coalesce((select sum(amount)::text from off_book_orders
+        where restaurant_id = ${restaurantId} and order_date = ${date}::date
+          and payment_mode = 'Cash'), '0') as off_book_cash`
 
   const base = {
     date,
     posCash: state.pos_cash,
     otherIncome: state.other_income,
     cashierVouchers: state.cashier_vouchers,
+    offBookCash: state.off_book_cash,
     priorFilings: state.prior_filings,
     anyCloses: state.any_closes,
   }

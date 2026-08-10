@@ -15,6 +15,14 @@ export default async function ItemsPage({ searchParams }: { searchParams: Promis
 
   return (
     <section>
+      <div className="mt-3 flex items-center justify-end">
+        <Link
+          href="/books/items/new"
+          className="rounded-lg border border-emerald-700 px-3 py-1.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+        >
+          ＋ Add item
+        </Link>
+      </div>
       <Suspense>
         <FilterInput placeholder="Filter items by name or code" />
       </Suspense>

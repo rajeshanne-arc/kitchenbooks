@@ -296,6 +296,90 @@ active owner can be neither retired nor demoted. `entered_by` on all
 eleven event tables is the session username; voids stamp the voider.
 Login errors stay generic and cost a small delay.
 
+## Phases 12–14 — Role groups, lists, tabs (migration
+`groups_indents_production_lists_pnl`)
+
+**THREE GLOBAL LAWS, enforced everywhere:**
+
+1. **STRICT INVISIBILITY.** A role never SEES a link it cannot open — nav,
+   home tiles, Books tabs, group tab strips, quick links. The matrix
+   (`src/lib/roles.ts`) is the single source; every surface filters through
+   `canAccess`. Deep links stay server-denied naming who to ask. Books tabs
+   per role: chef = recipes/stock/sections/food-cost; cashier = sales/cash;
+   store = bills/store log/stock/counts/vendors/items; manager/owner = all.
+   Chef LOST /books/store, /books/issues, /books/wastage. `/kitchen/indent`
+   admits store (the gap page is theirs too); `/pnl` is owner-only, beside
+   Users and snapshots.
+2. **LISTS, NOT FREE TEXT.** Categorical fields read `list_options` (7 keys:
+   waste_reason, voucher_category, payment_mode, other_income_item, partner,
+   non_revenue_reason, expense_category) via `getList`. NEW modules
+   (settlements, off-book, non-revenue, expenses) enforce membership
+   server-side; the error points at Settings → Lists. Lists screen
+   (/settings, manager+owner): add, reorder, retire — NEVER delete; grants
+   are INSERT + UPDATE(value, sort_order, status), exactly. Person fields
+   (handed_to, paid_to, buyers, due parties, payees, given_to) are
+   picker-from-history (`getNameHistory`) + add-new.
+3. **TABBED ENTRY.** Each role group is a tab strip (`GroupTabs` →
+   `tabsFor`): kitchen, cashier, store, staff. ORDER and LABELS come from
+   settings key `tabs.<group>` (JSON `[{key,label}]`), edited in /settings;
+   `src/lib/tabs.ts` holds the defaults and is the KEY REGISTRY — a setting
+   can never invent a route, drop a tab, or survive malformed (falls back
+   wholesale). Tab strips are matrix-filtered too (LAW 1).
+
+**Phase 12 — kitchen group** (Dashboard | Recipes | Indent | Production |
+Wastage | Closing): `indents`+`indent_lines` record what was ASKED; the
+issue records what was GIVEN; saveIssue takes `indentId`, stamps
+`issues.indent_id`, flips status open→issued (section mismatch refused by
+name; issued/cancelled indents refuse further stamps; reversal issues do
+NOT carry the stamp, so the gap query ignores voids). The asked-vs-given
+GAP on /kitchen/indent/[id] is the point — never hide it. Store side:
+open-indents badge on home + /issue, prefill via /api/indents.
+`productions` RECORD, they never move inventory; subs only (dish refused
+server-side), `unit_cost` FROZEN from recipe_costs.cost_per_output_unit,
+voids copy it EXACTLY. Closings are now itemized: `kitchen_closing_lines`
+(item XOR recipe, qty>0, unit_cost frozen at save from
+item_costs.issue_cost / cost_per_output_unit / dish_cost), header
+`closing_value` = SUM of lines computed in Postgres numeric and verified
+against the stored generated values inside the tx; zero lines = a real ₹0
+closing; food cost still reads the header. Kitchen wastage: component is
+item OR sub/dish OR value-only; with a component the value is FROZEN
+(qty × cost) — the chef types a value only in value-only mode
+(saveKitchenWastage now takes the discriminated `component` input).
+
+**Phase 13 — cashier group** (Day close | Vouchers | Settlements |
+Off-book | Other income | Non-revenue | Dues | Fetch day):
+`partner_settlements` (partner from list; per-partner summary with
+outstanding = gross − commission − deductions − received). Deep
+aggregator reconciliation WAITS for a real Swiggy statement — do not build
+it from imagination. `off_book_orders`: CASH mode feeds
+day_close_ladder.off_book_cash and expected_cash through the VIEW — never
+re-add it in code; the DayClose UI shows the rung (prefill + reveal +
+WhatsApp text). `non_revenue`: reason from list; a picked dish FREEZES
+cost_value from dish_costs (qty × dish_cost) — giveaways finally cost
+something; description-only entries carry cost 0, no claim; voids copy the
+frozen cost negated. `due_payments`: positive = credit given, negative =
+received back; `dues_outstanding` nets on lower(trim(party)).
+
+**Phase 14 — store/manager/owner.** Store group (Purchase | Payment |
+Issue | Wastage | Vendors | Items): standalone createVendor/createItem in
+books-actions ride the SAME V-CAT-NN / CAT-NNN series as the bill flow
+(dup names refused by code); masters are still born on bills too. Vendor
+payment (/store/payment) stays with the store for now — the accountant
+handoff comes in a later phase. Store wastage stays store wastage,
+separate from kitchen. Staff group (Employees | Attendance | Expenses):
+`expenses` are NON-DRAWER only — paid_via never offers till cash and the
+server refuses 'Cash' naming the Cash Voucher; category and mode from
+lists. Owner: /pnl renders `pnl_monthly` verbatim —
+sections_pending_closing is an honesty banner (COGS incomplete), cogs
+stays NULL (never zero) until closings exist, staff_food is its own line
+OUTSIDE cogs, giveaway_cost is labeled informational (already inside
+consumption), and the net line is captioned "before purchase-time
+overheads — not a statutory P&L".
+
+**Deliberately deferred:** aggregator statement reconciliation (needs a
+real statement), payroll/advances (money movement), accountant payment
+handoff.
+
 ## Phase 11 — Owner dashboard + polish
 
 /dashboard (manager + owner): TEN question cards, each backed by a named

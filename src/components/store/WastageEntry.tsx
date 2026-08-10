@@ -9,13 +9,13 @@ import type { IssuableItemHit, SaveWastageResult } from '@/lib/types'
 import { saveWastage } from '@/server/store-actions'
 import { parseQty, formatMoneyString } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
-import { cardCls, fieldLabelCls, inputCls, numCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
 import IssueItemPicker from './IssueItemPicker'
 import { useLang } from '@/components/useLang'
 
-const REASONS = ['Spoilage', 'Overproduction', 'Prep error', 'Expired', 'Other']
+const FALLBACK_REASONS = ['Spoilage', 'Overproduction', 'Prep error', 'Expired', 'Other']
 
-export default function WastageEntry() {
+export default function WastageEntry({ reasons = FALLBACK_REASONS }: { reasons?: string[] }) {
   const { label } = useLang()
   const [wasteDate, setWasteDate] = useState(todayLocal)
   const [item, setItem] = useState<IssuableItemHit | null>(null)
@@ -142,19 +142,14 @@ export default function WastageEntry() {
           </div>
           <label className="block">
             <span className={fieldLabelCls}>{label('reason')}</span>
-            <input
-              list="wastage-reasons"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Spoilage, Prep error… or type your own"
-              className={inputCls}
-              maxLength={60}
-            />
-            <datalist id="wastage-reasons">
-              {REASONS.map((r) => (
-                <option key={r} value={r} />
+            <select value={reason} onChange={(e) => setReason(e.target.value)} className={selectCls}>
+              <option value="">—</option>
+              {reasons.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
               ))}
-            </datalist>
+            </select>
           </label>
           <label className="block">
             <span className={fieldLabelCls}>{label('note')}</span>

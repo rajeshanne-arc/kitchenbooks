@@ -1,0 +1,160 @@
+'use server'
+
+// Write side of settings + managed lists.
+//   Lists: add value, reorder, retire — NEVER delete (history keeps its
+//   words). Values live in list_options under the seven seeded keys; the
+//   grants are INSERT + UPDATE(value, sort_order, status), nothing else.
+//   Tabs: 'tabs.<group>' settings row holds a JSON array of {key, label} —
+//   order and labels only; routes always come from the hardcoded defaults.
+
+import { z } from 'zod'
+import { sql } from '@/lib/db'
+import { getRestaurant } from '@/server/queries'
+import { getAllListOptions, getSettingValue } from '@/server/settings'
+import { ALL_LIST_KEYS, type ListOptionRow } from '@/lib/lists'
+import { resolveTabs, TAB_DEFAULTS, TAB_GROUPS, type TabDef, type TabGroup } from '@/lib/tabs'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+class SettingsError extends Error {}
+
+function fail(e: unknown): { ok: false; error: string } {
+  if (e instanceof SettingsError) return { ok: false, error: e.message }
+  if (e instanceof z.ZodError) return { ok: false, error: 'Invalid input — nothing was saved' }
+  console.error('settings action failed', e)
+  const detail = e instanceof Error ? e.message.slice(0, 200) : 'unknown error'
+  return { ok: false, error: `Failed — nothing was written. (${detail})` }
+}
+
+export type ListMutationResult = { ok: true; options: ListOptionRow[] } | { ok: false; error: string }
+
+const listKeySchema = z.string().refine((k): k is (typeof ALL_LIST_KEYS)[number] => (ALL_LIST_KEYS as string[]).includes(k), 'Unknown list')
+
+// ------------------------------------------------------------- add a value
+
+export async function addListOption(rawKey: string, rawValue: string): Promise<ListMutationResult> {
+  try {
+    const key = listKeySchema.parse(rawKey)
+    const value = z.string().trim().min(1, 'Type the value first').max(60).parse(rawValue)
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [existing] = await tx<{ id: string; status: string }[]>`
+        select id, status from list_options
+        where restaurant_id = ${rid} and list_key = ${key} and lower(value) = lower(${value})`
+      if (existing) {
+        if (existing.status === 'active') throw new SettingsError('That value is already on the list')
+        await tx`update list_options set status = 'active' where id = ${existing.id}`
+        return
+      }
+      const [{ next }] = await tx<{ next: number }[]>`
+        select coalesce(max(sort_order), 0) + 1 as next
+        from list_options where restaurant_id = ${rid} and list_key = ${key}`
+      await tx`
+        insert into list_options (restaurant_id, list_key, value, sort_order)
+        values (${rid}, ${key}, ${value}, ${next})`
+    })
+
+    return { ok: true, options: await getAllListOptions(rid) }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ------------------------------------------------- reorder within its list
+
+export async function moveListOption(id: string, dir: 'up' | 'down'): Promise<ListMutationResult> {
+  try {
+    if (!UUID.test(id)) throw new SettingsError('Malformed option id')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [row] = await tx<{ id: string; list_key: string; sort_order: number }[]>`
+        select id, list_key, sort_order from list_options
+        where id = ${id} and restaurant_id = ${rid}`
+      if (!row) throw new SettingsError('Option not found')
+      // Renumber the whole list 1..n first so swaps are always clean, then swap.
+      const all = await tx<{ id: string }[]>`
+        select id from list_options
+        where restaurant_id = ${rid} and list_key = ${row.list_key}
+        order by sort_order asc, value asc`
+      const idx = all.findIndex((o) => o.id === id)
+      const swapWith = dir === 'up' ? idx - 1 : idx + 1
+      if (swapWith < 0 || swapWith >= all.length) return // already at the edge — nothing to do
+      const order = all.map((o) => o.id)
+      ;[order[idx], order[swapWith]] = [order[swapWith], order[idx]]
+      for (const [i, oid] of order.entries()) {
+        await tx`update list_options set sort_order = ${i + 1} where id = ${oid}`
+      }
+    })
+
+    return { ok: true, options: await getAllListOptions(rid) }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// -------------------------------------------------------- retire / restore
+
+export async function setListOptionStatus(id: string, status: 'active' | 'inactive'): Promise<ListMutationResult> {
+  try {
+    if (!UUID.test(id)) throw new SettingsError('Malformed option id')
+    z.enum(['active', 'inactive']).parse(status)
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const updated = await sql<{ id: string }[]>`
+      update list_options set status = ${status}
+      where id = ${id} and restaurant_id = ${rid}
+      returning id`
+    if (!updated[0]) throw new SettingsError('Option not found')
+    return { ok: true, options: await getAllListOptions(rid) }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ----------------------------------------------------------- tab settings
+
+export type SaveTabsResult = { ok: true; tabs: TabDef[] } | { ok: false; error: string }
+
+const TabsSchema = z.array(z.object({ key: z.string().min(1).max(30), label: z.string().trim().max(24) })).max(20)
+
+export async function saveTabsSetting(rawGroup: string, rawEntries: { key: string; label: string }[]): Promise<SaveTabsResult> {
+  try {
+    const group = z
+      .string()
+      .refine((g): g is TabGroup => (TAB_GROUPS as string[]).includes(g), 'Unknown tab group')
+      .parse(rawGroup)
+    const entries = TabsSchema.parse(rawEntries)
+    const validKeys = new Set(TAB_DEFAULTS[group].map((t) => t.key))
+    const seen = new Set<string>()
+    for (const e of entries) {
+      if (!validKeys.has(e.key)) throw new SettingsError(`Unknown tab “${e.key}” for ${group}`)
+      if (seen.has(e.key)) throw new SettingsError(`Tab “${e.key}” appears twice`)
+      seen.add(e.key)
+    }
+    if (seen.size !== validKeys.size) throw new SettingsError('Every tab must stay on the strip — reorder or relabel, never remove')
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const value = JSON.stringify(entries.map((e) => ({ key: e.key, label: e.label })))
+
+    await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      await tx`
+        insert into settings (restaurant_id, key, value)
+        values (${rid}, ${'tabs.' + group}, ${value})
+        on conflict (restaurant_id, key) do update set value = excluded.value`
+    })
+
+    const raw = await getSettingValue(rid, `tabs.${group}`)
+    if (raw !== value) throw new SettingsError('Could not verify the setting after save')
+    return { ok: true, tabs: resolveTabs(group, raw) }
+  } catch (e) {
+    return fail(e)
+  }
+}

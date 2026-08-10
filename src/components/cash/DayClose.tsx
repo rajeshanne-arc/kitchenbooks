@@ -79,10 +79,12 @@ export default function DayClose({
   defaultDate,
   initialPrefill,
   restaurantName,
+  handedToNames = [],
 }: {
   defaultDate: string
   initialPrefill: ClosePrefill
   restaurantName: string
+  handedToNames?: string[]
 }) {
   const router = useRouter()
   const [date, setDate] = useState(defaultDate)
@@ -130,11 +132,12 @@ export default function DayClose({
     const opening = decimalStringToPaise(prefill.opening)
     const pos = decimalStringToPaise(prefill.posCash)
     const income = decimalStringToPaise(prefill.otherIncome)
+    const offBook = decimalStringToPaise(prefill.offBookCash)
     const vouchers = decimalStringToPaise(prefill.cashierVouchers)
     const extra = money(extraIn)
     const handed = money(handedOver)
     if (Number.isNaN(extra) || Number.isNaN(handed)) return null
-    const expected = opening + pos + income + extra - vouchers - handed
+    const expected = opening + pos + income + offBook + extra - vouchers - handed
     const countedP = counted.trim() === '' ? null : parseMoney(counted.trim())
     return { expected, difference: countedP === null ? null : countedP - expected }
   })()
@@ -205,6 +208,9 @@ export default function DayClose({
           <Rung label="Opening" value={formatMoneyString(saved.opening_cash)} />
           <Rung label="POS cash sales" value={formatMoneyString(saved.pos_cash)} sign="+" />
           <Rung label="Other income" value={formatMoneyString(saved.other_income)} sign="+" />
+          {decimalStringToPaise(saved.off_book_cash) !== 0 && (
+            <Rung label="Off-book cash" value={formatMoneyString(saved.off_book_cash)} sign="+" />
+          )}
           <Rung label="Extra cash in" value={formatMoneyString(saved.extra_cash_in)} sign="+" />
           <Rung label="Cashier vouchers" value={formatMoneyString(saved.cashier_vouchers)} sign="−" />
           <Rung
@@ -288,6 +294,9 @@ export default function DayClose({
             />
             <Rung label="POS cash sales" value={formatMoneyString(prefill.posCash)} sign="+" />
             <Rung label="Other income" value={formatMoneyString(prefill.otherIncome)} sign="+" />
+            {decimalStringToPaise(prefill.offBookCash) !== 0 && (
+              <Rung label="Off-book cash" value={formatMoneyString(prefill.offBookCash)} sign="+" />
+            )}
             <div className="flex items-center justify-between gap-3 py-1.5">
               <span className="text-sm text-stone-600">
                 <span className="mr-1 inline-block w-3 text-stone-400">+</span>Extra cash in
@@ -308,10 +317,16 @@ export default function DayClose({
               <div className="flex items-center gap-2">
                 <input
                   placeholder="to whom"
+                  list="kb-handed-to"
                   value={handedTo}
                   onChange={(e) => setHandedTo(e.target.value)}
                   className={`${numCls} w-28`}
                 />
+                <datalist id="kb-handed-to">
+                  {handedToNames.map((n) => (
+                    <option key={n} value={n} />
+                  ))}
+                </datalist>
                 <input
                   inputMode="decimal"
                   placeholder="0.00"

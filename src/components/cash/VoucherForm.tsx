@@ -11,21 +11,24 @@ import type { PaidBy, SaveVoucherResult } from '@/lib/types'
 import { saveVoucher } from '@/server/cash-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
-import { cardCls, fieldLabelCls, inputCls, numCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
 
 export default function VoucherForm({
   ownerNames,
   categories,
+  paidToNames = [],
 }: {
   ownerNames: string[]
+  /** ACTIVE voucher_category list values (LAW 2) — display form; the save normalizes */
   categories: string[]
+  paidToNames?: string[]
 }) {
   const [date, setDate] = useState(todayLocal)
   const [amount, setAmount] = useState('')
   const [paidTo, setPaidTo] = useState('')
   const [paidBy, setPaidBy] = useState<PaidBy>('cashier')
   const [ownerName, setOwnerName] = useState('')
-  const [category, setCategory] = useState('general')
+  const [category, setCategory] = useState(categories[0] ?? 'General')
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -67,7 +70,7 @@ export default function VoucherForm({
     setAmount('')
     setPaidTo('')
     setOwnerName('')
-    setCategory('general')
+    setCategory(categories[0] ?? 'General')
     setNote('')
     setError(null)
     setDate(todayLocal())
@@ -126,10 +129,10 @@ export default function VoucherForm({
         <label className="block">
           <span className={fieldLabelCls}>Paid to</span>
           <input
-            list={isReimb ? 'kb-owner-names' : undefined}
+            list={isReimb ? 'kb-owner-names' : 'kb-paid-to'}
             value={paidTo}
             onChange={(e) => setPaidTo(e.target.value)}
-            placeholder={isReimb ? 'which owner is being reimbursed' : 'vegetable vendor, gas agency…'}
+            placeholder={isReimb ? 'which owner is being reimbursed' : 'pick from history or add new'}
             className={inputCls}
             maxLength={120}
           />
@@ -173,13 +176,13 @@ export default function VoucherForm({
         )}
         <label className="block">
           <span className={fieldLabelCls}>Category</span>
-          <input
-            list="kb-voucher-categories"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className={inputCls}
-            maxLength={60}
-          />
+          <select value={category} onChange={(e) => setCategory(e.target.value)} className={selectCls}>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
           {isReimb && (
             <span className="mt-1 block text-xs text-stone-500">
               Reimbursement: cashier pays an owner back from the drawer — one log, netted in owners owed.
@@ -196,9 +199,9 @@ export default function VoucherForm({
           <option key={n} value={n} />
         ))}
       </datalist>
-      <datalist id="kb-voucher-categories">
-        {categories.map((c) => (
-          <option key={c} value={c} />
+      <datalist id="kb-paid-to">
+        {paidToNames.map((n) => (
+          <option key={n} value={n} />
         ))}
       </datalist>
 

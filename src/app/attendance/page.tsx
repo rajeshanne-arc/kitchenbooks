@@ -1,4 +1,5 @@
 import AttendanceSheet from '@/components/labour/AttendanceSheet'
+import GroupTabs from '@/components/GroupTabs'
 import { getRestaurant } from '@/server/queries'
 import { getDaySheet } from '@/server/labour-queries'
 import { todayIST } from '@/server/store-queries'
@@ -19,6 +20,7 @@ export default async function AttendancePage({ searchParams }: { searchParams: P
         <h1 className="text-2xl font-bold tracking-tight text-stone-900">Attendance</h1>
         <p className="mt-0.5 text-sm text-stone-400">{restaurant.name} · one sheet per day, corrections stay visible</p>
       </header>
+      <GroupTabs group="staff" />
       <AttendanceSheet key={date} date={date} initialSheet={sheet} />
     </main>
   )

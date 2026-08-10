@@ -290,6 +290,7 @@ export type IssueDetail = {
   section_code: string
   section_name: string
   note: string | null
+  indent_id: string | null
   reverses_id: string | null
   entered_by: string | null
   created_at: string
@@ -365,6 +366,8 @@ export type SaveIssueInput = {
   issueDate: string
   sectionId: string
   lines: { itemId: string; qty: string }[]
+  /** open indent this issue answers — stamped on the issue, marks the indent issued */
+  indentId?: string
 }
 
 export type SaveIssueResult =
@@ -722,6 +725,8 @@ export type ClosePrefill =
       posCash: string
       otherIncome: string
       cashierVouchers: string
+      /** off-book orders paid in CASH — they sit in the drawer too */
+      offBookCash: string
       priorFilings: number
       anyCloses: boolean
     }
@@ -732,6 +737,7 @@ export type DayCloseLadderRow = {
   opening_cash: string
   pos_cash: string
   other_income: string
+  off_book_cash: string
   extra_cash_in: string
   cashier_vouchers: string
   handed_over: string
@@ -857,6 +863,10 @@ export type KitchenWastageRow = {
   item_name: string | null
   qty: string | null
   purchase_unit: string | null
+  recipe_id: string | null
+  recipe_code: string | null
+  recipe_name: string | null
+  output_unit: string | null
   value: string
   reason: string
   note: string | null
@@ -911,4 +921,399 @@ export type FoodCostRow = {
   consumed_total: string | null
   sales_value: string | null
   food_cost_pct: string | null
+}
+
+// ---------- Kitchen group (phase 12) ----------
+
+export type IndentStatus = 'open' | 'issued' | 'cancelled'
+
+export type IndentRow = {
+  id: string
+  indent_date: string
+  section_id: string
+  section_code: string
+  section_name: string
+  status: IndentStatus
+  note: string | null
+  entered_by: string | null
+  created_at: string
+  line_count: number
+}
+
+export type IndentLineRow = {
+  id: string
+  item_id: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  qty_requested: string
+}
+
+/** Asked vs given, per item, across the indent and every live issue
+ * stamped with it. The gap is the point — never hide it. */
+export type IndentGapRow = {
+  item_id: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  qty_requested: string | null
+  qty_issued: string | null
+  gap: string
+}
+
+export type IndentDetail = {
+  indent: IndentRow
+  lines: IndentLineRow[]
+  issues: IssueDetail[]
+  gap: IndentGapRow[]
+}
+
+export type SaveIndentInput = {
+  date: string
+  sectionId: string
+  note: string
+  lines: { itemId: string; qty: string }[]
+}
+
+export type SaveIndentResult = { ok: true; indent: IndentRow; lines: IndentLineRow[] } | { ok: false; error: string }
+export type IndentStatusResult = { ok: true; indent: IndentRow } | { ok: false; error: string }
+
+/** An open indent shaped for the issue form: pickable lines with live
+ * stock, ready to prefill. */
+export type IndentPrefill = {
+  id: string
+  indent_date: string
+  section_id: string
+  section_code: string
+  section_name: string
+  note: string | null
+  lines: { item: IssuableItemHit; qty: string }[]
+}
+
+export type ProductionRow = {
+  id: string
+  prod_date: string
+  section_id: string
+  section_code: string
+  section_name: string
+  recipe_id: string
+  recipe_code: string
+  recipe_name: string
+  output_qty: string
+  output_unit: string
+  unit_cost: string
+  value: string
+  note: string | null
+  reverses_id: string | null
+  is_reversal: boolean
+  is_voided: boolean
+  entered_by: string | null
+  created_at: string
+}
+
+export type SaveProductionInput = {
+  date: string
+  sectionId: string
+  recipeId: string
+  outputQty: string
+  note: string
+}
+
+export type SaveProductionResult = { ok: true; production: ProductionRow } | { ok: false; error: string }
+export type VoidProductionResult =
+  | { ok: true; original: ProductionRow; reversal: ProductionRow }
+  | { ok: false; error: string }
+
+/** Three-component picker hit for closings/kitchen wastage: raw item
+ * (issue_cost), sub (cost_per_output_unit) or dish (dish_cost). */
+export type KitchenComponentHit = {
+  kind: 'item' | 'sub' | 'dish'
+  id: string
+  code: string
+  name: string
+  unit_name: string
+  has_cost: boolean
+}
+
+export type ClosingLineInput = { kind: 'item' | 'sub' | 'dish'; id: string; qty: string }
+
+export type ClosingLineRow = {
+  id: string
+  kind: 'item' | 'sub' | 'dish'
+  component_code: string
+  component_name: string
+  unit: string
+  qty: string
+  unit_cost: string
+  value: string
+}
+
+export type SaveItemizedClosingInput = {
+  date: string
+  sectionId: string
+  note: string
+  lines: ClosingLineInput[]
+}
+
+export type SaveItemizedClosingResult =
+  | { ok: true; closing: ClosingRow; lines: ClosingLineRow[] }
+  | { ok: false; error: string }
+
+/** Kitchen wastage, phase-12 shape: component item OR sub/dish OR value-
+ * only. With a component the value is FROZEN server-side (qty × cost) —
+ * the chef types a value only in value-only mode. */
+export type SaveKitchenWastage2Input = {
+  date: string
+  sectionId: string
+  reason: string
+  note: string
+  component:
+    | { kind: 'item'; id: string; qty: string }
+    | { kind: 'recipe'; id: string; qty: string }
+    | { kind: 'none'; value: string }
+}
+
+export type KitchenDayRow = {
+  section_id: string
+  section_code: string
+  section_name: string
+  issued: string
+  produced: string
+  wasted: string
+  closed: string | null
+}
+
+export type RecipePerfRow = {
+  recipe_id: string
+  code: string
+  name: string
+  section_code: string
+  qty_sold: string
+  sales_value: string
+  dish_cost: string
+  selling_price: string | null
+  food_cost_pct: string | null
+  uncosted_lines: number
+}
+
+export type WasteByReasonRow = { reason: string; entries: number; value: string }
+
+// ---------- Cashier group (phase 13) ----------
+
+export type SettlementRow = {
+  id: string
+  partner: string
+  period_start: string
+  period_end: string
+  gross_sales: string | null
+  commission: string | null
+  other_deductions: string | null
+  amount_received: string | null
+  received_date: string | null
+  note: string | null
+  reverses_id: string | null
+  is_reversal: boolean
+  is_voided: boolean
+  entered_by: string | null
+  created_at: string
+}
+
+export type SaveSettlementInput = {
+  partner: string
+  periodStart: string
+  periodEnd: string
+  grossSales: string
+  commission: string
+  otherDeductions: string
+  amountReceived: string
+  receivedDate: string
+  note: string
+}
+
+export type SaveSettlementResult = { ok: true; settlement: SettlementRow } | { ok: false; error: string }
+export type VoidSettlementResult =
+  | { ok: true; original: SettlementRow; reversal: SettlementRow }
+  | { ok: false; error: string }
+
+export type PartnerSummaryRow = {
+  partner: string
+  settlements: number
+  gross_sales: string
+  commission: string
+  other_deductions: string
+  amount_received: string
+  /** gross − commission − deductions − received: what the partner still owes */
+  outstanding: string
+}
+
+export type OffBookRow = {
+  id: string
+  order_date: string
+  description: string | null
+  amount: string
+  payment_mode: string
+  note: string | null
+  reverses_id: string | null
+  is_reversal: boolean
+  is_voided: boolean
+  entered_by: string | null
+  created_at: string
+}
+
+export type SaveOffBookInput = {
+  date: string
+  description: string
+  amount: string
+  paymentMode: string
+  note: string
+}
+
+export type SaveOffBookResult = { ok: true; order: OffBookRow } | { ok: false; error: string }
+export type VoidOffBookResult = { ok: true; original: OffBookRow; reversal: OffBookRow } | { ok: false; error: string }
+
+export type NonRevenueRow = {
+  id: string
+  nr_date: string
+  reason: string
+  recipe_id: string | null
+  recipe_code: string | null
+  recipe_name: string | null
+  description: string | null
+  qty: string | null
+  menu_value: string | null
+  cost_value: string
+  given_to: string | null
+  note: string | null
+  reverses_id: string | null
+  is_reversal: boolean
+  is_voided: boolean
+  entered_by: string | null
+  created_at: string
+}
+
+export type SaveNonRevenueInput = {
+  date: string
+  reason: string
+  /** dish picked → cost_value frozen from dish_costs at save */
+  recipeId: string
+  description: string
+  qty: string
+  menuValue: string
+  givenTo: string
+  note: string
+}
+
+export type SaveNonRevenueResult = { ok: true; entry: NonRevenueRow } | { ok: false; error: string }
+export type VoidNonRevenueResult =
+  | { ok: true; original: NonRevenueRow; reversal: NonRevenueRow }
+  | { ok: false; error: string }
+
+export type DueRow = {
+  id: string
+  due_date: string
+  party: string
+  amount: string
+  against_what: string | null
+  ref: string | null
+  note: string | null
+  reverses_id: string | null
+  is_reversal: boolean
+  is_voided: boolean
+  entered_by: string | null
+  created_at: string
+}
+
+export type SaveDueInput = {
+  date: string
+  party: string
+  /** positive = credit given, negative = received back */
+  amount: string
+  direction: 'given' | 'received'
+  againstWhat: string
+  ref: string
+  note: string
+}
+
+export type SaveDueResult = { ok: true; due: DueRow; outstanding: DueOutstandingRow[] } | { ok: false; error: string }
+export type VoidDueResult = { ok: true; original: DueRow; reversal: DueRow } | { ok: false; error: string }
+
+export type DueOutstandingRow = { party: string; balance: string }
+
+export type DifferenceTrendRow = { close_date: string; difference: string; filings: number }
+
+export type VoucherCategorySummaryRow = { category: string; entries: number; amount: string }
+
+// ---------- Expenses + P&L (phase 14) ----------
+
+export type ExpenseRow = {
+  id: string
+  expense_date: string
+  category: string
+  payee: string | null
+  amount: string
+  paid_via: string
+  note: string | null
+  reverses_id: string | null
+  is_reversal: boolean
+  is_voided: boolean
+  entered_by: string | null
+  created_at: string
+}
+
+export type SaveExpenseInput = {
+  date: string
+  category: string
+  payee: string
+  amount: string
+  paidVia: string
+  note: string
+}
+
+export type SaveExpenseResult = { ok: true; expense: ExpenseRow } | { ok: false; error: string }
+export type VoidExpenseResult = { ok: true; original: ExpenseRow; reversal: ExpenseRow } | { ok: false; error: string }
+
+export type ExpenseCategoryMonthRow = { category: string; month: string; amount: string }
+
+export type PnlRow = {
+  month: string
+  revenue: string
+  off_book_revenue: string
+  other_income: string
+  cogs: string | null
+  staff_food: string | null
+  sections_pending_closing: number
+  giveaway_cost: string
+  labour: string
+  expenses: string
+  gross_margin: string
+  net_before_purch_overheads: string
+}
+
+export type CreateVendorInput = {
+  name: string
+  category: string
+  gstin: string
+  phone: string
+  paymentTerms: string
+}
+
+export type CreateVendorResult = { ok: true; vendor: VendorDetail } | { ok: false; error: string }
+
+export type CreateItemInput = {
+  name: string
+  category: string
+  purchaseUnit: string
+  openingRate: string
+  brand: string
+}
+
+export type CreateItemResult = { ok: true; item: ItemDetail } | { ok: false; error: string }
+
+export type LabourMonthRow = {
+  section_code: string | null
+  section_name: string | null
+  dept_group: DeptGroup | null
+  labour_cost: string
+  unassigned_marks: number
+  unsalaried_marks: number
 }

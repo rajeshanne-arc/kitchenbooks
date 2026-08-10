@@ -13,6 +13,7 @@ export function buildCloseText(restaurantName: string, l: DayCloseLadderRow): st
     `Opening: ${m(l.opening_cash)}`,
     `+ POS cash: ${m(l.pos_cash)}`,
     `+ Other income: ${m(l.other_income)}`,
+    ...(decimalStringToPaise(l.off_book_cash) !== 0 ? [`+ Off-book cash: ${m(l.off_book_cash)}`] : []),
     `+ Extra in: ${m(l.extra_cash_in)}`,
     `− Vouchers: ${m(l.cashier_vouchers)}`,
     `− Handed over: ${m(l.handed_over)}${l.handed_to !== null ? ` (to ${l.handed_to})` : ''}`,

@@ -16,6 +16,9 @@
     "smoke:cash": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-cash.ts",
     "smoke:counts": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-counts.ts",
     "smoke:kitchen": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-kitchen.ts",
+    "smoke:groups-kitchen": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-groups-kitchen.ts",
+    "smoke:groups-cashier": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-groups-cashier.ts",
+    "smoke:groups-owner": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-groups-owner.ts",
     "smoke:auth": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-auth.ts",
     "smoke:dashboard": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-dashboard.ts"
   },

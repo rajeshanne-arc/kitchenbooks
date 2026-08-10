@@ -6,6 +6,8 @@ import 'server-only'
 import { sql } from '@/lib/db'
 import type {
   ChecklistRow,
+  IndentPrefill,
+  IndentRow,
   IssuableItemHit,
   IssueDetail,
   IssueLineRow,
@@ -102,7 +104,7 @@ export async function getChecklist(restaurantId: string, dateStr: string): Promi
 
 const ISSUE_SELECT = `
   select i.id, i.issue_date::text as issue_date, i.section_id, s.code as section_code, s.name as section_name,
-         i.note, i.reverses_id, i.entered_by, i.created_at::text as created_at,
+         i.note, i.indent_id, i.reverses_id, i.entered_by, i.created_at::text as created_at,
          (i.reverses_id is not null) as is_reversal,
          exists (select 1 from issues r where r.reverses_id = i.id) as is_voided,
          (select count(*)::int from issue_lines il where il.issue_id = i.id) as line_count,
@@ -205,6 +207,67 @@ export async function listStoreLog(restaurantId: string, limit = 150): Promise<S
   ]
   merged.sort((a, b) => (a.date === b.date ? b.created_at.localeCompare(a.created_at) : b.date.localeCompare(a.date)))
   return merged.slice(0, limit)
+}
+
+// ---------------------------------------------------------------- indents
+// The store side of indents: the badge count, the pick list, and an open
+// indent shaped to prefill the issue form. The indent records what was
+// ASKED; the issue records what was GIVEN — two documents, one stamp.
+
+export async function countOpenIndents(restaurantId: string): Promise<number> {
+  const rows = await sql<{ n: number }[]>`
+    select count(*)::int as n from open_indents where restaurant_id = ${restaurantId}`
+  return rows[0]?.n ?? 0
+}
+
+export async function listOpenIndents(restaurantId: string, sectionId?: string): Promise<IndentRow[]> {
+  return sql<IndentRow[]>`
+    select i.id, i.indent_date::text as indent_date, i.section_id,
+           s.code as section_code, s.name as section_name, i.status, i.note,
+           i.entered_by, i.created_at::text as created_at,
+           (select count(*)::int from indent_lines l where l.indent_id = i.id) as line_count
+    from indents i join sections s on s.id = i.section_id
+    where i.restaurant_id = ${restaurantId} and i.status = 'open'
+      ${sectionId ? sql`and i.section_id = ${sectionId}` : sql``}
+    order by i.indent_date desc, i.created_at desc
+    limit 30`
+}
+
+/** One open indent with its lines joined to live stock/cost — ready to
+ * drop into the issue form. Items retired or costless since the indent
+ * still appear (has_cost false) so the store sees the full ask. */
+export async function getIndentPrefill(restaurantId: string, indentId: string): Promise<IndentPrefill | null> {
+  const rows = await sql<
+    (Omit<IndentPrefill, 'lines'> & { status: string })[]
+  >`
+    select i.id, i.indent_date::text as indent_date, i.section_id,
+           s.code as section_code, s.name as section_name, i.note, i.status
+    from indents i join sections s on s.id = i.section_id
+    where i.restaurant_id = ${restaurantId} and i.id = ${indentId}`
+  const head = rows[0]
+  if (!head) return null
+  const lines = await sql<(IssuableItemHit & { qty: string })[]>`
+    select it.id, it.code, it.name, c.name as category_name, it.purchase_unit, u.name as unit_name,
+           coalesce(st.on_hand_qty, 0)::text as on_hand_qty,
+           (ic.issue_cost is not null) as has_cost,
+           l.qty_requested::text as qty
+    from indent_lines l
+    join items it on it.id = l.item_id
+    join categories c on c.code = it.category
+    join units u on u.code = it.purchase_unit
+    left join stock_on_hand st on st.item_id = it.id
+    left join item_costs ic on ic.item_id = it.id
+    where l.indent_id = ${indentId}
+    order by it.name asc`
+  return {
+    id: head.id,
+    indent_date: head.indent_date,
+    section_id: head.section_id,
+    section_code: head.section_code,
+    section_name: head.section_name,
+    note: head.note,
+    lines: lines.map(({ qty, ...item }) => ({ item, qty })),
+  }
 }
 
 export async function getStockSnaps(restaurantId: string, itemIds: string[]): Promise<StockSnap[]> {

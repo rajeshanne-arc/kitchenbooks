@@ -18,6 +18,10 @@ import { enteredBy } from '@/server/current-user'
 import { getBill, getDues, getItemDetail, getVendorDetail } from '@/server/books-queries'
 import { parseMoney, paiseToString } from '@/lib/money'
 import type {
+  CreateItemInput,
+  CreateItemResult,
+  CreateVendorInput,
+  CreateVendorResult,
   PaymentInput,
   PaymentResult,
   UpdateItemInput,
@@ -247,6 +251,103 @@ export async function updateItem(id: string, raw: UpdateItemInput): Promise<Upda
     if (!updated[0]) throw new BooksError('Item not found — nothing was changed')
 
     const item = await getItemDetail(rid, id)
+    if (!item) throw new BooksError('Could not read the item back after saving')
+    return { ok: true, item }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ----------------------------------------------------- create masters
+// Standalone birth (phase 14): vendors and items can now be created ahead
+// of their first bill. Same code series, same transaction discipline as
+// the inline path in save-bill — V-<CAT>-NN and <CAT>-NNN never fork.
+
+const CreateVendorSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  category: z.string().min(1).max(16),
+  gstin: z.string().trim().max(20),
+  phone: z.string().trim().max(20),
+  paymentTerms: z.string().trim().max(120),
+})
+
+export async function createVendor(raw: CreateVendorInput): Promise<CreateVendorResult> {
+  try {
+    const input = CreateVendorSchema.parse(raw)
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    const cat = await sql<{ code: string }[]>`
+      select code from categories where code = ${input.category} and status = 'active'`
+    if (!cat[0]) throw new BooksError(`Unknown category “${input.category}”`)
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [dup] = await tx<{ code: string }[]>`
+        select code from vendors
+        where restaurant_id = ${rid} and lower(name) = lower(${input.name}) limit 1`
+      if (dup) throw new BooksError(`A vendor with this name already exists (${dup.code}) — open it instead`)
+      const [{ next }] = await tx<{ next: number }[]>`
+        select coalesce(max(nullif(split_part(code, '-', 3), '')::int), 0) + 1 as next
+        from vendors
+        where restaurant_id = ${rid} and code like ${'V-' + input.category + '-%'}`
+      const vcode = `V-${input.category}-${String(next).padStart(2, '0')}`
+      const [v] = await tx<{ id: string }[]>`
+        insert into vendors (restaurant_id, code, name, primary_category, gstin, phone, payment_terms)
+        values (${rid}, ${vcode}, ${input.name}, ${input.category},
+                ${trimmedOrNull(input.gstin)}, ${trimmedOrNull(input.phone)}, ${trimmedOrNull(input.paymentTerms)})
+        returning id`
+      return { id: v.id }
+    })
+
+    const vendor = await getVendorDetail(rid, saved.id)
+    if (!vendor) throw new BooksError('Could not read the vendor back after saving')
+    return { ok: true, vendor }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+const CreateItemSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  category: z.string().min(1).max(16),
+  purchaseUnit: z.string().min(1).max(16),
+  openingRate: z.union([z.literal(''), z.string().regex(/^\d{1,5}(\.\d{1,2})?$/)]),
+  brand: z.string().trim().max(80),
+})
+
+export async function createItem(raw: CreateItemInput): Promise<CreateItemResult> {
+  try {
+    const input = CreateItemSchema.parse(raw)
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    const cat = await sql<{ code: string }[]>`
+      select code from categories where code = ${input.category} and status = 'active'`
+    if (!cat[0]) throw new BooksError(`Unknown category “${input.category}”`)
+    const unit = await sql<{ code: string }[]>`select code from units where code = ${input.purchaseUnit}`
+    if (!unit[0]) throw new BooksError(`Unknown unit “${input.purchaseUnit}”`)
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [dup] = await tx<{ code: string }[]>`
+        select code from items
+        where restaurant_id = ${rid} and lower(name) = lower(${input.name}) limit 1`
+      if (dup) throw new BooksError(`An item with this name already exists (${dup.code}) — open it instead`)
+      const [{ n }] = await tx<{ n: number }[]>`
+        select coalesce(max(nullif(split_part(code, '-', 2), '')::int), 0) as n
+        from items
+        where restaurant_id = ${rid} and code like ${input.category + '-%'}`
+      const icode = `${input.category}-${String(n + 1).padStart(3, '0')}`
+      const [row] = await tx<{ id: string }[]>`
+        insert into items (restaurant_id, code, name, category, purchase_unit, opening_rate, brand)
+        values (${rid}, ${icode}, ${input.name}, ${input.category}, ${input.purchaseUnit},
+                ${input.openingRate === '' ? null : input.openingRate}::numeric, ${trimmedOrNull(input.brand)})
+        returning id`
+      return { id: row.id }
+    })
+
+    const item = await getItemDetail(rid, saved.id)
     if (!item) throw new BooksError('Could not read the item back after saving')
     return { ok: true, item }
   } catch (e) {

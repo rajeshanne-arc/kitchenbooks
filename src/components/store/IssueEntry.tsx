@@ -3,10 +3,15 @@
 // The store manager's core form. No costs on screen anywhere — unit_cost is
 // snapshotted server-side at save; value appears only in the after-save
 // reveal, together with remaining stock per issued item.
+//
+// Indents: arriving with ?indent= (or tapping a suggestion after picking a
+// section) prefills the form from the ask. The issue records what was
+// GIVEN — edit lines freely; the gap against the ask lives on the indent's
+// page. Saving stamps issues.indent_id and marks the indent issued.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import type { IssuableItemHit, SaveIssueInput, SaveIssueResult, Section } from '@/lib/types'
+import type { IndentPrefill, IndentRow, IssuableItemHit, SaveIssueInput, SaveIssueResult, Section } from '@/lib/types'
 import { saveIssue } from '@/server/store-actions'
 import { parseQty, formatMoneyString } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
@@ -23,15 +28,62 @@ const cleanQty = (raw: string) => {
   return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '')
 }
 
-export default function IssueEntry({ sections }: { sections: Section[] }) {
+const prefillLines = (p: IndentPrefill, startKey: number): Line[] =>
+  p.lines.map((l, i) => ({ key: startKey + i, item: l.item, qty: l.qty }))
+
+export default function IssueEntry({
+  sections,
+  initialIndent = null,
+}: {
+  sections: Section[]
+  initialIndent?: IndentPrefill | null
+}) {
   const [issueDate, setIssueDate] = useState(todayLocal)
-  const [sectionId, setSectionId] = useState('')
-  const [lines, setLines] = useState<Line[]>([newLine(1)])
-  const [nextKey, setNextKey] = useState(2)
+  const [indent, setIndent] = useState<IndentPrefill | null>(initialIndent)
+  const [sectionId, setSectionId] = useState(initialIndent?.section_id ?? '')
+  const [lines, setLines] = useState<Line[]>(
+    initialIndent !== null && initialIndent.lines.length > 0 ? prefillLines(initialIndent, 1) : [newLine(1)],
+  )
+  const [nextKey, setNextKey] = useState((initialIndent?.lines.length ?? 0) + 2)
+  const [suggestions, setSuggestions] = useState<{ sectionId: string; rows: IndentRow[] } | null>(null)
   const { label } = useLang()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveIssueResult, { ok: true }> | null>(null)
+
+  // Picking a section (with no indent bound) surfaces that section's open
+  // indents as one-tap suggestions — the most recent first, chooser if
+  // several. Fetched per section; render shows only the matching batch.
+  useEffect(() => {
+    if (sectionId === '' || indent !== null) return
+    const ctl = new AbortController()
+    fetch(`/api/indents?section=${sectionId}`, { signal: ctl.signal, cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: IndentRow[]) => {
+        if (!ctl.signal.aborted) setSuggestions({ sectionId, rows })
+      })
+      .catch(() => {})
+    return () => ctl.abort()
+  }, [sectionId, indent])
+  const suggested = indent === null && suggestions?.sectionId === sectionId ? suggestions.rows : []
+
+  async function adoptIndent(id: string) {
+    try {
+      const res = await fetch(`/api/indents?id=${id}`, { cache: 'no-store' })
+      if (!res.ok) return
+      const p = (await res.json()) as IndentPrefill
+      setIndent(p)
+      setSectionId(p.section_id)
+      setLines(p.lines.length > 0 ? prefillLines(p, nextKey) : [newLine(nextKey)])
+      setNextKey((k) => k + p.lines.length + 1)
+    } catch {
+      /* suggestion only — the plain form still works */
+    }
+  }
+
+  function dropIndent() {
+    setIndent(null)
+  }
 
   const patchLine = (key: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
@@ -62,6 +114,7 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
       issueDate,
       sectionId,
       lines: lines.map((l) => ({ itemId: (l.item as IssuableItemHit).id, qty: l.qty.trim() })),
+      ...(indent !== null ? { indentId: indent.id } : {}),
     }
     try {
       const res = await saveIssue(payload)
@@ -79,6 +132,7 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
 
   function startAnother() {
     setSaved(null)
+    setIndent(null)
     setSectionId('')
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
@@ -101,6 +155,7 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
               <h2 className="text-lg font-bold text-stone-900">Issued to {issue.section_name}</h2>
               <p className="text-sm text-stone-500">
                 {fmtDate(issue.issue_date)} · {issue.line_count} {issue.line_count === 1 ? 'item' : 'items'}
+                {issue.indent_id !== null && ' · indent marked issued'}
               </p>
             </div>
           </div>
@@ -144,6 +199,14 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
         >
           Enter another issue
         </button>
+        {issue.indent_id !== null && (
+          <Link
+            href={`/kitchen/indent/${issue.indent_id}`}
+            className="block text-center text-sm font-medium text-emerald-700 hover:underline"
+          >
+            See asked vs given on the indent →
+          </Link>
+        )}
         <Link
           href={`/books/issues/${issue.id}`}
           className="block text-center text-sm font-medium text-emerald-700 hover:underline"
@@ -156,6 +219,22 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
 
   return (
     <div className="space-y-4">
+      {indent !== null && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-sky-300 bg-sky-50 p-3">
+          <span className="min-w-0 text-sm text-sky-900">
+            Filling <span className="font-semibold">{indent.section_name}</span>&apos;s indent of{' '}
+            {fmtDate(indent.indent_date)} — edit lines freely; the gap stays on record.
+          </span>
+          <button
+            type="button"
+            onClick={dropIndent}
+            className="shrink-0 rounded-lg border border-sky-300 bg-white px-2 py-1 text-xs font-medium text-sky-800 hover:border-sky-500"
+          >
+            drop indent
+          </button>
+        </div>
+      )}
+
       <section className={cardCls}>
         <div className="grid gap-4 sm:grid-cols-[11rem_1fr]">
           <label className="block">
@@ -174,7 +253,10 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
                 <button
                   key={s.id}
                   type="button"
-                  onClick={() => setSectionId(s.id)}
+                  onClick={() => {
+                    if (indent !== null && s.id !== indent.section_id) setIndent(null)
+                    setSectionId(s.id)
+                  }}
                   className={`rounded-xl border px-2 py-2 text-sm font-medium ${
                     sectionId === s.id
                       ? 'border-emerald-700 bg-emerald-700 text-white'
@@ -187,6 +269,26 @@ export default function IssueEntry({ sections }: { sections: Section[] }) {
             </div>
           </div>
         </div>
+        {suggested.length > 0 && (
+          <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+            <p className="text-xs font-medium text-amber-900">
+              This section has {suggested.length === 1 ? 'an open indent' : `${suggested.length} open indents`} — fill
+              from it?
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {suggested.slice(0, 3).map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => void adoptIndent(s.id)}
+                  className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:border-amber-600"
+                >
+                  {fmtDate(s.indent_date)} · {s.line_count} {s.line_count === 1 ? 'item' : 'items'}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className={cardCls}>

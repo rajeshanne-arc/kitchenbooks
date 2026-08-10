@@ -10,10 +10,19 @@ import { cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/c
 
 const MODES = ['Cash', 'UPI', 'Bank transfer', 'Cheque', 'Other']
 
-export default function PaymentForm({ vendorId, vendorName }: { vendorId: string; vendorName: string }) {
+export default function PaymentForm({
+  vendorId,
+  vendorName,
+  modes = MODES,
+}: {
+  vendorId: string
+  vendorName: string
+  /** payment_mode list values (LAW 2); the hardcoded set is the fallback */
+  modes?: string[]
+}) {
   const [paidDate, setPaidDate] = useState(todayLocal)
   const [amount, setAmount] = useState('')
-  const [mode, setMode] = useState('Cash')
+  const [mode, setMode] = useState(modes[0] ?? 'Cash')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -80,7 +89,7 @@ export default function PaymentForm({ vendorId, vendorName }: { vendorId: string
         <label className="block">
           <span className={fieldLabelCls}>Mode</span>
           <select value={mode} onChange={(e) => setMode(e.target.value)} className={selectCls}>
-            {MODES.map((m) => (
+            {modes.map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>

@@ -156,7 +156,8 @@ async function main() {
   assert.ok(sw.ok, `store wastage failed: ${sw.ok === false ? sw.error : ''}`)
   const kitchenSections = await getKitchenSections(rid)
   const kw = await saveKitchenWastage({
-    date: todayIST(), sectionId: kitchenSections[0].id, value: '75', reason: 'Burnt', itemId: '', qty: '', note: 'zz dash smoke',
+    date: todayIST(), sectionId: kitchenSections[0].id, reason: 'Burnt', note: 'zz dash smoke',
+    component: { kind: 'none', value: '75' },
   })
   assert.ok(kw.ok, `kitchen wastage failed: ${kw.ok === false ? kw.error : ''}`)
   const waste1 = await getWasteMonth(rid, monthStart)

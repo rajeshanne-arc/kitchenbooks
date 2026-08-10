@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
+import { getSessionUser } from '@/server/current-user'
 import { monthStartIST, todayIST } from '@/server/store-queries'
 import { getSectionCosts } from '@/server/labour-queries'
 import { getFoodCost } from '@/server/kitchen-queries'
@@ -53,6 +54,7 @@ const monthLabel = (monthStart: string) =>
 
 export default async function DashboardPage() {
   const restaurant = await getRestaurant()
+  const user = await getSessionUser()
   const monthStart = monthStartIST()
   const today = todayIST()
   const [yesterday, sections, foodCost, owed, unmapped, waste, alarms, unknownCount, missing, staff] =
@@ -278,6 +280,16 @@ export default async function DashboardPage() {
           </p>
         </Card>
       </div>
+
+      {user?.role === 'owner' && (
+        <Link
+          href="/pnl"
+          className="mt-3 flex items-center justify-between rounded-2xl border border-emerald-700 bg-emerald-700 p-4 text-white shadow-sm hover:bg-emerald-800"
+        >
+          <span className="text-[15px] font-semibold">P&amp;L — the month, added up</span>
+          <span>→</span>
+        </Link>
+      )}
 
       <p className="mt-4 text-xs text-stone-400">
         Every card reads a named view and clicks through to its source — no chart lives here for its own sake.

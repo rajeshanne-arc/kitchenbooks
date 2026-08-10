@@ -1,12 +1,17 @@
 // The role matrix — pure data, importable from the proxy, server code and
-// nav alike. Server-side is the law (proxy + actions); the nav merely
-// reflects it: you only see what you can open.
+// nav alike. Server-side is the law (proxy + actions); every surface merely
+// reflects it. STRICT INVISIBILITY: a role never SEES a link it cannot
+// open — nav, home tiles, Books tabs, group tab strips, quick links. Deep
+// links stay server-denied (the denied page names who to ask).
 //
-//   store:   bill entry, issues, wastage, counts, Books(bills/stock/vendors/items)
-//   chef:    recipes, kitchen closing+wastage, Books(stock/sections/food cost)
-//   cashier: sales fetch, day close, vouchers, other income, Books(sales/cash)
-//   manager: everything below owner
-//   owner:   everything + Users + snapshots + settings
+//   store:   store group (purchase/payment/issue/wastage) + counts,
+//            Books(bills/store log/stock/counts/vendors/items)
+//   chef:    kitchen group (indent/production/wastage/closing) + recipes,
+//            Books(recipes/stock/sections/food cost)
+//   cashier: cash group (close/vouchers/settlements/off-book/other income/
+//            non-revenue/dues/fetch), Books(sales/cash)
+//   manager: everything below owner + staff group + settings
+//   owner:   everything + Users + snapshots + P&L
 
 export type Role = 'owner' | 'manager' | 'chef' | 'store' | 'cashier'
 
@@ -28,21 +33,29 @@ const RULES: [prefix: string, roles: Role[]][] = [
   ['/books/food-cost', ['chef', 'manager', 'owner']],
   ['/books/sales', ['cashier', 'manager', 'owner']],
   ['/books/cash', ['cashier', 'manager', 'owner']],
-  ['/books/store', ['store', 'chef', 'manager', 'owner']],
-  ['/books/issues', ['store', 'chef', 'manager', 'owner']],
-  ['/books/wastage', ['store', 'chef', 'manager', 'owner']],
+  ['/books/store', ['store', 'manager', 'owner']],
+  ['/books/issues', ['store', 'manager', 'owner']],
+  ['/books/wastage', ['store', 'manager', 'owner']],
   ['/books/staff', ['manager', 'owner']],
   ['/books', ['manager', 'owner']],
   ['/bill', ['store', 'manager', 'owner']],
   ['/issue', ['store', 'manager', 'owner']],
   ['/wastage', ['store', 'manager', 'owner']],
+  ['/store', ['store', 'manager', 'owner']],
+  // The indent page shows asked-vs-given — the store side of that gap too.
+  ['/kitchen/indent', ['chef', 'store', 'manager', 'owner']],
   ['/kitchen', ['chef', 'manager', 'owner']],
   ['/cash', ['cashier', 'manager', 'owner']],
   ['/attendance', ['manager', 'owner']],
+  ['/expenses', ['manager', 'owner']],
   ['/dashboard', ['manager', 'owner']],
+  ['/pnl', ['owner']],
+  ['/settings', ['manager', 'owner']],
   ['/api/items', ['store', 'chef', 'manager', 'owner']],
   ['/api/vendors', ['store', 'manager', 'owner']],
   ['/api/recipes', ['chef', 'manager', 'owner']],
+  ['/api/kitchen', ['chef', 'manager', 'owner']],
+  ['/api/indents', ['store', 'chef', 'manager', 'owner']],
   ['/api/cash', ['cashier', 'manager', 'owner']],
   ['/', EVERYONE],
 ]
@@ -73,22 +86,28 @@ export function deniedHint(pathname: string): string {
   return 'Ask an owner to open this for you.'
 }
 
-/** Top-level nav items each role actually gets. */
-export function navFor(role: Role): { href: string; label: string }[] {
-  const links = [
-    { href: '/bill', label: 'Bill' },
-    { href: '/issue', label: 'Issue' },
-    { href: '/wastage', label: 'Wastage' },
-    { href: '/kitchen', label: 'Kitchen' },
-    { href: '/cash', label: 'Cash' },
-    { href: '/attendance', label: 'Attend.' },
-    { href: '/dashboard', label: 'Owner' },
-    { href: '/books/bills', label: 'Books' },
+/** Top-level nav: one entry per role group, matrix-filtered. `activePrefixes`
+ * lights the link for every page of its group, wherever the tab lives. */
+export type NavLink = { href: string; label: string; activePrefixes: string[] }
+
+export function navFor(role: Role): NavLink[] {
+  const links: NavLink[] = [
+    { href: '/bill', label: 'Store', activePrefixes: ['/bill', '/issue', '/wastage', '/store'] },
+    { href: '/kitchen', label: 'Kitchen', activePrefixes: ['/kitchen'] },
+    { href: '/cash', label: 'Cash', activePrefixes: ['/cash'] },
+    { href: '/attendance', label: 'Staff', activePrefixes: ['/attendance', '/expenses'] },
+    { href: '/dashboard', label: 'Owner', activePrefixes: ['/dashboard'] },
+    { href: '/pnl', label: 'P&L', activePrefixes: ['/pnl'] },
+    { href: '/books/bills', label: 'Books', activePrefixes: ['/books'] },
+    { href: '/settings', label: '⚙', activePrefixes: ['/settings'] },
   ]
-  return links.filter((l) => canAccess(role, l.href === '/books/bills' ? booksHomeFor(role) : l.href))
+  return links
+    .map((l) => (l.href === '/books/bills' ? { ...l, href: booksHomeFor(role) } : l))
+    .filter((l) => canAccess(role, l.href))
 }
 
-/** The Books tab a role lands on first (their own corner of the books). */
+/** The Books tab a role lands on first (their own corner of the books).
+ * chef's kitchen nav entry covers /kitchen; their Books opens on recipes. */
 export function booksHomeFor(role: Role): string {
   if (role === 'store') return '/books/bills'
   if (role === 'chef') return '/books/recipes'

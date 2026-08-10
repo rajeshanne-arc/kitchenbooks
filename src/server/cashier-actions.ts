@@ -1,0 +1,444 @@
+'use server'
+
+// Write side of the cashier group — all INSERT-only, corrections are
+// negative twins (reverses_id), and LAW 2 is enforced here, not just in
+// the pickers: partner, payment mode and non-revenue reason must be ACTIVE
+// list_options values. Free text survives only in descriptions and notes.
+//
+// Non-revenue is where giveaways finally cost something: picking a dish
+// FREEZES cost_value from dish_costs at save — the cashier never types a
+// cost. Off-book CASH lands on the day's ladder through the view; nothing
+// here re-adds it.
+
+import { z } from 'zod'
+import { sql } from '@/lib/db'
+import { getRestaurant } from '@/server/queries'
+import { enteredBy } from '@/server/current-user'
+import { getList } from '@/server/settings'
+import {
+  getDue,
+  getDuesOutstanding,
+  getNonRevenue,
+  getOffBook,
+  getSettlement,
+} from '@/server/cashier-queries'
+import { parseMoney, parseQty } from '@/lib/money'
+import type { ListKey } from '@/lib/lists'
+import type {
+  SaveDueInput,
+  SaveDueResult,
+  SaveNonRevenueInput,
+  SaveNonRevenueResult,
+  SaveOffBookInput,
+  SaveOffBookResult,
+  SaveSettlementInput,
+  SaveSettlementResult,
+  VoidDueResult,
+  VoidNonRevenueResult,
+  VoidOffBookResult,
+  VoidSettlementResult,
+} from '@/lib/types'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const moneyStr = z.string().regex(/^\d{1,7}(\.\d{1,2})?$/, 'plain amount, up to 2 decimals')
+const optionalMoney = z.union([z.literal(''), moneyStr])
+
+class CashierError extends Error {}
+
+function fail(e: unknown): { ok: false; error: string } {
+  if (e instanceof CashierError) return { ok: false, error: e.message }
+  if (e instanceof z.ZodError) return { ok: false, error: 'Invalid input — nothing was saved' }
+  console.error('cashier action failed', e)
+  const detail = e instanceof Error ? e.message.slice(0, 200) : 'unknown error'
+  return { ok: false, error: `Failed — nothing was written. (${detail})` }
+}
+
+function assertRealDate(s: string, label: string) {
+  const d = new Date(`${s}T00:00:00Z`)
+  if (!DATE_RE.test(s) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) {
+    throw new CashierError(`${label} is not a real calendar date`)
+  }
+  const year = Number(s.slice(0, 4))
+  if (year < 2000 || year > 2100) throw new CashierError(`${label} is out of range`)
+}
+
+/** LAW 2 at the write path: the value must be on the ACTIVE list. */
+async function assertListValue(restaurantId: string, key: ListKey, value: string, label: string) {
+  const values = await getList(restaurantId, key)
+  if (!values.includes(value)) {
+    throw new CashierError(`${label} must come from the list — add “${value}” in Settings → Lists first`)
+  }
+}
+
+const cleanName = (s: string) => s.trim().replace(/\s+/g, ' ')
+
+// ------------------------------------------------------------ settlements
+
+const SettlementSchema = z.object({
+  partner: z.string().trim().min(1, 'Pick the partner').max(60),
+  periodStart: z.string().regex(DATE_RE),
+  periodEnd: z.string().regex(DATE_RE),
+  grossSales: moneyStr,
+  commission: optionalMoney,
+  otherDeductions: optionalMoney,
+  amountReceived: optionalMoney,
+  receivedDate: z.union([z.literal(''), z.string().regex(DATE_RE)]),
+  note: z.string().trim().max(300),
+})
+
+export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSettlementResult> {
+  try {
+    const input = SettlementSchema.parse(raw)
+    assertRealDate(input.periodStart, 'Period start')
+    assertRealDate(input.periodEnd, 'Period end')
+    if (input.periodStart > input.periodEnd) throw new CashierError('The period ends before it starts')
+    if (input.receivedDate !== '') assertRealDate(input.receivedDate, 'Received date')
+    if (input.receivedDate !== '' && input.amountReceived === '') {
+      throw new CashierError('A received date needs its amount')
+    }
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    await assertListValue(rid, 'partner', input.partner, 'Partner')
+    const by = await enteredBy()
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [row] = await tx<{ id: string }[]>`
+        insert into partner_settlements (restaurant_id, partner, period_start, period_end,
+                                         gross_sales, commission, other_deductions,
+                                         amount_received, received_date, note, entered_by)
+        values (${rid}, ${input.partner}, ${input.periodStart}, ${input.periodEnd},
+                ${input.grossSales},
+                ${input.commission === '' ? null : input.commission},
+                ${input.otherDeductions === '' ? null : input.otherDeductions},
+                ${input.amountReceived === '' ? null : input.amountReceived},
+                ${input.receivedDate === '' ? null : input.receivedDate},
+                ${input.note === '' ? null : input.note}, ${by})
+        returning id`
+      return { id: row.id }
+    })
+
+    const settlement = await getSettlement(rid, saved.id)
+    if (!settlement) throw new CashierError('Could not verify the save — settlement missing after commit')
+    return { ok: true, settlement }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function voidSettlement(id: string): Promise<VoidSettlementResult> {
+  try {
+    if (!UUID.test(id)) throw new CashierError('Malformed settlement id')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
+        select id, reverses_id from partner_settlements where id = ${id} and restaurant_id = ${rid}`
+      if (!orig) throw new CashierError('Settlement not found')
+      if (orig.reverses_id !== null) throw new CashierError('This is a reversal — reversals cannot be voided')
+      const already = await tx<{ id: string }[]>`select id from partner_settlements where reverses_id = ${id} limit 1`
+      if (already[0]) throw new CashierError('This settlement is already voided')
+      const [rev] = await tx<{ id: string }[]>`
+        insert into partner_settlements (restaurant_id, partner, period_start, period_end,
+                                         gross_sales, commission, other_deductions,
+                                         amount_received, received_date, note, reverses_id, entered_by)
+        select restaurant_id, partner, period_start, period_end,
+               -gross_sales, -commission, -other_deductions, -amount_received,
+               received_date, 'void', id, ${by}
+        from partner_settlements where id = ${id}
+        returning id`
+      const [check] = await tx<{ zeroed: boolean }[]>`
+        select (coalesce((select gross_sales + coalesce(commission,0) + coalesce(other_deductions,0) + coalesce(amount_received,0)
+                          from partner_settlements where id = ${id}), 0)
+              + coalesce((select gross_sales + coalesce(commission,0) + coalesce(other_deductions,0) + coalesce(amount_received,0)
+                          from partner_settlements where id = ${rev.id}), 0) = 0) as zeroed`
+      if (!check?.zeroed) throw new CashierError('Verification failed: settlement values do not cancel to zero')
+      return { revId: rev.id }
+    })
+
+    const [original, reversal] = await Promise.all([getSettlement(rid, id), getSettlement(rid, saved.revId)])
+    if (!original || !reversal || !original.is_voided) {
+      throw new CashierError('Verification failed: could not read the voided pair back')
+    }
+    return { ok: true, original, reversal }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// -------------------------------------------------------- off-book orders
+
+const OffBookSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  description: z.string().trim().max(200),
+  amount: moneyStr,
+  paymentMode: z.string().trim().min(1, 'Pick how it was paid').max(30),
+  note: z.string().trim().max(300),
+})
+
+export async function saveOffBook(raw: SaveOffBookInput): Promise<SaveOffBookResult> {
+  try {
+    const input = OffBookSchema.parse(raw)
+    assertRealDate(input.date, 'Order date')
+    const amount = parseMoney(input.amount)
+    if (amount === null || amount <= 0) throw new CashierError('Amount must be more than zero')
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    await assertListValue(rid, 'payment_mode', input.paymentMode, 'Payment mode')
+    const by = await enteredBy()
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [row] = await tx<{ id: string }[]>`
+        insert into off_book_orders (restaurant_id, order_date, description, amount, payment_mode, note, entered_by)
+        values (${rid}, ${input.date}, ${input.description === '' ? null : input.description},
+                ${input.amount}, ${input.paymentMode}, ${input.note === '' ? null : input.note}, ${by})
+        returning id`
+      return { id: row.id }
+    })
+
+    const order = await getOffBook(rid, saved.id)
+    if (!order) throw new CashierError('Could not verify the save — off-book order missing after commit')
+    return { ok: true, order }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function voidOffBook(id: string): Promise<VoidOffBookResult> {
+  try {
+    if (!UUID.test(id)) throw new CashierError('Malformed order id')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
+        select id, reverses_id from off_book_orders where id = ${id} and restaurant_id = ${rid}`
+      if (!orig) throw new CashierError('Off-book order not found')
+      if (orig.reverses_id !== null) throw new CashierError('This is a reversal — reversals cannot be voided')
+      const already = await tx<{ id: string }[]>`select id from off_book_orders where reverses_id = ${id} limit 1`
+      if (already[0]) throw new CashierError('This order is already voided')
+      const [rev] = await tx<{ id: string }[]>`
+        insert into off_book_orders (restaurant_id, order_date, description, amount, payment_mode, note, reverses_id, entered_by)
+        select restaurant_id, order_date, description, -amount, payment_mode, 'void', id, ${by}
+        from off_book_orders where id = ${id}
+        returning id`
+      const [check] = await tx<{ zeroed: boolean }[]>`
+        select ((select amount from off_book_orders where id = ${id})
+              + (select amount from off_book_orders where id = ${rev.id}) = 0) as zeroed`
+      if (!check?.zeroed) throw new CashierError('Verification failed: amounts do not cancel to zero')
+      return { revId: rev.id }
+    })
+
+    const [original, reversal] = await Promise.all([getOffBook(rid, id), getOffBook(rid, saved.revId)])
+    if (!original || !reversal || !original.is_voided) {
+      throw new CashierError('Verification failed: could not read the voided pair back')
+    }
+    return { ok: true, original, reversal }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ------------------------------------------------------------ non-revenue
+
+const NonRevenueSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  reason: z.string().trim().min(1, 'Pick the reason').max(60),
+  recipeId: z.union([z.literal(''), z.string().regex(UUID)]),
+  description: z.string().trim().max(200),
+  qty: z.string().trim().max(12),
+  menuValue: optionalMoney,
+  givenTo: z.string().trim().max(120),
+  note: z.string().trim().max(300),
+})
+
+export async function saveNonRevenue(raw: SaveNonRevenueInput): Promise<SaveNonRevenueResult> {
+  try {
+    const input = NonRevenueSchema.parse(raw)
+    assertRealDate(input.date, 'Date')
+    if (input.recipeId === '' && input.description === '') {
+      throw new CashierError('Pick the dish or describe what went out')
+    }
+    let qty: string | null = null
+    if (input.recipeId !== '') {
+      qty = input.qty === '' ? '1' : input.qty
+      const q = parseQty(qty)
+      if (q === null || q <= 0) throw new CashierError('Quantity must be a plain number more than zero')
+    } else if (input.qty !== '') {
+      throw new CashierError('A quantity needs its dish — use the description for the rest')
+    }
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    await assertListValue(rid, 'non_revenue_reason', input.reason, 'Reason')
+    const by = await enteredBy()
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      let costValue = '0'
+      if (input.recipeId !== '') {
+        const [dish] = await tx<{ name: string; kind: string; cost: string | null }[]>`
+          select r.name, r.kind, dc.dish_cost::text as cost
+          from recipes r
+          left join dish_costs dc on dc.recipe_id = r.id
+          where r.id = ${input.recipeId} and r.restaurant_id = ${rid} and r.status = 'active'`
+        if (!dish) throw new CashierError('Dish not found')
+        if (dish.kind !== 'dish') throw new CashierError(`“${dish.name}” is not a dish — giveaways go out as dishes`)
+        if (dish.cost === null) throw new CashierError(`“${dish.name}” cannot be costed yet — its recipe has no lines`)
+        // FROZEN at save: the giveaway finally costs something.
+        const [v] = await tx<{ v: string }[]>`select (${qty}::numeric * ${dish.cost}::numeric)::text as v`
+        costValue = v.v
+      }
+      const [row] = await tx<{ id: string }[]>`
+        insert into non_revenue (restaurant_id, nr_date, reason, recipe_id, description, qty,
+                                 menu_value, cost_value, given_to, note, entered_by)
+        values (${rid}, ${input.date}, ${input.reason},
+                ${input.recipeId === '' ? null : input.recipeId},
+                ${input.description === '' ? null : input.description},
+                ${qty},
+                ${input.menuValue === '' ? null : input.menuValue},
+                ${costValue},
+                ${input.givenTo === '' ? null : cleanName(input.givenTo)},
+                ${input.note === '' ? null : input.note}, ${by})
+        returning id`
+      return { id: row.id }
+    })
+
+    const entry = await getNonRevenue(rid, saved.id)
+    if (!entry) throw new CashierError('Could not verify the save — entry missing after commit')
+    return { ok: true, entry }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function voidNonRevenue(id: string): Promise<VoidNonRevenueResult> {
+  try {
+    if (!UUID.test(id)) throw new CashierError('Malformed entry id')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
+        select id, reverses_id from non_revenue where id = ${id} and restaurant_id = ${rid}`
+      if (!orig) throw new CashierError('Entry not found')
+      if (orig.reverses_id !== null) throw new CashierError('This is a reversal — reversals cannot be voided')
+      const already = await tx<{ id: string }[]>`select id from non_revenue where reverses_id = ${id} limit 1`
+      if (already[0]) throw new CashierError('This entry is already voided')
+      // Negative twin: cost_value copied EXACTLY (negated) — never re-frozen.
+      const [rev] = await tx<{ id: string }[]>`
+        insert into non_revenue (restaurant_id, nr_date, reason, recipe_id, description, qty,
+                                 menu_value, cost_value, given_to, note, reverses_id, entered_by)
+        select restaurant_id, nr_date, reason, recipe_id, description, -qty,
+               -menu_value, -cost_value, given_to, 'void', id, ${by}
+        from non_revenue where id = ${id}
+        returning id`
+      const [check] = await tx<{ zeroed: boolean }[]>`
+        select ((select cost_value from non_revenue where id = ${id})
+              + (select cost_value from non_revenue where id = ${rev.id}) = 0) as zeroed`
+      if (!check?.zeroed) throw new CashierError('Verification failed: cost values do not cancel to zero')
+      return { revId: rev.id }
+    })
+
+    const [original, reversal] = await Promise.all([getNonRevenue(rid, id), getNonRevenue(rid, saved.revId)])
+    if (!original || !reversal || !original.is_voided) {
+      throw new CashierError('Verification failed: could not read the voided pair back')
+    }
+    return { ok: true, original, reversal }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ------------------------------------------------------------------- dues
+
+const DueSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  party: z.string().trim().min(1, 'Whose account is this?').max(120),
+  amount: moneyStr,
+  direction: z.enum(['given', 'received']),
+  againstWhat: z.string().trim().max(200),
+  ref: z.string().trim().max(60),
+  note: z.string().trim().max(300),
+})
+
+export async function saveDue(raw: SaveDueInput): Promise<SaveDueResult> {
+  try {
+    const input = DueSchema.parse(raw)
+    assertRealDate(input.date, 'Date')
+    const amount = parseMoney(input.amount)
+    if (amount === null || amount <= 0) throw new CashierError('Amount must be more than zero')
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      // positive = credit given, negative = received back — sign carries direction
+      const [row] = await tx<{ id: string }[]>`
+        insert into due_payments (restaurant_id, due_date, party, amount, against_what, ref, note, entered_by)
+        values (${rid}, ${input.date}, ${cleanName(input.party)},
+                ${input.direction === 'given' ? input.amount : '-' + input.amount},
+                ${input.againstWhat === '' ? null : input.againstWhat},
+                ${input.ref === '' ? null : input.ref},
+                ${input.note === '' ? null : input.note}, ${by})
+        returning id`
+      return { id: row.id }
+    })
+
+    const due = await getDue(rid, saved.id)
+    if (!due) throw new CashierError('Could not verify the save — due entry missing after commit')
+    return { ok: true, due, outstanding: await getDuesOutstanding(rid) }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function voidDue(id: string): Promise<VoidDueResult> {
+  try {
+    if (!UUID.test(id)) throw new CashierError('Malformed due id')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
+        select id, reverses_id from due_payments where id = ${id} and restaurant_id = ${rid}`
+      if (!orig) throw new CashierError('Due entry not found')
+      if (orig.reverses_id !== null) throw new CashierError('This is a reversal — reversals cannot be voided')
+      const already = await tx<{ id: string }[]>`select id from due_payments where reverses_id = ${id} limit 1`
+      if (already[0]) throw new CashierError('This entry is already voided')
+      const [rev] = await tx<{ id: string }[]>`
+        insert into due_payments (restaurant_id, due_date, party, amount, against_what, ref, note, reverses_id, entered_by)
+        select restaurant_id, due_date, party, -amount, against_what, ref, 'void', id, ${by}
+        from due_payments where id = ${id}
+        returning id`
+      const [check] = await tx<{ zeroed: boolean }[]>`
+        select ((select amount from due_payments where id = ${id})
+              + (select amount from due_payments where id = ${rev.id}) = 0) as zeroed`
+      if (!check?.zeroed) throw new CashierError('Verification failed: amounts do not cancel to zero')
+      return { revId: rev.id }
+    })
+
+    const [original, reversal] = await Promise.all([getDue(rid, id), getDue(rid, saved.revId)])
+    if (!original || !reversal || !original.is_voided) {
+      throw new CashierError('Verification failed: could not read the voided pair back')
+    }
+    return { ok: true, original, reversal }
+  } catch (e) {
+    return fail(e)
+  }
+}

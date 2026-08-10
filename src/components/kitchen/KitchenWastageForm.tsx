@@ -1,38 +1,48 @@
 'use client'
 
-// Kitchen wastage: the section lost VALUE — a burnt gravy, a dropped tray.
-// The rupee value is required and is what the chef states; item + qty are
-// optional detail for when the loss is one ingredient.
+// Kitchen wastage, phase-12 law: the loss is a COMPONENT (raw item, sub
+// batch or plated dish — cost frozen server-side from the live books) or a
+// plain rupee VALUE when nothing itemizable burned. Reason comes from the
+// waste_reason list — free text survives only in the note.
 
 import { useState } from 'react'
-import type { IssuableItemHit, Section } from '@/lib/types'
+import { useRouter } from 'next/navigation'
+import type { KitchenComponentHit, Section } from '@/lib/types'
 import { saveKitchenWastage } from '@/server/kitchen-actions'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import { todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
-import IssueItemPicker from '@/components/store/IssueItemPicker'
+import KitchenComponentPicker from './KitchenComponentPicker'
 import { toast } from '@/components/Toasts'
 import { useLang } from '@/components/useLang'
 
-const REASONS = ['Burnt', 'Over-prepped', 'Dropped', 'Spoiled in kitchen', 'Trial dish', 'Other']
-
-export default function KitchenWastageForm({ sections }: { sections: Section[] }) {
+export default function KitchenWastageForm({
+  sections,
+  wasteReasons,
+}: {
+  sections: Section[]
+  wasteReasons: string[]
+}) {
+  const router = useRouter()
   const { label } = useLang()
   const [date, setDate] = useState(todayLocal)
   const [sectionId, setSectionId] = useState('')
+  const [mode, setMode] = useState<'component' | 'value'>('component')
+  const [component, setComponent] = useState<KitchenComponentHit | null>(null)
+  const [qty, setQty] = useState('')
   const [value, setValue] = useState('')
   const [reason, setReason] = useState('')
-  const [item, setItem] = useState<IssuableItemHit | null>(null)
-  const [qty, setQty] = useState('')
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const qtyOk = parseQty(qty.trim()) !== null && Number(qty.trim()) > 0
   const valueParsed = parseMoney(value.trim())
-  const pairOk = (item === null) === (qty.trim() === '')
-  const qtyOk = qty.trim() === '' || (parseQty(qty.trim()) !== null && Number(qty.trim()) > 0)
   const canSave =
-    !saving && sectionId !== '' && valueParsed !== null && valueParsed > 0 && reason.trim() !== '' && pairOk && qtyOk
+    !saving &&
+    sectionId !== '' &&
+    reason !== '' &&
+    (mode === 'component' ? component !== null && qtyOk : valueParsed !== null && valueParsed > 0)
 
   async function onSave() {
     if (!canSave) return
@@ -42,19 +52,27 @@ export default function KitchenWastageForm({ sections }: { sections: Section[] }
       const res = await saveKitchenWastage({
         date,
         sectionId,
-        value: value.trim(),
-        reason: reason.trim(),
-        itemId: item?.id ?? '',
-        qty: qty.trim(),
+        reason,
         note: note.trim(),
+        component:
+          mode === 'component' && component !== null
+            ? component.kind === 'item'
+              ? { kind: 'item', id: component.id, qty: qty.trim() }
+              : { kind: 'recipe', id: component.id, qty: qty.trim() }
+            : { kind: 'none', value: value.trim() },
       })
       if (res.ok) {
-        toast(`${res.wastage.section_code} wastage ${formatMoneyString(res.wastage.value)} recorded`)
+        toast(
+          `${res.wastage.section_code} wastage ${formatMoneyString(res.wastage.value)} recorded${
+            mode === 'component' ? ' — cost frozen from the books' : ''
+          }`,
+        )
+        setComponent(null)
+        setQty('')
         setValue('')
         setReason('')
-        setItem(null)
-        setQty('')
         setNote('')
+        router.refresh()
       } else {
         setError(res.error)
       }
@@ -86,7 +104,56 @@ export default function KitchenWastageForm({ sections }: { sections: Section[] }
             </select>
           </label>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+
+        <div className="flex gap-2">
+          {(
+            [
+              ['component', 'What was lost'],
+              ['value', 'Value only'],
+            ] as const
+          ).map(([m, lbl]) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`rounded-full border px-3 py-1.5 text-sm font-medium ${
+                mode === m
+                  ? 'border-emerald-700 bg-emerald-700 text-white'
+                  : 'border-stone-200 bg-white text-stone-600 hover:border-emerald-400'
+              }`}
+            >
+              {lbl}
+            </button>
+          ))}
+        </div>
+
+        {mode === 'component' ? (
+          <>
+            <KitchenComponentPicker
+              value={component}
+              onPick={setComponent}
+              onClear={() => setComponent(null)}
+              placeholder="What was lost — item, sub or dish"
+            />
+            {component !== null && (
+              <label className="block">
+                <span className={fieldLabelCls}>
+                  {label('quantity')} ({component.unit_name})
+                </span>
+                <input
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={qty}
+                  onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ''))}
+                  className={`${numCls} w-28`}
+                />
+              </label>
+            )}
+            <p className="text-xs text-stone-400">
+              The rupee value is frozen from the live books at save — nothing to type.
+            </p>
+          </>
+        ) : (
           <label className="block">
             <span className={fieldLabelCls}>{label('value_lost')}</span>
             <input
@@ -94,46 +161,28 @@ export default function KitchenWastageForm({ sections }: { sections: Section[] }
               placeholder="0.00"
               value={value}
               onChange={(e) => setValue(e.target.value.replace(/[^\d.]/g, ''))}
-              className={`${numCls} w-full text-right`}
-            />
-          </label>
-          <label className="block">
-            <span className={fieldLabelCls}>{label('reason')}</span>
-            <input
-              list="kb-kitchen-reasons"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Burnt, dropped…"
-              className={inputCls}
-              maxLength={60}
-            />
-            <datalist id="kb-kitchen-reasons">
-              {REASONS.map((r) => (
-                <option key={r} value={r} />
-              ))}
-            </datalist>
-          </label>
-        </div>
-        <div>
-          <span className={fieldLabelCls}>Item (optional detail — needs its quantity)</span>
-          <IssueItemPicker value={item} onPick={setItem} onClear={() => setItem(null)} />
-        </div>
-        {item !== null && (
-          <label className="block">
-            <span className={fieldLabelCls}>Quantity ({item.unit_name})</span>
-            <input
-              inputMode="decimal"
-              placeholder="0"
-              value={qty}
-              onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ''))}
-              className={`${numCls} w-28`}
+              className={`${numCls} w-40 text-right`}
             />
           </label>
         )}
-        <label className="block">
-          <span className={fieldLabelCls}>{label('note')}</span>
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
-        </label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className={fieldLabelCls}>{label('reason')}</span>
+            <select value={reason} onChange={(e) => setReason(e.target.value)} className={selectCls}>
+              <option value="">—</option>
+              {wasteReasons.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className={fieldLabelCls}>{label('note')}</span>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
+          </label>
+        </div>
       </div>
 
       {error && (

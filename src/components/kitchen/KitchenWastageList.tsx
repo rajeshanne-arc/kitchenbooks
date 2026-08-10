@@ -52,6 +52,12 @@ export default function KitchenWastageList({ rows }: { rows: KitchenWastageRow[]
                       · {w.qty} {w.purchase_unit} {w.item_name}
                     </span>
                   )}
+                  {w.recipe_name !== null && (
+                    <span className="text-stone-500">
+                      {' '}
+                      · {w.qty} {w.output_unit} {w.recipe_name}
+                    </span>
+                  )}
                 </span>
                 <span className="block text-xs text-stone-500">
                   {fmtDate(w.waste_date)}

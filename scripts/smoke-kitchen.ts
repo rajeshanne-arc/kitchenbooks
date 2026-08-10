@@ -31,6 +31,7 @@ async function main() {
   const { mapPosItem } = await import('../src/server/sales-actions')
   const { listDishOptions } = await import('../src/server/sales-queries')
   const { createRecipe } = await import('../src/server/recipes-actions')
+  const { decimalStringToPaise } = await import('../src/lib/money')
   const { sql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
@@ -102,34 +103,56 @@ async function main() {
   assert.equal(chCheck.filings, 2)
   assert.ok(checklist.filter((c) => c.closing_value === null).length >= 7, 'unclosed sections stay visibly open')
 
-  // ---- 5. kitchen wastage: value required, item+qty an optional pair, voidable
+  // ---- 5. kitchen wastage (phase-12 law): a component freezes its cost
+  // server-side; value-only takes the chef's number; voids copy exactly
   const noQty = await saveKitchenWastage({
-    date: '2001-04-20', sectionId: ch.id, value: '152.5', reason: 'Burnt', itemId: plt1.id, qty: '', note: '',
+    date: '2001-04-20', sectionId: ch.id, reason: 'Burnt', note: '', component: { kind: 'item', id: plt1.id, qty: '' },
   })
   assert.ok(!noQty.ok && /quantity/i.test(noQty.error))
-  const noItem = await saveKitchenWastage({
-    date: '2001-04-20', sectionId: ch.id, value: '152.5', reason: 'Burnt', itemId: '', qty: '0.5', note: '',
+  const zeroValue = await saveKitchenWastage({
+    date: '2001-04-20', sectionId: ch.id, reason: 'Burnt', note: '', component: { kind: 'none', value: '0' },
   })
-  assert.ok(!noItem.ok && /item/i.test(noItem.error))
+  assert.ok(!zeroValue.ok && /more than zero/i.test(zeroValue.error))
 
   const kw1 = await saveKitchenWastage({
-    date: '2001-04-20', sectionId: ch.id, value: '50', reason: 'Burnt gravy', itemId: '', qty: '', note: 'zz kitchen smoke',
+    date: '2001-04-20', sectionId: ch.id, reason: 'Burnt gravy', note: 'zz kitchen smoke',
+    component: { kind: 'none', value: '50' },
   })
   assert.ok(kw1.ok, `kitchen wastage failed: ${kw1.ok === false ? kw1.error : ''}`)
   const kw2 = await saveKitchenWastage({
-    date: '2001-04-21', sectionId: ch.id, value: '152.5', reason: 'Dropped', itemId: plt1.id, qty: '0.5', note: '',
+    date: '2001-04-21', sectionId: ch.id, reason: 'Dropped', note: '',
+    component: { kind: 'item', id: plt1.id, qty: '0.5' },
   })
   assert.ok(kw2.ok)
   assert.equal(kw2.wastage.item_name !== null, true)
+  const [{ cost: plt1Cost }] = await sql<{ cost: string }[]>`
+    select issue_cost::text as cost from item_costs where item_id = ${plt1.id}`
+  const [{ v: kw2Expected }] = await sql<{ v: string }[]>`
+    select ('0.5'::numeric * ${plt1Cost}::numeric)::text as v`
+  assert.equal(
+    decimalStringToPaise(kw2.wastage.value),
+    decimalStringToPaise(kw2Expected),
+    'component wastage value is FROZEN qty × issue_cost — the chef typed no value',
+  )
 
   fc = await getFoodCost(rid, MONTH)
   chRow = fc.find((r) => r.section_code === 'CH')
   assert.ok(chRow)
-  assert.equal(Number(chRow.kitchen_wastage), 202.5, 'both wastage rows in the month column')
+  const [{ v: monthWaste }] = await sql<{ v: string }[]>`
+    select ('50'::numeric + ${kw2Expected}::numeric)::text as v`
+  assert.equal(
+    decimalStringToPaise(chRow.kitchen_wastage),
+    decimalStringToPaise(monthWaste),
+    'both wastage rows in the month column',
+  )
 
   const kv = await voidKitchenWastage(kw2.wastage.id)
   assert.ok(kv.ok, `void failed: ${kv.ok === false ? kv.error : ''}`)
-  assert.equal(Number(kv.reversal.value), -152.5, 'negative twin copies the value exactly')
+  assert.equal(
+    decimalStringToPaise(kv.reversal.value),
+    -decimalStringToPaise(kw2.wastage.value),
+    'negative twin copies the value exactly',
+  )
   assert.equal(Number(kv.reversal.qty), -0.5, 'and the qty, sign flipped')
   const again = await voidKitchenWastage(kw2.wastage.id)
   assert.ok(!again.ok && /already voided/i.test(again.error))

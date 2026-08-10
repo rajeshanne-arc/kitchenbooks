@@ -11,9 +11,18 @@ import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
 
-const ITEM_SUGGESTIONS = ['Used oil', 'Scrap', 'Cartons', 'Old newspaper']
-
-export default function OtherIncomeForm({ units }: { units: Unit[] }) {
+export default function OtherIncomeForm({
+  units,
+  items = [],
+  buyerNames = [],
+  receiverNames = [],
+}: {
+  units: Unit[]
+  /** ACTIVE other_income_item list values (LAW 2) */
+  items?: string[]
+  buyerNames?: string[]
+  receiverNames?: string[]
+}) {
   const [date, setDate] = useState(todayLocal)
   const [item, setItem] = useState('')
   const [qty, setQty] = useState('')
@@ -123,19 +132,17 @@ export default function OtherIncomeForm({ units }: { units: Unit[] }) {
         </div>
         <label className="block">
           <span className={fieldLabelCls}>Item</span>
-          <input
-            list="kb-income-items"
-            value={item}
-            onChange={(e) => setItem(e.target.value)}
-            placeholder="Used oil, scrap…"
-            className={inputCls}
-            maxLength={120}
-          />
-          <datalist id="kb-income-items">
-            {ITEM_SUGGESTIONS.map((s) => (
-              <option key={s} value={s} />
+          <select value={item} onChange={(e) => setItem(e.target.value)} className={selectCls}>
+            <option value="">—</option>
+            {items.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
             ))}
-          </datalist>
+          </select>
+          <span className="mt-1 block text-xs text-stone-400">
+            Missing something? Owners and managers add values in Settings → Lists.
+          </span>
         </label>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
@@ -168,17 +175,28 @@ export default function OtherIncomeForm({ units }: { units: Unit[] }) {
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
             <span className={fieldLabelCls}>Buyer</span>
-            <input value={buyer} onChange={(e) => setBuyer(e.target.value)} placeholder="optional" className={inputCls} maxLength={120} />
+            <input list="kb-income-buyers" value={buyer} onChange={(e) => setBuyer(e.target.value)} placeholder="pick or add" className={inputCls} maxLength={120} />
+            <datalist id="kb-income-buyers">
+              {buyerNames.map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
           </label>
           <label className="block">
             <span className={fieldLabelCls}>Received by</span>
             <input
+              list="kb-income-receivers"
               value={receivedBy}
               onChange={(e) => setReceivedBy(e.target.value)}
-              placeholder="optional"
+              placeholder="pick or add"
               className={inputCls}
               maxLength={120}
             />
+            <datalist id="kb-income-receivers">
+              {receiverNames.map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
           </label>
         </div>
       </div>

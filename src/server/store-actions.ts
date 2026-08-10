@@ -58,6 +58,7 @@ const IssueSchema = z.object({
   issueDate: z.string().regex(DATE_RE),
   sectionId: z.string().regex(UUID),
   lines: z.array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr })).min(1).max(40),
+  indentId: z.string().regex(UUID).optional(),
 })
 
 export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
@@ -81,6 +82,21 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
         where id = ${input.sectionId} and restaurant_id = ${rid} and status = 'active'`
       if (!section[0]) throw new StoreError('Section not found')
 
+      // Answering an indent: the stamp ties ASKED to GIVEN, and the indent
+      // moves to 'issued'. Section mismatch is refused, not silently fixed.
+      if (input.indentId !== undefined) {
+        const [indent] = await tx<{ status: string; section_id: string; section_name: string }[]>`
+          select i.status, i.section_id, s.name as section_name
+          from indents i join sections s on s.id = i.section_id
+          where i.id = ${input.indentId} and i.restaurant_id = ${rid}`
+        if (!indent) throw new StoreError('That indent no longer exists')
+        if (indent.status !== 'open') throw new StoreError(`That indent is already ${indent.status}`)
+        if (indent.section_id !== input.sectionId) {
+          throw new StoreError(`That indent belongs to ${indent.section_name} — issue to that section, or drop the indent`)
+        }
+        await tx`update indents set status = 'issued' where id = ${input.indentId}`
+      }
+
       // Snapshot each item's cost from item_costs inside the transaction.
       const costs = new Map<string, string>()
       for (const [i, l] of input.lines.entries()) {
@@ -98,8 +114,8 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
       }
 
       const [issue] = await tx<{ id: string }[]>`
-        insert into issues (restaurant_id, issue_date, section_id, entered_by)
-        values (${rid}, ${input.issueDate}, ${input.sectionId}, ${by})
+        insert into issues (restaurant_id, issue_date, section_id, indent_id, entered_by)
+        values (${rid}, ${input.issueDate}, ${input.sectionId}, ${input.indentId ?? null}, ${by})
         returning id`
 
       const lineRows = input.lines.map((l) => ({
@@ -116,6 +132,11 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
     if (!issue) throw new StoreError('Could not verify the save — issue missing after commit')
     if (issue.line_count !== input.lines.length) {
       throw new StoreError(`Verification failed: expected ${input.lines.length} lines, found ${issue.line_count}`)
+    }
+    if (input.indentId !== undefined) {
+      if (issue.indent_id !== input.indentId) throw new StoreError('Verification failed: indent stamp missing on the issue')
+      const [ind] = await sql<{ status: string }[]>`select status from indents where id = ${input.indentId}`
+      if (ind?.status !== 'issued') throw new StoreError('Verification failed: indent not marked issued')
     }
     const lines = await getIssueLines(saved.issueId)
     const stock = await getStockSnaps(rid, [...new Set(input.lines.map((l) => l.itemId))])

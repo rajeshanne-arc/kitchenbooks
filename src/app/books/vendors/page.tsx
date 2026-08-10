@@ -15,6 +15,14 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
 
   return (
     <section>
+      <div className="mt-3 flex items-center justify-end">
+        <Link
+          href="/books/vendors/new"
+          className="rounded-lg border border-emerald-700 px-3 py-1.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+        >
+          ＋ Add vendor
+        </Link>
+      </div>
       <Suspense>
         <FilterInput placeholder="Filter vendors by name or code" />
       </Suspense>

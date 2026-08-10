@@ -37,8 +37,7 @@ export default function TopNav({ user }: { user: NavUser | null }) {
           <>
             <nav className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto whitespace-nowrap sm:gap-1">
               {links.map((l) => {
-                const active =
-                  l.href === '/books/bills' ? pathname.startsWith('/books') : pathname.startsWith(l.href)
+                const active = l.activePrefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`))
                 return (
                   <Link
                     key={l.href}
