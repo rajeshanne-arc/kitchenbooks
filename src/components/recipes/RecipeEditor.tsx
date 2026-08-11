@@ -6,7 +6,8 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { addLine, deleteLine, updateLineQty, updateRecipe } from '@/server/recipes-actions'
+import { addLine, deleteLine, updateLineQty,
+  updateLineYield, updateRecipe } from '@/server/recipes-actions'
 import type { ComponentHit, RecipeDetail, RecipeLineRow, RecipeMutationResult, Unit } from '@/lib/types'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import { cardCls, fieldLabelCls, heroNumCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
@@ -40,6 +41,7 @@ export default function RecipeEditor({
   const [headerSaved, setHeaderSaved] = useState(false)
 
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({})
+  const [yieldDrafts, setYieldDrafts] = useState<Record<string, string>>({})
   const [component, setComponent] = useState<ComponentHit | null>(null)
   const [newQty, setNewQty] = useState('')
 
@@ -274,6 +276,11 @@ export default function RecipeEditor({
         <p className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm font-medium text-amber-900">
           Enter what you take from the store, including what gets trimmed away.
         </p>
+        <p className="mt-2 text-xs text-stone-600">
+          <span className="font-medium">Yield</span> is how much of what you take is usable — 100% when nothing
+          is lost. A fish at ₹350/kg with 55% yield costs ₹636.36 per usable kilo, and the batch cost below
+          charges that. It belongs to THIS line: the same fish may be trimmed differently in another dish.
+        </p>
 
         {lines.length === 0 ? (
           <p className="mt-3 text-sm text-stone-500">No ingredients yet — add what goes in, gross.</p>
@@ -283,6 +290,10 @@ export default function RecipeEditor({
               const draft = qtyDrafts[l.id] ?? l.qty
               const dirty = draft !== l.qty
               const draftOk = parseQty(draft.trim()) !== null && Number(draft) > 0
+              const yDraft = yieldDrafts[l.id] ?? l.yield_pct
+              const yDirty = yDraft !== l.yield_pct
+              const yNum = Number(yDraft)
+              const yOk = Number.isFinite(yNum) && yNum > 0 && yNum <= 100
               return (
                 <li key={l.id} className="flex flex-wrap items-center gap-x-2 gap-y-1.5 py-2.5">
                   <div className="min-w-0 flex-1">
@@ -297,6 +308,13 @@ export default function RecipeEditor({
                     <div className="text-xs text-stone-500">
                       <span className="font-mono">{l.component_code}</span>
                       {l.unit_cost !== null && <> · {formatMoneyString(l.unit_cost)}/{l.unit}</>}
+                      {/* what the trim actually costs, said out loud */}
+                      {!l.is_sub && l.usable_cost !== null && Number(l.yield_pct) < 100 && (
+                        <span className="text-red-400">
+                          {' '}
+                          · {formatMoneyString(l.usable_cost)}/usable {l.unit}
+                        </span>
+                      )}
                       {l.uncosted && <span className="text-amber-700"> · no cost yet — bill first</span>}
                       {l.is_sub && l.sub_uncosted_lines > 0 && (
                         <span className="text-amber-700"> · {l.sub_uncosted_lines} uncosted inside</span>
@@ -307,10 +325,54 @@ export default function RecipeEditor({
                     inputMode="decimal"
                     value={draft}
                     onChange={(e) => setQtyDrafts((d) => ({ ...d, [l.id]: cleanNum(e.target.value) }))}
-                    className={`${numCls} w-20`}
+                    className={`${numCls} w-20 text-right font-mono tabular-nums`}
                     aria-label={`Quantity of ${l.component_name}`}
                   />
-                  <span className="text-sm text-stone-500">{l.unit}</span>
+                  <span className="w-10 text-sm text-stone-500">{l.unit}</span>
+
+                  {/* YIELD — the line's, not the item's.
+                      A sub-recipe line shows none: the trim inside it was
+                      already paid for when its own cost was worked out, and
+                      applying a yield again would charge the same loss
+                      twice. Below 100 is terracotta because it is a fact
+                      about this ingredient, not an error; exactly 100 is
+                      greyed because it is the ordinary case. */}
+                  {l.is_sub ? (
+                    <span className="w-16 text-center text-xs text-stone-300" title="the yields inside the sub are already applied">
+                      —
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1">
+                      <input
+                        inputMode="decimal"
+                        value={yDraft}
+                        onChange={(e) => setYieldDrafts((d) => ({ ...d, [l.id]: cleanNum(e.target.value) }))}
+                        className={`${numCls} w-16 text-right font-mono tabular-nums ${
+                          Number(yDraft) < 100 ? 'text-red-400' : 'text-stone-400'
+                        }`}
+                        aria-label={`Yield of ${l.component_name}, percent`}
+                      />
+                      <span className="text-xs text-stone-400">%</span>
+                      {yDirty && (
+                        <button
+                          type="button"
+                          disabled={!yOk || busy}
+                          onClick={async () => {
+                            const ok = await run(() => updateLineYield(l.id, yDraft.trim()))
+                            if (ok)
+                              setYieldDrafts((d) => {
+                                const rest = { ...d }
+                                delete rest[l.id]
+                                return rest
+                              })
+                          }}
+                          className="rounded-lg bg-emerald-700 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-800 disabled:bg-stone-300"
+                        >
+                          ✓
+                        </button>
+                      )}
+                    </span>
+                  )}
                   {dirty && (
                     <button
                       type="button"

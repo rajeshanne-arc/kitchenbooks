@@ -956,3 +956,29 @@ The general rule this is an instance of: **a column default is not a
 substitute for an answer.** Where the database supplies a default for
 something a human is supposed to decide, the form must still ask, and the
 save must still refuse.
+
+## Commit 3, part 1 — the yield mechanic is live
+
+`recipe_lines.yield_pct` had no route into the UI, so every line sat at the
+default 100 and dish costs ignored trim entirely — the migration was inert.
+The line editor now carries it.
+
+**Where it shows and where it does not.** An ITEM line gets an editable
+yield; a SUB-RECIPE line shows a dash and `updateLineYield` refuses it by
+name. The trim inside a sub was already paid for when its own cost was
+worked out, and applying a yield again would charge the same loss twice.
+
+**Colour says what kind of fact it is.** Below 100 is terracotta
+(`red-400`) because trim is a fact about the ingredient, not an error;
+exactly 100 is greyed because it is the ordinary case. The line also states
+the usable cost — "₹636.36/usable kg" — beside the purchase cost, so the
+number the batch is actually charged is visible where it is caused.
+
+The per-line arithmetic mirrors `recipe_costs` exactly
+(`qty × cost ÷ yield × 100`), so the lines add up to the batch total the
+view states rather than to a slightly different number. Verified in a
+rolled-back transaction: ₹305 at 100% becomes ₹554.55 at 55% — ratio
+1.8182 = 100/55.
+
+Yield is capped at 100: it is a percentage of what you bought, so more than
+all of it is not a thing.

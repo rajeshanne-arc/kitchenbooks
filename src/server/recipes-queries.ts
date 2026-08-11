@@ -60,12 +60,20 @@ export async function getRecipeLines(recipeId: string): Promise<RecipeLineRow[]>
            coalesce(i.name, sr.name) as component_name,
            (rl.component_recipe_id is not null) as is_sub,
            rl.qty::text as qty,
+           rl.yield_pct::text as yield_pct,
            case when rl.component_item_id is not null then i.purchase_unit else sr.output_unit end as unit,
            case when rl.component_item_id is not null then ic.issue_cost
                 else src.cost_per_output_unit end::text as unit_cost,
+           -- cost per USABLE unit, and the line value that follows from it.
+           -- Same arithmetic recipe_costs uses, so the lines add up to the
+           -- batch total the view states rather than to a different number.
+           (case when rl.component_item_id is not null then ic.issue_cost
+                 else src.cost_per_output_unit end
+            / nullif(rl.yield_pct, 0) * 100)::text as usable_cost,
            (rl.qty * coalesce(
               case when rl.component_item_id is not null then ic.issue_cost
-                   else src.cost_per_output_unit end, 0))::text as line_cost,
+                   else src.cost_per_output_unit end, 0)
+            / nullif(rl.yield_pct, 0) * 100)::text as line_cost,
            (rl.component_item_id is not null and ic.issue_cost is null) as uncosted,
            coalesce(src.uncosted_lines, 0)::int as sub_uncosted_lines
     from recipe_lines rl

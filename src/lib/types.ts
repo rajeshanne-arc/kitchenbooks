@@ -623,8 +623,16 @@ export type RecipeLineRow = {
   is_sub: boolean
   qty: string
   unit: string
+  /** THE LINE'S yield, not the item's. 100 means nothing is trimmed away.
+   *  A sub-recipe line always reads 100 and hides it — the yields inside
+   *  the sub were already applied when its own cost was worked out, and
+   *  applying one again would trim the same loss twice. */
+  yield_pct: string
   /** live: item_costs.issue_cost or sub's recipe_costs.cost_per_output_unit; null when unpriced */
   unit_cost: string | null
+  /** unit_cost ÷ (yield ÷ 100) — what a USABLE unit costs once trim is paid
+   *  for. Basha at ₹350/kg and 55% yield is ₹636.36 per usable kilo. */
+  usable_cost: string | null
   line_cost: string | null
   uncosted: boolean
   /** for sub components: how many of ITS lines are uncosted */

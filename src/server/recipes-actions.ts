@@ -229,6 +229,35 @@ export async function addLine(raw: AddLineInput): Promise<RecipeMutationResult> 
   }
 }
 
+/** The line's yield. Editable here and nowhere else — it belongs to this
+ *  line of this recipe, not to the item. Sub-recipe lines are refused: the
+ *  yields inside the sub were already applied, and trimming again would
+ *  charge the same loss twice. */
+export async function updateLineYield(lineId: string, yieldPct: string): Promise<RecipeMutationResult> {
+  try {
+    if (!UUID.test(lineId)) throw new RecipeError('Malformed line id')
+    const n = Number(yieldPct)
+    if (!Number.isFinite(n) || n <= 0) throw new RecipeError('Yield must be more than zero')
+    if (n > 100) throw new RecipeError('Yield is a percentage of what you bought — 100 is the most it can be')
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const [line] = await sql<{ recipe_id: string; is_sub: boolean }[]>`
+      select rl.recipe_id, (rl.component_recipe_id is not null) as is_sub
+      from recipe_lines rl
+      join recipes r on r.id = rl.recipe_id
+      where rl.id = ${lineId} and r.restaurant_id = ${rid}`
+    if (!line) throw new RecipeError('Line not found')
+    if (line.is_sub) {
+      throw new RecipeError('A sub-recipe line has no yield of its own — the trim inside it is already costed')
+    }
+    await sql`update recipe_lines set yield_pct = ${yieldPct}::numeric where id = ${lineId}`
+    return await freshState(rid, line.recipe_id)
+  } catch (e) {
+    return fail(e)
+  }
+}
+
 export async function updateLineQty(lineId: string, qty: string): Promise<RecipeMutationResult> {
   try {
     if (!UUID.test(lineId)) throw new RecipeError('Malformed line id')
