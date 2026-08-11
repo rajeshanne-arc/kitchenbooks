@@ -1100,3 +1100,31 @@ second is the smaller change and matches the precedent. Not decided here.
 
 Casual labour's department is OPTIONAL — blank means the whole place, which
 is a real answer for a day's unloading, not a missing one.
+
+## Casual labour paid from the drawer — one payment, one record
+
+`cash_vouchers.is_casual_labour` (migration `casual_labour_voucher_flag`).
+
+**The drawer reconciles against reality, and reality is ONE payment.**
+Requiring both a voucher and a `casual_labour` row for the same ₹800 is
+double entry with nothing checking the halves — the same fault removed from
+owner reimbursements. One payment, one record, read twice.
+`is_stock_purchase` set this precedent, so the shape is one the cashier
+already knows rather than a new idea.
+
+**`pnl_monthly.casual_labour` now has TWO SOURCES** — the `casual_labour`
+table UNION cash vouchers flagged `is_casual_labour`. **This is a standing
+risk and both sides carry a comment saying so:** a total fed from two places
+can silently halve when either changes, and neither TypeScript nor the
+schema gate would notice, because both sides would still be valid SQL over
+existing columns.
+
+**So `npm run smoke:a2` asserts the money MOVES**, not that the column
+exists: a flagged voucher must shift `pnl_monthly.casual_labour` by its
+amount, and an unflagged one must not shift it at all. The negative case is
+the one that catches a broken `WHERE`. Both run inside a transaction that
+deliberately rolls back — the only way to prove money reaches a total is to
+move some.
+
+The casual-labour form still refuses till cash, but no longer as a dead end:
+it names the voucher question that does the job in one entry.

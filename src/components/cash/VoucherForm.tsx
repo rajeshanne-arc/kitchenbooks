@@ -31,6 +31,7 @@ export default function VoucherForm({
   const [category, setCategory] = useState(categories[0] ?? 'General')
   const [note, setNote] = useState('')
   const [isStockPurchase, setIsStockPurchase] = useState(false)
+  const [isCasualLabour, setIsCasualLabour] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveVoucherResult, { ok: true }> | null>(null)
@@ -57,6 +58,7 @@ export default function VoucherForm({
         category: category.trim(),
         note: note.trim(),
         isStockPurchase,
+        isCasualLabour,
       })
       if (res.ok) setSaved(res)
       else setError(res.error)
@@ -227,6 +229,39 @@ export default function VoucherForm({
         <p className="mt-2 text-xs text-stone-600">
           Vegetables from the market, ice, a forgotten ingredient — anything the kitchen will cook. Saying yes
           keeps it inside food cost; saying no leaves it as an operating expense.
+        </p>
+      </div>
+
+      {/* Same shape as the question above, and the same reason: one payment,
+          one record, read twice. A day hand paid Rs 800 from the till is a
+          voucher — the drawer must see it — AND labour, which the P&L must
+          see. Ticking this is what makes the second true, instead of asking
+          for a casual_labour row nothing reconciles against. */}
+      <div className="mt-3 rounded-xl border border-amber-300 bg-field p-3">
+        <span className="text-[15px] font-medium text-stone-900">Was this a day hand&apos;s wages?</span>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {[
+            { v: false, label: 'No' },
+            { v: true, label: 'Yes — casual labour' },
+          ].map((o) => (
+            <button
+              key={String(o.v)}
+              type="button"
+              aria-pressed={isCasualLabour === o.v}
+              onClick={() => setIsCasualLabour(o.v)}
+              className={`min-h-[44px] rounded-xl border px-3 text-sm font-medium ${
+                isCasualLabour === o.v
+                  ? 'border-emerald-700 bg-emerald-700 text-white'
+                  : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-stone-600">
+          Unloading, dishwashing, an extra pair of hands for the evening. Saying yes puts it on the P&amp;L&apos;s
+          labour line without a second entry anywhere.
         </p>
       </div>
       <datalist id="kb-owner-names">

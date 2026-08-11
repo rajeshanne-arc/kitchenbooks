@@ -51,16 +51,16 @@ async function main() {
 
   // ---- 3. D1: cashier voucher + owner voucher + other income
   const vCashier = await saveVoucher({
-    date: D1, amount: '300', paidTo: 'Zz Veg Vendor', paidBy: 'cashier', ownerName: '', category: 'general', note: 'zz cash smoke', isStockPurchase: false })
+    date: D1, amount: '300', paidTo: 'Zz Veg Vendor', paidBy: 'cashier', ownerName: '', category: 'general', note: 'zz cash smoke', isStockPurchase: false, isCasualLabour: false })
   assert.ok(vCashier.ok, `cashier voucher failed: ${vCashier.ok === false ? vCashier.error : ''}`)
   const vOwner = await saveVoucher({
-    date: D1, amount: '1000', paidTo: 'Zz Gas Agency', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'gas', note: '', isStockPurchase: false })
+    date: D1, amount: '1000', paidTo: 'Zz Gas Agency', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'gas', note: '', isStockPurchase: false, isCasualLabour: false })
   assert.ok(vOwner.ok, `owner voucher failed: ${vOwner.ok === false ? vOwner.error : ''}`)
   assert.equal(vOwner.voucher.owner_name, 'Zz Asheel')
 
-  const noName = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: '', category: 'general', note: '', isStockPurchase: false })
+  const noName = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: '', category: 'general', note: '', isStockPurchase: false, isCasualLabour: false })
   assert.ok(!noName.ok && /which owner/i.test(noName.error))
-  const ownerReimb = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'owner_reimbursement', note: '', isStockPurchase: false })
+  const ownerReimb = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false })
   assert.ok(!ownerReimb.ok && /cashier/i.test(ownerReimb.error), 'owner-paid reimbursement is nonsense — must refuse')
 
   const oil = await saveOtherIncome({
@@ -139,7 +139,7 @@ async function main() {
   assert.ok(owed1, 'Zz Asheel must appear in owners_owed')
   assert.equal(Number(owed1.balance), 1000)
   const reimb = await saveVoucher({
-    date: '2001-02-05', amount: '400', paidTo: 'Zz Asheel', paidBy: 'cashier', ownerName: '', category: 'owner_reimbursement', note: '', isStockPurchase: false })
+    date: '2001-02-05', amount: '400', paidTo: 'Zz Asheel', paidBy: 'cashier', ownerName: '', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false })
   assert.ok(reimb.ok, `reimbursement voucher failed: ${reimb.ok === false ? reimb.error : ''}`)
   const owed2 = (await getOwnersOwed(rid)).find((o) => o.person === 'Zz Asheel')
   assert.ok(owed2)

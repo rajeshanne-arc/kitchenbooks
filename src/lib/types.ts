@@ -920,6 +920,12 @@ export type SaveVoucherInput = {
    *  understated cost, overstated margin, and nothing on screen looks wrong.
    *  This flag is what lets those vouchers be found and counted. */
   isStockPurchase: boolean
+  /** Drawer-paid casual labour. The drawer reconciles against reality, and
+   *  reality is ONE payment — requiring both a voucher and a casual_labour
+   *  row for the same Rs 800 is double entry with nothing checking the
+   *  halves. pnl_monthly's casual_labour line UNIONs flagged vouchers with
+   *  the casual_labour table; changing either side changes that total. */
+  isCasualLabour: boolean
 }
 
 export type SaveVoucherResult = { ok: true; voucher: VoucherRow } | { ok: false; error: string }

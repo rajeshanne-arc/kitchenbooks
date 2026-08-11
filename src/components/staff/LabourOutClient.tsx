@@ -7,8 +7,13 @@
 // THE DRAWER RULE, and it is checkable rather than a habit:
 // day_close_ladder reads cash_vouchers and does NOT read either of these
 // tables. Money paid out of the till and recorded only here would leave the
-// drawer short at close with nothing to explain it. So till cash is refused
-// by name, exactly as on an expense, and the form says where it belongs.
+// drawer short at close with nothing to explain it.
+//
+// So till cash is refused here — but it is no longer a dead end. A drawer-
+// paid day hand is ONE payment, so it is ONE record: a cash voucher with
+// is_casual_labour ticked, which the drawer sees and which pnl_monthly's
+// casual_labour line UNIONs in. Asking for both a voucher and a row here
+// would be double entry with nothing checking the halves.
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -42,8 +47,9 @@ const clean = (s: string) => s.replace(/[^\d.]/g, '')
 function DrawerNote() {
   return (
     <p className="mt-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
-      Paid from the drawer? That is a Cash Voucher — record it on the Cash page, where the day&apos;s ladder can
-      see it. Recorded here alone, the till would come up short at close with nothing to explain it.
+      Paid from the drawer? Record it as a Cash Voucher on the Cash page and answer{' '}
+      <span className="font-medium">&ldquo;was this a day hand&apos;s wages?&rdquo;</span> — that puts it on the
+      drawer AND on the labour line from one entry. This form is for labour paid any other way.
     </p>
   )
 }

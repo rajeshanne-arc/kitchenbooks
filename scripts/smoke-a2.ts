@@ -5,8 +5,11 @@
 //      the same direction and nothing on screen would look odd.
 //   2. every new read query executed against the REAL database. A query that
 //      typechecks can still name a column that does not exist; only running
-//      it proves otherwise. All of these are read-only — this script writes
-//      nothing and is safe against live data.
+//      it proves otherwise.
+//   3. that a cash voucher flagged as casual labour actually MOVES the P&L
+//      labour line. That one writes — inside a transaction it deliberately
+//      rolls back, so nothing is left behind — because the only way to prove
+//      money reaches a total is to move some.
 //
 // Run: npm run smoke:a2   (exit 1 on any failure)
 
@@ -158,6 +161,73 @@ async function main() {
       assert.ok(Number(r.last_amount) > 0, 'an offered category must have had money last month')
       assert.equal(typeof r.done_this_month, 'boolean')
     }
+  })
+
+  /* ── 2b. the labour line has TWO sources ──────────────────────────── */
+  //
+  // pnl_monthly.casual_labour UNIONs the casual_labour table with cash
+  // vouchers flagged is_casual_labour. A total fed from two places can
+  // silently halve when either side changes, and neither a type check nor
+  // a column-exists check would notice — so this asserts the MONEY MOVES,
+  // inside a transaction that rolls back so nothing is left behind.
+  console.log('\na flagged voucher reaches the P&L labour line')
+
+  const { sql } = await import('../src/lib/db')
+
+  await check('a cash voucher flagged as casual labour lands on pnl_monthly.casual_labour', async () => {
+    const month = `${new Date().toISOString().slice(0, 7)}-01`
+    let before = 0
+    let after = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [b] = await tx<{ v: string }[]>`
+          select coalesce(casual_labour, 0)::text as v from pnl_monthly
+          where restaurant_id = ${rid} and month = ${month}::date`
+        before = Number(b?.v ?? 0)
+        await tx`
+          insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by,
+                                     category, entered_by, is_casual_labour)
+          values (${rid}, ${month}::date, 800, 'Zz gate probe', 'cashier', 'general', 'gate', true)`
+        const [a] = await tx<{ v: string }[]>`
+          select coalesce(casual_labour, 0)::text as v from pnl_monthly
+          where restaurant_id = ${rid} and month = ${month}::date`
+        after = Number(a?.v ?? 0)
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(
+      after - before,
+      800,
+      `a flagged voucher must move the labour line by its amount — the UNION in pnl_monthly's cas CTE is broken (before ${before}, after ${after})`,
+    )
+  })
+
+  await check('an UNflagged voucher does NOT touch the labour line', async () => {
+    const month = `${new Date().toISOString().slice(0, 7)}-01`
+    let before = 0
+    let after = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [b] = await tx<{ v: string }[]>`
+          select coalesce(casual_labour, 0)::text as v from pnl_monthly
+          where restaurant_id = ${rid} and month = ${month}::date`
+        before = Number(b?.v ?? 0)
+        await tx`
+          insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by,
+                                     category, entered_by, is_casual_labour)
+          values (${rid}, ${month}::date, 800, 'Zz gate probe', 'cashier', 'general', 'gate', false)`
+        const [a] = await tx<{ v: string }[]>`
+          select coalesce(casual_labour, 0)::text as v from pnl_monthly
+          where restaurant_id = ${rid} and month = ${month}::date`
+        after = Number(a?.v ?? 0)
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(after - before, 0, 'an ordinary voucher must not reach the labour line')
   })
 
   /* ── 3. the return path's list is real ────────────────────────────── */
