@@ -190,6 +190,13 @@ export default async function PnlPage() {
               Staff food is its own line, OUTSIDE cost of goods — it is fed to the staff, not sold. A dash means
               the view could not state that figure, never that it is zero.
             </p>
+            <p className="mt-1 text-xs text-stone-500">
+              <span className="font-medium">Purchases</span> includes cash vouchers marked as stock — a market
+              run paid from the drawer. Those reach cost of goods but never become inventory: no vendor, no
+              item lines, so they are absent from stock on hand and from reorder.{' '}
+              <span className="font-medium">Labour</span> likewise includes vouchers marked as a day
+              hand&apos;s wages.
+            </p>
             <p className="mt-1 text-xs text-stone-400">
               Net is before purchase-time overheads — not a statutory P&amp;L.
             </p>

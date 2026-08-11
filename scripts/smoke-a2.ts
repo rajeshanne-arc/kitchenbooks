@@ -230,6 +230,53 @@ async function main() {
     assert.equal(after - before, 0, 'an ordinary voucher must not reach the labour line')
   })
 
+  /* ── 2c. flagged vouchers reach COGS ──────────────────────────────── */
+  //
+  // pnl_monthly.purchases UNIONs the purchases table with cash vouchers
+  // flagged is_stock_purchase, so a market run paid from the drawer lands
+  // inside cost of goods. Same two-source risk as the labour line, so the
+  // same discipline: assert the money MOVES, and that an unflagged voucher
+  // does not move it.
+  console.log('\na flagged voucher reaches COGS')
+
+  const cogsProbe = async (flagged: boolean): Promise<number> => {
+    const month = `${new Date().toISOString().slice(0, 7)}-01`
+    let before = 0
+    let after = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [b] = await tx<{ v: string }[]>`
+          select coalesce(cogs, 0)::text as v from pnl_monthly
+          where restaurant_id = ${rid} and month = ${month}::date`
+        before = Number(b?.v ?? 0)
+        await tx`
+          insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by,
+                                     category, entered_by, is_stock_purchase)
+          values (${rid}, ${month}::date, 400, 'Zz market run', 'cashier', 'general', 'gate', ${flagged})`
+        const [a] = await tx<{ v: string }[]>`
+          select coalesce(cogs, 0)::text as v from pnl_monthly
+          where restaurant_id = ${rid} and month = ${month}::date`
+        after = Number(a?.v ?? 0)
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    return after - before
+  }
+
+  await check('a voucher flagged as a stock purchase moves COGS by its amount', async () => {
+    assert.equal(
+      await cogsProbe(true),
+      400,
+      "the UNION in pnl_monthly's pur CTE is broken — drawer-paid goods are outside cost of goods again",
+    )
+  })
+
+  await check('an UNflagged voucher does NOT move COGS', async () => {
+    assert.equal(await cogsProbe(false), 0, 'an ordinary voucher must not reach cost of goods')
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

@@ -228,8 +228,16 @@ export default function VoucherForm({
         </div>
         <p className="mt-2 text-xs text-stone-600">
           Vegetables from the market, ice, a forgotten ingredient — anything the kitchen will cook. Saying yes
-          keeps it inside food cost; saying no leaves it as an operating expense.
+          puts it inside cost of goods; saying no leaves it as an operating expense.
         </p>
+        {isStockPurchase && (
+          <p className="mt-2 rounded-lg border border-rule bg-cell px-2.5 py-2 text-xs text-stone-600">
+            <span className="font-medium">The money counts, the stock does not.</span> This reaches cost of
+            goods, but with no vendor and no item lines it never becomes inventory — it will not show in stock
+            on hand, will not trigger a reorder, and will not appear in slow-moving. If this needs to be
+            tracked as stock, enter it as a purchase bill instead.
+          </p>
+        )}
       </div>
 
       {/* Same shape as the question above, and the same reason: one payment,

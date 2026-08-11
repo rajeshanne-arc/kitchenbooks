@@ -1128,3 +1128,43 @@ move some.
 
 The casual-labour form still refuses till cash, but no longer as a dead end:
 it names the voucher question that does the job in one entry.
+
+## Drawer-paid stock reaches COGS — and why UNIONing is correct here
+
+`is_stock_purchase` recorded the intent and nothing carried it into the sum,
+so vegetable money sat outside cost of goods entirely. The same unfinished
+shape as the casual-labour flag, one commit earlier: **a flag that records
+an intention is not the same as a journey completed, and the second commit
+is the one that matters.**
+
+**Why UNIONing flagged vouchers into `purchases` is CORRECT, not a fudge.**
+COGS = opening + purchases − closing, and the CLOSING side is a PHYSICAL
+COUNT — `store_stock_by_month` reads `stock_counts × stock_count_lines`, not
+`stock_on_hand`. So:
+
+- vegetables consumed → not on the shelf → closing unchanged → COGS
+  correctly carries the cost;
+- vegetables still there → the counter counts them → closing rises too →
+  COGS nets back out.
+
+Either way the arithmetic lands right. It would NOT if closing came from
+`stock_on_hand`, where these goods never appear — COGS would be permanently
+overstated. **Read which side of a subtraction is measured and which is
+derived before deciding a UNION is safe.**
+
+**The rejected option:** making a flagged voucher write a real `purchases`
+row. It demands a vendor and item lines for a ₹400 market run at 6am, buys
+nothing COGS does not already get right, and would help inventory *badly* —
+approximate lines typed under pressure create ghost stock the physical count
+then contradicts.
+
+**The limitation is on screen, twice** — on the voucher form when the flag
+is ticked, and on the P&L under the table. The money counts, the stock does
+not: no vendor, no item lines, so these goods never reach `stock_on_hand`,
+never trigger a reorder, and never appear in slow-moving. If something needs
+tracking as stock, it is a purchase bill.
+
+`pnl_monthly` now has TWO two-source totals — `purchases` and
+`casual_labour`. Both CTEs name their other half in a comment, and
+`smoke:a2` asserts each moves by the flagged amount and does not move on an
+unflagged voucher.
