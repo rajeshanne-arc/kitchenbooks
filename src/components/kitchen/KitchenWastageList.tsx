@@ -40,7 +40,7 @@ export default function KitchenWastageList({ rows }: { rows: KitchenWastageRow[]
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-stone-500">Nothing yet. May it stay that way.</p>
       ) : (
-        <ul className="mt-2 divide-y divide-stone-100">
+        <ul className="mt-2 divide-y divide-rule-soft">
           {rows.map((w) => (
             <li key={w.id} className={`flex items-center justify-between gap-3 py-2 ${w.is_reversal ? 'opacity-60' : ''}`}>
               <span className="min-w-0">

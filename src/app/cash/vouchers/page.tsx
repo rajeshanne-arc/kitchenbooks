@@ -7,7 +7,7 @@ import GroupTabs from '@/components/GroupTabs'
 import VoucherForm from '@/components/cash/VoucherForm'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,8 +25,8 @@ export default async function VouchersPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Vouchers</h1>
-        <p className="mt-0.5 text-sm text-stone-400">money out of the drawer — or out of an owner’s pocket</p>
+        <h1 className={pageTitleCls}>Vouchers</h1>
+        <p className={pageSubCls}>money out of the drawer — or out of an owner’s pocket</p>
       </header>
       <GroupTabs group="cashier" />
 
@@ -39,7 +39,7 @@ export default async function VouchersPage() {
               <h2 className={sectionHeadCls}>This month by category</h2>
               <span className="text-xs text-stone-400">cashier-paid only</span>
             </div>
-            <ul className="mt-1 divide-y divide-stone-100">
+            <ul className="mt-1 divide-y divide-rule-soft">
               {byCategory.map((c) => (
                 <li key={c.category} className="flex items-center justify-between gap-3 py-2">
                   <span className="text-sm text-stone-900">
@@ -74,7 +74,7 @@ export default async function VouchersPage() {
           {vouchers.length === 0 ? (
             <p className="mt-2 text-sm text-stone-500">Nothing yet.</p>
           ) : (
-            <ul className="mt-1 divide-y divide-stone-100">
+            <ul className="mt-1 divide-y divide-rule-soft">
               {vouchers.map((v) => (
                 <li key={v.id} className="flex items-center justify-between gap-3 py-2">
                   <span className="min-w-0">

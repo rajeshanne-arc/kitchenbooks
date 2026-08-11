@@ -75,7 +75,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
       {payments.length > 0 && (
         <section className={cardCls}>
           <h3 className={sectionHeadCls}>Payments</h3>
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {payments.map((p) => (
               <li key={p.id} className="flex items-center justify-between gap-3 py-2.5">
                 <div className="min-w-0">

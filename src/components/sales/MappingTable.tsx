@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation'
 import type { DishOption, PosMapRow, UnmappedPosItem } from '@/lib/types'
 import { mapPosItem } from '@/server/sales-actions'
 import { formatMoneyString } from '@/lib/money'
-import { selectCls } from '@/components/ui'
+import { sectionHeadCls, selectCls } from '@/components/ui'
 
 function DishSelect({
   dishes,
@@ -87,7 +87,7 @@ export default function MappingTable({
   return (
     <div className="mt-4 space-y-6">
       <section>
-        <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">
+        <h2 className={sectionHeadCls}>
           Unmapped · biggest money first
         </h2>
         {unmapped.length === 0 ? (
@@ -95,7 +95,7 @@ export default function MappingTable({
             Everything sold so far is mapped — the sections page is telling the whole truth.
           </p>
         ) : (
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {unmapped.map((u) => (
               <li key={u.pos_item_id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
                 <span className="min-w-0">
@@ -127,8 +127,8 @@ export default function MappingTable({
 
       {mapped.length > 0 && (
         <section>
-          <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Mapped</h2>
-          <ul className="mt-1 divide-y divide-stone-100">
+          <h2 className={sectionHeadCls}>Mapped</h2>
+          <ul className="mt-1 divide-y divide-rule-soft">
             {mapped.map((m) => (
               <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
                 <span className="min-w-0">

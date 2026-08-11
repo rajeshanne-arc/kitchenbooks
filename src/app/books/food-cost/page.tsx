@@ -2,7 +2,8 @@ import { getRestaurant } from '@/server/queries'
 import { getFoodCost } from '@/server/kitchen-queries'
 import { monthStartIST } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
-import { cardCls } from '@/components/ui'
+import { cardCls, sectionHeadCls } from '@/components/ui'
+import Honesty, { HonestyPill } from '@/components/Honesty'
 import type { FoodCostRow } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -10,13 +11,7 @@ export const dynamic = 'force-dynamic'
 const monthLabel = (monthStart: string) =>
   new Date(`${monthStart}T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
 
-function Pending() {
-  return (
-    <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-      pending closing
-    </span>
-  )
-}
+const Pending = () => <HonestyPill>pending closing</HonestyPill>
 
 function Row({ r }: { r: FoodCostRow }) {
   const quiet = !r.has_activity
@@ -67,14 +62,29 @@ export default async function FoodCostPage() {
   const restaurant = await getRestaurant()
   const monthStart = monthStartIST()
   const rows = await getFoodCost(restaurant.id, monthStart)
+  const live = rows.filter((r) => r.has_activity)
+  const closed = live.filter((r) => r.consumed_total !== null).length
 
   return (
     <section className={`${cardCls} mt-4`}>
       <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">{monthLabel(monthStart)}</h2>
+        <h2 className={sectionHeadCls}>{monthLabel(monthStart)}</h2>
         <span className="text-xs text-stone-400">opening + issued − closing · section_food_cost</span>
       </div>
-      <ul className="mt-2 divide-y divide-stone-100">
+      {closed < live.length && (
+        <div className="mt-3">
+          <Honesty
+            verdict="incomplete"
+            meter={{ filled: closed, total: live.length, unit: 'sections closed' }}
+            action={{ href: '/kitchen/closing', label: 'File a closing' }}
+          >
+            {live.length - closed} of {live.length} sections {live.length - closed === 1 ? 'has' : 'have'} not
+            filed a closing for {monthLabel(monthStart)}. Until they do, the consumption below is incomplete —
+            not low.
+          </Honesty>
+        </div>
+      )}
+      <ul className="mt-2 divide-y divide-rule-soft">
         {rows.map((r) => (
           <Row key={r.section_code} r={r} />
         ))}

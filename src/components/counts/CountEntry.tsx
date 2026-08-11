@@ -11,17 +11,17 @@ import type { CountableItem, SaveCountResult } from '@/lib/types'
 import { saveCount } from '@/server/counts-actions'
 import { decimalStringToPaise, formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
-import { cardCls, fieldLabelCls, inputCls, numCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
 import { useLang } from '@/components/useLang'
+import Honesty from '@/components/Honesty'
 
 export function FirstCountWarning({ days }: { days: number }) {
   if (days >= 14) return null
   return (
-    <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-      <span className="font-semibold">Book stock has only {days} {days === 1 ? 'day' : 'days'} of consumption behind
-      it</span>{' '}
-      — a variance now will mostly measure missing bills, not theft. Count anyway; just read it accordingly.
-    </div>
+    <Honesty verdict="thin history" meter={{ filled: days, total: 14, unit: 'days of consumption on the book' }}>
+      Book stock has only {days} {days === 1 ? 'day' : 'days'} of consumption behind it. A variance today will
+      mostly measure bills that were never entered, not theft. Count anyway — just read the result that way.
+    </Honesty>
   )
 }
 
@@ -70,7 +70,7 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
       <div className="space-y-4">
         <section className={cardCls}>
           <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">
+            <h2 className={sectionHeadCls}>
               Counted — {fmtDate(saved.count.count_date)}
             </h2>
             <span className="text-xs text-stone-400">frozen at save · count_variances</span>
@@ -85,7 +85,7 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
           <div className="mt-3">
             <FirstCountWarning days={saved.historyDays} />
           </div>
-          <ul className="mt-2 divide-y divide-stone-100">
+          <ul className="mt-2 divide-y divide-rule-soft">
             {saved.variances.map((v) => {
               const neg = decimalStringToPaise(v.variance_value) < 0
               return (
@@ -140,7 +140,7 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
           Stock order — richest shelf first. Leave blank what you did not count; type 0 for an empty shelf, it is
           information. Book quantities stay hidden until the save — the count is blind on purpose.
         </p>
-        <ul className="mt-2 divide-y divide-stone-100">
+        <ul className="mt-2 divide-y divide-rule-soft">
           {visible.map((i) => {
             const v = qtys[i.id] ?? ''
             const bad = v.trim() !== '' && parseQty(v.trim()) === null

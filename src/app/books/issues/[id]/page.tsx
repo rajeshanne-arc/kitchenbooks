@@ -68,7 +68,7 @@ export default async function IssueDetailPage({ params }: { params: Promise<{ id
 
         <div className="mt-4 border-t border-stone-100 pt-3">
           <h3 className={sectionHeadCls}>Lines</h3>
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {lines.map((l) => (
               <li key={l.id} className="flex items-center justify-between gap-3 py-2.5">
                 <div className="min-w-0">

@@ -1,22 +1,276 @@
 @import "tailwindcss";
 
+/* ===========================================================================
+   The palette is a legend, not a mood.
+   ---------------------------------------------------------------------------
+   These are the real values, extracted from Rajesh's live Sales day-close
+   form — the sheet his staff have typed into every day for months. In that
+   sheet the fill carries meaning: pale-cream cells are where you type, white
+   cells are what the sheet worked out, grey is locked. This app keeps that
+   legend, which is why the page ground is grey and the INPUTS are cream — the
+   inverse of the usual white-field-on-grey-page web habit. Do not "fix" it.
+
+     ground  #EFF3F7   the page              -> --color-paper
+     cell    #FFFFFF   what the app worked out
+     cream   #FFFBEA   YOU TYPE HERE         -> --color-field
+     stone   #F3F1EC   header bands, chips   -> stone-100
+     line    #E2DFD6   gridline              -> --color-rule
+     muted   #8A8578   meta text             -> stone-400
+     navy    #233043   body text             -> --color-ink
+     ink     #1A2332   headings and figures  -> --color-ink-strong
+     green   #2F6B47   primary               -> --color-ledger
+     gold    #C8A951   the doubt accent      -> --color-gold
+     red     #9B2C2C   wrong or missing      -> alarm
+
+   The ten named values above are the palette. Every other step in the ramps
+   below is derived from them by lightening or darkening — nothing else was
+   invented. Note the cream is PALE (#FFFBEA): that exact tint is the one the
+   staff have been typing into, and it is why the field border and the doubt
+   hatch are gold rather than a deeper cream.
+
+   Tailwind's own `stone / emerald / amber / red / violet / sky` scales are
+   RE-POINTED at these ramps below, so the whole app speaks the palette
+   without 1,900 class edits. `emerald-700` is the green, not emerald;
+   `amber-*` is the gold/doubt family; `stone-*` runs cool navy at the dark
+   end and warm paper at the light end, exactly as the sheet does. New code
+   should prefer the semantic names (bg-field, text-doubt, border-rule).
+   =========================================================================== */
+
+@theme {
+  /* --- semantic: reach for these first --------------------------------- */
+  --color-paper: #eff3f7;
+  --color-cell: #ffffff;
+  --color-field: #fffbea;
+  --color-field-edge: #efe0ae;
+  --color-rule: #e2dfd6;
+  --color-rule-soft: #edebe4;
+  --color-ink: #233043;
+  --color-ink-soft: #6e6a5e;
+  --color-ink-strong: #1a2332;
+  --color-ledger: #2f6b47;
+  --color-ledger-tint: #d6e5dc;
+  --color-gold: #c8a951;
+  --color-doubt: #63501f;
+  --color-doubt-tint: #fffbea;
+  --color-alarm: #8a2727;
+  --color-alarm-tint: #f2d9d9;
+
+  /* --- neutrals: navy ink at the top, warm paper at the bottom ---------- */
+  --color-stone-50: #f8f7f2;
+  --color-stone-100: #f3f1ec;
+  --color-stone-200: #e2dfd6;
+  --color-stone-300: #cfcbbe;
+  --color-stone-400: #8a8578;
+  --color-stone-500: #6e6a5e;
+  --color-stone-600: #4e5359;
+  --color-stone-700: #354052;
+  --color-stone-800: #233043;
+  --color-stone-900: #1a2332;
+  --color-stone-950: #121a26;
+
+  /* --- the green (re-points emerald-*) ---------------------------------- */
+  --color-emerald-50: #eef4f0;
+  --color-emerald-100: #d6e5dc;
+  --color-emerald-200: #aecbb9;
+  --color-emerald-300: #86b196;
+  --color-emerald-400: #5e9673;
+  --color-emerald-500: #3f7f58;
+  --color-emerald-600: #37744f;
+  --color-emerald-700: #2f6b47;
+  --color-emerald-800: #275a3c;
+  --color-emerald-900: #1e4630;
+
+  /* --- the gold, which carries doubt (re-points amber-*) ---------------- */
+  --color-amber-50: #fffdf4;
+  --color-amber-100: #fffbea;
+  --color-amber-200: #efe0ae;
+  --color-amber-300: #dfc97f;
+  --color-amber-400: #c8a951;
+  --color-amber-500: #b08f3c;
+  --color-amber-600: #96792f;
+  --color-amber-700: #7b6326;
+  --color-amber-800: #63501f;
+  --color-amber-900: #4c3e18;
+
+  /* --- alarm (re-points red-*) ------------------------------------------ */
+  --color-red-50: #fbf1f1;
+  --color-red-100: #f2d9d9;
+  --color-red-200: #e0afaf;
+  --color-red-300: #ce8585;
+  --color-red-400: #bc5b5b;
+  --color-red-500: #a93b3b;
+  --color-red-600: #9b2c2c;
+  --color-red-700: #8a2727;
+  --color-red-800: #742121;
+  --color-red-900: #5a1919;
+
+  /* --- the two badge accents, derived from navy and from red ------------ */
+  --color-violet-50: #f5f1f4;
+  --color-violet-100: #e7dde5;
+  --color-violet-200: #cdb8c8;
+  --color-violet-300: #b294ab;
+  --color-violet-700: #6b4a62;
+  --color-violet-800: #4e3348;
+  --color-sky-50: #eef2f6;
+  --color-sky-100: #dce3ec;
+  --color-sky-200: #bac6d6;
+  --color-sky-300: #97aabf;
+  --color-sky-500: #52678a;
+  --color-sky-600: #445771;
+  --color-sky-700: #3a495f;
+  --color-sky-800: #233043;
+  --color-sky-900: #1a2332;
+
+  /* --- a sheet has gridlines, not drop shadows -------------------------- */
+  --radius-md: 0.25rem;
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.625rem;
+  --shadow-sm: 0 1px 0 0 rgb(26 35 50 / 0.05);
+  --shadow-lg: 0 8px 28px -8px rgb(26 35 50 / 0.24), 0 1px 0 0 rgb(26 35 50 / 0.07);
+}
+
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-plex-sans), var(--font-telugu), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
+  --font-display: var(--font-archivo), var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
-html {
-  /* the app is deliberately light-only; keep form controls light on dark-mode phones */
-  color-scheme: light;
+@layer base {
+  html {
+    /* the app is deliberately light-only; keep form controls light on dark-mode phones */
+    color-scheme: light;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-synthesis-weight: none;
+  }
+
+  /* Money and counts line up in columns or they are not a ledger. */
+  .tabular-nums,
+  code,
+  kbd,
+  samp,
+  pre {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Cream means type here — including the inputs that never learned the
+     shared classes in components/ui.ts. */
+  input:where(:not([type="checkbox"], [type="radio"], [type="submit"], [type="button"], [type="file"])),
+  select,
+  textarea {
+    background-color: var(--color-field);
+  }
+
+  /* Locked, not yours: the sheet greys out what you cannot change. */
+  input:disabled,
+  select:disabled,
+  textarea:disabled,
+  input[readonly],
+  textarea[readonly] {
+    background-color: var(--color-paper);
+    color: var(--color-ink-soft);
+  }
+
+  /* iOS renders empty date inputs collapsed; keep a stable height */
+  input[type="date"] {
+    min-height: 2.55rem;
+  }
+
+  /* Every interactive thing answers the keyboard. */
+  :focus-visible {
+    outline: 2px solid var(--color-ledger);
+    outline-offset: 1px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background: var(--color-field-edge);
+    color: var(--color-ink-strong);
+  }
 }
 
-body {
-  background: var(--color-stone-100);
-  color: var(--color-stone-900);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+/* ---------------------------------------------------------------------------
+   The honesty hatch.
+   Hatching is how a drawing says "provisional". Every number in this app that
+   rests on data which has not all arrived wears it, so doubt is legible from
+   across the kitchen before a word is read.
+   ------------------------------------------------------------------------ */
+
+/* Pending is the common case — it must be legible from across the kitchen and
+   still quieter than the figure it qualifies, so its stripe is a hairline. */
+@utility hatch {
+  background-color: var(--color-doubt-tint);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-field-edge) 0 1px,
+    transparent 1px 8px
+  );
 }
 
-/* iOS renders empty date inputs collapsed; keep a stable height */
-input[type="date"] {
-  min-height: 2.55rem;
+/* Alarm is rare and allowed to be loud — negative is never softened here. */
+@utility hatch-alarm {
+  background-color: var(--color-alarm-tint);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-red-200) 0 1.5px,
+    transparent 1.5px 7px
+  );
+}
+
+/* A doubtful figure, hatched underneath — the doubt survives without the sentence. */
+@utility doubted {
+  padding-bottom: 0.2em;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-amber-400) 0 1px,
+    transparent 1px 4px
+  );
+  background-size: 100% 0.3em;
+  background-position: 0 100%;
+  background-repeat: repeat-x;
+}
+
+@utility doubted-alarm {
+  padding-bottom: 0.2em;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-red-300) 0 1px,
+    transparent 1px 4px
+  );
+  background-size: 100% 0.3em;
+  background-position: 0 100%;
+  background-repeat: repeat-x;
+}
+
+/* The one animated moment in the app: the coverage meter fills, cell by cell. */
+@keyframes kb-cell-in {
+  from {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility cell-in {
+  animation: kb-cell-in 220ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

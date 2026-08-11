@@ -9,7 +9,7 @@ import type { SaveOtherIncomeResult, Unit } from '@/lib/types'
 import { saveOtherIncome } from '@/server/cash-actions'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
-import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 
 export default function OtherIncomeForm({
   units,
@@ -83,7 +83,7 @@ export default function OtherIncomeForm({
     const i = saved.income
     return (
       <section className={cardCls}>
-        <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Income recorded</h2>
+        <h2 className={sectionHeadCls}>Income recorded</h2>
         <p className="mt-2 text-2xl font-bold tabular-nums text-stone-900">{formatMoneyString(i.amount)}</p>
         <p className="mt-1 text-[15px] text-stone-900">
           {i.item}
@@ -112,7 +112,7 @@ export default function OtherIncomeForm({
 
   return (
     <section className={cardCls}>
-      <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Other income</h2>
+      <h2 className={sectionHeadCls}>Other income</h2>
       <div className="mt-3 space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <label className="block">

@@ -47,7 +47,7 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
           )}
         </div>
       ) : (
-        <ul className="mt-2 divide-y divide-stone-100">
+        <ul className="mt-2 divide-y divide-rule-soft">
           {vendors.map((v) => {
             const balP = decimalStringToPaise(v.balance)
             return (

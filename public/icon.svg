@@ -1,5 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#047857"/>
-  <text x="256" y="316" font-family="Georgia, 'Times New Roman', serif" font-size="220" font-weight="bold" fill="#fff" text-anchor="middle">KB</text>
-  <rect x="96" y="368" width="320" height="14" rx="7" fill="#a7f3d0"/>
+  <defs>
+    <pattern id="hatch" width="14" height="14" patternTransform="rotate(-45)" patternUnits="userSpaceOnUse">
+      <rect width="14" height="14" fill="#fffbea"/>
+      <rect width="3" height="14" fill="#c8a951"/>
+    </pattern>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="#2f6b47"/>
+  <text x="256" y="290" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="212" font-weight="700" letter-spacing="-6" fill="#fffbea" text-anchor="middle">KB</text>
+  <!-- the coverage meter: what is counted, and what is still owed -->
+  <g>
+    <rect x="136" y="356" width="72" height="52" rx="6" fill="#d6e5dc"/>
+    <rect x="220" y="356" width="72" height="52" rx="6" fill="#d6e5dc"/>
+    <rect x="304" y="356" width="72" height="52" rx="6" fill="url(#hatch)"/>
+  </g>
 </svg>

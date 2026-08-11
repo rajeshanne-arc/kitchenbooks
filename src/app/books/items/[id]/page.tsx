@@ -71,7 +71,7 @@ export default async function ItemDetailPage({ params }: { params: Promise<{ id:
         {history.length === 0 ? (
           <p className="mt-3 text-sm text-stone-500">No purchases yet — history starts with the first bill.</p>
         ) : (
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {history.map((h, idx) => (
               <li key={`${h.purchase_id}-${idx}`}>
                 <Link

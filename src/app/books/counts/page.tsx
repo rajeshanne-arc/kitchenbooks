@@ -35,7 +35,7 @@ export default async function CountsPage() {
             true even as stock moves on.
           </p>
         ) : (
-          <ul className="mt-2 divide-y divide-stone-100">
+          <ul className="mt-2 divide-y divide-rule-soft">
             {counts.map((c) => {
               const total = decimalStringToPaise(c.total_variance_value)
               return (

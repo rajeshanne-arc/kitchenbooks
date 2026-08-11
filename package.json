@@ -20,7 +20,8 @@
     "smoke:groups-cashier": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-groups-cashier.ts",
     "smoke:groups-owner": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-groups-owner.ts",
     "smoke:auth": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-auth.ts",
-    "smoke:dashboard": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-dashboard.ts"
+    "smoke:dashboard": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-dashboard.ts",
+    "audit:matrix": "NODE_OPTIONS='--conditions react-server' tsx scripts/audit-matrix.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

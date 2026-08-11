@@ -76,7 +76,7 @@ export default function TabsEditor({ initialTabs }: { initialTabs: Record<TabGro
               {busy === group ? 'Saving…' : 'Save order & labels'}
             </button>
           </div>
-          <ul className="mt-2 divide-y divide-stone-100">
+          <ul className="mt-2 divide-y divide-rule-soft">
             {tabs[group].map((t, i) => (
               <li key={t.key} className="flex items-center gap-2 py-1.5">
                 <span className="w-8 shrink-0 text-center font-mono text-[11px] text-stone-400">{i + 1}</span>

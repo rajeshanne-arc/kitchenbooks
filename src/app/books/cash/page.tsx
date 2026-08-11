@@ -42,7 +42,7 @@ export default async function BooksCashPage() {
               <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Counted</span>
               <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Diff</span>
             </div>
-            <ul className="divide-y divide-stone-100">
+            <ul className="divide-y divide-rule-soft">
               {ladder.map((d) => {
                 const diff = decimalStringToPaise(d.difference)
                 return (
@@ -98,7 +98,7 @@ export default async function BooksCashPage() {
             automatically and lands on that day’s ladder for free.
           </p>
         ) : (
-          <ul className="mt-2 divide-y divide-stone-100">
+          <ul className="mt-2 divide-y divide-rule-soft">
             {owners.map((o) => {
               const bal = decimalStringToPaise(o.balance)
               return (
@@ -128,7 +128,7 @@ export default async function BooksCashPage() {
         {vouchers.length === 0 ? (
           <p className="mt-3 text-sm text-stone-500">Nothing paid out yet.</p>
         ) : (
-          <ul className="mt-2 divide-y divide-stone-100">
+          <ul className="mt-2 divide-y divide-rule-soft">
             {vouchers.map((v) => (
               <li key={v.id} className="flex items-center justify-between gap-3 py-2">
                 <span className="min-w-0">
@@ -159,7 +159,7 @@ export default async function BooksCashPage() {
         {income.length === 0 ? (
           <p className="mt-3 text-sm text-stone-500">Nothing sold on the side yet — used oil will show up here.</p>
         ) : (
-          <ul className="mt-2 divide-y divide-stone-100">
+          <ul className="mt-2 divide-y divide-rule-soft">
             {income.map((i) => (
               <li key={i.id} className="flex items-center justify-between gap-3 py-2">
                 <span className="min-w-0">

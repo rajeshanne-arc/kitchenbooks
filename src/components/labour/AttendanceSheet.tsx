@@ -112,7 +112,7 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
         </div>
       ) : (
         <section className={cardCls}>
-          <ul className="divide-y divide-stone-100">
+          <ul className="divide-y divide-rule-soft">
             {sheet.map((r) => {
               const sel = selectionFor(r)
               const corrected = r.history.length > 1

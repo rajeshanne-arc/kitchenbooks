@@ -41,7 +41,7 @@ export default function ProductionList({ rows }: { rows: ProductionRow[] }) {
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-stone-500">Nothing recorded yet. A batch of gravy or dough goes here.</p>
       ) : (
-        <ul className="mt-1 divide-y divide-stone-100">
+        <ul className="mt-1 divide-y divide-rule-soft">
           {rows.map((r) => (
             <li key={r.id} className="flex items-center justify-between gap-3 py-2.5">
               <span className="min-w-0">

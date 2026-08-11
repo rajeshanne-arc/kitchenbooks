@@ -9,20 +9,25 @@ import { RetiredBadge } from '@/components/books/Badges'
 import SnapshotButton from '@/components/counts/SnapshotButton'
 import { fmtDate } from '@/lib/format'
 import { sectionHeadCls } from '@/components/ui'
+import { HonestyPill } from '@/components/Honesty'
+import { getSessionUser } from '@/server/current-user'
+import { canAccess } from '@/lib/roles'
 import type { DishCostRow } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
-function UncostedPill({ n }: { n: number }) {
-  return (
-    <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
-      {n} {n === 1 ? 'ingredient has' : 'ingredients have'} no cost yet — bill first
-    </span>
-  )
-}
+const UncostedPill = ({ n }: { n: number }) => (
+  <HonestyPill>
+    {n} {n === 1 ? 'ingredient has' : 'ingredients have'} no cost yet — bill first
+  </HonestyPill>
+)
 
 export default async function RecipesPage() {
   const restaurant = await getRestaurant()
+  // LAW 1: photographs are owner-only. A chef or manager reading this page
+  // must not SEE the section, not merely be refused when they click it.
+  const user = await getSessionUser()
+  const canPhotograph = user !== null && canAccess(user.role, '/books/snapshots')
   const [dishes, subs, sold, snapshots] = await Promise.all([
     listDishCosts(restaurant.id),
     listSubCosts(restaurant.id),
@@ -70,7 +75,7 @@ export default async function RecipesPage() {
               <h2 className={sectionHeadCls}>
                 {group.name} <span className="ml-1 font-mono text-[11px] text-stone-400">{code}</span>
               </h2>
-              <ul className="mt-1 divide-y divide-stone-100">
+              <ul className="mt-1 divide-y divide-rule-soft">
                 {group.rows.map((d) => (
                   <li key={d.recipe_id}>
                     <Link
@@ -117,7 +122,7 @@ export default async function RecipesPage() {
           {subs.length > 0 && (
             <div>
               <h2 className={sectionHeadCls}>Sub-recipes</h2>
-              <ul className="mt-1 divide-y divide-stone-100">
+              <ul className="mt-1 divide-y divide-rule-soft">
                 {subs.map((s) => (
                   <li key={s.recipe_id}>
                     <Link
@@ -159,6 +164,7 @@ export default async function RecipesPage() {
           )}
         </>
       )}
+      {canPhotograph && (
       <div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className={sectionHeadCls}>Photographs</h2>
@@ -169,7 +175,7 @@ export default async function RecipesPage() {
             None yet. Live costs rewrite history — a month-end photograph keeps what the menu cost that day.
           </p>
         ) : (
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {snapshots.map((s) => (
               <li key={s.snap_date}>
                 <Link
@@ -186,6 +192,7 @@ export default async function RecipesPage() {
           </ul>
         )}
       </div>
+      )}
 
       <p className="text-xs text-stone-400">
         Costed live at today’s weighted-average purchase costs · recipe_costs / dish_costs. No re-cost button exists —

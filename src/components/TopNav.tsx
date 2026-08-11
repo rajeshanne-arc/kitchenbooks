@@ -28,9 +28,12 @@ export default function TopNav({ user }: { user: NavUser | null }) {
   const links = user === null ? [] : navFor(user.role)
 
   return (
-    <header className="sticky top-0 z-40 border-b border-stone-200 bg-white/90 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-rule bg-cell/95 backdrop-blur">
       <div className="mx-auto flex h-12 max-w-2xl items-center justify-between gap-2 px-4 sm:px-6">
-        <Link href="/" className="shrink-0 text-[15px] font-bold tracking-tight text-emerald-800">
+        <Link
+          href="/"
+          className="shrink-0 font-display text-[15px] font-bold tracking-[-0.02em] text-emerald-800"
+        >
           KB
         </Link>
         {user !== null && (
@@ -42,7 +45,7 @@ export default function TopNav({ user }: { user: NavUser | null }) {
                   <Link
                     key={l.href}
                     href={l.href}
-                    className={`rounded-lg px-2 py-1.5 text-[13px] font-medium sm:px-2.5 sm:text-sm ${
+                    className={`inline-flex min-h-[40px] items-center rounded-lg px-2 text-[13px] font-medium transition-colors sm:px-2.5 sm:text-sm ${
                       active ? 'bg-emerald-700 text-white' : 'text-stone-600 hover:bg-stone-100'
                     }`}
                   >

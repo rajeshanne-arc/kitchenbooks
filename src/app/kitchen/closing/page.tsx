@@ -4,7 +4,7 @@ import { todayIST } from '@/server/store-queries'
 import GroupTabs from '@/components/GroupTabs'
 import ClosingEntry from '@/components/kitchen/ClosingEntry'
 import { formatMoneyString } from '@/lib/money'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,8 +23,8 @@ export default async function ClosingPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Closing</h1>
-        <p className="mt-0.5 text-sm text-stone-400">
+        <h1 className={pageTitleCls}>Closing</h1>
+        <p className={pageSubCls}>
           {closed} of {checklist.length} sections closed today
         </p>
       </header>
@@ -35,7 +35,7 @@ export default async function ClosingPage() {
 
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>Tonight so far</h2>
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {checklist.map((r) => (
               <li key={r.section_id} className="flex items-center justify-between gap-3 py-2">
                 <span className="flex min-w-0 items-center gap-2">

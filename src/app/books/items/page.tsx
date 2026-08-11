@@ -47,7 +47,7 @@ export default async function ItemsPage({ searchParams }: { searchParams: Promis
           )}
         </div>
       ) : (
-        <ul className="mt-2 divide-y divide-stone-100">
+        <ul className="mt-2 divide-y divide-rule-soft">
           {items.map((i) => (
             <li key={i.id}>
               <Link

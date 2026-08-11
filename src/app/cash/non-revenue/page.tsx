@@ -4,6 +4,7 @@ import { getList, getNameHistory } from '@/server/settings'
 import { monthStartIST } from '@/server/store-queries'
 import GroupTabs from '@/components/GroupTabs'
 import NonRevenueClient from '@/components/cash/NonRevenueClient'
+import { pageSubCls, pageTitleCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,8 +21,8 @@ export default async function NonRevenuePage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Non-revenue</h1>
-        <p className="mt-0.5 text-sm text-stone-400">staff meals, owner tables, PR plates — giveaways cost something</p>
+        <h1 className={pageTitleCls}>Non-revenue</h1>
+        <p className={pageSubCls}>staff meals, owner tables, PR plates — giveaways cost something</p>
       </header>
       <GroupTabs group="cashier" />
       <NonRevenueClient reasons={reasons} dishes={dishes} rows={rows} giveaway={giveaway} givenToNames={givenToNames} />

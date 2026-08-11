@@ -11,7 +11,7 @@ import type { KitchenComponentHit, Section } from '@/lib/types'
 import { saveKitchenWastage } from '@/server/kitchen-actions'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import { todayLocal } from '@/lib/format'
-import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 import KitchenComponentPicker from './KitchenComponentPicker'
 import { toast } from '@/components/Toasts'
 import { useLang } from '@/components/useLang'
@@ -85,7 +85,7 @@ export default function KitchenWastageForm({
 
   return (
     <section className={cardCls}>
-      <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">{label('kitchen_wastage_title')}</h2>
+      <h2 className={sectionHeadCls}>{label('kitchen_wastage_title')}</h2>
       <div className="mt-3 space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <label className="block">

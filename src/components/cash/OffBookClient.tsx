@@ -137,7 +137,7 @@ export default function OffBookClient({ modes, rows }: { modes: string[]; rows: 
         {rows.length === 0 ? (
           <p className="mt-2 text-sm text-stone-500">Nothing recorded yet.</p>
         ) : (
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {rows.map((r) => (
               <li key={r.id} className={`flex items-center justify-between gap-3 py-2.5 ${r.is_reversal ? 'opacity-60' : ''}`}>
                 <span className="min-w-0">

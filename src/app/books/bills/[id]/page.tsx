@@ -76,7 +76,7 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
 
         <div className="mt-4 border-t border-stone-100 pt-3">
           <h3 className={sectionHeadCls}>Lines</h3>
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {lines.map((l) => {
               const extras: string[] = []
               if (decimalStringToPaise(l.gst_amount) !== 0) extras.push(`GST ${formatMoneyString(l.gst_amount)}`)

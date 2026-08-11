@@ -6,7 +6,7 @@ import { ReversalBadge, VoidedBadge } from './Badges'
 
 export default function BillList({ bills, showVendor = true }: { bills: BillRow[]; showVendor?: boolean }) {
   return (
-    <ul className="divide-y divide-stone-100">
+    <ul className="divide-y divide-rule-soft">
       {bills.map((b) => {
         const neg = decimalStringToPaise(b.bill_total) < 0
         const title = showVendor ? b.vendor_name : (b.bill_no ?? 'Bill')

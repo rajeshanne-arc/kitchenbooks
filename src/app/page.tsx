@@ -4,7 +4,7 @@ import { getChecklist, todayIST, countOpenIndents } from '@/server/store-queries
 import { getSessionUser } from '@/server/current-user'
 import { canAccess, type Role } from '@/lib/roles'
 import { fmtDate } from '@/lib/format'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, codeCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,8 +62,8 @@ export default async function Home() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header>
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Today at {restaurantName}</h1>
-        <p className="mt-0.5 text-sm text-stone-400">{fmtDate(today)}</p>
+        <h1 className={pageTitleCls}>Today at {restaurantName}</h1>
+        <p className={pageSubCls}>{fmtDate(today)}</p>
       </header>
 
       {showChecklist && openIndents > 0 && (
@@ -105,7 +105,7 @@ export default async function Home() {
               {entered} of {checklist.length} entered
             </span>
           </div>
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {checklist.map((c) => (
               <li key={c.id} className="flex items-center justify-between gap-3 py-2.5">
                 <span className="flex min-w-0 items-center gap-2.5">
@@ -119,7 +119,7 @@ export default async function Home() {
                     <span className="h-6 w-6 shrink-0 rounded-full border-2 border-dashed border-stone-200" aria-hidden />
                   )}
                   <span className="truncate text-[15px] text-stone-900">{c.name}</span>
-                  <span className="font-mono text-[11px] text-stone-400">{c.code}</span>
+                  <span className={codeCls}>{c.code}</span>
                 </span>
                 {c.issues_today > 0 ? (
                   <span className="shrink-0 text-xs font-medium text-emerald-700">

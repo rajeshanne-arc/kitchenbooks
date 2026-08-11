@@ -395,3 +395,71 @@ that have no reveal screen; the en/te dictionary in src/lib/i18n.ts
 covers LABELS ONLY on the five staff-facing forms (Issue, store Wastage,
 Kitchen closing, Kitchen wastage, Count) — adding Hindi later is adding
 data, not code. Nav is matrix-filtered: you only see what you can open.
+
+## Phase 15 — The look (the sheet legend + the honesty strip)
+
+**The palette is a legend, not a mood.** The values are extracted from
+Rajesh's live Sales day-close form — the sheet his staff have typed into
+every day for months. In that sheet the fill carries meaning, so it does
+here:
+
+- **cream `#FFFBEA` = you type here.** Inputs are cream — the inverse of the
+  usual white-field-on-grey-page habit. Do not "fix" it. The cream is PALE;
+  that exact tint is the one the staff know, and it is why the field border
+  and the doubt hatch are gold rather than a deeper cream.
+- **white = a number the app worked out.** ground `#EFF3F7` = the page, and
+  a field filled with the ground colour is locked, not yours.
+- ground `#EFF3F7` · stone `#F3F1EC` · line `#E2DFD6` · muted `#8A8578` ·
+  navy `#233043` (body) · ink `#1A2332` (headings) · green `#2F6B47`
+  (primary) · gold `#C8A951` (doubt) · red `#9B2C2C` (wrong or missing).
+
+Those ten named values are the palette. Every other ramp step is derived
+from them by lightening or darkening — nothing else was invented.
+
+Tailwind's `stone / emerald / amber / red / violet / sky` scales are
+**RE-POINTED** at those ramps in `src/app/globals.css` — `emerald-700` is
+the green, `amber-*` is the gold/doubt family, and `stone-*` runs cool navy
+at the dark end and warm paper at the light end exactly as the sheet does.
+That is how ~1,900 existing class usages speak the palette without a
+rewrite. New code should prefer the semantic names: `bg-field`, `bg-cell`,
+`border-rule`, `divide-rule-soft`, `text-doubt`.
+
+Type: **Archivo** display (page titles, hero figures, micro-caps section
+heads), **IBM Plex Sans** body, **IBM Plex Mono** for money columns and for
+the codes — V-PLT-01, CH-001, E014 — which are the spine of the product.
+**Noto Sans Telugu** is in the stack so the `te` labels are words, not
+tofu. Shared class vocabulary lives in `src/components/ui.ts`; `heroNumCls`
+deliberately carries NO colour (appending a second `text-*` would be a coin
+flip on stylesheet order — always pass one).
+
+**The signature is `src/components/Honesty.tsx`.** Every number that rests
+on data which has not all arrived wears the same hatched cream strip: a
+micro-caps verdict, one plain sentence, and — where the gap is countable —
+a **meter of literal spreadsheet cells**, filled for the truth that is in,
+blank for the truth still owed. `<HonestyPill>` is its inline form for list
+rows, `<Doubted>` hatches the figure itself so the doubt survives when the
+sentence scrolls away. `level="alarm"` is the red twin, and it stays loud.
+
+Use it for every honesty column the views already publish — uncosted_lines,
+pending closing, unassigned/unsalaried marks, unknown POS statuses,
+negative stock, missing closes, thin count history, cogs NULL. **Never
+compute a figure to fill a gap.** Inside a card that is itself a `<Link>`,
+use Honesty WITHOUT `action` — a link inside a link is invalid.
+
+**`npm run audit:matrix` is the LAW 1 gate — run it before every commit.**
+It executes navFor / booksTabsFor / the tab strips / the home tiles once
+per role and asserts every href they emit is matrix-admitted, then walks
+every page in src/app, follows its imports, and asserts that every literal
+internal href reachable from a page is openable by every role that can open
+that page. It exits 1 on any ungated violation. It was written because
+STRICT INVISIBILITY had been claimed twice and was wrong twice: it caught
+four live leaks on its first run — the owner-only Photographs block on
+/books/recipes (chef and manager saw it), the item links and "Enter a bill"
+button on /books/stock (chef), and the /books/issues links on the indent gap
+page (chef). All four now gate on `canAccess`, which is also why the
+dashboard's P&L link reads `canAccess(user.role, '/pnl')` rather than a
+hand-rolled role comparison — one source, every surface.
+
+Quality floor, kept quietly: 40px+ touch targets in nav and tab strips,
+`:focus-visible` outlines app-wide, `prefers-reduced-motion` honoured (the
+meter's cell-by-cell fill is the one animated moment in the app).

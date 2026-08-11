@@ -2,7 +2,8 @@ import { getRestaurant } from '@/server/queries'
 import { monthStartIST } from '@/server/store-queries'
 import { getSectionCosts } from '@/server/labour-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
-import { cardCls } from '@/components/ui'
+import { cardCls, sectionHeadCls } from '@/components/ui'
+import { HonestyPill } from '@/components/Honesty'
 import type { SectionCostRow } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -41,15 +42,15 @@ function Row({ r, loud }: { r: SectionCostRow; loud?: boolean }) {
       {(r.unassigned_marks > 0 || r.unsalaried_marks > 0) && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {r.unassigned_marks > 0 && (
-            <span className="rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700">
+            <HonestyPill level="alarm">
               {r.unassigned_marks} {r.unassigned_marks === 1 ? 'mark' : 'marks'} from staff with no section
-            </span>
+            </HonestyPill>
           )}
           {r.unsalaried_marks > 0 && (
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+            <HonestyPill>
               {r.unsalaried_marks} paid {r.unsalaried_marks === 1 ? 'mark' : 'marks'} without a salary — labour
               understates
-            </span>
+            </HonestyPill>
           )}
         </div>
       )}
@@ -78,7 +79,7 @@ export default async function SectionsPage() {
   return (
     <section className={`${cardCls} mt-4`}>
       <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">{monthLabel(monthStart)}</h2>
+        <h2 className={sectionHeadCls}>{monthLabel(monthStart)}</h2>
         <span className="text-xs text-stone-400">earns, eats, pays · section_costs</span>
       </div>
       <div className={`mt-2 grid gap-2 border-b border-stone-200 pb-1.5 ${GRID}`}>
@@ -93,7 +94,7 @@ export default async function SectionsPage() {
         <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Sales</span>
         <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Margin</span>
       </div>
-      <ul className="divide-y divide-stone-100">
+      <ul className="divide-y divide-rule-soft">
         {regular.map((r) => (
           <Row key={r.section_code} r={r} />
         ))}

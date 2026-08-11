@@ -11,7 +11,8 @@ import { monthStartIST, todayIST } from '@/server/store-queries'
 import GroupTabs from '@/components/GroupTabs'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import Honesty from '@/components/Honesty'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,8 +41,8 @@ export default async function KitchenDashboardPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Kitchen</h1>
-        <p className="mt-0.5 text-sm text-stone-400">
+        <h1 className={pageTitleCls}>Kitchen</h1>
+        <p className={pageSubCls}>
           {restaurant.name} — {fmtDate(today)}
         </p>
       </header>
@@ -60,7 +61,7 @@ export default async function KitchenDashboardPage() {
             <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Wasted</span>
             <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Closed</span>
           </div>
-          <ul className="divide-y divide-stone-100">
+          <ul className="divide-y divide-rule-soft">
             {day.map((d) => (
               <li key={d.section_id} className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_4.5rem_4.5rem] items-center gap-1 py-2 text-right">
                 <span className="truncate text-left text-sm text-stone-900">{d.section_name}</span>
@@ -77,16 +78,25 @@ export default async function KitchenDashboardPage() {
               </li>
             ))}
           </ul>
-          <div className="mt-2 flex items-center justify-between">
-            {unclosed > 0 ? (
-              <span className="text-xs font-medium text-amber-700">{unclosed} sections not closed yet</span>
-            ) : (
-              <span className="text-xs text-emerald-700">all sections closed</span>
-            )}
-            <Link href="/kitchen/closing" className="text-xs font-medium text-emerald-700 hover:underline">
-              go close →
-            </Link>
-          </div>
+          {unclosed > 0 ? (
+            <div className="mt-3">
+              <Honesty
+                verdict="incomplete"
+                meter={{ filled: day.length - unclosed, total: day.length, unit: 'sections closed' }}
+                action={{ href: '/kitchen/closing', label: 'File a closing' }}
+              >
+                {unclosed} {unclosed === 1 ? 'section has' : 'sections have'} not said what {unclosed === 1 ? 'it' : 'they'}{' '}
+                still {unclosed === 1 ? 'holds' : 'hold'}, so today’s consumption is not known yet.
+              </Honesty>
+            </div>
+          ) : (
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-xs font-medium text-emerald-700">All sections closed.</span>
+              <Link href="/kitchen/closing" className="text-xs font-medium text-emerald-700 hover:underline">
+                Re-file →
+              </Link>
+            </div>
+          )}
         </section>
 
         <section className={cardCls}>
@@ -100,7 +110,7 @@ export default async function KitchenDashboardPage() {
               talking.
             </p>
           ) : (
-            <ul className="mt-1 divide-y divide-stone-100">
+            <ul className="mt-1 divide-y divide-rule-soft">
               {perf.map((p) => (
                 <li key={p.recipe_id} className="flex items-center justify-between gap-3 py-2">
                   <span className="min-w-0">
@@ -136,7 +146,7 @@ export default async function KitchenDashboardPage() {
           {wasteByReason.length === 0 ? (
             <p className="mt-2 text-sm text-stone-500">Nothing wasted this month. May it stay that way.</p>
           ) : (
-            <ul className="mt-1 divide-y divide-stone-100">
+            <ul className="mt-1 divide-y divide-rule-soft">
               {wasteByReason.map((w) => (
                 <li key={w.reason} className="flex items-center justify-between gap-3 py-2">
                   <span className="text-sm text-stone-900">

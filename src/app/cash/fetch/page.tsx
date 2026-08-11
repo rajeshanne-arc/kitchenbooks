@@ -5,7 +5,7 @@ import GroupTabs from '@/components/GroupTabs'
 import FetchDay from '@/components/sales/FetchDay'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,8 +16,8 @@ export default async function CashFetchPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Fetch day</h1>
-        <p className="mt-0.5 text-sm text-stone-400">pull a day from Petpooja — the latest fetch wins</p>
+        <h1 className={pageTitleCls}>Fetch day</h1>
+        <p className={pageSubCls}>pull a day from Petpooja — the latest fetch wins</p>
       </header>
       <GroupTabs group="cashier" />
 
@@ -34,7 +34,7 @@ export default async function CashFetchPage() {
           {days.length === 0 ? (
             <p className="mt-2 text-sm text-stone-500">Nothing fetched yet — yesterday is the usual first pull.</p>
           ) : (
-            <ul className="mt-1 divide-y divide-stone-100">
+            <ul className="mt-1 divide-y divide-rule-soft">
               {days.slice(0, 10).map((d) => (
                 <li key={d.business_date} className="flex items-center justify-between gap-3 py-2">
                   <span className="text-sm text-stone-900">

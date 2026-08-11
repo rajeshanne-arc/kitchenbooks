@@ -38,7 +38,7 @@ export default async function StoreLogPage() {
 
   return (
     <section className="mt-2">
-      <ul className="divide-y divide-stone-100">
+      <ul className="divide-y divide-rule-soft">
         {rows.map((r) => {
           const neg = decimalStringToPaise(r.value) < 0
           const href = r.kind === 'issue' ? (`/books/issues/${r.id}` as const) : (`/books/wastage/${r.id}` as const)

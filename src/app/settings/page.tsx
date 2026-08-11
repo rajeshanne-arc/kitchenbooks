@@ -6,6 +6,7 @@ import { getAllListOptions, getSettingValue } from '@/server/settings'
 import { resolveTabs, TAB_GROUPS, type TabDef, type TabGroup } from '@/lib/tabs'
 import ListsEditor from '@/components/settings/ListsEditor'
 import TabsEditor from '@/components/settings/TabsEditor'
+import { pageSubCls, pageTitleCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,8 +21,8 @@ export default async function SettingsPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Settings</h1>
-        <p className="mt-0.5 text-sm text-stone-400">{restaurant.name} — lists and tab strips</p>
+        <h1 className={pageTitleCls}>Settings</h1>
+        <p className={pageSubCls}>{restaurant.name} — lists and tab strips</p>
       </header>
 
       <div className="space-y-8">

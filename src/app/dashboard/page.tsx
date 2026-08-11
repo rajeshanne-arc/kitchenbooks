@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
+import { canAccess } from '@/lib/roles'
 import { monthStartIST, todayIST } from '@/server/store-queries'
 import { getSectionCosts } from '@/server/labour-queries'
 import { getFoodCost } from '@/server/kitchen-queries'
@@ -16,7 +17,8 @@ import {
 } from '@/server/dashboard-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { cardCls } from '@/components/ui'
+import { cardCls, heroNumCls, moneyCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import Honesty, { HonestyPill } from '@/components/Honesty'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,10 +41,8 @@ function Card({
       className={`${cardCls} block hover:border-emerald-400 ${alert ? 'border-red-300 bg-red-50/50' : ''}`}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <h2 className={`text-xs font-semibold uppercase tracking-wide ${alert ? 'text-red-700' : 'text-stone-500'}`}>
-          {title}
-        </h2>
-        <span className="text-[10px] text-stone-400">{source} →</span>
+        <h2 className={`${sectionHeadCls} ${alert ? 'text-red-700' : ''}`}>{title}</h2>
+        <span className="font-mono text-[10px] text-stone-400">{source} →</span>
       </div>
       <div className="mt-2">{children}</div>
     </Link>
@@ -81,8 +81,8 @@ export default async function DashboardPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">{restaurant.name}</h1>
-        <p className="mt-0.5 text-sm text-stone-400">the owner’s ten questions · {monthLabel(monthStart)}</p>
+        <h1 className={pageTitleCls}>{restaurant.name}</h1>
+        <p className={pageSubCls}>the owner’s ten questions · {monthLabel(monthStart)}</p>
       </header>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -92,7 +92,7 @@ export default async function DashboardPage() {
             <p className="text-sm text-stone-500">No fetch for {fmtDate(yesterday.date)} yet — fetch it under Sales.</p>
           ) : (
             <>
-              <p className="text-2xl font-bold tabular-nums text-stone-900">
+              <p className={`text-[26px] ${heroNumCls} text-stone-900`}>
                 {formatMoneyString(yesterday.sales.revenue)}
               </p>
               <p className="mt-0.5 text-sm text-stone-600">
@@ -147,14 +147,14 @@ export default async function DashboardPage() {
                 <li key={f.section_code} className="flex items-center justify-between gap-2 text-sm">
                   <span className="truncate text-stone-700">{f.section_name}</span>
                   {f.consumed_total === null ? (
-                    <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-                      pending closing
-                    </span>
+                    <HonestyPill>pending closing</HonestyPill>
                   ) : f.food_cost_pct === null ? (
-                    <span className="tabular-nums text-stone-500">{formatMoneyString(f.consumed_total)} · no sales</span>
+                    <span className={`${moneyCls} text-stone-500`}>
+                      {formatMoneyString(f.consumed_total)} · no sales
+                    </span>
                   ) : (
                     <span
-                      className={`font-bold tabular-nums ${Number(f.food_cost_pct) > 40 ? 'text-red-700' : 'text-emerald-700'}`}
+                      className={`${moneyCls} font-bold ${Number(f.food_cost_pct) > 40 ? 'text-red-700' : 'text-emerald-700'}`}
                     >
                       {f.food_cost_pct}%
                     </span>
@@ -199,11 +199,13 @@ export default async function DashboardPage() {
             <p className="text-sm font-medium text-emerald-700">Everything sold is mapped. ✓</p>
           ) : (
             <>
-              <p className="text-2xl font-bold tabular-nums text-red-700">{formatMoneyString(unmapped.revenue)}</p>
-              <p className="mt-0.5 text-sm text-red-800">
-                across {unmapped.items} POS item{unmapped.items === 1 ? '' : 's'} no dish claims —{' '}
-                <span className="font-semibold underline">map them now</span>; the top rows are half the money.
-              </p>
+              <p className={`text-[26px] ${heroNumCls} text-red-700`}>{formatMoneyString(unmapped.revenue)}</p>
+              <div className="mt-2">
+                <Honesty level="alarm" verdict="unclaimed" compact>
+                  {unmapped.items} POS item{unmapped.items === 1 ? '' : 's'} no dish claims, so this money belongs
+                  to no section and no food cost. The top rows are half of it — map those first.
+                </Honesty>
+              </div>
             </>
           )}
         </Card>
@@ -228,13 +230,21 @@ export default async function DashboardPage() {
           {alarms.length === 0 ? (
             <p className="text-sm font-medium text-emerald-700">No negative stock. ✓</p>
           ) : (
-            <ul className="space-y-0.5">
-              {alarms.map((a) => (
-                <li key={a.code} className="text-sm font-semibold tabular-nums text-red-700">
-                  {a.name}: {a.on_hand_qty} {a.purchase_unit} — a bill is probably missing
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="space-y-0.5">
+                {alarms.map((a) => (
+                  <li key={a.code} className={`text-sm font-semibold text-red-700 ${moneyCls}`}>
+                    {a.name}: {a.on_hand_qty} {a.purchase_unit}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-2">
+                <Honesty level="alarm" verdict="impossible" compact>
+                  Stock cannot go below zero. {alarms.length === 1 ? 'This item has' : 'These items have'} been
+                  issued more than {alarms.length === 1 ? 'it was' : 'they were'} ever bought — a bill is missing.
+                </Honesty>
+              </div>
+            </>
           )}
         </Card>
 
@@ -243,10 +253,11 @@ export default async function DashboardPage() {
           {unknownCount === 0 ? (
             <p className="text-sm font-medium text-emerald-700">Zero — as it must be. ✓</p>
           ) : (
-            <p className="text-lg font-bold text-red-700">
-              {unknownCount} order{unknownCount === 1 ? '' : 's'} with a status this app does not know — not banked;
-              look at them.
-            </p>
+            <Honesty level="alarm" verdict="not banked" compact>
+              {unknownCount} order{unknownCount === 1 ? '' : 's'} came back with a status this app does not know.
+              {unknownCount === 1 ? ' It is' : ' They are'} not counted as revenue until someone reads{' '}
+              {unknownCount === 1 ? 'it' : 'them'}.
+            </Honesty>
           )}
         </Card>
 
@@ -255,7 +266,10 @@ export default async function DashboardPage() {
           {missing.length === 0 ? (
             <p className="text-sm font-medium text-emerald-700">Every sales day has its close. ✓</p>
           ) : (
-            <p className="text-sm font-semibold text-red-700">{missing.map((d) => fmtDate(d)).join(' · ')}</p>
+            <Honesty level="alarm" verdict="unclosed" compact>
+              {missing.map((d) => fmtDate(d)).join(' · ')} sold food and never had{' '}
+              {missing.length === 1 ? 'its' : 'their'} cash counted. A shortage belongs to the day it happened.
+            </Honesty>
           )}
         </Card>
 
@@ -281,7 +295,7 @@ export default async function DashboardPage() {
         </Card>
       </div>
 
-      {user?.role === 'owner' && (
+      {user !== null && canAccess(user.role, '/pnl') && (
         <Link
           href="/pnl"
           className="mt-3 flex items-center justify-between rounded-2xl border border-emerald-700 bg-emerald-700 p-4 text-white shadow-sm hover:bg-emerald-800"

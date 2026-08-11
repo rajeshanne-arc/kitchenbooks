@@ -48,7 +48,7 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
               <h2 className="text-[15px] font-semibold text-stone-900">{name}</h2>
               <span className="text-xs text-stone-400">{usedBy}</span>
             </div>
-            <ul className="mt-2 divide-y divide-stone-100">
+            <ul className="mt-2 divide-y divide-rule-soft">
               {rows.map((o, i) => (
                 <li key={o.id} className="flex items-center justify-between gap-2 py-1.5">
                   <span className={`min-w-0 truncate text-sm ${o.status === 'inactive' ? 'text-stone-400 line-through' : 'text-stone-900'}`}>

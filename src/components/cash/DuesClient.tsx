@@ -188,7 +188,7 @@ export default function DuesClient({
         {outstanding.length === 0 ? (
           <p className="mt-2 text-sm text-stone-500">Nobody owes and nobody is owed. Clean slate.</p>
         ) : (
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {outstanding.map((o) => {
               const bal = decimalStringToPaise(o.balance)
               return (
@@ -209,7 +209,7 @@ export default function DuesClient({
         {rows.length === 0 ? (
           <p className="mt-2 text-sm text-stone-500">Nothing recorded yet.</p>
         ) : (
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {rows.map((r) => {
               const amt = decimalStringToPaise(r.amount)
               return (

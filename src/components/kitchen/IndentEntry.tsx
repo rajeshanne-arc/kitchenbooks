@@ -99,7 +99,7 @@ export default function IndentEntry({ sections }: { sections: Section[] }) {
             </p>
           </div>
         </div>
-        <ul className="mt-4 divide-y divide-stone-100 border-t border-stone-100">
+        <ul className="mt-4 divide-y divide-rule-soft border-t border-stone-100">
           {saved.lines.map((l) => (
             <li key={l.id} className="flex items-center justify-between gap-3 py-2.5">
               <span className="min-w-0 truncate text-[15px] text-stone-900">{l.item_name}</span>
@@ -158,7 +158,7 @@ export default function IndentEntry({ sections }: { sections: Section[] }) {
 
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Items requested</h2>
-        <div className="mt-1 divide-y divide-stone-100">
+        <div className="mt-1 divide-y divide-rule-soft">
           {lines.map((line, i) => (
             <div key={line.key} className="space-y-2 py-3">
               <div className="flex items-start gap-2">

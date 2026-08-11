@@ -11,7 +11,7 @@ import type { SaveProductionResult, Section, SubCostRow } from '@/lib/types'
 import { saveProduction } from '@/server/kitchen-actions'
 import { formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
-import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 import { useLang } from '@/components/useLang'
 
 export default function ProductionEntry({ sections, subs }: { sections: Section[]; subs: SubCostRow[] }) {
@@ -67,7 +67,7 @@ export default function ProductionEntry({ sections, subs }: { sections: Section[
         <p className="text-sm text-stone-500">
           {p.section_name} · {fmtDate(p.prod_date)}
         </p>
-        <div className="mt-3 divide-y divide-stone-100 border-t border-stone-100">
+        <div className="mt-3 divide-y divide-rule-soft border-t border-stone-100">
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-stone-600">Unit cost (frozen at save)</span>
             <span className="tabular-nums text-sm text-stone-700">{formatMoneyString(p.unit_cost)}</span>
@@ -93,7 +93,7 @@ export default function ProductionEntry({ sections, subs }: { sections: Section[
 
   return (
     <section className={cardCls}>
-      <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Record production</h2>
+      <h2 className={sectionHeadCls}>Record production</h2>
       <div className="mt-3 space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <label className="block">

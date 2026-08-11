@@ -30,7 +30,7 @@ export default async function SnapshotPage({ params }: { params: Promise<{ date:
         <p className="mt-0.5 text-xs text-stone-400">
           Costs as they stood that day. The live recipe pages have moved on; this page never will.
         </p>
-        <ul className="mt-3 divide-y divide-stone-100">
+        <ul className="mt-3 divide-y divide-rule-soft">
           {rows.map((r, i) => (
             <li key={`${r.code}-${i}`} className="flex items-center justify-between gap-3 py-2.5">
               <span className="min-w-0">

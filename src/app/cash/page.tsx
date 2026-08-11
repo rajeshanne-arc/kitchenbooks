@@ -7,7 +7,7 @@ import GroupTabs from '@/components/GroupTabs'
 import DayClose from '@/components/cash/DayClose'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,8 +24,8 @@ export default async function CashPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Cash</h1>
-        <p className="mt-0.5 text-sm text-stone-400">{restaurant.name} — the cashier’s day</p>
+        <h1 className={pageTitleCls}>Cash</h1>
+        <p className={pageSubCls}>{restaurant.name} — the cashier’s day</p>
       </header>
       <GroupTabs group="cashier" />
 
@@ -62,7 +62,7 @@ export default async function CashPage() {
         {ladder.length > 0 && (
           <section className={cardCls}>
             <h2 className={sectionHeadCls}>Recent closes</h2>
-            <ul className="mt-1 divide-y divide-stone-100">
+            <ul className="mt-1 divide-y divide-rule-soft">
               {ladder.map((l) => {
                 const diff = decimalStringToPaise(l.difference)
                 return (

@@ -184,7 +184,7 @@ export default function SettlementsClient({
         {summaries.length === 0 ? (
           <p className="mt-2 text-sm text-stone-500">No settlements yet.</p>
         ) : (
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {summaries.map((s) => (
               <li key={s.partner} className="py-2.5">
                 <div className="flex items-center justify-between gap-3">
@@ -210,7 +210,7 @@ export default function SettlementsClient({
         {rows.length === 0 ? (
           <p className="mt-2 text-sm text-stone-500">Nothing filed yet.</p>
         ) : (
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {rows.map((r) => (
               <li key={r.id} className={`flex items-center justify-between gap-3 py-2.5 ${r.is_reversal ? 'opacity-60' : ''}`}>
                 <span className="min-w-0">

@@ -17,6 +17,7 @@ import VendorPicker from './VendorPicker'
 import ItemPicker from './ItemPicker'
 import SaveReveal from './SaveReveal'
 import { inputCls, numCls } from './ui'
+import { sectionHeadCls } from '@/components/ui'
 
 type Line = { key: number; item: ItemSel | null; qty: string; rate: string; prefillRate: string | null }
 
@@ -157,19 +158,19 @@ export default function BillEntry({
       <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="grid gap-4 sm:grid-cols-[11rem_1fr]">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-stone-500">Bill date</span>
+            <span className={`mb-1 block ${sectionHeadCls}`}>Bill date</span>
             <input type="date" value={billDate} onChange={(e) => setBillDate(e.target.value)} className={inputCls} />
           </label>
           <div>
-            <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-stone-500">Vendor</span>
+            <span className={`mb-1 block ${sectionHeadCls}`}>Vendor</span>
             <VendorPicker categories={categories} value={vendor} onChange={setVendor} />
           </div>
         </div>
       </section>
 
       <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Items</h2>
-        <div className="mt-1 divide-y divide-stone-100">
+        <h2 className={sectionHeadCls}>Items</h2>
+        <div className="mt-1 divide-y divide-rule-soft">
           {lines.map((line, i) => (
             <LineRow
               key={line.key}
@@ -210,7 +211,7 @@ export default function BillEntry({
         ) : (
           <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">GST & transport</h2>
+              <h2 className={sectionHeadCls}>GST & transport</h2>
               <button
                 type="button"
                 onClick={() => setExtrasOpen(false)}

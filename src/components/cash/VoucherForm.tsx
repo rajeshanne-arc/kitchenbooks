@@ -11,7 +11,7 @@ import type { PaidBy, SaveVoucherResult } from '@/lib/types'
 import { saveVoucher } from '@/server/cash-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
-import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 
 export default function VoucherForm({
   ownerNames,
@@ -80,7 +80,7 @@ export default function VoucherForm({
     const v = saved.voucher
     return (
       <section className={cardCls}>
-        <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Voucher recorded</h2>
+        <h2 className={sectionHeadCls}>Voucher recorded</h2>
         <p className="mt-2 text-2xl font-bold tabular-nums text-stone-900">{formatMoneyString(v.amount)}</p>
         <p className="mt-1 text-[15px] text-stone-900">
           to {v.paid_to} · {v.category}
@@ -108,7 +108,7 @@ export default function VoucherForm({
 
   return (
     <section className={cardCls}>
-      <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Cash voucher</h2>
+      <h2 className={sectionHeadCls}>Cash voucher</h2>
       <div className="mt-3 space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <label className="block">

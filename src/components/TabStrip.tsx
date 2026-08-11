@@ -22,7 +22,7 @@ export default function TabStrip({ tabs }: { tabs: TabDef[] }) {
         <Link
           key={t.key}
           href={t.href}
-          className={`rounded-lg px-2.5 py-1.5 text-[13px] font-medium sm:text-sm ${
+          className={`inline-flex min-h-[40px] items-center rounded-lg px-2.5 text-[13px] font-medium transition-colors sm:text-sm ${
             active?.key === t.key ? 'bg-emerald-700 text-white' : 'text-stone-600 hover:bg-stone-100'
           }`}
         >

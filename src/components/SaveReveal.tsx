@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import type { SavedBill } from '@/lib/types'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
+import { sectionHeadCls } from '@/components/ui'
 
 const fmtDate = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -53,7 +54,7 @@ export default function SaveReveal({ saved, onAgain }: { saved: SavedBill; onAga
 
       {createdSomething && (
         <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-stone-500">Created with this bill</h3>
+          <h3 className={sectionHeadCls}>Created with this bill</h3>
           <ul className="mt-3 space-y-2">
             {vendor.created && (
               <li className="flex items-center gap-2.5">

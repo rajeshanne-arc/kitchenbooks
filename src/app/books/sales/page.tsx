@@ -4,7 +4,8 @@ import { countUnmapped, getSalesDays, listUnknownOrders, yesterdayIST } from '@/
 import FetchDay from '@/components/sales/FetchDay'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { cardCls } from '@/components/ui'
+import { cardCls, sectionHeadCls } from '@/components/ui'
+import Honesty from '@/components/Honesty'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,7 +37,7 @@ export default async function SalesPage() {
 
       <div className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Days</h2>
+          <h2 className={sectionHeadCls}>Days</h2>
           <span className="text-xs text-stone-400">latest fetch per date wins · sales_by_day</span>
         </div>
         {days.length === 0 ? (
@@ -54,7 +55,7 @@ export default async function SalesPage() {
               <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Flags</span>
               <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Revenue</span>
             </div>
-            <ul className="divide-y divide-stone-100">
+            <ul className="divide-y divide-rule-soft">
               {days.map((d) => (
                 <li
                   key={d.business_date}
@@ -101,14 +102,12 @@ export default async function SalesPage() {
       </div>
 
       {unknownOrders.length > 0 && (
-        <div className="rounded-2xl border border-red-200 bg-red-50/70 p-4">
-          <h2 className="text-xs font-bold uppercase tracking-wide text-red-700">
-            Unrecognized statuses — surfaced, never banked
-          </h2>
-          <p className="mt-1 text-xs text-red-800">
-            These orders carry a status this app does not know. They are in no total; someone should look at them in
-            Petpooja.
-          </p>
+        <div>
+          <Honesty level="alarm" verdict="not banked">
+            {unknownOrders.length === 1 ? 'This order carries' : 'These orders carry'} a status this app does not
+            know, so {unknownOrders.length === 1 ? 'it is' : 'they are'} in no total — not revenue, not cancelled,
+            not comped. Look {unknownOrders.length === 1 ? 'it' : 'them'} up in Petpooja.
+          </Honesty>
           <ul className="mt-2 space-y-1 font-mono text-xs text-red-900">
             {unknownOrders.map((u) => (
               <li key={`${u.business_date}:${u.pos_order_id}`}>

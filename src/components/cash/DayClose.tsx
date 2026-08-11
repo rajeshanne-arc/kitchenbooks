@@ -13,7 +13,7 @@ import { closeDay, setFirstOpening } from '@/server/cash-actions'
 import { buildCloseText, whatsappUrl } from '@/lib/share'
 import { decimalStringToPaise, formatPaise, formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { cardCls, fieldLabelCls, inputCls, numCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
 
 function Rung({ label, value, sign, strong }: { label: string; value: string; sign?: '+' | '−'; strong?: boolean }) {
   return (
@@ -195,7 +195,7 @@ export default function DayClose({
     return (
       <section className={cardCls}>
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">
+          <h2 className={sectionHeadCls}>
             Closed — {fmtDate(saved.close_date)}
           </h2>
           {saved.filings > 1 && (
@@ -204,7 +204,7 @@ export default function DayClose({
             </span>
           )}
         </div>
-        <div className="mt-2 divide-y divide-stone-100">
+        <div className="mt-2 divide-y divide-rule-soft">
           <Rung label="Opening" value={formatMoneyString(saved.opening_cash)} />
           <Rung label="POS cash sales" value={formatMoneyString(saved.pos_cash)} sign="+" />
           <Rung label="Other income" value={formatMoneyString(saved.other_income)} sign="+" />
@@ -259,7 +259,7 @@ export default function DayClose({
   return (
     <section className={cardCls}>
       <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Day close</h2>
+        <h2 className={sectionHeadCls}>Day close</h2>
         <span className="text-xs text-stone-400">one day at a time · day_close_ladder</span>
       </div>
 
@@ -287,7 +287,7 @@ export default function DayClose({
               new one wins, the old one stays visible.
             </p>
           )}
-          <div className="mt-3 divide-y divide-stone-100">
+          <div className="mt-3 divide-y divide-rule-soft">
             <Rung
               label={`Opening (${prefill.openingSource})`}
               value={formatMoneyString(prefill.opening)}

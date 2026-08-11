@@ -36,7 +36,7 @@ export default async function CountDetailPage({ params }: { params: Promise<{ id
         <p className="mt-0.5 text-sm text-stone-500">
           total variance · book and cost frozen at count time — worst shortage first
         </p>
-        <ul className="mt-3 divide-y divide-stone-100">
+        <ul className="mt-3 divide-y divide-rule-soft">
           {variances.map((v) => {
             const neg = decimalStringToPaise(v.variance_value) < 0
             return (

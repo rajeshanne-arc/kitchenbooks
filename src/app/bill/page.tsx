@@ -1,6 +1,7 @@
 import BillEntry from '@/components/BillEntry'
 import GroupTabs from '@/components/GroupTabs'
 import { getMasters, getRestaurant } from '@/server/queries'
+import { pageSubCls, pageTitleCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,8 +29,8 @@ export default async function BillPage() {
   return (
     <main className="pb-36">
       <header className="mx-auto max-w-2xl px-4 pb-4 pt-6 sm:px-6">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">New purchase bill</h1>
-        <p className="mt-0.5 text-sm text-stone-400">{restaurantName}</p>
+        <h1 className={pageTitleCls}>New purchase bill</h1>
+        <p className={pageSubCls}>{restaurantName}</p>
       </header>
       <div className="mx-auto max-w-2xl px-4 sm:px-6">
         <GroupTabs group="store" />

@@ -11,7 +11,7 @@ import { monthStartIST } from '@/server/store-queries'
 import GroupTabs from '@/components/GroupTabs'
 import ExpensesClient from '@/components/staff/ExpensesClient'
 import { formatMoneyString } from '@/lib/money'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,8 +33,8 @@ export default async function ExpensesPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Expenses</h1>
-        <p className="mt-0.5 text-sm text-stone-400">{restaurant.name} — the money that isn’t food or the drawer</p>
+        <h1 className={pageTitleCls}>Expenses</h1>
+        <p className={pageSubCls}>{restaurant.name} — the money that isn’t food or the drawer</p>
       </header>
       <GroupTabs group="staff" />
 
@@ -47,7 +47,7 @@ export default async function ExpensesPage() {
               <h2 className={sectionHeadCls}>This month by category</h2>
               <span className="text-xs text-stone-400">expenses_by_category</span>
             </div>
-            <ul className="mt-1 divide-y divide-stone-100">
+            <ul className="mt-1 divide-y divide-rule-soft">
               {byCategory.map((c) => (
                 <li key={c.category} className="flex items-center justify-between gap-3 py-2">
                   <span className="text-sm text-stone-900">{c.category}</span>
@@ -82,7 +82,7 @@ export default async function ExpensesPage() {
           {labour.length === 0 ? (
             <p className="mt-2 text-sm text-stone-500">No attendance marked this month yet.</p>
           ) : (
-            <ul className="mt-1 divide-y divide-stone-100">
+            <ul className="mt-1 divide-y divide-rule-soft">
               {labour.map((l) => (
                 <li key={l.section_code ?? '—'} className="flex items-center justify-between gap-3 py-2">
                   <span className={`text-sm ${l.section_code === null ? 'font-semibold text-amber-800' : 'text-stone-900'}`}>

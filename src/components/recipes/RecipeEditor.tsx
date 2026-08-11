@@ -9,7 +9,8 @@ import { useRouter } from 'next/navigation'
 import { addLine, deleteLine, updateLineQty, updateRecipe } from '@/server/recipes-actions'
 import type { ComponentHit, RecipeDetail, RecipeLineRow, RecipeMutationResult, Unit } from '@/lib/types'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
-import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, heroNumCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
+import Honesty, { Doubted } from '@/components/Honesty'
 import ComponentPicker from './ComponentPicker'
 
 const cleanNum = (raw: string) => {
@@ -120,8 +121,14 @@ export default function RecipeEditor({
             <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-800">
               {recipe.kind === 'dish' ? 'Dish cost' : 'Batch cost'}
             </div>
-            <div className="text-3xl font-bold tabular-nums tracking-tight text-stone-900">
-              {formatMoneyString(recipe.total_cost)}
+            <div className={`text-3xl ${heroNumCls} text-stone-900`}>
+              {uncosted > 0 ? (
+                <Doubted title={`${uncosted} ingredient(s) have no cost yet — this is lower than the real cost`}>
+                  {formatMoneyString(recipe.total_cost)}
+                </Doubted>
+              ) : (
+                formatMoneyString(recipe.total_cost)
+              )}
             </div>
             {recipe.kind === 'sub' && (
               <div className="mt-0.5 text-sm tabular-nums text-stone-600">
@@ -148,10 +155,16 @@ export default function RecipeEditor({
           )}
         </div>
         {uncosted > 0 && (
-          <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
-            {uncosted} {uncosted === 1 ? 'ingredient has' : 'ingredients have'} no cost yet — bill first. Until then
-            this number understates.
-          </p>
+          <div className="mt-3">
+            <Honesty
+              verdict="understated"
+              meter={{ filled: lines.length - uncosted, total: lines.length, unit: 'ingredients priced' }}
+            >
+              {uncosted} {uncosted === 1 ? 'ingredient has' : 'ingredients have'} no cost yet, so this figure is
+              lower than the real one. Enter a bill for {uncosted === 1 ? 'it' : 'them'} and the cost corrects
+              itself.
+            </Honesty>
+          </div>
         )}
         <p className="mt-2 text-xs text-stone-500">
           costed live at today’s weighted-average purchase costs · recipe_costs — it moves when your rates do
@@ -265,7 +278,7 @@ export default function RecipeEditor({
         {lines.length === 0 ? (
           <p className="mt-3 text-sm text-stone-500">No ingredients yet — add what goes in, gross.</p>
         ) : (
-          <ul className="mt-2 divide-y divide-stone-100">
+          <ul className="mt-2 divide-y divide-rule-soft">
             {lines.map((l) => {
               const draft = qtyDrafts[l.id] ?? l.qty
               const dirty = draft !== l.qty

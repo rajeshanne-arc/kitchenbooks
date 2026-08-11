@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { login } from '@/server/auth-actions'
-import { cardCls, fieldLabelCls, inputCls } from '@/components/ui'
+import { btnCls, cardCls, fieldLabelCls, inputCls } from '@/components/ui'
 
 export default function LoginForm({ next }: { next: string }) {
   const [username, setUsername] = useState('')
@@ -61,7 +61,7 @@ export default function LoginForm({ next }: { next: string }) {
       <button
         type="submit"
         disabled={busy || username.trim() === '' || password === ''}
-        className="mt-4 w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+        className={`${btnCls} mt-4 w-full`}
       >
         {busy ? 'Signing in…' : 'Sign in'}
       </button>

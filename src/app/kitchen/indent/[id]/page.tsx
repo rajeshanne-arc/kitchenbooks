@@ -9,7 +9,9 @@ import GroupTabs from '@/components/GroupTabs'
 import CancelIndent from '@/components/kitchen/CancelIndent'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { getSessionUser } from '@/server/current-user'
+import { canAccess } from '@/lib/roles'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,9 +21,24 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: 'border-stone-300 bg-stone-100 text-stone-500',
 }
 
+function IssueRow({ href, children }: { href: string | null; children: React.ReactNode }) {
+  const cls = 'flex items-center justify-between gap-3 py-2.5'
+  if (href === null) return <div className={cls}>{children}</div>
+  return (
+    <Link href={href} className={`${cls} hover:bg-stone-50`}>
+      {children}
+    </Link>
+  )
+}
+
 export default async function IndentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const restaurant = await getRestaurant()
+  // LAW 1: the store log belongs to store accounts. The chef sees each issue
+  // and its value here — that is the gap, and it is never hidden — but not a
+  // link into a screen their role cannot open.
+  const user = await getSessionUser()
+  const canOpenIssues = user !== null && canAccess(user.role, '/books/issues')
   const detail = await getIndentDetail(restaurant.id, id)
   if (!detail) notFound()
   const { indent, lines, issues, gap } = detail
@@ -31,14 +48,14 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
         <div className="flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold tracking-tight text-stone-900">
+          <h1 className={pageTitleCls}>
             Indent — {indent.section_name}
           </h1>
           <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS_BADGE[indent.status]}`}>
             {indent.status}
           </span>
         </div>
-        <p className="mt-0.5 text-sm text-stone-400">
+        <p className={pageSubCls}>
           {fmtDate(indent.indent_date)} · asked {fmtDateTime(indent.created_at)}
           {indent.entered_by !== null && <> · by {indent.entered_by}</>}
         </p>
@@ -65,7 +82,7 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
             <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Given</span>
             <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Gap</span>
           </div>
-          <ul className="divide-y divide-stone-100">
+          <ul className="divide-y divide-rule-soft">
             {gap.map((g) => {
               const gapNum = Number(g.gap)
               return (
@@ -100,10 +117,10 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
               {indent.status === 'cancelled' ? 'None — the indent was cancelled.' : 'None yet — the store has not issued against it.'}
             </p>
           ) : (
-            <ul className="mt-1 divide-y divide-stone-100">
+            <ul className="mt-1 divide-y divide-rule-soft">
               {liveIssues.map((i) => (
                 <li key={i.id}>
-                  <Link href={`/books/issues/${i.id}`} className="flex items-center justify-between gap-3 py-2.5 hover:bg-stone-50">
+                  <IssueRow href={canOpenIssues ? `/books/issues/${i.id}` : null}>
                     <span className="min-w-0">
                       <span className="block text-sm text-stone-900">
                         {fmtDate(i.issue_date)} · {i.line_count} {i.line_count === 1 ? 'item' : 'items'}
@@ -113,7 +130,7 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
                     <span className="shrink-0 tabular-nums text-sm font-semibold text-stone-900">
                       {formatMoneyString(i.total_value)}
                     </span>
-                  </Link>
+                  </IssueRow>
                 </li>
               ))}
             </ul>
@@ -122,7 +139,7 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
 
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>As asked</h2>
-          <ul className="mt-1 divide-y divide-stone-100">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {lines.map((l) => (
               <li key={l.id} className="flex items-center justify-between gap-3 py-2">
                 <span className="min-w-0 truncate text-sm text-stone-900">{l.item_name}</span>

@@ -19,7 +19,7 @@ function Band({ title, loud, note, rows }: { title: string; loud?: boolean; note
         </h2>
         {note !== undefined && <p className="mt-0.5 text-xs text-red-700">{note}</p>}
       </div>
-      <ul className="mt-1 divide-y divide-stone-100">
+      <ul className="mt-1 divide-y divide-rule-soft">
         {rows.map((p) => (
           <li key={p.id}>
             <Link

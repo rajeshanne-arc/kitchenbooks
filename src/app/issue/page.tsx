@@ -4,7 +4,7 @@ import GroupTabs from '@/components/GroupTabs'
 import { getRestaurant } from '@/server/queries'
 import { getIndentPrefill, getSections, listOpenIndents } from '@/server/store-queries'
 import { fmtDate } from '@/lib/format'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,8 +23,8 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Issue to section</h1>
-        <p className="mt-0.5 text-sm text-stone-400">{restaurant.name} store</p>
+        <h1 className={pageTitleCls}>Issue to section</h1>
+        <p className={pageSubCls}>{restaurant.name} store</p>
       </header>
       <GroupTabs group="store" />
 

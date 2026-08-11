@@ -7,7 +7,8 @@ import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getPnlMonthly } from '@/server/pnl-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
-import { cardCls } from '@/components/ui'
+import { cardCls, pageSubCls, pageTitleCls } from '@/components/ui'
+import Honesty, { Doubted } from '@/components/Honesty'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,7 +42,11 @@ function Line({
           strong ? 'text-[15px] font-bold text-stone-900' : muted ? 'text-sm text-stone-400' : 'text-sm text-stone-800'
         }`}
       >
-        {value === null ? 'pending closing' : formatMoneyString(value)}
+        {value === null ? (
+          <span className="font-mono text-[13px] font-medium text-amber-800">pending closing</span>
+        ) : (
+          formatMoneyString(value)
+        )}
       </span>
     </div>
   )
@@ -54,8 +59,8 @@ export default async function PnlPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
       <header className="pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">P&amp;L</h1>
-        <p className="mt-0.5 text-sm text-stone-400">
+        <h1 className={pageTitleCls}>P&amp;L</h1>
+        <p className={pageSubCls}>
           {restaurant.name} · month by month · pnl_monthly — every line reads the books, nothing is typed here
         </p>
       </header>
@@ -74,21 +79,39 @@ export default async function PnlPage() {
             return (
               <section key={m.month} className={cardCls}>
                 <div className="flex items-baseline justify-between gap-3">
-                  <h2 className="text-lg font-bold text-stone-900">{monthName(m.month)}</h2>
-                  <span className={`tabular-nums text-lg font-bold ${net < 0 ? 'text-red-700' : 'text-emerald-700'}`}>
-                    {formatMoneyString(m.net_before_purch_overheads)}
+                  <h2 className="font-display text-lg font-bold tracking-[-0.01em] text-stone-900">
+                    {monthName(m.month)}
+                  </h2>
+                  <span
+                    className={`font-display text-lg font-bold tabular-nums tracking-[-0.02em] ${
+                      net < 0 ? 'text-red-700' : 'text-emerald-700'
+                    }`}
+                  >
+                    {m.sections_pending_closing > 0 ? (
+                      <Doubted title="cost of goods is missing sections that have not closed — the real figure is lower">
+                        {formatMoneyString(m.net_before_purch_overheads)}
+                      </Doubted>
+                    ) : (
+                      formatMoneyString(m.net_before_purch_overheads)
+                    )}
                   </span>
                 </div>
 
                 {m.sections_pending_closing > 0 && (
-                  <p className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-                    {m.sections_pending_closing} {m.sections_pending_closing === 1 ? 'section has' : 'sections have'} no
-                    ending closing this month — COGS is incomplete and this month is understated. Close them on the
-                    Kitchen page.
-                  </p>
+                  <div className="mt-3">
+                    <Honesty
+                      verdict="incomplete"
+                      action={{ href: '/kitchen/closing', label: 'File the closings' }}
+                    >
+                      {m.sections_pending_closing}{' '}
+                      {m.sections_pending_closing === 1 ? 'section has' : 'sections have'} no ending closing for
+                      this month, so cost of goods is missing part of what was eaten. Every line below it reads
+                      better than the month was.
+                    </Honesty>
+                  </div>
                 )}
 
-                <div className="mt-2 divide-y divide-stone-100">
+                <div className="mt-2 divide-y divide-rule-soft">
                   <Line label="POS revenue" value={m.revenue} sign="+" />
                   <Line label="Off-book revenue" value={m.off_book_revenue} sign="+" />
                   <Line label="Other income" value={m.other_income} sign="+" caption="oil, scrap, cartons" />

@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation'
 import type { AppUserRow, StaffRow } from '@/lib/types'
 import { createUserAction, resetPasswordAction, updateUserAction } from '@/server/auth-actions'
 import { ALL_ROLES } from '@/lib/roles'
-import { cardCls, fieldLabelCls, inputCls, selectCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
 
 type StaffOpt = Pick<StaffRow, 'id' | 'code' | 'name'>
@@ -51,7 +51,7 @@ function CreateUser({ staff }: { staff: StaffOpt[] }) {
 
   return (
     <section className={`${cardCls} mt-4`}>
-      <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">New account</h2>
+      <h2 className={sectionHeadCls}>New account</h2>
       <div className="mt-3 grid grid-cols-2 gap-3">
         <label className="block">
           <span className={fieldLabelCls}>Username</span>
@@ -261,8 +261,8 @@ export default function UsersAdmin({ users, staff, self }: { users: AppUserRow[]
   return (
     <>
       <section className={`${cardCls} mt-4`}>
-        <h2 className="text-xs font-medium uppercase tracking-wide text-stone-500">Accounts</h2>
-        <ul className="mt-1 divide-y divide-stone-100">
+        <h2 className={sectionHeadCls}>Accounts</h2>
+        <ul className="mt-1 divide-y divide-rule-soft">
           {users.map((u) => (
             <UserRow key={u.id} u={u} staff={staff} self={self} />
           ))}
