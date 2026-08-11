@@ -1168,3 +1168,34 @@ tracking as stock, it is a purchase bill.
 `casual_labour`. Both CTEs name their other half in a comment, and
 `smoke:a2` asserts each moves by the flagged amount and does not move on an
 unflagged voucher.
+
+## Commit 5b — catering and off-book lines
+
+**Catering costs itself from the issues, and the stamp is not optional.**
+`catering_summary.food_cost` sums ONLY `issue_lines` whose issue carries
+`catering_id`. An event with no stamped issue therefore reads
+margin = revenue, which looks like a wildly profitable job rather than an
+uncosted one. So the stamp had to ship WITH the module — a picker that
+appears on the store issue form when the session is Catering — or the
+screen would have been a confident lie. **The same flag-without-journey
+fault as `is_stock_purchase`, caught before shipping this time.**
+
+Verified in a rolled-back transaction: an unstamped catering issue leaves
+food_cost at 0; a stamped one moves it to 610 and margin from 5000 to 4390.
+
+Where an event has nothing stamped the table prints "none stamped" and
+"not real" rather than a margin, and an honesty strip says an uncosted job
+is not a profitable one.
+
+**NO MENU PRICE ANYWHERE in catering**, deliberately: a job is costed from
+what actually left the store, not from what those dishes would have sold
+for. Revenue collected is the one editable figure — the cheque clears days
+after the food goes out — and cost never is, because cost is the issues.
+
+**Off-book lines** answer a question a lump sum cannot: what was given, and
+how far under the menu. `at_menu` and `agreed_value` are GENERATED and so
+are absent from the insert column list by necessity; `cost_value` is FROZEN
+from `dish_costs` at save, the same rule as a non-revenue giveaway — a
+discount still consumed real food, and that cost must not drift when the
+recipe changes later. Lines are optional: a lump sum is still a true record
+of money.

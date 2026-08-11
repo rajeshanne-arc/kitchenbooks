@@ -97,11 +97,11 @@ async function main() {
   assert.equal(decimalStringToPaise(zomato2.outstanding), 0, 'void nets the partner summary')
 
   // ---- 2. off-book: mode from the list; CASH joins the drawer ladder
-  const badMode = await saveOffBook({ date: CLOSE_DATE, description: 'zz', amount: '100', paymentMode: 'Barter', note: '', customer: '', receivedInto: '' })
+  const badMode = await saveOffBook({ date: CLOSE_DATE, description: 'zz', amount: '100', paymentMode: 'Barter', note: '', customer: '', receivedInto: '', lines: [] })
   assert.ok(!badMode.ok && /list/i.test(badMode.error))
-  const ob1 = await saveOffBook({ date: CLOSE_DATE, description: 'zz party order', amount: '1500', paymentMode: 'Cash', note: 'zz cashier smoke', customer: '', receivedInto: '' })
+  const ob1 = await saveOffBook({ date: CLOSE_DATE, description: 'zz party order', amount: '1500', paymentMode: 'Cash', note: 'zz cashier smoke', customer: '', receivedInto: '', lines: [] })
   assert.ok(ob1.ok, `off-book failed: ${ob1.ok === false ? ob1.error : ''}`)
-  const ob2 = await saveOffBook({ date: CLOSE_DATE, description: 'zz upi order', amount: '900', paymentMode: 'UPI', note: 'zz cashier smoke', customer: '', receivedInto: '' })
+  const ob2 = await saveOffBook({ date: CLOSE_DATE, description: 'zz upi order', amount: '900', paymentMode: 'UPI', note: 'zz cashier smoke', customer: '', receivedInto: '', lines: [] })
   assert.ok(ob2.ok)
 
   // a 2001 close row straight through the INSERT grant — the ladder view
@@ -117,7 +117,7 @@ async function main() {
 
   // the chain continues from that close: next day's prefill sees its
   // counted cash as opening, and the day's own off-book cash as a rung
-  const ob3 = await saveOffBook({ date: NEXT_DATE, description: 'zz next-day cash', amount: '250', paymentMode: 'Cash', note: 'zz cashier smoke', customer: '', receivedInto: '' })
+  const ob3 = await saveOffBook({ date: NEXT_DATE, description: 'zz next-day cash', amount: '250', paymentMode: 'Cash', note: 'zz cashier smoke', customer: '', receivedInto: '', lines: [] })
   assert.ok(ob3.ok)
   const prefill = await getClosePrefill(rid, NEXT_DATE)
   assert.ok(prefill.ok, `prefill blocked: ${prefill.ok === false ? prefill.error : ''}`)

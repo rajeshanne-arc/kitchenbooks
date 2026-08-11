@@ -72,6 +72,7 @@ const IssueSchema = z.object({
     .min(1)
     .max(40),
   indentId: z.string().regex(UUID).optional(),
+  cateringId: z.string().regex(UUID).optional(),
 })
 
 export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
@@ -131,9 +132,10 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
       }
 
       const [issue] = await tx<{ id: string }[]>`
-        insert into issues (restaurant_id, issue_date, section_id, session, indent_id, entered_by)
+        insert into issues (restaurant_id, issue_date, section_id, session, indent_id,
+                            catering_id, entered_by)
         values (${rid}, ${input.issueDate}, ${input.sectionId}, ${input.session},
-                ${input.indentId ?? null}, ${by})
+                ${input.indentId ?? null}, ${input.cateringId ?? null}, ${by})
         returning id`
 
       const lineRows = input.lines.map((l) => ({

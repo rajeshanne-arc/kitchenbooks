@@ -3,6 +3,7 @@ import IssueEntry from '@/components/store/IssueEntry'
 import { getRestaurant } from '@/server/queries'
 import { getIndentPrefill, getSections, listOpenIndents } from '@/server/store-queries'
 import { getList } from '@/server/settings'
+import { listCateringForPicker } from '@/server/catering-queries'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
@@ -12,7 +13,7 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
   const { indent: indentParam } = await searchParams
   const restaurant = await getRestaurant()
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  const [sections, openIndents, prefill, returnReasons, sessions] = await Promise.all([
+  const [sections, openIndents, prefill, returnReasons, sessions, cateringEvents] = await Promise.all([
     getSections(restaurant.id),
     listOpenIndents(restaurant.id),
     indentParam !== undefined && UUID.test(indentParam)
@@ -20,6 +21,7 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
       : Promise.resolve(null),
     getList(restaurant.id, 'return_reason'),
     getList(restaurant.id, 'session'),
+    listCateringForPicker(restaurant.id),
   ])
 
   return (
@@ -72,6 +74,7 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
           key={prefill?.id ?? 'blank'}
           sections={sections}
           sessions={sessions}
+          cateringEvents={cateringEvents}
           returnReasons={returnReasons}
           initialIndent={prefill}
         />

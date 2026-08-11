@@ -236,6 +236,17 @@ const OffBookSchema = z.object({
   note: z.string().trim().max(300),
   customer: z.string().trim().max(120),
   receivedInto: z.string().trim().max(60),
+  lines: z
+    .array(
+      z.object({
+        recipeId: z.union([z.literal(''), z.string().regex(UUID)]),
+        description: z.string().trim().max(200),
+        qty: z.string().regex(/^\d{1,5}(\.\d{1,3})?$/),
+        menuPrice: z.union([z.literal(''), moneyStr]),
+        agreedPrice: moneyStr,
+      }),
+    )
+    .max(40),
 })
 
 export async function saveOffBook(raw: SaveOffBookInput): Promise<SaveOffBookResult> {
@@ -260,6 +271,34 @@ export async function saveOffBook(raw: SaveOffBookInput): Promise<SaveOffBookRes
                 ${input.customer === '' ? null : input.customer},
                 ${input.receivedInto === '' ? null : input.receivedInto})
         returning id`
+
+      // Lines, when the cashier itemised the order. cost_value is FROZEN
+      // here from dish_costs — a giveaway priced below menu still consumed
+      // real food, and that cost must not drift when the recipe changes
+      // later. at_menu and agreed_value are GENERATED and so are absent
+      // from this column list by necessity, not by choice.
+      if (input.lines.length > 0) {
+        for (const [i, l] of input.lines.entries()) {
+          let cost = '0'
+          if (l.recipeId !== '') {
+            const [d] = await tx<{ dish_cost: string | null }[]>`
+              select dish_cost::text as dish_cost from dish_costs
+              where restaurant_id = ${rid} and recipe_id = ${l.recipeId}`
+            if (!d) throw new CashierError(`Line ${i + 1}: that dish is not on the menu`)
+            const [v] = await tx<{ v: string }[]>`
+              select (${l.qty}::numeric * ${d.dish_cost ?? '0'}::numeric)::text as v`
+            cost = v.v
+          }
+          await tx`
+            insert into off_book_lines (off_book_id, recipe_id, description, qty,
+                                        menu_price, agreed_price, cost_value)
+            values (${row.id}, ${l.recipeId === '' ? null : l.recipeId},
+                    ${l.description === '' ? null : l.description},
+                    ${l.qty}::numeric,
+                    ${l.menuPrice === '' ? null : l.menuPrice}::numeric,
+                    ${l.agreedPrice}::numeric, ${cost}::numeric)`
+        }
+      }
       return { id: row.id }
     })
 

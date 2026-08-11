@@ -36,6 +36,7 @@ import {
   fieldLabelCls,
   numCls,
   sectionHeadCls,
+  selectCls,
   thCls,
   thNumCls,
 } from '@/components/ui'
@@ -63,12 +64,17 @@ type Saved =
 export default function IssueEntry({
   sections,
   sessions,
+  cateringEvents,
   returnReasons,
   initialIndent = null,
 }: {
   sections: Section[]
   /** the `session` list. NOTHING is preselected — see below. */
   sessions: string[]
+  /** catering events an issue may be stamped to. catering_summary sums ONLY
+   *  stamped issues, so an unstamped catering issue leaves that event's
+   *  food cost at zero and its margin reading as the whole revenue. */
+  cateringEvents: { id: string; name: string; event_date: string }[]
   returnReasons: string[]
   initialIndent?: IndentPrefill | null
 }) {
@@ -81,6 +87,7 @@ export default function IssueEntry({
   // to be a morning one. An unanswered question stays unanswered until it
   // is answered, and the save refuses until then.
   const [session, setSession] = useState(initialIndent?.session ?? '')
+  const [cateringId, setCateringId] = useState('')
   const [indent, setIndent] = useState<IndentPrefill | null>(initialIndent)
   const [sectionId, setSectionId] = useState(initialIndent?.section_id ?? '')
   const [lines, setLines] = useState<Line[]>(
@@ -211,6 +218,7 @@ export default function IssueEntry({
           session,
           lines: movedLines,
           ...(indent !== null ? { indentId: indent.id } : {}),
+          ...(cateringId !== '' ? { cateringId } : {}),
         }
         const res = await saveIssue(payload)
         if (res.ok) setSaved({ kind: 'out', res })
@@ -232,6 +240,7 @@ export default function IssueEntry({
     setIndent(null)
     setSectionId('')
     setReason('')
+    setCateringId('')
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
@@ -455,6 +464,42 @@ export default function IssueEntry({
             </p>
           )}
         </div>
+
+        {/* A catering session asks WHICH event. Without the stamp the event's
+            food cost stays zero and its margin reads as the whole revenue —
+            so the question is asked here, where the stock is actually going
+            out, rather than reconstructed later. */}
+        {direction === 'out' && session.toLowerCase() === 'catering' && (
+          <div className="mt-4">
+            <span className={fieldLabelCls}>Which event?</span>
+            {cateringEvents.length === 0 ? (
+              <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                No catering event on file yet — create it under Sales → Catering first, or this stock will not
+                reach any event&apos;s cost.
+              </p>
+            ) : (
+              <>
+                <select
+                  value={cateringId}
+                  onChange={(e) => setCateringId(e.target.value)}
+                  className={selectCls}
+                >
+                  <option value="">— not for an event —</option>
+                  {cateringEvents.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} · {fmtDate(c.event_date)}
+                    </option>
+                  ))}
+                </select>
+                {cateringId === '' && (
+                  <p className="mt-1.5 text-xs text-amber-900">
+                    Unstamped, this stock costs nobody — the event&apos;s margin will read as its whole revenue.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         {direction === 'back' && (
           <div className="mt-4">

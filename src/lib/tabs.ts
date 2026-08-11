@@ -115,6 +115,7 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     // settlement is something a partner does. They were sibling tabs, which
     // put the master and the thing it governs in two places.
     { key: 'partners', href: '/sales/partners', label: 'Partners' },
+    { key: 'catering', href: '/sales/catering', label: 'Catering' },
     { key: 'books', href: '/sales/books', label: 'Books' },
   ],
   staff: [

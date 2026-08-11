@@ -13,7 +13,16 @@ import { fmtDate, todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
 
-export default function OffBookClient({ modes, rows }: { modes: string[]; rows: OffBookRow[] }) {
+export default function OffBookClient({
+  dishes,
+  modes,
+  rows,
+}: {
+  /** the menu, for pricing a line against it */
+  dishes: { recipe_id: string; name: string }[]
+  modes: string[]
+  rows: OffBookRow[]
+}) {
   const router = useRouter()
   const [date, setDate] = useState(todayLocal)
   const [description, setDescription] = useState('')
@@ -22,6 +31,14 @@ export default function OffBookClient({ modes, rows }: { modes: string[]; rows: 
   const [note, setNote] = useState('')
   const [customer, setCustomer] = useState('')
   const [receivedInto, setReceivedInto] = useState('')
+  // Lines are OPTIONAL. An off-book order recorded as a lump sum is still a
+  // true record of money; itemising it additionally answers "what did we
+  // give away, and how far below menu" — a different question, and one
+  // nobody can reconstruct later from an amount alone.
+  const [lines, setLines] = useState<
+    { key: number; recipeId: string; description: string; qty: string; menuPrice: string; agreedPrice: string }[]
+  >([])
+  const [nextKey, setNextKey] = useState(1)
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -42,6 +59,15 @@ export default function OffBookClient({ modes, rows }: { modes: string[]; rows: 
         note: note.trim(),
         customer: customer.trim(),
         receivedInto: receivedInto.trim(),
+        lines: lines
+          .filter((l) => l.qty.trim() !== '' && l.agreedPrice.trim() !== '')
+          .map(({ recipeId, description, qty, menuPrice, agreedPrice }) => ({
+            recipeId,
+            description: description.trim(),
+            qty: qty.trim(),
+            menuPrice: menuPrice.trim(),
+            agreedPrice: agreedPrice.trim(),
+          })),
       })
       if (res.ok) {
         setSaved(res)
@@ -50,6 +76,7 @@ export default function OffBookClient({ modes, rows }: { modes: string[]; rows: 
         setNote('')
         setCustomer('')
         setReceivedInto('')
+        setLines([])
         router.refresh()
       } else {
         setError(res.error)
@@ -147,6 +174,102 @@ export default function OffBookClient({ modes, rows }: { modes: string[]; rows: 
             <span className={fieldLabelCls}>Note</span>
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
           </label>
+
+          {/* AGREED vs MENU. The amount above says what was collected; these
+              lines say what was given and how far under the menu it went.
+              The difference is the discount, which nobody can reconstruct
+              from a lump sum afterwards. Optional — a lump sum is still a
+              true record of money. */}
+          <div className="rounded-xl border border-rule bg-stone-50 p-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className={sectionHeadCls}>What was sold</h3>
+              <span className="text-xs text-stone-500">optional — agreed price against menu price</span>
+            </div>
+            {lines.length > 0 && (
+              <div className="mt-2 space-y-2">
+                {lines.map((l, i) => (
+                  <div key={l.key} className="grid grid-cols-[1fr_4rem_5rem_5rem_2rem] gap-2">
+                    <select
+                      value={l.recipeId}
+                      onChange={(e) =>
+                        setLines((ls) => ls.map((x) => (x.key === l.key ? { ...x, recipeId: e.target.value } : x)))
+                      }
+                      className={selectCls}
+                      aria-label={`Dish, line ${i + 1}`}
+                    >
+                      <option value="">— not a menu dish —</option>
+                      {dishes.map((d) => (
+                        <option key={d.recipe_id} value={d.recipe_id}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={l.qty}
+                      onChange={(e) =>
+                        setLines((ls) =>
+                          ls.map((x) => (x.key === l.key ? { ...x, qty: e.target.value.replace(/[^\d.]/g, '') } : x)),
+                        )
+                      }
+                      inputMode="decimal"
+                      placeholder="qty"
+                      className={`${numCls} w-full text-right font-mono tabular-nums`}
+                      aria-label={`Quantity, line ${i + 1}`}
+                    />
+                    <input
+                      value={l.menuPrice}
+                      onChange={(e) =>
+                        setLines((ls) =>
+                          ls.map((x) => (x.key === l.key ? { ...x, menuPrice: e.target.value.replace(/[^\d.]/g, '') } : x)),
+                        )
+                      }
+                      inputMode="decimal"
+                      placeholder="menu"
+                      className={`${numCls} w-full text-right font-mono tabular-nums`}
+                      aria-label={`Menu price, line ${i + 1}`}
+                    />
+                    <input
+                      value={l.agreedPrice}
+                      onChange={(e) =>
+                        setLines((ls) =>
+                          ls.map((x) => (x.key === l.key ? { ...x, agreedPrice: e.target.value.replace(/[^\d.]/g, '') } : x)),
+                        )
+                      }
+                      inputMode="decimal"
+                      placeholder="agreed"
+                      className={`${numCls} w-full text-right font-mono tabular-nums`}
+                      aria-label={`Agreed price, line ${i + 1}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
+                      aria-label={`Remove line ${i + 1}`}
+                      className="rounded-md text-stone-300 hover:bg-stone-100 hover:text-stone-600"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setLines((ls) => [
+                  ...ls,
+                  { key: nextKey, recipeId: '', description: '', qty: '', menuPrice: '', agreedPrice: '' },
+                ])
+                setNextKey((k) => k + 1)
+              }}
+              className="mt-2 w-full rounded-lg border border-dashed border-stone-300 py-2 text-xs font-medium text-stone-500 hover:border-emerald-400 hover:text-emerald-700"
+            >
+              ＋ Add a line
+            </button>
+            <p className="mt-2 text-xs text-stone-500">
+              Picking a dish freezes its food cost onto the line, so the discount can be read against what it
+              actually cost to make.
+            </p>
+          </div>
         </div>
         {error && (
           <div role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">

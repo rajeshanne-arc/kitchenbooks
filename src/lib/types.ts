@@ -506,6 +506,10 @@ export type SaveIssueInput = {
   lines: { itemId: string; qty: string; note: string }[]
   /** open indent this issue answers — stamped on the issue, marks the indent issued */
   indentId?: string
+  /** the catering event this stock went to. catering_summary sums ONLY
+   *  stamped issues, so without this an event's food cost reads zero and
+   *  its margin reads as the whole revenue. */
+  cateringId?: string
 }
 
 export type SaveIssueResult =
@@ -1402,6 +1406,55 @@ export type VoidSettlementResult =
  *  BOTH ways — the rupee gap and the effective-vs-agreed rate. They are
  *  different findings: a small gap on a huge period can hide a rate that
  *  drifted, and a big gap can be one disputed invoice at the agreed rate. */
+/* ── catering ──────────────────────────────────────────────────────────── */
+
+/** One event as catering_summary states it. food_cost sums ONLY issue lines
+ *  stamped with this catering_id — an unstamped issue is invisible here, so
+ *  margin would read as the whole revenue. The screen says so. */
+export type CateringSummaryRow = {
+  catering_id: string
+  event_date: string
+  name: string
+  customer: string | null
+  covers: number | null
+  revenue_collected: string
+  food_cost: string
+  other_expenses: string
+  total_cost: string
+  margin: string
+}
+
+export type CateringEventDetail = CateringSummaryRow & {
+  contact: string | null
+  payment_mode: string | null
+  note: string | null
+  /** issues stamped to this event — what the kitchen actually took */
+  issues: { id: string; issue_date: string; section_name: string; line_count: number; value: string }[]
+  expenses: { id: string; description: string | null; amount: string; paid_via: string | null }[]
+}
+
+export type SaveCateringEventInput = {
+  date: string
+  name: string
+  customer: string
+  contact: string
+  covers: string
+  revenueCollected: string
+  paymentMode: string
+  note: string
+}
+
+export type SaveCateringEventResult =
+  | { ok: true; event: CateringSummaryRow }
+  | { ok: false; error: string }
+
+export type SaveCateringExpenseInput = {
+  cateringId: string
+  description: string
+  amount: string
+  paidVia: string
+}
+
 /* ── contract bills and casual labour: money out that is LABOUR ────────── */
 
 export type ContractBillRow = {
@@ -1520,6 +1573,10 @@ export type SaveOffBookInput = {
   customer: string
   /** which account it landed in — a UPI handle, a card machine, the drawer */
   receivedInto: string
+  /** what was actually sold, and at what price against the menu. at_menu and
+   *  agreed_value are GENERATED — never inserted; cost_value is frozen from
+   *  dish_costs at save, the same rule as a non-revenue giveaway. */
+  lines: { recipeId: string; description: string; qty: string; menuPrice: string; agreedPrice: string }[]
 }
 
 export type SaveOffBookResult = { ok: true; order: OffBookRow } | { ok: false; error: string }

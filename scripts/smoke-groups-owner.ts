@@ -85,7 +85,7 @@ async function main() {
   assert.ok(rent && decimalStringToPaise(rent.amount) === 500000, 'expenses_by_category holds the month')
 
   // ---- 4. the P&L adds the month up
-  const ob = await saveOffBook({ date: OB_DATE, description: 'zz owner smoke', amount: '400', paymentMode: 'UPI', note: '', customer: '', receivedInto: '' })
+  const ob = await saveOffBook({ date: OB_DATE, description: 'zz owner smoke', amount: '400', paymentMode: 'UPI', note: '', customer: '', receivedInto: '', lines: [] })
   assert.ok(ob.ok)
   const pnl = await getPnlMonthly(rid, 24)
   const aug = pnl.find((m) => m.month === MONTH)
