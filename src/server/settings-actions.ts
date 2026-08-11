@@ -176,17 +176,27 @@ const DeptSchema = z.object({
 const NewDeptSchema = DeptSchema.extend({
   code: z.string().trim().min(2, 'A code is 2 letters').max(4).regex(/^[A-Za-z]+$/, 'Letters only'),
   deptGroup: z.enum(['Management', 'Support', 'Kitchen', 'Service', 'Bar']),
+  deptKind: z.enum(['kitchen', 'operational']),
+  // Only a department that COOKS may code a dish. Security receives issues
+  // and posts staff but no dish was ever a Security dish, and the code is
+  // permanent once a dish carries it.
+  codesDishes: z.boolean(),
 })
 
 export async function createDepartment(raw: {
   name: string
   code: string
   deptGroup: string
+  deptKind: string
+  codesDishes: boolean
   sortOrder: string
   status: 'active' | 'inactive'
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const input = NewDeptSchema.parse(raw)
+    if (input.codesDishes && input.deptKind !== 'kitchen') {
+      throw new SettingsError('Only a kitchen department can code dishes')
+    }
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const code = input.code.toUpperCase()
@@ -199,8 +209,8 @@ export async function createDepartment(raw: {
       const [{ next }] = await tx<{ next: number }[]>`
         select coalesce(max(sort_order), 0) + 1 as next from sections where restaurant_id = ${rid}`
       await tx`
-        insert into sections (restaurant_id, code, name, dept_group, sort_order, status)
-        values (${rid}, ${code}, ${input.name}, ${input.deptGroup},
+        insert into sections (restaurant_id, code, name, dept_group, dept_kind, codes_dishes, sort_order, status)
+        values (${rid}, ${code}, ${input.name}, ${input.deptGroup}, ${input.deptKind}, ${input.codesDishes},
                 ${input.sortOrder === '' ? next : Number(input.sortOrder)}, ${input.status})`
     })
     return { ok: true }

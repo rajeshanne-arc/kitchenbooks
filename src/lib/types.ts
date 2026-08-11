@@ -368,6 +368,10 @@ export type DepartmentRow = {
   code: string
   name: string
   dept_group: DeptGroup
+  /** kitchen departments cook; operational ones do not. The split is what
+   *  the two tabs are — a chef looking for Tandoori should not scroll past
+   *  Security to reach it. */
+  dept_kind: string
   sort_order: number
   status: 'active' | 'inactive'
   issues: number
@@ -568,6 +572,14 @@ export type VoidWastageResult =
 /** dish_costs view row (+ section sort for grouping) */
 /** The whole dish card, exactly as dish_costs computes it. Every figure
  *  below is the VIEW's — this app renders them and never recomputes one. */
+/** One supplier's EXPOSURE: how much of the menu depends on them. */
+export type SupplierExposureRow = {
+  supplier: string
+  items: number
+  dishes: number
+  batch_cost: string
+}
+
 export type DishCard = {
   recipe_id: string
   code: string

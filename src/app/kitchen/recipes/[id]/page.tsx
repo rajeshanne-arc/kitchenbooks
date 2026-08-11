@@ -13,6 +13,7 @@ import { monthStartIST } from '@/server/store-queries'
 import { formatMoneyString } from '@/lib/money'
 import RecipeEditor from '@/components/recipes/RecipeEditor'
 import DishCardPanel from '@/components/recipes/DishCardPanel'
+import SubCardPanel from '@/components/recipes/SubCardPanel'
 import { RetiredBadge } from '@/components/books/Badges'
 
 export const dynamic = 'force-dynamic'
@@ -70,6 +71,12 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
       {card !== null && (
         <div className="mt-4">
           <DishCardPanel card={card} media={media} courses={courses} />
+        </div>
+      )}
+
+      {recipe.kind === 'sub' && (
+        <div className="mt-4">
+          <SubCardPanel recipe={recipe} />
         </div>
       )}
     </div>

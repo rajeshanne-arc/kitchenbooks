@@ -1013,3 +1013,42 @@ kitchen is judged by would make the kitchen answer for the owner's estimate.
 **No portions, no answers.** A batch cost divided by nothing is nothing, so
 the answers block is replaced by an honesty strip naming what is missing
 rather than four dashes or four zeroes.
+
+## Commit 3, parts 3–6
+
+**Sub-recipe card — and a default masquerading as an answer.** The brief
+asked for "both quantity and unit required before the cost means anything".
+Reading the schema first showed why that cannot be a null check:
+`recipes.output_qty` is NOT NULL DEFAULT 1 and `output_unit` is NOT NULL
+DEFAULT 'portion'. Neither can be missing, so the database cannot tell
+"this batch makes 1 portion" from "nobody ever said what this batch makes".
+A gravy that really makes 5 litres but still carries the defaults reports
+its whole batch cost as the cost of one portion — five times the truth,
+inherited by every dish using it, with nothing looking wrong.
+
+So the card treats BOTH-at-default as unanswered, withholds cost-per-unit,
+and names what is missing. One alone is ordinary: a sub really can make 1
+litre, and a sub really can be portioned. **This is the same failure as
+`issues.session` defaulting to 'Morning'** — a column default standing in
+for a human answer — and it is now the second instance, so treat it as a
+pattern when reading any NOT NULL DEFAULT on a column a human is meant to
+decide.
+
+**Supplier exposure** (`supplier_costs`, Kitchen → Books) is sorted by
+DISHES, and the ordering is the report's argument: if the big-money supplier
+fails you pay more; if the thirty-dish supplier fails, a third of the menu
+stops. Captioned EXPOSURE, not spend — it counts what the cooking depends
+on, not what was bought, so a supplier who sold nothing this month can still
+be the reason thirty dishes are possible.
+
+**Kitchen wastage quantity was already built** — component (item | sub |
+dish) → qty → value frozen from the component's cost, with value-only kept
+as the fallback for "half a tray of gravy", reason from `waste_reason`.
+Verified rather than rebuilt.
+
+**Departments are two tabs** on `dept_kind`. Same table, same editing rules;
+the split is only so a chef looking for Tandoori does not scroll past
+Security. Creating one sets `dept_kind` from the active tab, and
+`codes_dishes` is a deliberate tick shown only for kitchen departments —
+the server refuses it for operational ones, because the code becomes part of
+every dish code and cannot be moved afterwards.

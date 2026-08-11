@@ -35,6 +35,10 @@ const GROUPS = ['Management', 'Support', 'Kitchen', 'Service', 'Bar'] as const
 
 export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
   const router = useRouter()
+  // Two tabs on dept_kind. Both lists are the same table and the same
+  // editing rules — the split is only so a chef looking for Tandoori does
+  // not scroll past Security to reach it.
+  const [kind, setKind] = useState<'kitchen' | 'operational'>('kitchen')
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState({ name: '', sortOrder: '', status: 'active' as 'active' | 'inactive' })
   const [adding, setAdding] = useState(false)
@@ -42,6 +46,7 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
     name: '',
     code: '',
     deptGroup: 'Kitchen' as (typeof GROUPS)[number],
+    codesDishes: false,
     sortOrder: '',
     status: 'active' as 'active' | 'inactive',
   })
@@ -69,10 +74,10 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
     setBusy(true)
     setError(null)
     try {
-      const res = await createDepartment(neu)
+      const res = await createDepartment({ ...neu, deptKind: kind })
       if (res.ok) {
         toast(`${neu.name} added`)
-        setNeu({ name: '', code: '', deptGroup: 'Kitchen', sortOrder: '', status: 'active' })
+        setNeu({ name: '', code: '', deptGroup: 'Kitchen', codesDishes: false, sortOrder: '', status: 'active' })
         setAdding(false)
         router.refresh()
       } else setError(res.error)
@@ -83,11 +88,50 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
     }
   }
 
+  const shown = rows.filter((r) => r.dept_kind === kind)
+  const counts = {
+    kitchen: rows.filter((r) => r.dept_kind === 'kitchen').length,
+    operational: rows.filter((r) => r.dept_kind === 'operational').length,
+  }
+
   return (
     <div className="space-y-4">
+      <div className="flex gap-2" role="group" aria-label="Department kind">
+        {(
+          [
+            { k: 'kitchen' as const, label: 'Kitchen', hint: 'these cook' },
+            { k: 'operational' as const, label: 'Operational', hint: 'these do not' },
+          ]
+        ).map((t) => (
+          <button
+            key={t.k}
+            type="button"
+            aria-pressed={kind === t.k}
+            onClick={() => setKind(t.k)}
+            className={`rounded-xl border px-3.5 py-2 text-left transition-colors ${
+              kind === t.k
+                ? 'border-emerald-700 bg-emerald-700 text-white'
+                : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
+            }`}
+          >
+            <span className="block text-sm font-semibold">
+              {t.label}
+              <span className={`ml-1.5 font-mono text-xs ${kind === t.k ? 'text-emerald-100' : 'text-stone-400'}`}>
+                {counts[t.k]}
+              </span>
+            </span>
+            <span className={`block text-[11px] ${kind === t.k ? 'text-emerald-100' : 'text-stone-500'}`}>
+              {t.hint}
+            </span>
+          </button>
+        ))}
+      </div>
+
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className={sectionHeadCls}>Departments</h2>
+          <h2 className={sectionHeadCls}>
+            {kind === 'kitchen' ? 'Kitchen departments' : 'Operational departments'}
+          </h2>
           <button
             type="button"
             onClick={() => setAdding((a) => !a)}
@@ -145,6 +189,24 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
                 />
               </label>
             </div>
+            {kind === 'kitchen' && (
+              <label className="mt-3 flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={neu.codesDishes}
+                  onChange={(e) => setNeu((n) => ({ ...n, codesDishes: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 accent-emerald-700"
+                />
+                <span className="text-xs text-stone-700">
+                  Dishes can be coded to this department.{' '}
+                  <span className="text-stone-500">
+                    Only tick it for a department that cooks — the code becomes part of every dish code and
+                    cannot be moved afterwards.
+                  </span>
+                </span>
+              </label>
+            )}
+
             <button
               type="button"
               onClick={saveNew}
@@ -179,7 +241,7 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) =>
+              {shown.map((r) =>
                 editing === r.id ? (
                   <tr key={r.id} className="h-12 bg-amber-50/40">
                     <td className="border-b border-rule-soft px-1 py-1.5">

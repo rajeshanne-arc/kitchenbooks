@@ -10,6 +10,7 @@ import type {
   RecipeDetail,
   RecipeLineRow,
   SubCostRow,
+  SupplierExposureRow,
 } from '@/lib/types'
 
 export async function listDishCosts(restaurantId: string): Promise<DishCostRow[]> {
@@ -170,4 +171,22 @@ export async function getRecipeMedia(
     select photo_url, video_url from recipes
     where restaurant_id = ${restaurantId} and id = ${recipeId}`
   return rows[0] ?? { photo_url: null, video_url: null }
+}
+
+/** Menu exposure by supplier, from supplier_costs.
+ *
+ * SORTED BY DISHES, NOT MONEY, and that ordering is the report's argument:
+ * a supplier behind 30 dishes is a harder problem than a bigger number
+ * behind 2. If the big-money supplier fails you pay more; if the 30-dish
+ * supplier fails, a third of the menu stops.
+ *
+ * Sub-recipe lines are already split across the suppliers inside them by
+ * the view — a gravy made of four suppliers' ingredients exposes all four.
+ */
+export async function getSupplierExposure(restaurantId: string): Promise<SupplierExposureRow[]> {
+  return sql<SupplierExposureRow[]>`
+    select supplier, items::int as items, dishes::int as dishes, batch_cost::text as batch_cost
+    from supplier_costs
+    where restaurant_id = ${restaurantId}
+    order by dishes desc, batch_cost desc, supplier asc`
 }
