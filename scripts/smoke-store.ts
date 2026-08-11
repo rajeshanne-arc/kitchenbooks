@@ -41,8 +41,7 @@ async function main() {
   const issue = await saveIssue({
     issueDate: today,
     sectionId: ch.id,
-    lines: [{ itemId: plt1.id, qty: '5', note: '' }],
-  })
+    lines: [{ itemId: plt1.id, qty: '5', note: '' }], session: 'Morning' })
   assert.ok(issue.ok, `saveIssue failed: ${issue.ok === false ? issue.error : ''}`)
   assert.equal(issue.issue.section_code, 'CH')
   assert.equal(issue.lines[0].unit_cost.replace(/0+$/, '').replace(/\.$/, ''), '305')

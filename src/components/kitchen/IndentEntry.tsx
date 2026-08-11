@@ -41,6 +41,43 @@ export default function IndentEntry({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveIndentResult, { ok: true }> | null>(null)
+  const [refilling, setRefilling] = useState(false)
+  const [refillNote, setRefillNote] = useState<string | null>(null)
+
+  // Yesterday's list, back on the screen. A kitchen asks for nearly the same
+  // things every evening, and retyping fifteen lines was the single biggest
+  // daily cost in the product. It fills the form and stops — every quantity
+  // is still editable, and nothing is saved until save is pressed.
+  async function refillFromLast() {
+    if (sectionId === '' || session === '') return
+    setRefilling(true)
+    setRefillNote(null)
+    try {
+      const res = await fetch(
+        `/api/indents?last=1&section=${sectionId}&session=${encodeURIComponent(session)}`,
+        { cache: 'no-store' },
+      )
+      if (!res.ok) {
+        setRefillNote('No earlier request for this department and session yet.')
+        return
+      }
+      const p = (await res.json()) as {
+        indent_date: string
+        lines: { item: IssuableItemHit; qty: string }[]
+      }
+      if (p.lines.length === 0) {
+        setRefillNote('The last request had no lines.')
+        return
+      }
+      setLines(p.lines.map((l, i) => ({ key: nextKey + i, item: l.item, qty: l.qty })))
+      setNextKey((k) => k + p.lines.length + 1)
+      setRefillNote(`Filled from the request of ${fmtDate(p.indent_date)} — edit anything before saving.`)
+    } catch {
+      setRefillNote('Could not reach the server.')
+    } finally {
+      setRefilling(false)
+    }
+  }
 
   const patchLine = (key: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
@@ -195,6 +232,20 @@ export default function IndentEntry({
           )}
         </div>
       </section>
+
+      {sectionId !== '' && session !== '' && (
+        <div className="rounded-2xl border border-rule bg-stone-50 p-3">
+          <button
+            type="button"
+            onClick={() => void refillFromLast()}
+            disabled={refilling}
+            className="w-full rounded-xl border border-dashed border-stone-300 py-2.5 text-sm font-medium text-stone-600 hover:border-emerald-400 hover:text-emerald-700 disabled:opacity-50"
+          >
+            {refilling ? 'Fetching…' : '↻ Refill from last request'}
+          </button>
+          {refillNote !== null && <p className="mt-2 text-xs text-stone-600">{refillNote}</p>}
+        </div>
+      )}
 
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Items requested</h2>

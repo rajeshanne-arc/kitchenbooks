@@ -354,15 +354,20 @@ export async function countOpenIndents(restaurantId: string): Promise<number> {
   return rows[0]?.n ?? 0
 }
 
-export async function listOpenIndents(restaurantId: string, sectionId?: string): Promise<IndentRow[]> {
+export async function listOpenIndents(
+  restaurantId: string,
+  sectionId?: string,
+  session?: string,
+): Promise<IndentRow[]> {
   return sql<IndentRow[]>`
-    select i.id, i.indent_date::text as indent_date, i.section_id,
+    select i.id, i.indent_date::text as indent_date, i.section_id, i.session,
            s.code as section_code, s.name as section_name, i.status, i.note,
            i.entered_by, i.created_at::text as created_at,
            (select count(*)::int from indent_lines l where l.indent_id = i.id) as line_count
     from indents i join sections s on s.id = i.section_id
     where i.restaurant_id = ${restaurantId} and i.status = 'open'
       ${sectionId ? sql`and i.section_id = ${sectionId}` : sql``}
+      ${session ? sql`and i.session = ${session}` : sql``}
     order by i.indent_date desc, i.created_at desc
     limit 30`
 }
@@ -374,7 +379,7 @@ export async function getIndentPrefill(restaurantId: string, indentId: string): 
   const rows = await sql<
     (Omit<IndentPrefill, 'lines'> & { status: string })[]
   >`
-    select i.id, i.indent_date::text as indent_date, i.section_id,
+    select i.id, i.indent_date::text as indent_date, i.section_id, i.session,
            s.code as section_code, s.name as section_name, i.note, i.status
     from indents i join sections s on s.id = i.section_id
     where i.restaurant_id = ${restaurantId} and i.id = ${indentId}`
@@ -396,6 +401,7 @@ export async function getIndentPrefill(restaurantId: string, indentId: string): 
   return {
     id: head.id,
     indent_date: head.indent_date,
+    session: head.session,
     section_id: head.section_id,
     section_code: head.section_code,
     section_name: head.section_name,

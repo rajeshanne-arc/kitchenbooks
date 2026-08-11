@@ -930,3 +930,29 @@ rather than implying a link the data does not carry.
 **Line prefill was already fixed** — the `key={prefill?.id}` remount from the
 Store phase. Verified against the live database: `initialIndent` arrives
 with both lines and their quantities. The screenshot predated the fix.
+
+## Commit 2 (cont.) — session, and the refusal that replaces a default
+
+**`issues.session` has a database default of 'Morning', and that default is
+what made the data wrong** — every evening issue quietly claiming to be a
+morning one, with nothing on screen to notice. So:
+
+- `SaveIssueInput.session` is REQUIRED and `saveIssue` refuses a blank one
+  by name. There is no fallback anywhere on the path.
+- The picker starts **empty**. Preselecting "Morning" would reproduce the
+  exact bug in the UI layer — a question that answers itself is not a
+  question. The form says "Pick the session before saving — it is not
+  assumed" once a department is chosen.
+- **Department + session together** pick out the one indent being filled: a
+  department can have a morning ask and an evening ask open at once.
+  `/api/indents?section=&session=` narrows it, and filling an indent adopts
+  ITS session, so the store never restates what the kitchen already said.
+- Session shows on the open-indents list and in the chooser.
+- **"Refill from last request"** (`/api/indents?last=1&section=&session=`)
+  puts the previous request for that department and shift back on the
+  screen, editable, saving nothing until save is pressed.
+
+The general rule this is an instance of: **a column default is not a
+substitute for an answer.** Where the database supplies a default for
+something a human is supposed to decide, the form must still ask, and the
+save must still refuse.

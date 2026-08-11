@@ -12,13 +12,14 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
   const { indent: indentParam } = await searchParams
   const restaurant = await getRestaurant()
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  const [sections, openIndents, prefill, returnReasons] = await Promise.all([
+  const [sections, openIndents, prefill, returnReasons, sessions] = await Promise.all([
     getSections(restaurant.id),
     listOpenIndents(restaurant.id),
     indentParam !== undefined && UUID.test(indentParam)
       ? getIndentPrefill(restaurant.id, indentParam)
       : Promise.resolve(null),
     getList(restaurant.id, 'return_reason'),
+    getList(restaurant.id, 'session'),
   ])
 
   return (
@@ -44,7 +45,8 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
                   >
                     <span className="min-w-0">
                       <span className="block truncate text-[15px] font-medium text-stone-900">
-                        {i.section_name} · {i.line_count} {i.line_count === 1 ? 'item' : 'items'}
+                        {i.section_name} · {i.session} · {i.line_count}{' '}
+                        {i.line_count === 1 ? 'item' : 'items'}
                       </span>
                       <span className="block text-xs text-stone-500">
                         {fmtDate(i.indent_date)}
@@ -69,6 +71,7 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
         <IssueEntry
           key={prefill?.id ?? 'blank'}
           sections={sections}
+          sessions={sessions}
           returnReasons={returnReasons}
           initialIndent={prefill}
         />

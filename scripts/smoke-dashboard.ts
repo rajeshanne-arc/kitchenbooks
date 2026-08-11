@@ -140,7 +140,7 @@ async function main() {
   const sections = await getSections(rid)
   const ch = sections.find((s) => s.code === 'CH')
   assert.ok(ch)
-  const over = await saveIssue({ issueDate: todayIST(), sectionId: ch.id, lines: [{ itemId: plt2.id, qty: '25', note: '' }] })
+  const over = await saveIssue({ issueDate: todayIST(), sectionId: ch.id, lines: [{ itemId: plt2.id, qty: '25', note: '' }], session: 'Morning' })
   assert.ok(over.ok, `over-issue failed: ${over.ok === false ? over.error : ''}`)
   const alarms1 = await getStockAlarms(rid)
   const alarm = alarms1.find((a) => a.code === 'PLT-002')

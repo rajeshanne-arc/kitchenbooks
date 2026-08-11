@@ -62,23 +62,36 @@ type Saved =
 
 export default function IssueEntry({
   sections,
+  sessions,
   returnReasons,
   initialIndent = null,
 }: {
   sections: Section[]
+  /** the `session` list. NOTHING is preselected — see below. */
+  sessions: string[]
   returnReasons: string[]
   initialIndent?: IndentPrefill | null
 }) {
   const [issueDate, setIssueDate] = useState(todayLocal)
   const [direction, setDirection] = useState<Direction>('out')
   const [reason, setReason] = useState('')
+  // Deliberately BLANK. issues.session defaults to 'Morning' in the
+  // database, and preselecting it here would reproduce exactly the silent
+  // default that mislabelled the data: every evening issue quietly claiming
+  // to be a morning one. An unanswered question stays unanswered until it
+  // is answered, and the save refuses until then.
+  const [session, setSession] = useState(initialIndent?.session ?? '')
   const [indent, setIndent] = useState<IndentPrefill | null>(initialIndent)
   const [sectionId, setSectionId] = useState(initialIndent?.section_id ?? '')
   const [lines, setLines] = useState<Line[]>(
     initialIndent !== null && initialIndent.lines.length > 0 ? prefillLines(initialIndent, 1) : [newLine(1)],
   )
   const [nextKey, setNextKey] = useState((initialIndent?.lines.length ?? 0) + 2)
-  const [suggestions, setSuggestions] = useState<{ sectionId: string; rows: IndentRow[] } | null>(null)
+  const [suggestions, setSuggestions] = useState<{
+    sectionId: string
+    session: string
+    rows: IndentRow[]
+  } | null>(null)
   const { label } = useLang()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -97,20 +110,32 @@ export default function IssueEntry({
   // Picking a section (with no indent bound) surfaces that section's open
   // indents as one-tap suggestions — the most recent first, chooser if
   // several. Fetched per section; render shows only the matching batch.
+  // DEPARTMENT + SESSION together pick out the one indent being filled.
+  // A department alone can have a morning ask and an evening ask open at
+  // once; asking for both narrows it to the request actually in hand, and
+  // when exactly one matches it fills itself.
   useEffect(() => {
-    if (sectionId === '' || indent !== null) return
+    if (sectionId === '' || session === '' || indent !== null) return
     const ctl = new AbortController()
-    fetch(`/api/indents?section=${sectionId}`, { signal: ctl.signal, cache: 'no-store' })
+    fetch(`/api/indents?section=${sectionId}&session=${encodeURIComponent(session)}`, {
+      signal: ctl.signal,
+      cache: 'no-store',
+    })
       .then((r) => (r.ok ? r.json() : []))
       .then((rows: IndentRow[]) => {
-        if (!ctl.signal.aborted) setSuggestions({ sectionId, rows })
+        if (!ctl.signal.aborted) setSuggestions({ sectionId, session, rows })
       })
       .catch(() => {})
     return () => ctl.abort()
-  }, [sectionId, indent])
+  }, [sectionId, session, indent])
   // Open indents are an offer to fill a request — meaningless on a return.
   const suggested =
-    direction === 'out' && indent === null && suggestions?.sectionId === sectionId ? suggestions.rows : []
+    direction === 'out' &&
+    indent === null &&
+    suggestions?.sectionId === sectionId &&
+    suggestions?.session === session
+      ? suggestions.rows
+      : []
 
   async function adoptIndent(id: string) {
     try {
@@ -119,6 +144,7 @@ export default function IssueEntry({
       const p = (await res.json()) as IndentPrefill
       setIndent(p)
       setSectionId(p.section_id)
+      setSession(p.session)
       setLines(p.lines.length > 0 ? prefillLines(p, nextKey) : [newLine(nextKey)])
       setNextKey((k) => k + p.lines.length + 1)
     } catch {
@@ -154,6 +180,7 @@ export default function IssueEntry({
     sectionId !== '' &&
     lines.length > 0 &&
     lines.every(lineReady) &&
+    session !== '' &&
     (direction === 'out' || reason !== '')
 
   async function onSave() {
@@ -167,7 +194,13 @@ export default function IssueEntry({
     }))
     try {
       if (direction === 'back') {
-        const payload: SaveReturnInput = { returnDate: issueDate, sectionId, reason, lines: movedLines }
+        const payload: SaveReturnInput = {
+          returnDate: issueDate,
+          sectionId,
+          session,
+          reason,
+          lines: movedLines,
+        }
         const res = await saveReturn(payload)
         if (res.ok) setSaved({ kind: 'back', res })
         else setError(res.error)
@@ -175,6 +208,7 @@ export default function IssueEntry({
         const payload: SaveIssueInput = {
           issueDate,
           sectionId,
+          session,
           lines: movedLines,
           ...(indent !== null ? { indentId: indent.id } : {}),
         }
@@ -388,6 +422,40 @@ export default function IssueEntry({
             </div>
           </div>
         </div>
+        {/* Beside the department, because together they name the one ask
+            being answered. Nothing is preselected on purpose. */}
+        <div className="mt-4">
+          <span className={fieldLabelCls}>Session</span>
+          {sessions.length === 0 ? (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              No sessions are set up — add them in Settings → Lists.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {sessions.map((sn) => (
+                <button
+                  key={sn}
+                  type="button"
+                  aria-pressed={session === sn}
+                  onClick={() => setSession(sn)}
+                  className={`rounded-full border px-3.5 py-2 text-sm font-medium ${
+                    session === sn
+                      ? 'border-emerald-700 bg-emerald-700 text-white'
+                      : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
+                  }`}
+                >
+                  {sn}
+                </button>
+              ))}
+            </div>
+          )}
+          {session === '' && sectionId !== '' && (
+            <p className="mt-1.5 text-xs text-stone-600">
+              Pick the session before saving — it is not assumed.
+            </p>
+          )}
+        </div>
+
         {direction === 'back' && (
           <div className="mt-4">
             <span className={fieldLabelCls}>Why is it coming back?</span>
@@ -430,7 +498,8 @@ export default function IssueEntry({
                   onClick={() => void adoptIndent(s.id)}
                   className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:border-amber-600"
                 >
-                  {fmtDate(s.indent_date)} · {s.line_count} {s.line_count === 1 ? 'item' : 'items'}
+                  {fmtDate(s.indent_date)} · {s.session} · {s.line_count}{' '}
+                  {s.line_count === 1 ? 'item' : 'items'}
                 </button>
               ))}
             </div>

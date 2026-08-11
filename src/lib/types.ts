@@ -495,6 +495,10 @@ export type ReorderRow = {
 export type SaveIssueInput = {
   issueDate: string
   sectionId: string
+  /** Morning / Evening / Extra / Catering. REQUIRED — see saveIssue: the
+   *  column defaults to 'Morning' in the database, and letting that default
+   *  stand is what silently mislabelled every issue ever entered. */
+  session: string
   lines: { itemId: string; qty: string; note: string }[]
   /** open indent this issue answers — stamped on the issue, marks the indent issued */
   indentId?: string
@@ -528,6 +532,8 @@ export type ReturnLineRow = IssueLineRow
 export type SaveReturnInput = {
   returnDate: string
   sectionId: string
+  /** the session this stock went back from */
+  session: string
   /** from the return_reason managed list — membership enforced server-side */
   reason: string
   lines: { itemId: string; qty: string; note: string }[]
@@ -1157,6 +1163,9 @@ export type IndentStatusResult = { ok: true; indent: IndentRow } | { ok: false; 
 export type IndentPrefill = {
   id: string
   indent_date: string
+  /** filling an indent adopts ITS session — the ask and the answer belong
+   *  to the same shift, so the store never has to restate it */
+  session: string
   section_id: string
   section_code: string
   section_name: string

@@ -63,6 +63,10 @@ function assertRealDate(s: string, label: string) {
 const IssueSchema = z.object({
   issueDate: z.string().regex(DATE_RE),
   sectionId: z.string().regex(UUID),
+  // No default and no fallback. issues.session defaults to 'Morning' in the
+  // database, and a silent default is how every issue came to claim it was
+  // a morning issue. An unanswered question is refused, not guessed.
+  session: z.string().trim().min(1, 'Pick the session — morning, evening or extra'),
   lines: z
     .array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr, note: z.string().trim().max(200) }))
     .min(1)
@@ -82,6 +86,10 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await enteredBy()
+    const sessions = await getList(rid, 'session')
+    if (!sessions.some((v) => v.toLowerCase() === input.session.toLowerCase())) {
+      await noteListSuggestion(rid, 'session', input.session, by)
+    }
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -123,8 +131,9 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
       }
 
       const [issue] = await tx<{ id: string }[]>`
-        insert into issues (restaurant_id, issue_date, section_id, indent_id, entered_by)
-        values (${rid}, ${input.issueDate}, ${input.sectionId}, ${input.indentId ?? null}, ${by})
+        insert into issues (restaurant_id, issue_date, section_id, session, indent_id, entered_by)
+        values (${rid}, ${input.issueDate}, ${input.sectionId}, ${input.session},
+                ${input.indentId ?? null}, ${by})
         returning id`
 
       const lineRows = input.lines.map((l) => ({
@@ -169,6 +178,7 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
 const ReturnSchema = z.object({
   returnDate: z.string().regex(DATE_RE),
   sectionId: z.string().regex(UUID),
+  session: z.string().trim().min(1, 'Pick the session'),
   reason: z.string().trim().min(1, 'Pick a reason').max(60),
   lines: z
     .array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr, note: z.string().trim().max(200) }))
