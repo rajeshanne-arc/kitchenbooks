@@ -1199,3 +1199,31 @@ from `dish_costs` at save, the same rule as a non-revenue giveaway — a
 discount still consumed real food, and that cost must not drift when the
 recipe changes later. Lines are optional: a lump sum is still a true record
 of money.
+
+## Commit 6 — the count is a SHEET
+
+Rajesh's paper count lists every item with a box against it and you work
+down. A screen that makes you search for each item in turn is slower than
+the paper it replaces, so the entry list is now a table on the shared
+column vocabulary — item · code · category · counted · unit — with a
+running `filled / total` so a counter knows where they are on a long sheet.
+The filter narrows the sheet; it never gates entry.
+
+**Blind, and the reason is on screen:** book quantities appear only in the
+reveal after save. `CountableItem` does not even carry `book_qty`, so the
+entry screen cannot leak it — seeing the book figure while counting turns a
+count into a confirmation of it.
+
+Already correct and left alone: `book_qty` and `unit_cost` are FROZEN
+server-side inside the save transaction from `stock_on_hand` and
+`item_costs`; `variance_qty` and `variance_value` are GENERATED; zero is a
+real count; the first-count warning is COMPUTED from
+`getIssueHistoryDays` and warns without blocking.
+
+**Why this screen matters more than it looks.** `store_stock_by_month`
+reads `stock_counts × stock_count_lines`, and that closing figure is what
+makes BOTH COGS branches correct — including the drawer-paid market
+purchases UNIONed into `purchases`. Verified in a rolled-back transaction:
+a count of 3 short froze book 19 / cost 305, generated variance −3 /
+−₹915, and moved `store_stock_by_month.closing_value` to 4880 immediately.
+**Making counting fast is the same job as making COGS trustworthy.**

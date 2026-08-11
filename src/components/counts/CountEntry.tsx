@@ -11,7 +11,18 @@ import type { CountableItem, SaveCountResult } from '@/lib/types'
 import { saveCount } from '@/server/counts-actions'
 import { decimalStringToPaise, formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
-import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
+import {
+  cardCls,
+  dataTableCls,
+  fieldLabelCls,
+  inputCls,
+  numCls,
+  sectionHeadCls,
+  tdCls,
+  tdCodeCls,
+  thCls,
+  thNumCls,
+} from '@/components/ui'
 import { useLang } from '@/components/useLang'
 import Honesty from '@/components/Honesty'
 
@@ -136,37 +147,68 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
           <span className={fieldLabelCls}>{label('filter_items')}</span>
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="type to narrow the list" className={inputCls} />
         </label>
-        <p className="mt-3 text-xs text-stone-400">
-          Stock order — richest shelf first. Leave blank what you did not count; type 0 for an empty shelf, it is
-          information. Book quantities stay hidden until the save — the count is blind on purpose.
-        </p>
-        <ul className="mt-2 divide-y divide-rule-soft">
+        <div className="mt-3 flex items-baseline justify-between gap-3">
+          <p className="text-xs text-stone-500">
+            Work down the sheet. Type 0 for an empty shelf — that is information, not a blank. Leave blank only
+            what you did not reach.
+          </p>
+          <span className="shrink-0 font-mono text-xs tabular-nums text-stone-500">
+            {filled.length} / {items.length}
+          </span>
+        </div>
+
+        {/* A SHEET, not a search box. Rajesh's paper count lists every item
+            with a box against it and you work down; a screen that makes you
+            search for each one in turn is slower than the paper it replaces.
+            The filter narrows a long sheet, it does not gate entry. */}
+        <div className="mt-2 overflow-x-auto">
+          <table className={dataTableCls}>
+            <thead>
+              <tr>
+                <th className={thCls}>Item</th>
+                <th className={thCls}>Code</th>
+                <th className={thCls}>Category</th>
+                <th className={`${thNumCls} w-28`}>Counted</th>
+                <th className={thCls}>Unit</th>
+              </tr>
+            </thead>
+            <tbody>
           {visible.map((i) => {
             const v = qtys[i.id] ?? ''
             const bad = v.trim() !== '' && parseQty(v.trim()) === null
             return (
-              <li key={i.id} className="flex items-center justify-between gap-3 py-2">
-                <span className="min-w-0">
-                  <span className="block truncate text-[15px] text-stone-900">{i.name}</span>
-                  <span className="block text-xs text-stone-500">
-                    {i.code} · {i.category_name}
-                  </span>
-                </span>
-                <span className="flex items-center gap-2">
+              <tr key={i.id} className="h-11 hover:bg-stone-50">
+                <td className={tdCls}>{i.name}</td>
+                <td className={tdCodeCls}>{i.code}</td>
+                <td className={`${tdCls} text-stone-500`}>{i.category_name}</td>
+                <td className="border-b border-rule-soft px-1 py-1.5">
                   <input
                     inputMode="decimal"
                     placeholder="—"
+                    aria-label={`Counted quantity of ${i.name}`}
                     value={v}
                     onChange={(e) => setQtys((q) => ({ ...q, [i.id]: e.target.value.replace(/[^\d.]/g, '') }))}
-                    className={`${numCls} w-24 text-right ${bad ? 'border-red-400' : ''}`}
+                    className={`${numCls} w-full text-right font-mono tabular-nums ${bad ? 'border-red-400' : ''}`}
                   />
-                  <span className="w-10 text-xs text-stone-500">{i.purchase_unit}</span>
-                </span>
-              </li>
+                </td>
+                <td className={`${tdCls} text-stone-500`}>{i.purchase_unit}</td>
+              </tr>
             )
           })}
-          {visible.length === 0 && <li className="py-3 text-sm text-stone-400">No items match.</li>}
-        </ul>
+              {visible.length === 0 && (
+                <tr>
+                  <td colSpan={5} className={`${tdCls} text-stone-400`}>
+                    No items match that filter — clear it to see the whole sheet again.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-xs text-stone-400">
+          Book quantities stay hidden until the save — the count is blind on purpose. Seeing the book figure
+          while counting turns a count into a confirmation of it.
+        </p>
       </section>
 
       {error && (
