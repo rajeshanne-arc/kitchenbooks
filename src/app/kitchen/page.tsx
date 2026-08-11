@@ -8,7 +8,6 @@ import { getKitchenDay, getWasteByReason } from '@/server/kitchen-queries'
 import { getQtySold } from '@/server/sales-queries'
 import { listDishCosts } from '@/server/recipes-queries'
 import { monthStartIST, todayIST } from '@/server/store-queries'
-import GroupTabs from '@/components/GroupTabs'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
@@ -39,14 +38,13 @@ export default async function KitchenDashboardPage() {
   const unclosed = day.filter((d) => d.closed === null).length
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
+    <>
       <header className="pb-4">
         <h1 className={pageTitleCls}>Kitchen</h1>
         <p className={pageSubCls}>
           {restaurant.name} — {fmtDate(today)}
         </p>
       </header>
-      <GroupTabs group="kitchen" />
 
       <div className="space-y-4">
         <section className={cardCls}>
@@ -83,7 +81,7 @@ export default async function KitchenDashboardPage() {
               <Honesty
                 verdict="incomplete"
                 meter={{ filled: day.length - unclosed, total: day.length, unit: 'sections closed' }}
-                action={{ href: '/kitchen/closing', label: 'File a closing' }}
+                action={{ href: '/kitchen/shift/closing', label: 'File a closing' }}
               >
                 {unclosed} {unclosed === 1 ? 'section has' : 'sections have'} not said what {unclosed === 1 ? 'it' : 'they'}{' '}
                 still {unclosed === 1 ? 'holds' : 'hold'}, so today’s consumption is not known yet.
@@ -92,7 +90,7 @@ export default async function KitchenDashboardPage() {
           ) : (
             <div className="mt-2 flex items-center justify-between">
               <span className="text-xs font-medium text-emerald-700">All sections closed.</span>
-              <Link href="/kitchen/closing" className="text-xs font-medium text-emerald-700 hover:underline">
+              <Link href="/kitchen/shift/closing" className="text-xs font-medium text-emerald-700 hover:underline">
                 Re-file →
               </Link>
             </div>
@@ -114,7 +112,7 @@ export default async function KitchenDashboardPage() {
               {perf.map((p) => (
                 <li key={p.recipe_id} className="flex items-center justify-between gap-3 py-2">
                   <span className="min-w-0">
-                    <Link href={`/books/recipes/${p.recipe_id}`} className="block truncate text-sm text-stone-900 hover:text-emerald-700">
+                    <Link href={`/kitchen/recipes/${p.recipe_id}`} className="block truncate text-sm text-stone-900 hover:text-emerald-700">
                       {p.name}
                     </Link>
                     <span className="block text-xs text-stone-500">
@@ -139,7 +137,7 @@ export default async function KitchenDashboardPage() {
         <section className={cardCls}>
           <div className="flex items-baseline justify-between gap-3">
             <h2 className={sectionHeadCls}>Waste by reason — this month</h2>
-            <Link href="/kitchen/wastage" className="text-xs font-medium text-emerald-700 hover:underline">
+            <Link href="/kitchen/loss" className="text-xs font-medium text-emerald-700 hover:underline">
               record →
             </Link>
           </div>
@@ -159,6 +157,6 @@ export default async function KitchenDashboardPage() {
           )}
         </section>
       </div>
-    </main>
+    </>
   )
 }

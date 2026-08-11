@@ -1,7 +1,6 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getKitchenSections, listIndents } from '@/server/kitchen-queries'
-import GroupTabs from '@/components/GroupTabs'
 import IndentEntry from '@/components/kitchen/IndentEntry'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
@@ -22,12 +21,11 @@ export default async function IndentPage() {
   ])
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
+    <>
       <header className="pb-4">
         <h1 className={pageTitleCls}>Indent</h1>
         <p className={pageSubCls}>ask the store — the issue answers</p>
       </header>
-      <GroupTabs group="kitchen" />
 
       <div className="space-y-4">
         <IndentEntry sections={sections} />
@@ -60,6 +58,6 @@ export default async function IndentPage() {
           )}
         </section>
       </div>
-    </main>
+    </>
   )
 }

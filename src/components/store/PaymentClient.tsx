@@ -48,7 +48,7 @@ export default function PaymentClient({ modes }: { modes: string[] }) {
         </div>
         <PaymentForm vendorId={vendor.id} vendorName={vendor.name} modes={modes} />
         <Link
-          href={`/books/vendors/${vendor.id}`}
+          href={`/store/masters/vendors/${vendor.id}`}
           className="block text-center text-sm font-medium text-emerald-700 hover:underline"
         >
           Vendor page — bills and payment history →

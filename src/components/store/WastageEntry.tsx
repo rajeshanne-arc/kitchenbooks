@@ -99,7 +99,7 @@ export default function WastageEntry({ reasons = FALLBACK_REASONS }: { reasons?:
           Record another
         </button>
         <Link
-          href={`/books/wastage/${wastage.id}`}
+          href={`/store/books/wastage/${wastage.id}`}
           className="block text-center text-sm font-medium text-emerald-700 hover:underline"
         >
           See it in the store log →

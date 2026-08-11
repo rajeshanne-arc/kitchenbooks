@@ -208,7 +208,7 @@ export default function IssueEntry({
           </Link>
         )}
         <Link
-          href={`/books/issues/${issue.id}`}
+          href={`/store/books/issues/${issue.id}`}
           className="block text-center text-sm font-medium text-emerald-700 hover:underline"
         >
           See it in the store log →

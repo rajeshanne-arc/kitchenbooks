@@ -52,7 +52,7 @@ export default function VoidWastage({
         <h3 className="text-xs font-medium uppercase tracking-wide text-emerald-800">Write-off reversed</h3>
         <p className="mt-2 text-sm text-stone-700">
           A{' '}
-          <Link href={`/books/wastage/${done.reversal.id}`} className="font-medium text-emerald-800 underline">
+          <Link href={`/store/books/wastage/${done.reversal.id}`} className="font-medium text-emerald-800 underline">
             reversal entry
           </Link>{' '}
           for <span className="font-semibold tabular-nums">{formatMoneyString(done.reversal.value)}</span> cancels this

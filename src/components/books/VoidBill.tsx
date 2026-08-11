@@ -56,7 +56,7 @@ export default function VoidBill({
         <h3 className="text-xs font-medium uppercase tracking-wide text-emerald-800">Bill voided</h3>
         <p className="mt-2 text-sm text-stone-700">
           Reversal bill{' '}
-          <Link href={`/books/bills/${done.reversal.id}`} className="font-medium text-emerald-800 underline">
+          <Link href={`/store/books/bills/${done.reversal.id}`} className="font-medium text-emerald-800 underline">
             {done.reversal.bill_no}
           </Link>{' '}
           for <span className="font-semibold tabular-nums">{formatMoneyString(done.reversal.bill_total)}</span> now

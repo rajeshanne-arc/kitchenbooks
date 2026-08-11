@@ -241,7 +241,7 @@ export default function DayClose({
           href={whatsappUrl(buildCloseText(restaurantName, saved))}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-3 block w-full rounded-xl bg-[#25D366] py-3 text-center text-[15px] font-semibold text-white shadow-sm hover:brightness-95"
+          className="mt-3 block w-full rounded-xl bg-whatsapp py-3 text-center text-[15px] font-semibold text-white shadow-sm hover:brightness-95"
         >
           Share on WhatsApp
         </a>

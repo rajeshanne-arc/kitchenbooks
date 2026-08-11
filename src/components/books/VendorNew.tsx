@@ -31,7 +31,7 @@ export default function VendorNew({ categories }: { categories: Category[] }) {
       const res = await createVendor({ name: name.trim(), category, gstin, phone, paymentTerms })
       if (res.ok) {
         toast(`${res.vendor.code} — ${res.vendor.name} created`)
-        router.push(`/books/vendors/${res.vendor.id}`)
+        router.push(`/store/masters/vendors/${res.vendor.id}`)
         router.refresh()
       } else {
         setError(res.error)

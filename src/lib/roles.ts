@@ -1,17 +1,17 @@
 // The role matrix — pure data, importable from the proxy, server code and
 // nav alike. Server-side is the law (proxy + actions); every surface merely
 // reflects it. STRICT INVISIBILITY: a role never SEES a link it cannot
-// open — nav, home tiles, Books tabs, group tab strips, quick links. Deep
-// links stay server-denied (the denied page names who to ask).
+// open — nav, group tiles, tabs, chips, quick links. Deep links stay
+// server-denied (the denied page names who to ask), but denial is the
+// backstop, never the mechanism.
 //
-//   store:   store group (purchase/payment/issue/wastage) + counts,
-//            Books(bills/store log/stock/counts/vendors/items)
-//   chef:    kitchen group (indent/production/wastage/closing) + recipes,
-//            Books(recipes/stock/sections/food cost)
-//   cashier: cash group (close/vouchers/settlements/off-book/other income/
-//            non-revenue/dues/fetch), Books(sales/cash)
-//   manager: everything below owner + staff group + settings
-//   owner:   everything + Users + snapshots + P&L
+// Phase A: each group owns its books. A chef never leaves /kitchen.
+//
+//   /kitchen  /kitchen/books    chef
+//   /store    /store/books      store
+//   /sales    /sales/books      cashier
+//   /staff    /staff/books      manager
+//   /owner                      owner (dashboard is manager+owner)
 
 export type Role = 'owner' | 'manager' | 'chef' | 'store' | 'cashier'
 
@@ -21,42 +21,53 @@ const EVERYONE: Role[] = ALL_ROLES
 
 // First prefix match wins — keep more specific paths above their parents.
 const RULES: [prefix: string, roles: Role[]][] = [
-  ['/books/users', ['owner']],
-  ['/books/snapshots', ['owner']],
-  ['/books/bills', ['store', 'manager', 'owner']],
-  ['/books/stock', ['store', 'chef', 'manager', 'owner']],
-  ['/books/vendors', ['store', 'manager', 'owner']],
-  ['/books/items', ['store', 'manager', 'owner']],
-  ['/books/counts', ['store', 'manager', 'owner']],
-  ['/books/recipes', ['chef', 'manager', 'owner']],
-  ['/books/sections', ['chef', 'manager', 'owner']],
-  ['/books/food-cost', ['chef', 'manager', 'owner']],
-  ['/books/sales', ['cashier', 'manager', 'owner']],
-  ['/books/cash', ['cashier', 'manager', 'owner']],
-  ['/books/store', ['store', 'manager', 'owner']],
-  ['/books/issues', ['store', 'manager', 'owner']],
-  ['/books/wastage', ['store', 'manager', 'owner']],
-  ['/books/staff', ['manager', 'owner']],
-  ['/books', ['manager', 'owner']],
-  ['/bill', ['store', 'manager', 'owner']],
-  ['/issue', ['store', 'manager', 'owner']],
-  ['/wastage', ['store', 'manager', 'owner']],
-  ['/store', ['store', 'manager', 'owner']],
-  // The indent page shows asked-vs-given — the store side of that gap too.
+  // --- owner group ---------------------------------------------------
+  ['/owner/users', ['owner']],
+  ['/owner/pnl', ['owner']],
+  ['/owner/lists', ['manager', 'owner']],
+  ['/owner/settings', ['manager', 'owner']],
+  ['/owner/snapshots', ['owner']],
+  ['/owner', ['manager', 'owner']],
+
+  // --- kitchen group (chef) -------------------------------------------
+  // The indent page shows asked-vs-given — the store side of that gap too,
+  // and it is the ONLY kitchen path a store account may open.
   ['/kitchen/indent', ['chef', 'store', 'manager', 'owner']],
   ['/kitchen', ['chef', 'manager', 'owner']],
-  ['/cash', ['cashier', 'manager', 'owner']],
-  ['/attendance', ['manager', 'owner']],
-  ['/expenses', ['manager', 'owner']],
-  ['/dashboard', ['manager', 'owner']],
-  ['/pnl', ['owner']],
-  ['/settings', ['manager', 'owner']],
+
+  // --- store group -----------------------------------------------------
+  ['/store', ['store', 'manager', 'owner']],
+
+  // --- sales group (cashier) -------------------------------------------
+  ['/sales', ['cashier', 'manager', 'owner']],
+
+  // --- staff group (manager) -------------------------------------------
+  ['/staff', ['manager', 'owner']],
+
+  // --- apis -------------------------------------------------------------
   ['/api/items', ['store', 'chef', 'manager', 'owner']],
   ['/api/vendors', ['store', 'manager', 'owner']],
   ['/api/recipes', ['chef', 'manager', 'owner']],
   ['/api/kitchen', ['chef', 'manager', 'owner']],
   ['/api/indents', ['store', 'chef', 'manager', 'owner']],
   ['/api/cash', ['cashier', 'manager', 'owner']],
+
+  // --- retired URLs -----------------------------------------------------
+  // Every pre-Phase-A path still resolves, as a permanent redirect into the
+  // caller's own group (see app/(legacy)). They carry no data and decide
+  // nothing, so they are open to every signed-in role; the target they land
+  // on is matrix-checked like any other page.
+  ['/books', EVERYONE],
+  ['/bill', EVERYONE],
+  ['/issue', EVERYONE],
+  ['/wastage', EVERYONE],
+  ['/cash', EVERYONE],
+  ['/attendance', EVERYONE],
+  ['/expenses', EVERYONE],
+  ['/dashboard', EVERYONE],
+  ['/pnl', EVERYONE],
+  ['/settings', EVERYONE],
+
   ['/', EVERYONE],
 ]
 
@@ -86,50 +97,29 @@ export function deniedHint(pathname: string): string {
   return 'Ask an owner to open this for you.'
 }
 
-/** Top-level nav: one entry per role group, matrix-filtered. `activePrefixes`
- * lights the link for every page of its group, wherever the tab lives. */
+/** The five groups. Top-level nav is exactly this list, matrix-filtered —
+ *  there is no other top-level destination in the app. */
+export type Group = { key: string; href: string; label: string; blurb: string }
+
+export const GROUPS: Group[] = [
+  { key: 'kitchen', href: '/kitchen', label: 'Kitchen', blurb: 'indents, shift close, losses, recipes' },
+  { key: 'store', href: '/store', label: 'Store', blurb: 'goods in, issues out, counts, masters' },
+  { key: 'sales', href: '/sales', label: 'Sales', blurb: 'the day close and what came with it' },
+  { key: 'staff', href: '/staff', label: 'Staff', blurb: 'people, attendance, money out' },
+  { key: 'owner', href: '/owner', label: 'Owner', blurb: 'the whole restaurant, added up' },
+]
+
+export const groupsFor = (role: Role): Group[] => GROUPS.filter((g) => canAccess(role, g.href))
+
 export type NavLink = { href: string; label: string; activePrefixes: string[] }
 
 export function navFor(role: Role): NavLink[] {
-  const links: NavLink[] = [
-    { href: '/bill', label: 'Store', activePrefixes: ['/bill', '/issue', '/wastage', '/store'] },
-    { href: '/kitchen', label: 'Kitchen', activePrefixes: ['/kitchen'] },
-    { href: '/cash', label: 'Cash', activePrefixes: ['/cash'] },
-    { href: '/attendance', label: 'Staff', activePrefixes: ['/attendance', '/expenses'] },
-    { href: '/dashboard', label: 'Owner', activePrefixes: ['/dashboard'] },
-    { href: '/pnl', label: 'P&L', activePrefixes: ['/pnl'] },
-    { href: '/books/bills', label: 'Books', activePrefixes: ['/books'] },
-    { href: '/settings', label: '⚙', activePrefixes: ['/settings'] },
-  ]
-  return links
-    .map((l) => (l.href === '/books/bills' ? { ...l, href: booksHomeFor(role) } : l))
-    .filter((l) => canAccess(role, l.href))
+  return groupsFor(role).map((g) => ({ href: g.href, label: g.label, activePrefixes: [g.href] }))
 }
 
-/** The Books tab a role lands on first (their own corner of the books).
- * chef's kitchen nav entry covers /kitchen; their Books opens on recipes. */
-export function booksHomeFor(role: Role): string {
-  if (role === 'store') return '/books/bills'
-  if (role === 'chef') return '/books/recipes'
-  if (role === 'cashier') return '/books/sales'
-  return '/books/bills'
-}
-
-export function booksTabsFor(role: Role): { href: string; label: string }[] {
-  const tabs = [
-    { href: '/books/bills', label: 'Bills' },
-    { href: '/books/sales', label: 'Sales' },
-    { href: '/books/cash', label: 'Cash' },
-    { href: '/books/recipes', label: 'Recipes' },
-    { href: '/books/store', label: 'Store log' },
-    { href: '/books/stock', label: 'Stock' },
-    { href: '/books/counts', label: 'Counts' },
-    { href: '/books/food-cost', label: 'Food cost' },
-    { href: '/books/sections', label: 'Sections' },
-    { href: '/books/staff', label: 'Staff' },
-    { href: '/books/vendors', label: 'Vendors' },
-    { href: '/books/items', label: 'Items' },
-    { href: '/books/users', label: 'Users' },
-  ]
-  return tabs.filter((t) => canAccess(role, t.href))
+/** Where '/' sends this role. A role with exactly one group never sees a
+ *  chooser — it lands in its own group. */
+export function homeFor(role: Role): string | null {
+  const groups = groupsFor(role)
+  return groups.length === 1 ? groups[0].href : null
 }

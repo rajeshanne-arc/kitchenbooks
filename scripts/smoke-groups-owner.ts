@@ -29,7 +29,7 @@ async function main() {
   const { addListOption, moveListOption, setListOptionStatus, saveTabsSetting } = await import('../src/server/settings-actions')
   const { getList, getAllListOptions, tabsFor } = await import('../src/server/settings')
   const { resolveTabs, TAB_DEFAULTS } = await import('../src/lib/tabs')
-  const { canAccess, navFor, booksTabsFor } = await import('../src/lib/roles')
+  const { canAccess, navFor } = await import('../src/lib/roles')
   const { decimalStringToPaise } = await import('../src/lib/money')
   const { sql } = await import('../src/lib/db')
 
@@ -45,16 +45,15 @@ async function main() {
   assert.equal(canAccess('cashier', '/pnl'), false)
   assert.equal(canAccess('manager', '/pnl'), false, 'P&L is the owner’s, like Users and snapshots')
   assert.equal(canAccess('owner', '/pnl'), true)
-  assert.equal(canAccess('manager', '/settings'), true)
-  assert.equal(canAccess('chef', '/settings'), false)
-  assert.deepEqual(navFor('chef').map((l) => l.label), ['Kitchen', 'Books'], 'chef nav = their world only')
-  assert.deepEqual(navFor('cashier').map((l) => l.label), ['Cash', 'Books'])
-  assert.deepEqual(navFor('store').map((l) => l.label), ['Store', 'Books'])
-  assert.deepEqual(booksTabsFor('chef').map((t) => t.label), ['Recipes', 'Stock', 'Food cost', 'Sections'], 'chef Books tabs exactly as ruled')
-  assert.deepEqual(booksTabsFor('cashier').map((t) => t.label), ['Sales', 'Cash'])
-  const storeTabs = booksTabsFor('store').map((t) => t.label)
-  for (const must of ['Bills', 'Stock', 'Vendors', 'Items']) assert.ok(storeTabs.includes(must))
-  assert.ok(!storeTabs.includes('Users') && !storeTabs.includes('Staff'))
+  assert.equal(canAccess('manager', '/owner/settings'), true)
+  assert.equal(canAccess('chef', '/owner/settings'), false)
+  // Phase A: nav is the group list. A single-group role sees exactly one.
+  assert.deepEqual(navFor('chef').map((l) => l.label), ['Kitchen'], 'chef nav = their world only')
+  assert.deepEqual(navFor('cashier').map((l) => l.label), ['Sales'])
+  assert.deepEqual(navFor('store').map((l) => l.label), ['Store'])
+  assert.deepEqual(navFor('owner').map((l) => l.label), ['Kitchen', 'Store', 'Sales', 'Staff', 'Owner'])
+  // Books strips, chip rows and every literal href on every page are asserted
+  // exhaustively by scripts/audit-matrix.ts — the LAW 1 gate.
 
   // ---- 2. standalone masters: same code series as the bill flow
   const [{ next_v: expectedVendorN }] = await sql<{ next_v: number }[]>`

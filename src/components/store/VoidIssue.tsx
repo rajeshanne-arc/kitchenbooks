@@ -52,7 +52,7 @@ export default function VoidIssue({
         <h3 className="text-xs font-medium uppercase tracking-wide text-emerald-800">Issue voided</h3>
         <p className="mt-2 text-sm text-stone-700">
           A{' '}
-          <Link href={`/books/issues/${done.reversal.id}`} className="font-medium text-emerald-800 underline">
+          <Link href={`/store/books/issues/${done.reversal.id}`} className="font-medium text-emerald-800 underline">
             reversal issue
           </Link>{' '}
           for <span className="font-semibold tabular-nums">{formatMoneyString(done.reversal.total_value)}</span> now

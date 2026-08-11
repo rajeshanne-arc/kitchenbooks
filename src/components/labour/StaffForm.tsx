@@ -66,7 +66,7 @@ export default function StaffForm({
       const res = existing === null ? await createStaff(input) : await updateStaff(existing.id, input)
       if (res.ok) {
         if (existing === null) {
-          router.push('/books/staff')
+          router.push('/staff/people/employees')
         } else {
           setSaved(true)
           router.refresh()

@@ -1,0 +1,39 @@
+import BillEntry from '@/components/BillEntry'
+import { getMasters, getRestaurant } from '@/server/queries'
+import { pageSubCls, pageTitleCls } from '@/components/ui'
+
+export const dynamic = 'force-dynamic'
+
+export default async function BillPage() {
+  let restaurantName: string
+  let categories, units
+  try {
+    const [restaurant, masters] = await Promise.all([getRestaurant(), getMasters()])
+    restaurantName = restaurant.name
+    categories = masters.categories
+    units = masters.units
+  } catch (e) {
+    console.error('bootstrap failed', e)
+    return (
+      <>
+        <h1 className="text-xl font-semibold text-stone-900">KitchenBooks isn’t connected yet</h1>
+        <p className="mt-2 text-sm text-stone-600">
+          The database could not be reached, or the restaurant row is missing. Check{' '}
+          <code className="rounded bg-stone-100 px-1.5 py-0.5 text-xs">DATABASE_URL</code> and reload.
+        </p>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <header className="mx-auto max-w-2xl px-4 pb-4 pt-6 sm:px-6">
+        <h1 className={pageTitleCls}>New purchase bill</h1>
+        <p className={pageSubCls}>{restaurantName}</p>
+      </header>
+      <div className="mx-auto max-w-2xl px-4 sm:px-6">
+      </div>
+      <BillEntry categories={categories} units={units} />
+    </>
+  )
+}

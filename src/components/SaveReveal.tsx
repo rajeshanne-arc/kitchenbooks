@@ -97,7 +97,7 @@ export default function SaveReveal({ saved, onAgain }: { saved: SavedBill; onAga
         Enter another bill
       </button>
       <Link
-        href={`/books/bills/${purchase.id}`}
+        href={`/store/books/bills/${purchase.id}`}
         className="block text-center text-sm font-medium text-emerald-700 hover:underline"
       >
         See it in Books →

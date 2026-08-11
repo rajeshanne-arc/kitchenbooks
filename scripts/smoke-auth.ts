@@ -22,7 +22,7 @@ async function main() {
     createFirstOwner, createUser, listUsers, resetPassword, updateUser, verifyCredentials,
   } = await import('../src/server/auth-core')
   const { signSession, verifySession } = await import('../src/lib/session')
-  const { ALL_ROLES, canAccess, deniedHint, navFor, booksTabsFor } = await import('../src/lib/roles')
+  const { ALL_ROLES, canAccess, deniedHint, navFor } = await import('../src/lib/roles')
   const { getSessionUser } = await import('../src/server/current-user')
   const { sql } = await import('../src/lib/db')
 
@@ -67,15 +67,14 @@ async function main() {
   for (const p of ['/books/users', '/books/snapshots', '/attendance', '/dashboard', '/bill', '/kitchen', '/cash']) {
     assert.ok(canAccess('owner', p), `owner opens everything: ${p}`)
   }
-  assert.ok(/owner/i.test(deniedHint('/books/users')), 'denied names who to ask')
-  assert.ok(/manager or owner/i.test(deniedHint('/attendance')))
+  assert.ok(/owner/i.test(deniedHint('/owner/users')), 'denied names who to ask')
+  assert.ok(/manager or owner/i.test(deniedHint('/staff/people/attendance')))
+  // Nav is the group list, matrix-filtered. The books strips, chip rows and
+  // every literal href on every page are asserted exhaustively by
+  // scripts/audit-matrix.ts, which is the LAW 1 gate.
   for (const role of ALL_ROLES) {
     for (const l of navFor(role)) {
-      const target = l.href === '/books/bills' ? (role === 'chef' ? '/books/recipes' : role === 'cashier' ? '/books/sales' : '/books/bills') : l.href
-      assert.ok(canAccess(role, target), `nav shows only what opens: ${role} ${l.href}`)
-    }
-    for (const t of booksTabsFor(role)) {
-      assert.ok(canAccess(role, t.href), `books tabs obey the matrix: ${role} ${t.href}`)
+      assert.ok(canAccess(role, l.href), `nav shows only what opens: ${role} ${l.href}`)
     }
   }
 

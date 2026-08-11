@@ -44,7 +44,7 @@ export default function CreateRecipe({
         sellingPrice: kind === 'dish' ? sellingPrice.trim() : '',
       })
       if (res.ok) {
-        router.push(`/books/recipes/${res.id}`)
+        router.push(`/kitchen/recipes/${res.id}`)
       } else {
         setError(res.error)
         setBusy(false)
@@ -165,7 +165,7 @@ export default function CreateRecipe({
         {busy ? 'Creating…' : kind === 'dish' ? 'Create dish → add ingredients' : 'Create sub-recipe → add ingredients'}
       </button>
       <Link
-        href={`/books/recipes/new?kind=${kind === 'dish' ? 'sub' : 'dish'}`}
+        href={`/kitchen/recipes/new?kind=${kind === 'dish' ? 'sub' : 'dish'}`}
         className="block text-center text-sm font-medium text-stone-500 hover:text-emerald-700"
       >
         {kind === 'dish' ? 'Making a gravy or dough? Create a sub-recipe instead' : 'Making a menu item? Create a dish instead'}

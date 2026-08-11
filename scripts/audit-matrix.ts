@@ -4,8 +4,9 @@
 // through five logins, because it covers every route and every role rather
 // than the handful anyone would screenshot:
 //
-//   PASS 1  Executes the surfaces that emit navigation — navFor, booksTabsFor,
-//           the group tab strips, the home tiles — once per role, and asserts
+//   PASS 1  Executes the surfaces that emit navigation — navFor, the group
+//           tab strips, their chip rows, each group's books strip, and the
+//           home group tiles — once per role, and asserts
 //           every href they produce is one the matrix admits for that role.
 //           This is the rendered link list, taken from the same functions the
 //           components render, so it cannot drift from what ships.
@@ -20,8 +21,9 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
-import { ALL_ROLES, booksTabsFor, canAccess, navFor, type Role } from '../src/lib/roles'
+import { ALL_ROLES, canAccess, groupsFor, navFor, type Role } from '../src/lib/roles'
 import { TAB_DEFAULTS, TAB_GROUPS } from '../src/lib/tabs'
+import { BOOKS } from '../src/lib/books'
 
 const SRC = resolve(process.cwd(), 'src')
 const APP = join(SRC, 'app')
@@ -39,11 +41,8 @@ const review: Violation[] = []
 /* the home tiles — the one nav surface whose list lives in a page      */
 /* ------------------------------------------------------------------ */
 
-function homeTiles(): string[] {
-  const src = readFileSync(join(APP, 'page.tsx'), 'utf8')
-  const block = /const TILES[^=]*=\s*\[([\s\S]*?)\n\]/.exec(src)
-  if (!block) throw new Error('home TILES array not found — audit is stale, fix it before trusting it')
-  return [...block[1].matchAll(/href:\s*'([^']+)'/g)].map((m) => m[1])
+function homeTiles(role: Role): string[] {
+  return groupsFor(role).map((g) => g.href)
 }
 
 /* ------------------------------------------------------------------ */
@@ -55,20 +54,30 @@ export type RoleReport = {
   nav: string[]
   booksTabs: string[]
   groupTabs: Record<string, string[]>
+  chips: string[]
   tiles: string[]
 }
 
 function reportFor(role: Role): RoleReport {
   const nav = navFor(role).map((l) => `${l.label} ${l.href}`)
-  const booksTabs = booksTabsFor(role).map((t) => `${t.label} ${t.href}`)
   const groupTabs: Record<string, string[]> = {}
+  const chips: string[] = []
   for (const g of TAB_GROUPS) {
-    // A settings row can reorder or relabel a tab; tabs.ts is the key registry
-    // and cannot invent a route, so the defaults are the complete href set.
+    // A settings row can reorder, relabel or hide a tab; tabs.ts is the key
+    // registry and cannot invent a route, so the defaults are the complete
+    // href set that could ever reach the DOM.
     const admitted = TAB_DEFAULTS[g].filter((t) => canAccess(role, t.href))
     if (admitted.length > 0) groupTabs[g] = admitted.map((t) => `${t.label} ${t.href}`)
+    for (const t of admitted) {
+      for (const c of t.chips ?? []) chips.push(`${c.label} ${t.href}/${c.key}`)
+    }
   }
-  const tiles = homeTiles().filter((h) => canAccess(role, h))
+  const booksTabs: string[] = []
+  for (const g of TAB_GROUPS) {
+    if (!canAccess(role, `/${g}/books`) && g !== 'owner') continue
+    for (const v of BOOKS[g]) booksTabs.push(`${v.label} ${v.href}`)
+  }
+  const tiles = homeTiles(role)
 
   const check = (where: string, hrefs: string[]) => {
     for (const h of hrefs) {
@@ -77,11 +86,12 @@ function reportFor(role: Role): RoleReport {
     }
   }
   check('nav', nav)
-  check('books tabs', booksTabs)
+  check('books strip', booksTabs)
+  check('chips', chips)
   for (const [g, list] of Object.entries(groupTabs)) check(`${g} tab strip`, list)
-  check('home tiles', tiles)
+  check('group tiles', tiles)
 
-  return { role, nav, booksTabs, groupTabs, tiles }
+  return { role, nav, booksTabs, groupTabs, chips, tiles }
 }
 
 /* ------------------------------------------------------------------ */
@@ -170,7 +180,10 @@ const GATED = new Set(
     'components/TopNav.tsx',
     'components/TabStrip.tsx',
     'components/GroupTabs.tsx',
-    'components/books/BooksTabs.tsx',
+    'lib/books.ts',
+    'lib/legacy.ts',
+    'components/BooksNav.tsx',
+    'components/ChipRow.tsx',
     'app/page.tsx',
   ].map((p) => join(SRC, p)),
 )
@@ -209,11 +222,12 @@ function main(): void {
   for (const r of reports) {
     console.log(`\n═══ ${r.role.toUpperCase()} ${'═'.repeat(52 - r.role.length)}`)
     console.log(`  nav          ${r.nav.join('  ·  ') || '(none)'}`)
-    console.log(`  home tiles   ${r.tiles.join('  ·  ') || '(none)'}`)
+    console.log(`  group tiles  ${r.tiles.join('  ·  ') || '(none)'}`)
     for (const [g, list] of Object.entries(r.groupTabs)) {
       console.log(`  ${g.padEnd(12)} ${list.join('  ·  ')}`)
     }
-    console.log(`  books tabs   ${r.booksTabs.join('  ·  ') || '(none)'}`)
+    console.log(`  chips        ${r.chips.join('  ·  ') || '(none)'}`)
+    console.log(`  books        ${r.booksTabs.join('  ·  ') || '(none)'}`)
   }
 
   const routes = walk(APP)

@@ -13,7 +13,7 @@ export default function BillList({ bills, showVendor = true }: { bills: BillRow[
         return (
           <li key={b.id}>
             <Link
-              href={`/books/bills/${b.id}`}
+              href={`/store/books/bills/${b.id}`}
               className={`flex items-center justify-between gap-3 rounded-lg px-2 py-3 hover:bg-stone-50 ${
                 b.is_reversal ? 'border-l-2 border-violet-300 pl-3' : ''
               }`}

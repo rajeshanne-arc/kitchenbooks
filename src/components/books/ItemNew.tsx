@@ -31,7 +31,7 @@ export default function ItemNew({ categories, units }: { categories: Category[];
       const res = await createItem({ name: name.trim(), category, purchaseUnit, openingRate: openingRate.trim(), brand })
       if (res.ok) {
         toast(`${res.item.code} — ${res.item.name} created`)
-        router.push(`/books/items/${res.item.id}`)
+        router.push(`/store/masters/items/${res.item.id}`)
         router.refresh()
       } else {
         setError(res.error)

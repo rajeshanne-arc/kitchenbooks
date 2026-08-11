@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
 import { getIndentDetail } from '@/server/kitchen-queries'
-import GroupTabs from '@/components/GroupTabs'
 import CancelIndent from '@/components/kitchen/CancelIndent'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
@@ -38,14 +37,14 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
   // and its value here — that is the gap, and it is never hidden — but not a
   // link into a screen their role cannot open.
   const user = await getSessionUser()
-  const canOpenIssues = user !== null && canAccess(user.role, '/books/issues')
+  const canOpenIssues = user !== null && canAccess(user.role, '/store/books/issues')
   const detail = await getIndentDetail(restaurant.id, id)
   if (!detail) notFound()
   const { indent, lines, issues, gap } = detail
   const liveIssues = issues.filter((i) => !i.is_reversal && !i.is_voided)
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
+    <>
       <header className="pb-4">
         <div className="flex items-center justify-between gap-3">
           <h1 className={pageTitleCls}>
@@ -61,7 +60,6 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
         </p>
         {indent.note !== null && <p className="mt-1 text-sm text-stone-600">“{indent.note}”</p>}
       </header>
-      <GroupTabs group="kitchen" />
 
       <div className="space-y-4">
         {indent.status === 'open' && (
@@ -120,7 +118,7 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
             <ul className="mt-1 divide-y divide-rule-soft">
               {liveIssues.map((i) => (
                 <li key={i.id}>
-                  <IssueRow href={canOpenIssues ? `/books/issues/${i.id}` : null}>
+                  <IssueRow href={canOpenIssues ? `/store/books/issues/${i.id}` : null}>
                     <span className="min-w-0">
                       <span className="block text-sm text-stone-900">
                         {fmtDate(i.issue_date)} · {i.line_count} {i.line_count === 1 ? 'item' : 'items'}
@@ -151,6 +149,6 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
           </ul>
         </section>
       </div>
-    </main>
+    </>
   )
 }

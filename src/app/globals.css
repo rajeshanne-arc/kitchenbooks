@@ -121,6 +121,12 @@
   --color-sky-800: #233043;
   --color-sky-900: #1a2332;
 
+  /* --- the one colour that is not ours ---------------------------------- */
+  /* WhatsApp's own green, on the share button only. It is named here so the
+     stray-hex gate stays strict: every colour in the app is either a token or
+     a bug, with no exception list. */
+  --color-whatsapp: #25d366;
+
   /* --- a sheet has gridlines, not drop shadows -------------------------- */
   --radius-md: 0.25rem;
   --radius-lg: 0.375rem;

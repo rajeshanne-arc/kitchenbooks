@@ -463,3 +463,74 @@ hand-rolled role comparison — one source, every surface.
 Quality floor, kept quietly: 40px+ touch targets in nav and tab strips,
 `:focus-visible` outlines app-wide, `prefers-reduced-motion` honoured (the
 meter's cell-by-cell fill is the one animated moment in the app).
+
+
+## Phase A — URL restructure, consolidation (2026-08-11)
+
+**Each group owns its books. A chef never leaves /kitchen.**
+
+    /kitchen  /kitchen/books    chef
+    /store    /store/books      store
+    /sales    /sales/books      cashier
+    /staff    /staff/books      manager
+    /owner                      owner (Dashboard is manager+owner)
+
+`/` is the front door: a role with exactly ONE group is redirected into it
+and never sees a chooser; manager and owner get group tiles. The group
+layout renders the tab strip once — pages no longer carry `<GroupTabs>` or
+their own `<main>`.
+
+**Tabs group by PERSON AND MOMENT, not by data shape.** The sheets needed 28
+tabs because a Sheets tab holds one form shape; that constraint is gone. A
+consolidated tab carries a CHIP ROW, and each chip is a real URL holding ONE
+small focused form — never one large form with conditional fields. One
+question at a time still rules.
+
+    kitchen  Indent · End of shift [Production|Closing] · Loss · Recipes · Books
+    store    Receive [Purchase|Pay vendor] · Issue · Loss · Count ·
+             Masters [Vendors|Items] · Books
+    sales    Day close · Record [Voucher|Other income|Off-book|Non-revenue|Due] ·
+             Settlements · Books
+    staff    People [Employees|Attendance] · Money out [Expense] · Books
+    owner    Dashboard · P&L · Users · Lists · Settings
+
+`src/lib/tabs.ts` is the KEY REGISTRY and the fallback; settings key
+`tabs.<group>` may reorder, RELABEL and HIDE a tab and can never invent a
+route. The LABEL is editable, the KEY and URL never are. Hidden tabs matter:
+a restaurant with no bar should not see Bar.
+
+**Retired URLs redirect, permanently and role-aware** (`src/lib/legacy.ts`,
+`components/LegacyRedirect.tsx`). Phones have the old links bookmarked. Two
+are role-aware because two groups mount the same view: `/books/stock` and
+`/books/sections`; `/books` itself means "my books". The legacy prefixes are
+open to every signed-in role in the matrix — they carry no data and decide
+nothing, and the target they land on is matrix-checked like any other page.
+
+**Two views are mounted in two groups** (`src/components/views/`): Stock
+(chef reads, store owns) and Sections (chef and manager). One file, two thin
+route files — never a copy.
+
+**Money-out is five tables** — payments, cash_vouchers, expenses,
+contract_bills, casual_labour — an artefact of porting the sheets one tab at
+a time. The chips hide that from the user. Merging them is a later refactor,
+deliberately not Phase A.
+
+**The schema has moved ahead of this app.** `returns`/`return_lines`,
+`contract_bills`, `casual_labour`, `partners` (with `agreed_commission_pct`),
+`settlement_deductions`, `catering_events`/`catering_expenses`,
+`off_book_lines`, `expense_category_kinds` and several new views all exist
+with no UI. They belong to Phase B — do not build forms for them casually,
+and do not invent columns: read the schema first.
+
+**Two gates run on every build, both because invisibility was claimed fixed
+and was not:**
+
+- `npm run audit:matrix` — every route × every role, plus every literal href
+  reachable from every page. Exits 1 on any ungated violation.
+- `npm run smoke:phase-a` — the nav list per role BY VALUE (a rule can be
+  satisfied by a wrong list), Indian grouping on every rupee figure, no stray
+  hex outside the token set in globals.css, and every retired URL resolving
+  to a live route for every role.
+
+WhatsApp's green is a named token (`--color-whatsapp`) rather than an
+exception in the hex gate: every colour in the app is either a token or a bug.

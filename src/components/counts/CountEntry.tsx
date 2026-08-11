@@ -109,7 +109,7 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
           </ul>
         </section>
         <Link
-          href="/books/counts"
+          href="/store/count"
           className="block w-full rounded-xl bg-emerald-700 py-3 text-center text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
         >
           Back to counts
