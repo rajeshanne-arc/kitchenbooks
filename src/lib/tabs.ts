@@ -33,24 +33,26 @@ export const TAB_GROUP_NAMES: Record<TabGroup, string> = {
 
 export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
   kitchen: [
-    // The group root IS the kitchen dashboard and always has been; until now
-    // no tab pointed at it, so the only way in was the top nav and no tab
-    // ever showed as active while you were on it. That is what "dashboards
-    // not visible" meant. Same for the store below.
     { key: 'dashboard', href: '/kitchen', label: 'Dashboard' },
+    // DEPARTMENTS. sections is ONE table — the same row codes a dish,
+    // receives an issue and posts a staff member — so a rename here reflects
+    // everywhere with nothing else to update. The word in the UI is
+    // "department"; the column is still `sections`.
+    { key: 'departments', href: '/kitchen/departments', label: 'Departments' },
     { key: 'indent', href: '/kitchen/indent', label: 'Indent' },
+    // PRODUCTION SPLIT OUT of end-of-shift. Batches are made through the
+    // day; closing happens once at night. Different moments, different tabs
+    // — the earlier pairing was wrong.
+    { key: 'production', href: '/kitchen/shift/production', label: 'Production' },
     {
-      // Production and closing are the same person at the same moment, so
-      // they are one tab. Today's production pre-fills tonight's closing.
       key: 'shift',
       href: '/kitchen/shift',
       label: 'End of shift',
       chips: [
-        { key: 'production', label: 'Production' },
         { key: 'closing', label: 'Closing' },
+        { key: 'loss', label: 'Loss' },
       ],
     },
-    { key: 'loss', href: '/kitchen/loss', label: 'Loss' },
     { key: 'recipes', href: '/kitchen/recipes', label: 'Recipes' },
     { key: 'books', href: '/kitchen/books', label: 'Books' },
   ],
@@ -65,7 +67,17 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         { key: 'pay', label: 'Pay vendor' },
       ],
     },
-    { key: 'reorder', href: '/store/reorder', label: 'Reorder' },
+    {
+      key: 'reorder',
+      href: '/store/reorder',
+      label: 'Reorder',
+      // Slow-moving sits beside Reorder because they are the same question
+      // from opposite ends: what to buy, and what was over-bought.
+      chips: [
+        { key: 'due', label: 'To reorder' },
+        { key: 'slow', label: 'Slow-moving' },
+      ],
+    },
     { key: 'issue', href: '/store/issue', label: 'Issue' },
     { key: 'loss', href: '/store/loss', label: 'Loss' },
     { key: 'count', href: '/store/count', label: 'Count' },
@@ -81,12 +93,17 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     { key: 'books', href: '/store/books', label: 'Books' },
   ],
   sales: [
-    { key: 'close', href: '/sales', label: 'Day close' },
+    { key: 'dashboard', href: '/sales', label: 'Dashboard' },
+    { key: 'daily', href: '/sales/books/sales', label: 'Daily sale' },
     {
+      // DAY CLOSE LIVES HERE NOW. It is a daily money event like the rest of
+      // them, and giving it its own tab implied it was a different KIND of
+      // thing. It is first because it is the one done every night.
       key: 'record',
       href: '/sales/record',
       label: 'Record',
       chips: [
+        { key: 'close', label: 'Day close' },
         { key: 'voucher', label: 'Voucher' },
         { key: 'income', label: 'Other income' },
         { key: 'offbook', label: 'Off-book' },
@@ -94,9 +111,8 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         { key: 'due', label: 'Due' },
       ],
     },
-    { key: 'settlements', href: '/sales/settlements', label: 'Settlements' },
-    // The partners MASTER, beside the settlements it governs. Not a list:
-    // agreed_commission_pct is what the gap card measures against.
+    // PARTNERS is the section; settlements live inside it, because a
+    // settlement is something a partner does.
     { key: 'partners', href: '/sales/partners', label: 'Partners' },
     { key: 'books', href: '/sales/books', label: 'Books' },
   ],
@@ -123,6 +139,7 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
   owner: [
     { key: 'dashboard', href: '/owner', label: 'Dashboard' },
     { key: 'pnl', href: '/owner/pnl', label: 'P&L' },
+    { key: 'activity', href: '/owner/activity', label: 'Activity' },
     { key: 'users', href: '/owner/users', label: 'Users' },
     { key: 'lists', href: '/owner/lists', label: 'Lists' },
     { key: 'settings', href: '/owner/settings', label: 'Settings' },

@@ -1,86 +1,152 @@
+import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import { getClosePrefill, getLadder } from '@/server/cash-queries'
-import { getDifferenceTrend } from '@/server/cashier-queries'
-import { getNameHistory } from '@/server/settings'
+import { getSalesSeries, getYesterday, getUnmappedSummary, getMissingCloses } from '@/server/dashboard-queries'
+import { getGstServiceByDay } from '@/server/reports-queries'
 import { todayIST } from '@/server/store-queries'
-import DayClose from '@/components/cash/DayClose'
-import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
+import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
+import {
+  cardCls, heroNumCls, pageSubCls, pageTitleCls, sectionHeadCls,
+} from '@/components/ui'
+import PeriodControl from '@/components/dashboard/PeriodControl'
+import { SalesLine } from '@/components/dashboard/Charts'
+import Honesty from '@/components/Honesty'
 
 export const dynamic = 'force-dynamic'
 
-export default async function CashPage() {
+// The cashier's own dashboard. Day close moved into Record — it is a daily
+// money event like the vouchers beside it — so this tab is now what the
+// cashier looks at rather than what they type into.
+
+const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many)
+
+export default async function SalesDashboard({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>
+}) {
+  const { period: periodParam } = await searchParams
+  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
+  const period = resolvePeriod(periodKey, todayIST())
   const restaurant = await getRestaurant()
-  const today = todayIST()
-  const [prefill, handedToNames, trend, ladder] = await Promise.all([
-    getClosePrefill(restaurant.id, today),
-    getNameHistory(restaurant.id, 'handed_to'),
-    getDifferenceTrend(restaurant.id, 14),
-    getLadder(restaurant.id, 7),
+
+  const [series, yesterday, unmapped, missing, gst] = await Promise.all([
+    getSalesSeries(restaurant.id, period.from, period.to),
+    getYesterday(restaurant.id),
+    getUnmappedSummary(restaurant.id),
+    getMissingCloses(restaurant.id),
+    getGstServiceByDay(restaurant.id, period.from, period.to),
   ])
+
+  const total = series.reduce((n, p) => n + decimalStringToPaise(p.revenue), 0)
+  const diff = yesterday.difference === null ? null : decimalStringToPaise(yesterday.difference)
+  const foodBev = gst.reduce((n, r) => n + decimalStringToPaise(r.food_bev), 0)
+  const gstTotal = gst.reduce((n, r) => n + decimalStringToPaise(r.gst_collected), 0)
+  const effective = foodBev > 0 ? (gstTotal / foodBev) * 100 : null
 
   return (
     <>
       <header className="pb-4">
-        <h1 className={pageTitleCls}>Cash</h1>
-        <p className={pageSubCls}>{restaurant.name} — the cashier’s day</p>
+        <h1 className={pageTitleCls}>Sales</h1>
+        <p className={pageSubCls}>{restaurant.name} — {period.label}</p>
       </header>
 
-      <div className="space-y-4">
-        <DayClose defaultDate={today} initialPrefill={prefill} restaurantName={restaurant.name} handedToNames={handedToNames} />
+      <div className="pb-4">
+        <PeriodControl active={periodKey} basePath="/sales" />
+      </div>
 
-        {trend.length > 0 && (
-          <section className={cardCls}>
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className={sectionHeadCls}>Difference trend</h2>
-              <span className="text-xs text-stone-400">recent closes · day_close_ladder</span>
-            </div>
-            <div className="mt-2 flex items-end gap-1.5 overflow-x-auto pb-1">
-              {trend.map((t) => {
-                const diff = decimalStringToPaise(t.difference)
-                return (
-                  <div key={t.close_date} className="flex shrink-0 flex-col items-center gap-1">
-                    <span
-                      className={`rounded px-1.5 py-1 text-[11px] font-semibold tabular-nums ${
-                        diff === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                      }`}
-                    >
-                      {diff === 0 ? '0' : formatMoneyString(t.difference)}
-                    </span>
-                    <span className="text-[10px] text-stone-400">{t.close_date.slice(8)}</span>
-                  </div>
-                )
-              })}
-            </div>
-            <p className="mt-1 text-xs text-stone-400">red on any non-zero difference — it belongs to its day</p>
-          </section>
-        )}
+      {missing.length > 0 && (
+        <Link href="/sales/record/close" className={`${cardCls} mb-3 block border-red-300 bg-red-50/50`}>
+          <h2 className={`${sectionHeadCls} text-red-700`}>Days not closed</h2>
+          <p className="mt-1 text-sm font-medium text-red-800">
+            {missing.length} {plural(missing.length, 'day')} sold food and never had{' '}
+            {missing.length === 1 ? 'its' : 'their'} cash counted — {missing.slice(0, 5).map((d) => fmtDate(d)).join(' · ')}
+          </p>
+        </Link>
+      )}
 
-        {ladder.length > 0 && (
-          <section className={cardCls}>
-            <h2 className={sectionHeadCls}>Recent closes</h2>
-            <ul className="mt-1 divide-y divide-rule-soft">
-              {ladder.map((l) => {
-                const diff = decimalStringToPaise(l.difference)
-                return (
-                  <li key={l.close_date} className="flex items-center justify-between gap-3 py-2">
-                    <span className="text-sm text-stone-900">
-                      {fmtDate(l.close_date)}
-                      {l.filings > 1 && <span className="ml-1.5 text-xs text-amber-700">corrected ×{l.filings - 1}</span>}
-                    </span>
-                    <span className="flex items-center gap-3">
-                      <span className="tabular-nums text-sm text-stone-500">counted {formatMoneyString(l.cash_counted)}</span>
-                      <span className={`tabular-nums text-sm font-semibold ${diff === 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                        {formatMoneyString(l.difference)}
-                      </span>
-                    </span>
-                  </li>
-                )
-              })}
-            </ul>
-          </section>
-        )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <section className={cardCls}>
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 className={sectionHeadCls}>Revenue</h2>
+            <span className="font-mono text-[10px] text-stone-400">sales_by_day</span>
+          </div>
+          <p className="mt-1.5 text-sm text-stone-700">
+            {series.length === 0
+              ? 'No sales fetched for this period yet.'
+              : `${formatPaise(total)} across ${series.length} ${plural(series.length, 'day')}.`}
+          </p>
+          {series.length === 1 ? (
+            <p className={`mt-1 text-[26px] ${heroNumCls} text-stone-900`}>
+              {formatMoneyString(series[0].revenue)}
+            </p>
+          ) : (
+            series.length > 1 && (
+              <div className="mt-2">
+                <SalesLine points={series} />
+              </div>
+            )
+          )}
+        </section>
+
+        <section className={cardCls}>
+          <h2 className={sectionHeadCls}>Yesterday&apos;s drawer</h2>
+          <p className="mt-1.5 text-sm text-stone-700">
+            {diff === null
+              ? `${fmtDate(yesterday.date)} is not closed yet.`
+              : diff === 0
+                ? `${fmtDate(yesterday.date)} squared exactly.`
+                : `${fmtDate(yesterday.date)} was out by ${formatPaise(Math.abs(diff))}.`}
+          </p>
+          {diff !== null && diff !== 0 && (
+            <p className={`mt-1 text-[26px] ${heroNumCls} text-red-700`}>{formatPaise(diff)}</p>
+          )}
+          <Link
+            href="/sales/record/close"
+            className="mt-2 inline-block text-xs font-medium text-emerald-700 hover:underline"
+          >
+            close a day →
+          </Link>
+        </section>
+
+        <section className={cardCls}>
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 className={sectionHeadCls}>Effective GST</h2>
+            <span className="font-mono text-[10px] text-stone-400">gst_service_by_day</span>
+          </div>
+          <p className={`mt-1 text-[26px] ${heroNumCls} text-stone-900`}>
+            {effective === null ? '—' : `${effective.toFixed(2)}%`}
+          </p>
+          <p className="text-xs text-stone-600">
+            GST belongs to the government, service charge to the staff — neither is revenue.
+          </p>
+          <Link
+            href="/sales/books/gst"
+            className="mt-2 inline-block text-xs font-medium text-emerald-700 hover:underline"
+          >
+            the reconciliation →
+          </Link>
+        </section>
+
+        <section className={cardCls}>
+          <h2 className={sectionHeadCls}>Unmapped POS revenue</h2>
+          {unmapped.items === 0 ? (
+            <p className="mt-1.5 text-sm text-stone-700">Everything sold is mapped to a dish.</p>
+          ) : (
+            <>
+              <p className={`mt-1 text-[26px] ${heroNumCls} text-red-700`}>
+                {formatMoneyString(unmapped.revenue)}
+              </p>
+              <div className="mt-2">
+                <Honesty level="alarm" verdict="unclaimed" compact>
+                  {unmapped.items} POS {plural(unmapped.items, 'item')} no dish claims, so this money belongs to
+                  no department and no food cost.
+                </Honesty>
+              </div>
+            </>
+          )}
+        </section>
       </div>
     </>
   )

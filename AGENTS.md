@@ -778,3 +778,54 @@ resolvable, skips writes for the unqualified pass (an INSERT names target
 columns before any relation is in scope), and cannot reason about CTE bodies
 or dynamic `sql.unsafe` fragments. It would have caught the pnl break; it
 would not catch a column whose TYPE changed.
+
+## Phase B (cont.) — structure, the four recovered reports, activity
+
+**PAYROLL IS NOT BUILT, DELIBERATELY.** Rajesh's Labour sheet has never run
+a real payroll — its June run paid 34 days in a 30-day month. Attendance is
+INSERT-only and `attendance_current` already resolves corrections, so the
+data is ready whenever he is; what is missing is a proven method, not a
+table. Do not build payroll, advances or salary payments from the sheet as
+it stands.
+
+**Production split out of End of shift.** Batches are made through the day;
+closing happens once at night. Different moments, different tabs — the
+earlier pairing was wrong. End of shift now holds Closing and Loss.
+
+**Kitchen tabs: Dashboard · Departments · Indent · Production · End of shift
+· Recipes · Books.** **Sales tabs: Dashboard · Daily sale · Record ·
+Partners · Books** — the day close moved INTO Record (it is a daily money
+event like the vouchers beside it, and its own tab implied it was a
+different kind of thing) and `/sales` became the cashier's dashboard.
+`/cash` now redirects to `/sales/record/close`, not `/sales`.
+
+**Departments ARE sections.** One table: the same row codes a dish (CH-001),
+receives an issue and posts a staff member — so a rename lands in all three
+at once with nothing else to update. The NAME is editable, the CODE is not,
+and the screen says why. Each row shows how many dishes, issues and staff
+already depend on it. "Section" is now "department" in UI copy; the column
+is still `sections` and always will be.
+
+**Indents carry a SESSION** (Morning / Evening / Extra / Catering, from the
+`session` list). An indent is for a SHIFT, not a day: the evening kitchen
+asks for different things than the morning one, and the store needs to know
+which ask it is filling. `open_indents` carries it too.
+
+**The four recovered reports**, each reading a view the migration publishes:
+`gst_service_by_day` (Sales → Books → GST & service — the effective rate
+against an expected 5%, captioned so nobody mistakes GST or service charge
+for revenue), `cash_handovers` (who took how much, by day and period),
+`slow_moving_stock` (beside Reorder as a chip, because what to buy and what
+was over-bought are the same question from opposite ends), and
+`daily_purchases` (Store → Books).
+
+**The owner activity log** (`/owner/activity`, owner-only) reads
+`activity_log` and records NOTHING new — `entered_by` and `created_at` have
+sat on every event table since phase 10. Filters by person, type and period
+come from what actually happened, not a hardcoded list. Reversals are
+BADGED as corrections rather than hidden or merged: a correction is a thing
+someone filed, and reading it as "they changed the number" is the difference
+between a ledger and an accusation.
+
+`npm run audit:schema` covers the new views automatically — it walks all of
+`src/server`, so a new query file is gated the moment it exists.

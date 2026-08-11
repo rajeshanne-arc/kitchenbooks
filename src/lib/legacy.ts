@@ -30,7 +30,8 @@ const FIXED: [from: string, to: string][] = [
   ['/cash/dues', '/sales/record/due'],
   ['/kitchen/production', '/kitchen/shift/production'],
   ['/kitchen/closing', '/kitchen/shift/closing'],
-  ['/kitchen/wastage', '/kitchen/loss'],
+  ['/kitchen/wastage', '/kitchen/shift/loss'],
+  ['/kitchen/loss', '/kitchen/shift/loss'],
   ['/attendance', '/staff/people/attendance'],
   ['/expenses', '/staff/money-out/expense'],
   ['/dashboard', '/owner'],
@@ -39,7 +40,8 @@ const FIXED: [from: string, to: string][] = [
   ['/bill', '/store/receive/purchase'],
   ['/issue', '/store/issue'],
   ['/wastage', '/store/loss'],
-  ['/cash', '/sales'],
+  // /cash WAS the day close, and the day close now lives inside Record.
+  ['/cash', '/sales/record/close'],
 ]
 
 /** The Phase-A home of a retired URL, for this role. Null when nothing maps. */

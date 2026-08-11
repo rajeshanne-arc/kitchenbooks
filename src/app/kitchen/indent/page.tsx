@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
+import { getList } from '@/server/settings'
 import { getKitchenSections, listIndents } from '@/server/kitchen-queries'
 import IndentEntry from '@/components/kitchen/IndentEntry'
 import { fmtDate } from '@/lib/format'
@@ -15,9 +16,10 @@ const STATUS_BADGE: Record<string, string> = {
 
 export default async function IndentPage() {
   const restaurant = await getRestaurant()
-  const [sections, indents] = await Promise.all([
+  const [sections, indents, sessions] = await Promise.all([
     getKitchenSections(restaurant.id),
     listIndents(restaurant.id),
+    getList(restaurant.id, 'session'),
   ])
 
   return (
@@ -28,7 +30,7 @@ export default async function IndentPage() {
       </header>
 
       <div className="space-y-4">
-        <IndentEntry sections={sections} />
+        <IndentEntry sections={sections} sessions={sessions} />
 
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>Recent indents</h2>

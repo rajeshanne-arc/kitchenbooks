@@ -12,6 +12,7 @@ import { z } from 'zod'
 import type postgres from 'postgres'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { getList } from '@/server/settings'
 import { enteredBy } from '@/server/current-user'
 import {
   getClosingCurrent,
@@ -270,6 +271,7 @@ export async function voidKitchenWastage(id: string): Promise<VoidKitchenWastage
 const IndentSchema = z.object({
   date: z.string().regex(DATE_RE),
   sectionId: z.string().regex(UUID),
+  session: z.string().trim().min(1, 'Pick the session').max(40),
   note: z.string().trim().max(300),
   lines: z.array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr })).min(1).max(40),
 })
@@ -291,6 +293,10 @@ export async function saveIndent(raw: SaveIndentInput): Promise<SaveIndentResult
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     await assertKitchenSection(rid, input.sectionId)
+    const sessions = await getList(rid, 'session')
+    if (!sessions.includes(input.session)) {
+      throw new KitchenError(`Session must come from the list — add “${input.session}” in Settings → Lists first`)
+    }
     const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
@@ -301,8 +307,9 @@ export async function saveIndent(raw: SaveIndentInput): Promise<SaveIndentResult
         if (!item[0]) throw new KitchenError(`Line ${i + 1}: item not found`)
       }
       const [indent] = await tx<{ id: string }[]>`
-        insert into indents (restaurant_id, indent_date, section_id, note, entered_by)
-        values (${rid}, ${input.date}, ${input.sectionId}, ${input.note === '' ? null : input.note}, ${by})
+        insert into indents (restaurant_id, indent_date, section_id, session, note, entered_by)
+        values (${rid}, ${input.date}, ${input.sectionId}, ${input.session},
+                ${input.note === '' ? null : input.note}, ${by})
         returning id`
       const lineRows = input.lines.map((l) => ({ indent_id: indent.id, item_id: l.itemId, qty_requested: l.qty.trim() }))
       await tx`insert into indent_lines ${tx(lineRows, 'indent_id', 'item_id', 'qty_requested')}`

@@ -23,10 +23,18 @@ const cleanQty = (raw: string) => {
   return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '')
 }
 
-export default function IndentEntry({ sections }: { sections: Section[] }) {
+export default function IndentEntry({
+  sections,
+  sessions,
+}: {
+  sections: Section[]
+  /** the `session` list — an indent is for a SHIFT, not a day */
+  sessions: string[]
+}) {
   const { label } = useLang()
   const [date, setDate] = useState(todayLocal)
   const [sectionId, setSectionId] = useState('')
+  const [session, setSession] = useState(sessions[0] ?? '')
   const [note, setNote] = useState('')
   const [lines, setLines] = useState<Line[]>([newLine(1)])
   const [nextKey, setNextKey] = useState(2)
@@ -50,7 +58,8 @@ export default function IndentEntry({ sections }: { sections: Section[] }) {
   }
 
   const lineReady = (l: Line) => l.item !== null && parseQty(l.qty) !== null && Number(l.qty) > 0
-  const canSave = !saving && sectionId !== '' && lines.length > 0 && lines.every(lineReady)
+  const canSave =
+    !saving && sectionId !== '' && session !== '' && lines.length > 0 && lines.every(lineReady)
 
   async function onSave() {
     if (!canSave) return
@@ -60,6 +69,7 @@ export default function IndentEntry({ sections }: { sections: Section[] }) {
       const res = await saveIndent({
         date,
         sectionId,
+        session,
         note: note.trim(),
         lines: lines.map((l) => ({ itemId: (l.item as IssuableItemHit).id, qty: l.qty.trim() })),
       })
@@ -135,7 +145,7 @@ export default function IndentEntry({ sections }: { sections: Section[] }) {
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${numCls} w-full`} />
           </label>
           <div>
-            <span className={fieldLabelCls}>{label('section')}</span>
+            <span className={fieldLabelCls}>Department</span>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {sections.map((s) => (
                 <button
@@ -145,7 +155,7 @@ export default function IndentEntry({ sections }: { sections: Section[] }) {
                   className={`rounded-xl border px-2 py-2 text-sm font-medium ${
                     sectionId === s.id
                       ? 'border-emerald-700 bg-emerald-700 text-white'
-                      : 'border-stone-200 bg-white text-stone-700 hover:border-emerald-400'
+                      : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
                   }`}
                 >
                   {s.name}
@@ -153,6 +163,36 @@ export default function IndentEntry({ sections }: { sections: Section[] }) {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* An indent is for a SHIFT. The evening kitchen asks for different
+            things than the morning one, and the store needs to know which
+            ask it is filling. */}
+        <div className="mt-4">
+          <span className={fieldLabelCls}>Session</span>
+          {sessions.length === 0 ? (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              No sessions are set up — add them in Settings → Lists.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {sessions.map((sn) => (
+                <button
+                  key={sn}
+                  type="button"
+                  aria-pressed={session === sn}
+                  onClick={() => setSession(sn)}
+                  className={`rounded-full border px-3.5 py-2 text-sm font-medium ${
+                    session === sn
+                      ? 'border-emerald-700 bg-emerald-700 text-white'
+                      : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
+                  }`}
+                >
+                  {sn}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

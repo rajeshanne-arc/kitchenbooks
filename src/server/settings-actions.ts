@@ -158,3 +158,78 @@ export async function saveTabsSetting(rawGroup: string, rawEntries: { key: strin
     return fail(e)
   }
 }
+
+// ─────────────────────────── departments (sections) ───────────────────────
+// sections is ONE table: the same row codes a dish (CH-001), receives an
+// issue and posts a staff member. So a rename here reflects in all three
+// with nothing else to update — which is exactly why the NAME is editable
+// and the CODE is not. Dish codes and issue history carry the code forever.
+//
+// Retire, never delete.
+
+const DeptSchema = z.object({
+  name: z.string().trim().min(1, 'Name the department').max(60),
+  sortOrder: z.union([z.literal(''), z.string().regex(/^\d{1,4}$/)]),
+  status: z.enum(['active', 'inactive']),
+})
+
+const NewDeptSchema = DeptSchema.extend({
+  code: z.string().trim().min(2, 'A code is 2 letters').max(4).regex(/^[A-Za-z]+$/, 'Letters only'),
+  deptGroup: z.enum(['Management', 'Support', 'Kitchen', 'Service', 'Bar']),
+})
+
+export async function createDepartment(raw: {
+  name: string
+  code: string
+  deptGroup: string
+  sortOrder: string
+  status: 'active' | 'inactive'
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const input = NewDeptSchema.parse(raw)
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const code = input.code.toUpperCase()
+
+    await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const dup = await tx<{ id: string }[]>`
+        select id from sections where restaurant_id = ${rid} and code = ${code}`
+      if (dup[0]) throw new SettingsError(`Code ${code} is already used — codes are permanent and never reused`)
+      const [{ next }] = await tx<{ next: number }[]>`
+        select coalesce(max(sort_order), 0) + 1 as next from sections where restaurant_id = ${rid}`
+      await tx`
+        insert into sections (restaurant_id, code, name, dept_group, sort_order, status)
+        values (${rid}, ${code}, ${input.name}, ${input.deptGroup},
+                ${input.sortOrder === '' ? next : Number(input.sortOrder)}, ${input.status})`
+    })
+    return { ok: true }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function updateDepartment(
+  id: string,
+  raw: { name: string; sortOrder: string; status: 'active' | 'inactive' },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new SettingsError('Malformed department id')
+    const input = DeptSchema.parse(raw)
+    const restaurant = await getRestaurant()
+
+    // name, sort_order and status are the ONLY granted columns. code and
+    // dept_group are absent by design.
+    const updated = await sql<{ id: string }[]>`
+      update sections set
+        name = ${input.name},
+        sort_order = ${input.sortOrder === '' ? sql`sort_order` : Number(input.sortOrder)},
+        status = ${input.status}
+      where id = ${id} and restaurant_id = ${restaurant.id}
+      returning id`
+    if (!updated[0]) throw new SettingsError('Department not found — nothing was changed')
+    return { ok: true }
+  } catch (e) {
+    return fail(e)
+  }
+}

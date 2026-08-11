@@ -71,7 +71,7 @@ async function main() {
 
   // ---- 1. the indent records the ASK
   const openBefore = await countOpenIndents(rid)
-  const ind1 = await saveIndent({ date: D1, sectionId: ch.id, note: 'zz groups smoke', lines: [{ itemId: plt1.id, qty: '2' }] })
+  const ind1 = await saveIndent({ date: D1, sectionId: ch.id, session: 'Morning', note: 'zz groups smoke', lines: [{ itemId: plt1.id, qty: '2' }] })
   assert.ok(ind1.ok, `saveIndent failed: ${ind1.ok === false ? ind1.error : ''}`)
   assert.equal(ind1.indent.status, 'open')
   assert.equal(await countOpenIndents(rid), openBefore + 1, 'the store-home badge counts it')
@@ -103,7 +103,7 @@ async function main() {
   // ---- 4. cancel: open only
   const cantCancel = await cancelIndent(ind1.indent.id)
   assert.ok(!cantCancel.ok && /issued/i.test(cantCancel.error))
-  const ind2 = await saveIndent({ date: D1, sectionId: td.id, note: 'zz groups smoke', lines: [{ itemId: plt1.id, qty: '1' }] })
+  const ind2 = await saveIndent({ date: D1, sectionId: td.id, session: 'Morning', note: 'zz groups smoke', lines: [{ itemId: plt1.id, qty: '1' }] })
   assert.ok(ind2.ok)
   const cancelled = await cancelIndent(ind2.indent.id)
   assert.ok(cancelled.ok && cancelled.indent.status === 'cancelled')

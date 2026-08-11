@@ -10,18 +10,21 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
   kitchen: [
     { href: '/kitchen/books/stock', label: 'Stock' },
     { href: '/kitchen/books/food-cost', label: 'Food cost' },
-    { href: '/kitchen/books/sections', label: 'Sections' },
+    { href: '/kitchen/books/sections', label: 'Departments' },
   ],
   store: [
     { href: '/store/books/bills', label: 'Bills' },
     { href: '/store/books/log', label: 'Store log' },
     { href: '/store/books/stock', label: 'Stock' },
+    { href: '/store/books/purchases', label: 'Daily purchases' },
   ],
   sales: [
     { href: '/sales/books/sales', label: 'Sales' },
     { href: '/sales/books/cash', label: 'Cash' },
     { href: '/sales/books/fetch', label: 'Fetch a day' },
+    { href: '/sales/books/gst', label: 'GST & service' },
+    { href: '/sales/books/handovers', label: 'Handovers' },
   ],
-  staff: [{ href: '/staff/books/sections', label: 'Sections' }],
+  staff: [{ href: '/staff/books/sections', label: 'Departments' }],
   owner: [],
 }

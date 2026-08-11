@@ -364,6 +364,19 @@ export type StockRow = {
   on_hand_value: string
 }
 
+/** A department (the sections table) with what already depends on it. */
+export type DepartmentRow = {
+  id: string
+  code: string
+  name: string
+  dept_group: DeptGroup
+  sort_order: number
+  status: 'active' | 'inactive'
+  issues: number
+  dishes: number
+  staff: number
+}
+
 export type SectionMonthRow = Section & {
   /** section_consumption.consumed_value for the month; '0' when absent */
   consumed_value: string
@@ -1063,6 +1076,7 @@ export type FoodCostRow = {
 export type IndentStatus = 'open' | 'issued' | 'cancelled'
 
 export type IndentRow = {
+  session: string
   id: string
   indent_date: string
   section_id: string
@@ -1106,6 +1120,10 @@ export type IndentDetail = {
 export type SaveIndentInput = {
   date: string
   sectionId: string
+  /** Morning / Evening / Extra / Catering, from the session list. An indent
+   *  is for a SHIFT, not a day — the evening kitchen asks for different
+   *  things than the morning one, and the store needs to know which. */
+  session: string
   note: string
   lines: { itemId: string; qty: string }[]
 }
@@ -1450,6 +1468,50 @@ export type EntryPulse = {
   closes: number
   kitchenClosings: number
   expenses: number
+}
+
+/* ── the four recovered reports, and the activity log ─────────────────── */
+
+export type GstServiceRow = {
+  business_date: string
+  food_bev: string
+  gst_collected: string
+  service_charge: string
+  container: string
+  /** null when there was no food & bev to divide by — never a fake 0% */
+  effective_gst_pct: string | null
+}
+
+export type CashHandoverRow = { close_date: string; person: string; amount: string }
+
+export type SlowMovingRow = {
+  item_id: string
+  code: string
+  name: string
+  category: string
+  on_hand_qty: string
+  purchase_unit: string
+  on_hand_value: string
+  last_bought: string | null
+  days_since_bought: number | null
+}
+
+export type DailyPurchaseRow = {
+  bill_date: string
+  vendor_name: string
+  vendor_code: string
+  bills: number
+  spend: string
+}
+
+export type ActivityRow = {
+  what: string
+  id: string
+  created_at: string
+  entered_by: string | null
+  on_date: string
+  amount: string | null
+  is_reversal: boolean
 }
 
 export type ExpenseCategoryMonthRow = { category: string; month: string; amount: string }
