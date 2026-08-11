@@ -45,6 +45,7 @@ export default function SettlementsClient({
   const [received, setReceived] = useState('')
   const [receivedDate, setReceivedDate] = useState('')
   const [note, setNote] = useState('')
+  const [reference, setReference] = useState('')
   const [billed, setBilled] = useState('')
   const [claimed, setClaimed] = useState('')
   const [lines, setLines] = useState<Deduction[]>([])
@@ -76,6 +77,7 @@ export default function SettlementsClient({
         amountReceived: received.trim(),
         receivedDate,
         note: note.trim(),
+        reference: reference.trim(),
         billedByUs: billed.trim(),
         claimedByThem: claimed.trim(),
         deductions: lines
@@ -90,6 +92,7 @@ export default function SettlementsClient({
         setReceived('')
         setReceivedDate('')
         setNote('')
+        setReference('')
         setBilled('')
         setClaimed('')
         setLines([])
@@ -178,6 +181,19 @@ export default function SettlementsClient({
               as zero.
             </p>
             <div className="mt-2 grid grid-cols-2 gap-3">
+              <label className="block sm:col-span-2">
+                <span className={fieldLabelCls}>Their reference</span>
+                <input
+                  value={reference}
+                  onChange={(e) => setReference(e.target.value)}
+                  placeholder="statement or UTR number"
+                  className={`${numCls} w-full font-mono`}
+                  maxLength={80}
+                />
+                <span className="mt-1 block text-xs text-stone-500">
+                  What you quote back at them when the gap is disputed.
+                </span>
+              </label>
               <label className="block">
                 <span className={fieldLabelCls}>We billed (₹)</span>
                 <input

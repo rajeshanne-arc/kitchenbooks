@@ -37,7 +37,7 @@ export default async function Home() {
 
   const groups = groupsFor(user.role)
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
+    <main className="mx-auto max-w-2xl px-4 pb-10 pt-6 sm:px-6">
       <header>
         <h1 className={pageTitleCls}>Today at {restaurantName}</h1>
         <p className={pageSubCls}>{fmtDate(todayIST())}</p>

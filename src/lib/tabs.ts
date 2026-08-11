@@ -43,7 +43,7 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     // PRODUCTION SPLIT OUT of end-of-shift. Batches are made through the
     // day; closing happens once at night. Different moments, different tabs
     // — the earlier pairing was wrong.
-    { key: 'production', href: '/kitchen/shift/production', label: 'Production' },
+    { key: 'production', href: '/kitchen/production', label: 'Production' },
     {
       key: 'shift',
       href: '/kitchen/shift',

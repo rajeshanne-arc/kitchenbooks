@@ -15,6 +15,7 @@ import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { getList } from '@/server/settings'
+import { noteListSuggestion } from '@/server/settings-actions'
 import {
   getDue,
   getDuesOutstanding,
@@ -68,12 +69,18 @@ function assertRealDate(s: string, label: string) {
 }
 
 /** LAW 2 at the write path: the value must be on the ACTIVE list. */
-async function assertListValue(restaurantId: string, key: ListKey, value: string, label: string) {
-  const values = await getList(restaurantId, key)
-  if (!values.includes(value)) {
-    throw new CashierError(`${label} must come from the list — add “${value}” in Settings → Lists first`)
+/** Accept a list value, recording it as a suggestion when it is new.
+ *  The entry is never blocked — see noteListSuggestion for why. */
+async function acceptListValue(restaurantId: string, key: ListKey, value: string, label: string) {
+  const clean = value.trim()
+  if (clean === '') throw new CashierError(`${label} is required`)
+  const approved = await getList(restaurantId, key)
+  if (!approved.some((v) => v.toLowerCase() === clean.toLowerCase())) {
+    await noteListSuggestion(restaurantId, key, clean, await enteredBy())
   }
+  return clean
 }
+
 
 const cleanName = (s: string) => s.trim().replace(/\s+/g, ' ')
 
@@ -95,6 +102,8 @@ const SettlementSchema = z.object({
   // `uncompared` rather than treating a missing side as zero.
   billedByUs: optionalMoney,
   claimedByThem: optionalMoney,
+  /** their statement or UTR number — what you quote when disputing */
+  reference: z.string().trim().max(80),
   deductions: z
     .array(
       z.object({
@@ -131,11 +140,8 @@ export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSett
       )
     }
 
-    const deductionTypes = await getList(rid, 'settlement_deduction')
     for (const d of input.deductions) {
-      if (!deductionTypes.includes(d.type)) {
-        throw new CashierError(`Deduction type must come from the list — add “${d.type}” in Settings → Lists first`)
-      }
+      await acceptListValue(rid, 'settlement_deduction', d.type, 'Deduction type')
     }
     const by = await enteredBy()
 
@@ -154,7 +160,8 @@ export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSett
                 ${input.receivedDate === '' ? null : input.receivedDate},
                 ${input.note === '' ? null : input.note}, ${by},
                 ${input.billedByUs === '' ? null : input.billedByUs},
-                ${input.claimedByThem === '' ? null : input.claimedByThem})
+                ${input.claimedByThem === '' ? null : input.claimedByThem},
+                ${input.reference === '' ? null : input.reference})
         returning id`
       if (input.deductions.length > 0) {
         const rows = input.deductions.map((d) => ({
@@ -227,6 +234,8 @@ const OffBookSchema = z.object({
   amount: moneyStr,
   paymentMode: z.string().trim().min(1, 'Pick how it was paid').max(30),
   note: z.string().trim().max(300),
+  customer: z.string().trim().max(120),
+  receivedInto: z.string().trim().max(60),
 })
 
 export async function saveOffBook(raw: SaveOffBookInput): Promise<SaveOffBookResult> {
@@ -238,15 +247,18 @@ export async function saveOffBook(raw: SaveOffBookInput): Promise<SaveOffBookRes
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    await assertListValue(rid, 'payment_mode', input.paymentMode, 'Payment mode')
+    await acceptListValue(rid, 'payment_mode', input.paymentMode, 'Payment mode')
     const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string }[]>`
-        insert into off_book_orders (restaurant_id, order_date, description, amount, payment_mode, note, entered_by)
+        insert into off_book_orders (restaurant_id, order_date, description, amount, payment_mode, note, entered_by,
+                                     customer, received_into)
         values (${rid}, ${input.date}, ${input.description === '' ? null : input.description},
-                ${input.amount}, ${input.paymentMode}, ${input.note === '' ? null : input.note}, ${by})
+                ${input.amount}, ${input.paymentMode}, ${input.note === '' ? null : input.note}, ${by},
+                ${input.customer === '' ? null : input.customer},
+                ${input.receivedInto === '' ? null : input.receivedInto})
         returning id`
       return { id: row.id }
     })
@@ -327,7 +339,7 @@ export async function saveNonRevenue(raw: SaveNonRevenueInput): Promise<SaveNonR
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    await assertListValue(rid, 'non_revenue_reason', input.reason, 'Reason')
+    await acceptListValue(rid, 'non_revenue_reason', input.reason, 'Reason')
     const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {

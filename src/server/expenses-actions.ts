@@ -11,6 +11,7 @@ import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { getList } from '@/server/settings'
+import { noteListSuggestion } from '@/server/settings-actions'
 import { getExpense } from '@/server/expenses-queries'
 import { parseMoney } from '@/lib/money'
 import type { SaveExpenseInput, SaveExpenseResult, VoidExpenseResult } from '@/lib/types'
@@ -55,15 +56,18 @@ export async function saveExpense(raw: SaveExpenseInput): Promise<SaveExpenseRes
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
+    // Accept, then record. The expense_category list was EMPTY in
+    // production, which meant this form refused every entry that reached
+    // it — the rule was protecting the vocabulary by preventing the work.
+    const by = await enteredBy()
     const categories = await getList(rid, 'expense_category')
-    if (!categories.includes(input.category)) {
-      throw new ExpenseError(`Category must come from the list — add “${input.category}” in Settings → Lists first`)
+    if (!categories.some((c) => c.toLowerCase() === input.category.toLowerCase())) {
+      await noteListSuggestion(rid, 'expense_category', input.category, by)
     }
     const modes = await getList(rid, 'payment_mode')
-    if (!modes.includes(input.paidVia)) {
-      throw new ExpenseError(`Payment mode must come from the list — add “${input.paidVia}” in Settings → Lists first`)
+    if (!modes.some((m) => m.toLowerCase() === input.paidVia.toLowerCase())) {
+      await noteListSuggestion(rid, 'payment_mode', input.paidVia, by)
     }
-    const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`

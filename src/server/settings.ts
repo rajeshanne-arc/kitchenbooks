@@ -6,7 +6,7 @@ import 'server-only'
 import { sql } from '@/lib/db'
 import { resolveTabs, type TabDef, type TabGroup } from '@/lib/tabs'
 import { canAccess, type Role } from '@/lib/roles'
-import type { ListKey, ListOptionRow } from '@/lib/lists'
+import type { ListKey, ListOptionRow, ListSuggestionRow } from '@/lib/lists'
 
 export async function getSettingValue(restaurantId: string, key: string): Promise<string | null> {
   const rows = await sql<{ value: string | null }[]>`
@@ -63,4 +63,50 @@ export async function getNameHistory(restaurantId: string, field: HistoryField):
     where restaurant_id = ${restaurantId} and ${sql.unsafe(src.column)} is not null
     group by 1 order by last_used desc, 1 asc limit 40`
   return rows.map((r) => r.name)
+}
+
+/** A list value the app will accept, INCLUDING one nobody has approved yet.
+ *
+ * LAW 2 said "lists, not free text", and it was right about the danger —
+ * "Asheel" and "Asheel Sir" are two vendors to a computer. It was wrong
+ * about the remedy: refusing the save stops the WORK, and the person with
+ * the receipt in their hand cannot wait for an owner to log in. So a typed
+ * value is accepted, recorded in list_suggestions as pending, and the owner
+ * decides later whether it becomes vocabulary. Entry never blocks; the
+ * decision is still deliberate.
+ */
+export async function isAcceptedListValue(
+  restaurantId: string,
+  key: ListKey,
+  value: string,
+): Promise<boolean> {
+  const clean = value.trim()
+  if (clean === '') return false
+  const approved = await getList(restaurantId, key)
+  if (approved.some((v) => v.toLowerCase() === clean.toLowerCase())) return true
+  const pending = await sql<{ id: string }[]>`
+    select id from list_suggestions
+    where restaurant_id = ${restaurantId} and list_key = ${key}
+      and lower(value) = ${clean.toLowerCase()} and status = 'pending'`
+  return pending.length > 0
+}
+
+/** Pending suggestions for the Settings screen, newest first. */
+export async function getListSuggestions(restaurantId: string): Promise<ListSuggestionRow[]> {
+  return sql<ListSuggestionRow[]>`
+    select s.id, s.list_key, s.value, s.suggested_by, s.seen_count, s.status,
+           s.created_at::text as created_at,
+           k.kind as expense_kind
+    from list_suggestions s
+    left join expense_category_kinds k
+      on k.restaurant_id = s.restaurant_id and k.category = s.value
+    where s.restaurant_id = ${restaurantId} and s.status = 'pending'
+    order by s.seen_count desc, s.created_at desc`
+}
+
+/** How each approved expense category is classified for the P&L. */
+export async function getExpenseKinds(restaurantId: string): Promise<Record<string, string>> {
+  const rows = await sql<{ category: string; kind: string }[]>`
+    select category, kind from expense_category_kinds where restaurant_id = ${restaurantId}`
+  return Object.fromEntries(rows.map((r) => [r.category, r.kind]))
 }

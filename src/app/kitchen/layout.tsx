@@ -5,7 +5,7 @@ import GroupTabs from '@/components/GroupTabs'
 
 export default function KitchenGroupLayout({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-6">
+    <main className="mx-auto max-w-2xl px-4 pb-10 pt-6 sm:px-6">
       <GroupTabs group="kitchen" />
       {children}
     </main>

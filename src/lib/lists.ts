@@ -37,6 +37,22 @@ export const LIST_KEYS: { key: ListKey; name: string; usedBy: string }[] = [
 
 export const ALL_LIST_KEYS: ListKey[] = LIST_KEYS.map((k) => k.key)
 
+/** A value somebody typed that was not on the list yet. It is ALREADY
+ *  saved on the event that used it — this row is the owner's queue, not a
+ *  gate the entry had to pass. */
+export type ListSuggestionRow = {
+  id: string
+  list_key: string
+  value: string
+  suggested_by: string | null
+  /** how many times somebody has typed it — the strongest signal it is real */
+  seen_count: number
+  status: string
+  created_at: string
+  /** for expense categories only: controllable | occupancy, once decided */
+  expense_kind: string | null
+}
+
 export type ListOptionRow = {
   id: string
   list_key: string

@@ -20,6 +20,8 @@ export default function OffBookClient({ modes, rows }: { modes: string[]; rows: 
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState(modes.includes('Cash') ? 'Cash' : '')
   const [note, setNote] = useState('')
+  const [customer, setCustomer] = useState('')
+  const [receivedInto, setReceivedInto] = useState('')
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -32,12 +34,22 @@ export default function OffBookClient({ modes, rows }: { modes: string[]; rows: 
     setSaving(true)
     setError(null)
     try {
-      const res = await saveOffBook({ date, description: description.trim(), amount: amount.trim(), paymentMode: mode, note: note.trim() })
+      const res = await saveOffBook({
+        date,
+        description: description.trim(),
+        amount: amount.trim(),
+        paymentMode: mode,
+        note: note.trim(),
+        customer: customer.trim(),
+        receivedInto: receivedInto.trim(),
+      })
       if (res.ok) {
         setSaved(res)
         setDescription('')
         setAmount('')
         setNote('')
+        setCustomer('')
+        setReceivedInto('')
         router.refresh()
       } else {
         setError(res.error)
@@ -109,6 +121,28 @@ export default function OffBookClient({ modes, rows }: { modes: string[]; rows: 
             <span className={fieldLabelCls}>Description</span>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="party order, counter sale…" className={inputCls} maxLength={200} />
           </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className={fieldLabelCls}>Customer</span>
+              <input
+                value={customer}
+                onChange={(e) => setCustomer(e.target.value)}
+                placeholder="who bought it"
+                className={inputCls}
+                maxLength={120}
+              />
+            </label>
+            <label className="block">
+              <span className={fieldLabelCls}>Received into</span>
+              <input
+                value={receivedInto}
+                onChange={(e) => setReceivedInto(e.target.value)}
+                placeholder="which account or machine"
+                className={inputCls}
+                maxLength={60}
+              />
+            </label>
+          </div>
           <label className="block">
             <span className={fieldLabelCls}>Note</span>
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />

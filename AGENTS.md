@@ -829,3 +829,46 @@ between a ledger and an accusation.
 
 `npm run audit:schema` covers the new views automatically — it walks all of
 `src/server`, so a new query file is gated the moment it exists.
+
+## Phase B — commit 1: three live bugs, inline lists, four one-field gaps
+
+**The three reported bugs, all real:**
+
+1. *Dishes could be coded to Security.* `/kitchen/recipes/new` called
+   `getSections`, which returns ALL 16 active org units — `dept_group` was
+   never the right filter. `sections.codes_dishes` now exists (SI NI CH CT
+   TD BK BR) and `getDishCodingSections` uses it. The dish code carries the
+   department forever, so a wrong one here is permanent.
+2. *Production and End of shift both showed Closing + Loss chips.* The
+   production page lived at `/kitchen/shift/production`, UNDER the shift
+   layout — and that layout paints the chip row for everything beneath it.
+   Production moved to `/kitchen/production`; `/kitchen/shift/production`
+   is now a retired URL. **Route nesting decides chrome: a page that should
+   not wear a group's chips must not live inside that group's segment.**
+3. *Dead space below the issue form.* Every group layout carried `pb-24`.
+   Only two screens in the app have a fixed bottom bar (BillEntry,
+   AttendanceSheet) and they were making every other screen pay for their
+   clearance. Layouts are `pb-10`; those two reserve their own room.
+
+**INLINE LIST ADDITIONS — LAW 2 amended.** A list field now ACCEPTS a typed
+value: it saves, and the value lands in `list_suggestions` as pending. LAW 2
+was right about the danger ("Asheel" and "Asheel Sir" are two people to a
+computer) and wrong about the remedy — refusing the save stops the WORK, and
+the person holding the receipt cannot wait for an owner to log in. The
+proof it was wrong: `expense_category` was EMPTY in production, so the
+Expense form refused every entry that reached it. Entry never blocks now;
+the owner still decides what becomes vocabulary, in Settings → Lists.
+`seen_count` is the signal — a word typed nine times is real, once is a typo.
+**An expense category cannot be approved without being marked controllable
+or occupancy**, because `pnl_monthly` splits on exactly that and an
+unclassified category would land in neither. `list_suggestions.status` is
+`pending | accepted | rejected` — 'approved' violates the CHECK constraint.
+
+**The four one-field gaps, and why `is_stock_purchase` was not cosmetic.**
+COGS is opening + purchases − closing. A market purchase paid from the
+drawer never enters `purchases`, so recorded only as a voucher it dropped
+out of food cost entirely — cost understated, margin overstated, nothing on
+screen looking wrong. The voucher form now asks it as a plain question:
+"Was this stock for the kitchen?" Also added: `off_book_orders.customer` and
+`received_into`, and `partner_settlements.reference` (their statement/UTR —
+what you quote when the gap is disputed).

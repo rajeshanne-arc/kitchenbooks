@@ -827,6 +827,12 @@ export type SaveVoucherInput = {
   ownerName: string
   category: string
   note: string
+  /** LOAD-BEARING, not a tick-box. The P&L computes cost of goods as
+   *  opening + purchases − closing. A cash market purchase recorded only as
+   *  a voucher never enters `purchases`, so it vanishes from COGS entirely:
+   *  understated cost, overstated margin, and nothing on screen looks wrong.
+   *  This flag is what lets those vouchers be found and counted. */
+  isStockPurchase: boolean
 }
 
 export type SaveVoucherResult = { ok: true; voucher: VoucherRow } | { ok: false; error: string }
@@ -1285,6 +1291,8 @@ export type SaveSettlementInput = {
   billedByUs: string
   /** what THEIR statement admits to — the right side */
   claimedByThem: string
+  /** their statement or UTR number — what you quote when disputing */
+  reference: string
   /** itemised deductions; deduction_type comes from the settlement_deduction list */
   deductions: { type: string; amount: string; note: string }[]
 }
@@ -1325,6 +1333,10 @@ export type SaveOffBookInput = {
   amount: string
   paymentMode: string
   note: string
+  /** who bought it */
+  customer: string
+  /** which account it landed in — a UPI handle, a card machine, the drawer */
+  receivedInto: string
 }
 
 export type SaveOffBookResult = { ok: true; order: OffBookRow } | { ok: false; error: string }

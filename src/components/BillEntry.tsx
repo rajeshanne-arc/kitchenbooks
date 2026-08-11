@@ -244,6 +244,10 @@ export default function BillEntry({
         </div>
       )}
 
+      {/* clearance for the fixed bar below — the bar is why this screen
+          needs bottom room, so this screen reserves it rather than every
+          layout in the app padding for a bar it does not have */}
+      <div aria-hidden className="kb-fixed-bar-clearance h-20" />
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-2xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <div>

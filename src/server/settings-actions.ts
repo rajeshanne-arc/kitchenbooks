@@ -233,3 +233,142 @@ export async function updateDepartment(
     return fail(e)
   }
 }
+
+// ─────────────────── inline list additions, and their approval ────────────
+//
+// The rule that changed: a list field now ACCEPTS a value that is not on the
+// list. It saves, and the value lands in list_suggestions as pending. The
+// person entering never waits for an owner; the owner still decides what
+// becomes vocabulary. seen_count is the signal — a word typed nine times is
+// real, a word typed once may be a typo.
+
+/** Record a typed-but-unlisted value. Safe to call on every save: a repeat
+ *  bumps seen_count rather than making a second row. Never throws — a
+ *  failure here must not lose the entry it was attached to. */
+export async function noteListSuggestion(
+  restaurantId: string,
+  listKey: string,
+  value: string,
+  suggestedBy: string | null,
+): Promise<void> {
+  const clean = value.trim()
+  if (clean === '') return
+  try {
+    const [existing] = await sql<{ id: string; seen_count: number }[]>`
+      select id, seen_count from list_suggestions
+      where restaurant_id = ${restaurantId} and list_key = ${listKey}
+        and lower(value) = ${clean.toLowerCase()}`
+    if (existing) {
+      await sql`update list_suggestions set seen_count = ${existing.seen_count + 1} where id = ${existing.id}`
+    } else {
+      await sql`
+        insert into list_suggestions (restaurant_id, list_key, value, suggested_by, seen_count, status)
+        values (${restaurantId}, ${listKey}, ${clean}, ${suggestedBy}, 1, 'pending')`
+    }
+  } catch (e) {
+    // deliberately swallowed: the entry is already saved and matters more
+    console.error('could not note list suggestion', e)
+  }
+}
+
+/** Owner approves a pending value into the real list.
+ *
+ * For expense_category the approval ALSO classifies it, because the P&L
+ * splits controllable from occupancy and an unclassified category would
+ * quietly land in neither. That is why `kind` is required for that one key
+ * and refused for every other. */
+export async function approveSuggestion(
+  id: string,
+  kind?: 'controllable' | 'occupancy',
+): Promise<ListMutationResult> {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new SettingsError('Malformed suggestion id')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    await sql.begin(async (tx) => {
+      const [sug] = await tx<{ list_key: string; value: string }[]>`
+        select list_key, value from list_suggestions
+        where id = ${id} and restaurant_id = ${rid} and status = 'pending'`
+      if (!sug) throw new SettingsError('That suggestion is no longer pending')
+
+      if (sug.list_key === 'expense_category') {
+        if (kind === undefined) {
+          throw new SettingsError(
+            'An expense category needs to be marked controllable or occupancy — the P&L splits on it',
+          )
+        }
+        const [already] = await tx<{ category: string }[]>`
+          select category from expense_category_kinds
+          where restaurant_id = ${rid} and category = ${sug.value}`
+        if (already) {
+          await tx`update expense_category_kinds set kind = ${kind}
+                   where restaurant_id = ${rid} and category = ${sug.value}`
+        } else {
+          await tx`insert into expense_category_kinds (restaurant_id, category, kind)
+                   values (${rid}, ${sug.value}, ${kind})`
+        }
+      } else if (kind !== undefined) {
+        throw new SettingsError('Only expense categories carry a controllable/occupancy split')
+      }
+
+      const [dup] = await tx<{ id: string }[]>`
+        select id from list_options
+        where restaurant_id = ${rid} and list_key = ${sug.list_key} and lower(value) = ${sug.value.toLowerCase()}`
+      if (dup) {
+        await tx`update list_options set status = 'active' where id = ${dup.id}`
+      } else {
+        const [{ next }] = await tx<{ next: number }[]>`
+          select coalesce(max(sort_order), 0) + 1 as next from list_options
+          where restaurant_id = ${rid} and list_key = ${sug.list_key}`
+        await tx`insert into list_options (restaurant_id, list_key, value, sort_order)
+                 values (${rid}, ${sug.list_key}, ${sug.value}, ${next})`
+      }
+      await tx`update list_suggestions set status = 'accepted' where id = ${id}`
+    })
+
+    return { ok: true, options: await getAllListOptions(rid) }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/** Owner rejects it. The events that already used the value keep it —
+ *  nothing is rewritten — it simply stops being offered. */
+export async function rejectSuggestion(id: string): Promise<ListMutationResult> {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new SettingsError('Malformed suggestion id')
+    const restaurant = await getRestaurant()
+    const updated = await sql<{ id: string }[]>`
+      update list_suggestions set status = 'rejected'
+      where id = ${id} and restaurant_id = ${restaurant.id} and status = 'pending'
+      returning id`
+    if (!updated[0]) throw new SettingsError('That suggestion is no longer pending')
+    return { ok: true, options: await getAllListOptions(restaurant.id) }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/** Classify an already-approved expense category. */
+export async function setExpenseKind(
+  category: string,
+  kind: 'controllable' | 'occupancy',
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const [already] = await sql<{ category: string }[]>`
+      select category from expense_category_kinds where restaurant_id = ${rid} and category = ${category}`
+    if (already) {
+      await sql`update expense_category_kinds set kind = ${kind}
+                where restaurant_id = ${rid} and category = ${category}`
+    } else {
+      await sql`insert into expense_category_kinds (restaurant_id, category, kind)
+                values (${rid}, ${category}, ${kind})`
+    }
+    return { ok: true }
+  } catch (e) {
+    return fail(e)
+  }
+}

@@ -185,7 +185,12 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
       )}
 
       {sheet.length > 0 && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 backdrop-blur">
+        <>
+          {/* clearance for the fixed bar — the bar is why this screen needs
+              bottom room, so this screen reserves it rather than every
+              layout in the app padding for a bar it does not have */}
+          <div aria-hidden className="h-20" />
+          <div className="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 backdrop-blur">
           <div className="mx-auto flex max-w-2xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
             <span className="text-sm text-stone-500">
               {changes.length === 0 ? 'No unsaved marks' : `${changes.length} to save`}
@@ -199,7 +204,8 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
               {busy ? 'Saving…' : 'Save attendance'}
             </button>
           </div>
-        </div>
+          </div>
+        </>
       )}
     </div>
   )

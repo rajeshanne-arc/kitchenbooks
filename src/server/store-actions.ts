@@ -22,6 +22,7 @@ import {
   getWastage,
 } from '@/server/store-queries'
 import { getList } from '@/server/settings'
+import { noteListSuggestion } from '@/server/settings-actions'
 import { parseQty } from '@/lib/money'
 import type {
   SaveIssueInput,
@@ -186,11 +187,11 @@ export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    const reasons = await getList(rid, 'return_reason')
-    if (!reasons.includes(input.reason)) {
-      throw new StoreError(`Reason must come from the list — add “${input.reason}” in Settings → Lists first`)
-    }
     const by = await enteredBy()
+    const reasons = await getList(rid, 'return_reason')
+    if (!reasons.some((r) => r.toLowerCase() === input.reason.toLowerCase())) {
+      await noteListSuggestion(rid, 'return_reason', input.reason, by)
+    }
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`

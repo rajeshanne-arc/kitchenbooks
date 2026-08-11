@@ -121,6 +121,7 @@ const VoucherSchema = z.object({
   ownerName: z.string().trim().max(120),
   category: z.string().trim().max(60),
   note: z.string().trim().max(300),
+  isStockPurchase: z.boolean(),
 })
 
 export async function saveVoucher(raw: SaveVoucherInput): Promise<SaveVoucherResult> {
@@ -145,10 +146,10 @@ export async function saveVoucher(raw: SaveVoucherInput): Promise<SaveVoucherRes
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string }[]>`
-        insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by)
+        insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by, is_stock_purchase)
         values (${rid}, ${input.date}, ${input.amount}, ${cleanName(input.paidTo)}, ${input.paidBy},
                 ${input.paidBy === 'owner' ? cleanName(input.ownerName) : null}, ${category},
-                ${input.note === '' ? null : input.note}, ${by})
+                ${input.note === '' ? null : input.note}, ${by}, ${input.isStockPurchase})
         returning id`
       return { id: row.id }
     })

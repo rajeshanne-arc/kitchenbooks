@@ -13,6 +13,7 @@ import type postgres from 'postgres'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getList } from '@/server/settings'
+import { noteListSuggestion } from '@/server/settings-actions'
 import { enteredBy } from '@/server/current-user'
 import {
   getClosingCurrent,
@@ -293,11 +294,11 @@ export async function saveIndent(raw: SaveIndentInput): Promise<SaveIndentResult
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     await assertKitchenSection(rid, input.sectionId)
-    const sessions = await getList(rid, 'session')
-    if (!sessions.includes(input.session)) {
-      throw new KitchenError(`Session must come from the list — add “${input.session}” in Settings → Lists first`)
-    }
     const by = await enteredBy()
+    const sessions = await getList(rid, 'session')
+    if (!sessions.some((v) => v.toLowerCase() === input.session.toLowerCase())) {
+      await noteListSuggestion(rid, 'session', input.session, by)
+    }
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`

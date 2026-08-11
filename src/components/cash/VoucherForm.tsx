@@ -30,6 +30,7 @@ export default function VoucherForm({
   const [ownerName, setOwnerName] = useState('')
   const [category, setCategory] = useState(categories[0] ?? 'General')
   const [note, setNote] = useState('')
+  const [isStockPurchase, setIsStockPurchase] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveVoucherResult, { ok: true }> | null>(null)
@@ -55,6 +56,7 @@ export default function VoucherForm({
         ownerName: ownerName.trim(),
         category: category.trim(),
         note: note.trim(),
+        isStockPurchase,
       })
       if (res.ok) setSaved(res)
       else setError(res.error)
@@ -193,6 +195,39 @@ export default function VoucherForm({
           <span className={fieldLabelCls}>Note</span>
           <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
         </label>
+      </div>
+
+      {/* The one question on this form that changes a number elsewhere.
+          Cost of goods is opening + purchases − closing; a market purchase
+          paid from the drawer never enters `purchases`, so without this it
+          drops out of food cost entirely — cost understated, margin
+          overstated, and nothing on screen looking wrong. */}
+      <div className="mt-3 rounded-xl border border-amber-300 bg-field p-3">
+        <span className="text-[15px] font-medium text-stone-900">Was this stock for the kitchen?</span>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {[
+            { v: false, label: 'No — an expense' },
+            { v: true, label: 'Yes — goods bought' },
+          ].map((o) => (
+            <button
+              key={String(o.v)}
+              type="button"
+              aria-pressed={isStockPurchase === o.v}
+              onClick={() => setIsStockPurchase(o.v)}
+              className={`min-h-[44px] rounded-xl border px-3 text-sm font-medium ${
+                isStockPurchase === o.v
+                  ? 'border-emerald-700 bg-emerald-700 text-white'
+                  : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-stone-600">
+          Vegetables from the market, ice, a forgotten ingredient — anything the kitchen will cook. Saying yes
+          keeps it inside food cost; saying no leaves it as an operating expense.
+        </p>
       </div>
       <datalist id="kb-owner-names">
         {ownerNames.map((n) => (

@@ -33,6 +33,19 @@ export async function getKitchenSections(restaurantId: string): Promise<Section[
     order by sort_order asc`
 }
 
+/** Departments a DISH may be coded to — SI NI CH CT TD BK BR and nothing
+ *  else. dept_group was the wrong filter and let Security, Valet and
+ *  Housekeeping into the dish picker: they are org units that receive
+ *  issues and post staff, but no dish is ever "a Security dish". The dish
+ *  code carries the department forever, so a wrong one here is permanent. */
+export async function getDishCodingSections(restaurantId: string): Promise<Section[]> {
+  return sql<Section[]>`
+    select id, code, name, sort_order, status, dept_group
+    from sections
+    where restaurant_id = ${restaurantId} and status = 'active' and codes_dishes
+    order by sort_order asc`
+}
+
 /** One row per kitchen section for a date: today's effective closing (or
  * null), with the filing count so corrections wear their marker. */
 export async function getClosingChecklist(restaurantId: string, date: string): Promise<ClosingChecklistRow[]> {
