@@ -10,7 +10,9 @@ import type {
   DueRow,
   NonRevenueRow,
   OffBookRow,
+  Partner,
   PartnerSummaryRow,
+  SettlementDeductionRow,
   SettlementRow,
   VoucherCategorySummaryRow,
 } from '@/lib/types'
@@ -209,4 +211,36 @@ export async function getVoucherCategorySummary(
       and date_trunc('month', voucher_date)::date = ${monthStart}::date
     group by category
     order by sum(amount) desc`
+}
+
+// ───────────────────────────── the partners master ────────────────────────
+// The aggregators as ROWS, not as strings in a list. list_options could hold
+// the name and nothing else; agreed_commission_pct is the number the whole
+// settlement-gap card turns on, so the partners table is the master and the
+// settlement form reads from it.
+
+export async function listPartners(restaurantId: string, includeRetired = false): Promise<Partner[]> {
+  return sql<Partner[]>`
+    select id, name, kind, agreed_commission_pct::text as agreed_commission_pct, status
+    from partners
+    where restaurant_id = ${restaurantId}
+      and (${includeRetired} or status = 'active')
+    order by status asc, name asc`
+}
+
+export async function getPartner(restaurantId: string, id: string): Promise<Partner | null> {
+  const rows = await sql<Partner[]>`
+    select id, name, kind, agreed_commission_pct::text as agreed_commission_pct, status
+    from partners
+    where restaurant_id = ${restaurantId} and id = ${id}`
+  return rows[0] ?? null
+}
+
+/** The itemised deductions under one settlement. */
+export async function getSettlementDeductions(settlementId: string): Promise<SettlementDeductionRow[]> {
+  return sql<SettlementDeductionRow[]>`
+    select id, deduction_type, amount::text as amount, note
+    from settlement_deductions
+    where settlement_id = ${settlementId}
+    order by amount desc, deduction_type asc`
 }

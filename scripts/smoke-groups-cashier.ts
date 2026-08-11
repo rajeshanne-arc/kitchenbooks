@@ -32,6 +32,7 @@ async function main() {
   } = await import('../src/server/cashier-queries')
   const { getClosePrefill, getLadderDay } = await import('../src/server/cash-queries')
   const { getList } = await import('../src/server/settings')
+  const { listPartners } = await import('../src/server/cashier-queries')
   const { createRecipe, addLine } = await import('../src/server/recipes-actions')
   const { searchIssuableItems } = await import('../src/server/store-queries')
   const { getKitchenSections } = await import('../src/server/kitchen-queries')
@@ -42,9 +43,15 @@ async function main() {
   const rid = restaurant.id
   console.log('restaurant:', restaurant.name)
 
-  // ---- 0. the seven lists are seeded and ordered
-  const partners = await getList(rid, 'partner')
-  assert.deepEqual(partners, ['Swiggy', 'Zomato'], 'partner list seeded in order')
+  // ---- 0. the lists are seeded and ordered.
+  // Partners are NOT a list — they are a master table carrying
+  // agreed_commission_pct, which a list_options row could never hold.
+  const partners = await listPartners(rid)
+  assert.ok(partners.length > 0, 'partners master has rows')
+  assert.ok(
+    partners.every((p) => p.name.trim() !== ''),
+    'every partner has a name the settlement form can match on',
+  )
   assert.equal((await getList(rid, 'payment_mode')).length, 4)
   assert.ok((await getList(rid, 'voucher_category')).includes('Owner reimbursement'))
   assert.ok((await getList(rid, 'non_revenue_reason')).includes('Staff meal'))
@@ -55,18 +62,23 @@ async function main() {
   const badPartner = await saveSettlement({
     partner: 'Zz Nowhere', periodStart: SETTLE_START, periodEnd: SETTLE_END,
     grossSales: '1000', commission: '', otherDeductions: '', amountReceived: '', receivedDate: '', note: '',
+    billedByUs: '', claimedByThem: '', deductions: [],
   })
-  assert.ok(!badPartner.ok && /list/i.test(badPartner.error), 'unlisted partner refused, points at Settings → Lists')
+  // the partner now comes from the partners MASTER, not list_options — the
+  // refusal points at Sales → Partners, where the agreed commission lives
+  assert.ok(!badPartner.ok && /partner/i.test(badPartner.error), 'unknown partner refused by name')
 
   const s1 = await saveSettlement({
     partner: 'Swiggy', periodStart: SETTLE_START, periodEnd: SETTLE_END,
     grossSales: '10000', commission: '2200', otherDeductions: '300',
     amountReceived: '7500', receivedDate: '2001-07-09', note: 'zz cashier smoke',
+    billedByUs: '10000', claimedByThem: '9600', deductions: [],
   })
   assert.ok(s1.ok, `settlement failed: ${s1.ok === false ? s1.error : ''}`)
   const s2 = await saveSettlement({
     partner: 'Zomato', periodStart: SETTLE_START, periodEnd: SETTLE_END,
     grossSales: '8000', commission: '1800', otherDeductions: '', amountReceived: '', receivedDate: '', note: 'zz cashier smoke',
+    billedByUs: '', claimedByThem: '', deductions: [],
   })
   assert.ok(s2.ok)
 

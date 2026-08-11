@@ -1,5 +1,5 @@
 import { getRestaurant } from '@/server/queries'
-import { getPartnerSummaries, listSettlements } from '@/server/cashier-queries'
+import { getPartnerSummaries, listPartners, listSettlements } from '@/server/cashier-queries'
 import { getList } from '@/server/settings'
 import SettlementsClient from '@/components/cash/SettlementsClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
@@ -8,10 +8,11 @@ export const dynamic = 'force-dynamic'
 
 export default async function SettlementsPage() {
   const restaurant = await getRestaurant()
-  const [partners, rows, summaries] = await Promise.all([
-    getList(restaurant.id, 'partner'),
+  const [partners, rows, summaries, deductionTypes] = await Promise.all([
+    listPartners(restaurant.id),
     listSettlements(restaurant.id, 15),
     getPartnerSummaries(restaurant.id),
+    getList(restaurant.id, 'settlement_deduction'),
   ])
 
   return (
@@ -20,7 +21,12 @@ export default async function SettlementsPage() {
         <h1 className={pageTitleCls}>Settlements</h1>
         <p className={pageSubCls}>what Swiggy and Zomato grossed, kept, and paid</p>
       </header>
-      <SettlementsClient partners={partners} rows={rows} summaries={summaries} />
+      <SettlementsClient
+        partners={partners}
+        deductionTypes={deductionTypes}
+        rows={rows}
+        summaries={summaries}
+      />
     </>
   )
 }

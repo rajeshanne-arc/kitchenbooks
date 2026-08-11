@@ -23,7 +23,8 @@
     "smoke:dashboard": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-dashboard.ts",
     "audit:matrix": "NODE_OPTIONS='--conditions react-server' tsx scripts/audit-matrix.ts",
     "smoke:phase-a": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-phase-a.ts",
-    "smoke:a2": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-a2.ts"
+    "smoke:a2": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-a2.ts",
+    "audit:schema": "NODE_OPTIONS='--conditions react-server' tsx scripts/audit-schema.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

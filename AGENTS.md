@@ -740,3 +740,41 @@ everything measured.
 category and the Settlements partner picker is still empty. `payment_mode`
 was seeded and works. These are Rajesh's vocabulary — add them in
 Settings → Lists.
+
+## Phase B (cont.) — partners are a MASTER, and the schema gate
+
+**PARTNERS ARE NOT A LIST.** `list_options` was the wrong home and the
+question "does Settings → Lists edit `partners` or `list_options`?" has a
+blunt answer: only `list_options`, and nothing in the app read the `partners`
+table at all. A list row holds a name. A partner carries `kind` and
+`agreed_commission_pct` — the number the whole settlement-gap card turns on —
+so partners are a master table with their own screen, **Sales → Partners**,
+and the `partner` key is REMOVED from the list registry. Adding partner names
+under Lists built a second, silent vocabulary the gap card could not join to.
+
+**The settlement form never wrote the gap.** `billed_by_us` and
+`claimed_by_them` existed in the schema and no form filled them, so `gap` (a
+GENERATED column) was always NULL and the dashboard card could never fire.
+The form now captures both sides — either may be left blank, and a
+one-sided settlement is counted as `uncompared` rather than read as zero —
+validates the partner against the MASTER (the refusal names Sales →
+Partners), and writes `settlement_deductions` as itemised lines from the
+`settlement_deduction` list. Verified end to end in a rolled-back
+transaction: billed 100000 / claimed 96000 → gap 4000, agreed 24%,
+effective 26.4%, two deduction lines.
+
+**`npm run audit:schema` is the fourth gate — every column the server reads
+must still exist.** It parses every `sql\`…\`` template in `src/server`,
+resolves the relations each one selects from, and checks both qualified
+(`p.bill_date`) and UNQUALIFIED (`coalesce(revenue, 0)`) column references
+against `information_schema`. The unqualified case is the one that matters:
+the pnl query named its columns bare, so an alias-only checker would have
+sailed straight past the break it was written for. `--self-test` asserts it
+still catches the `pnl_monthly.revenue` regression specifically. Currently
+1332 references checked, all resolving.
+
+Its limits, stated honestly: it checks statements where the relation is
+resolvable, skips writes for the unqualified pass (an INSERT names target
+columns before any relation is in scope), and cannot reason about CTE bodies
+or dynamic `sql.unsafe` fragments. It would have caught the pnl break; it
+would not catch a column whose TYPE changed.

@@ -20,7 +20,9 @@ import {
   getDuesOutstanding,
   getNonRevenue,
   getOffBook,
+  getPartner,
   getSettlement,
+  listPartners,
 } from '@/server/cashier-queries'
 import { parseMoney, parseQty } from '@/lib/money'
 import type { ListKey } from '@/lib/lists'
@@ -31,6 +33,8 @@ import type {
   SaveNonRevenueResult,
   SaveOffBookInput,
   SaveOffBookResult,
+  SavePartnerInput,
+  SavePartnerResult,
   SaveSettlementInput,
   SaveSettlementResult,
   VoidDueResult,
@@ -85,6 +89,21 @@ const SettlementSchema = z.object({
   amountReceived: optionalMoney,
   receivedDate: z.union([z.literal(''), z.string().regex(DATE_RE)]),
   note: z.string().trim().max(300),
+  // The two sides of the gap. Both optional: a settlement filed before the
+  // statement arrives has our figure and not theirs, and `gap` (a GENERATED
+  // column) must not pretend otherwise — the dashboard counts those as
+  // `uncompared` rather than treating a missing side as zero.
+  billedByUs: optionalMoney,
+  claimedByThem: optionalMoney,
+  deductions: z
+    .array(
+      z.object({
+        type: z.string().trim().min(1).max(60),
+        amount: moneyStr,
+        note: z.string().trim().max(200),
+      }),
+    )
+    .max(20),
 })
 
 export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSettlementResult> {
@@ -100,7 +119,24 @@ export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSett
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    await assertListValue(rid, 'partner', input.partner, 'Partner')
+
+    // The partner comes from the partners MASTER, not from list_options. The
+    // master is what carries agreed_commission_pct, and matching on the name
+    // is what lets the gap card say "took 26.4% against 24% agreed".
+    const partners = await listPartners(rid)
+    const match = partners.find((p) => p.name.trim().toLowerCase() === input.partner.trim().toLowerCase())
+    if (!match) {
+      throw new CashierError(
+        `“${input.partner}” is not a partner on file — add it under Sales → Partners, with the commission you agreed`,
+      )
+    }
+
+    const deductionTypes = await getList(rid, 'settlement_deduction')
+    for (const d of input.deductions) {
+      if (!deductionTypes.includes(d.type)) {
+        throw new CashierError(`Deduction type must come from the list — add “${d.type}” in Settings → Lists first`)
+      }
+    }
     const by = await enteredBy()
 
     const saved = await sql.begin(async (tx) => {
@@ -108,15 +144,27 @@ export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSett
       const [row] = await tx<{ id: string }[]>`
         insert into partner_settlements (restaurant_id, partner, period_start, period_end,
                                          gross_sales, commission, other_deductions,
-                                         amount_received, received_date, note, entered_by)
-        values (${rid}, ${input.partner}, ${input.periodStart}, ${input.periodEnd},
+                                         amount_received, received_date, note, entered_by,
+                                         billed_by_us, claimed_by_them)
+        values (${rid}, ${match.name}, ${input.periodStart}, ${input.periodEnd},
                 ${input.grossSales},
                 ${input.commission === '' ? null : input.commission},
                 ${input.otherDeductions === '' ? null : input.otherDeductions},
                 ${input.amountReceived === '' ? null : input.amountReceived},
                 ${input.receivedDate === '' ? null : input.receivedDate},
-                ${input.note === '' ? null : input.note}, ${by})
+                ${input.note === '' ? null : input.note}, ${by},
+                ${input.billedByUs === '' ? null : input.billedByUs},
+                ${input.claimedByThem === '' ? null : input.claimedByThem})
         returning id`
+      if (input.deductions.length > 0) {
+        const rows = input.deductions.map((d) => ({
+          settlement_id: row.id,
+          deduction_type: d.type,
+          amount: d.amount,
+          note: d.note === '' ? null : d.note,
+        }))
+        await tx`insert into settlement_deductions ${tx(rows, 'settlement_id', 'deduction_type', 'amount', 'note')}`
+      }
       return { id: row.id }
     })
 
@@ -438,6 +486,78 @@ export async function voidDue(id: string): Promise<VoidDueResult> {
       throw new CashierError('Verification failed: could not read the voided pair back')
     }
     return { ok: true, original, reversal }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ───────────────────────────── the partners master ────────────────────────
+// A master, so: born here, retired never deleted, and column-granted edits
+// only (name, kind, agreed_commission_pct, status).
+
+const PartnerSchema = z.object({
+  name: z.string().trim().min(1, 'Name the partner').max(80),
+  kind: z.string().trim().min(1, 'Say what kind').max(40),
+  agreedCommissionPct: z.union([z.literal(''), z.string().regex(/^\d{1,3}(\.\d{1,2})?$/)]),
+  status: z.enum(['active', 'inactive']),
+})
+
+export async function createPartner(raw: SavePartnerInput): Promise<SavePartnerResult> {
+  try {
+    const input = PartnerSchema.parse(raw)
+    if (input.agreedCommissionPct !== '' && Number(input.agreedCommissionPct) > 100) {
+      throw new CashierError('A commission is a percentage — 100 max')
+    }
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const dup = await tx<{ id: string }[]>`
+        select id from partners
+        where restaurant_id = ${rid} and lower(trim(name)) = ${input.name.toLowerCase()}`
+      if (dup[0]) throw new CashierError(`“${input.name}” is already a partner`)
+      const [row] = await tx<{ id: string }[]>`
+        insert into partners (restaurant_id, name, kind, agreed_commission_pct, status)
+        values (${rid}, ${input.name}, ${input.kind},
+                ${input.agreedCommissionPct === '' ? null : input.agreedCommissionPct}::numeric,
+                ${input.status})
+        returning id`
+      return { id: row.id }
+    })
+
+    const partner = await getPartner(rid, saved.id)
+    if (!partner) throw new CashierError('Could not verify the save — partner missing after commit')
+    return { ok: true, partner }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function updatePartner(id: string, raw: SavePartnerInput): Promise<SavePartnerResult> {
+  try {
+    if (!UUID.test(id)) throw new CashierError('Malformed partner id')
+    const input = PartnerSchema.parse(raw)
+    if (input.agreedCommissionPct !== '' && Number(input.agreedCommissionPct) > 100) {
+      throw new CashierError('A commission is a percentage — 100 max')
+    }
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    // Only the column-granted fields ever appear in this SET.
+    const updated = await sql<{ id: string }[]>`
+      update partners set
+        name = ${input.name},
+        kind = ${input.kind},
+        agreed_commission_pct = ${input.agreedCommissionPct === '' ? null : input.agreedCommissionPct}::numeric,
+        status = ${input.status}
+      where id = ${id} and restaurant_id = ${rid}
+      returning id`
+    if (!updated[0]) throw new CashierError('Partner not found — nothing was changed')
+
+    const partner = await getPartner(rid, id)
+    if (!partner) throw new CashierError('Could not read the partner back after saving')
+    return { ok: true, partner }
   } catch (e) {
     return fail(e)
   }

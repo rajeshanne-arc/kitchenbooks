@@ -95,6 +95,9 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       ],
     },
     { key: 'settlements', href: '/sales/settlements', label: 'Settlements' },
+    // The partners MASTER, beside the settlements it governs. Not a list:
+    // agreed_commission_pct is what the gap card measures against.
+    { key: 'partners', href: '/sales/partners', label: 'Partners' },
     { key: 'books', href: '/sales/books', label: 'Books' },
   ],
   staff: [

@@ -1,12 +1,19 @@
 'use client'
 
 // Partner settlements: what the aggregator period grossed, what they kept,
-// what landed in the bank. Partner comes from the list (LAW 2); the
-// per-partner summary is server-computed. Corrections are negative twins.
+// what landed in the bank. The partner comes from the partners MASTER —
+// not list_options, which could only ever hold a name; the master carries
+// agreed_commission_pct, and that is what the gap card compares against.
+//
+// THE GAP IS THE POINT. "We billed" is our own books; "they claim" is their
+// statement. Either may be blank — a settlement filed before the statement
+// arrives has one side only — and the dashboard counts those as uncompared
+// rather than reading a missing side as zero. Deductions are itemised lines,
+// because "other deductions: ₹4,000" is where the argument starts.
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { PartnerSummaryRow, SaveSettlementResult, SettlementRow } from '@/lib/types'
+import type { Partner, PartnerSummaryRow, SaveSettlementResult, SettlementRow } from '@/lib/types'
 import { saveSettlement, voidSettlement } from '@/server/cashier-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
@@ -15,12 +22,16 @@ import { toast } from '@/components/Toasts'
 
 const moneyClean = (s: string) => s.replace(/[^\d.]/g, '')
 
+type Deduction = { key: number; type: string; amount: string; note: string }
+
 export default function SettlementsClient({
   partners,
+  deductionTypes,
   rows,
   summaries,
 }: {
-  partners: string[]
+  partners: Partner[]
+  deductionTypes: string[]
   rows: SettlementRow[]
   summaries: PartnerSummaryRow[]
 }) {
@@ -34,6 +45,10 @@ export default function SettlementsClient({
   const [received, setReceived] = useState('')
   const [receivedDate, setReceivedDate] = useState('')
   const [note, setNote] = useState('')
+  const [billed, setBilled] = useState('')
+  const [claimed, setClaimed] = useState('')
+  const [lines, setLines] = useState<Deduction[]>([])
+  const [nextKey, setNextKey] = useState(1)
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -61,6 +76,11 @@ export default function SettlementsClient({
         amountReceived: received.trim(),
         receivedDate,
         note: note.trim(),
+        billedByUs: billed.trim(),
+        claimedByThem: claimed.trim(),
+        deductions: lines
+          .filter((l) => l.type !== '' && parseMoney(l.amount.trim()) !== null)
+          .map((l) => ({ type: l.type, amount: l.amount.trim(), note: l.note.trim() })),
       })
       if (res.ok) {
         setSaved(res)
@@ -70,6 +90,9 @@ export default function SettlementsClient({
         setReceived('')
         setReceivedDate('')
         setNote('')
+        setBilled('')
+        setClaimed('')
+        setLines([])
         router.refresh()
       } else {
         setError(res.error)
@@ -117,8 +140,9 @@ export default function SettlementsClient({
               <select value={partner} onChange={(e) => setPartner(e.target.value)} className={selectCls}>
                 <option value="">—</option>
                 {partners.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
+                  <option key={p.id} value={p.name}>
+                    {p.name}
+                    {p.agreed_commission_pct !== null && ` — ${p.agreed_commission_pct}% agreed`}
                   </option>
                 ))}
               </select>
@@ -146,6 +170,129 @@ export default function SettlementsClient({
               <input inputMode="decimal" placeholder="0.00" value={deductions} onChange={(e) => setDeductions(moneyClean(e.target.value))} className={`${numCls} w-full text-right`} />
             </label>
           </div>
+          {/* THE GAP — our books against their statement */}
+          <div className="rounded-xl border border-amber-300 bg-amber-50/40 p-3">
+            <h3 className={sectionHeadCls}>The two sides</h3>
+            <p className="mt-0.5 text-xs text-stone-600">
+              Leave a side blank if it has not arrived yet — the dashboard counts that as not-yet-compared, not
+              as zero.
+            </p>
+            <div className="mt-2 grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className={fieldLabelCls}>We billed (₹)</span>
+                <input
+                  inputMode="decimal"
+                  placeholder="our books"
+                  value={billed}
+                  onChange={(e) => setBilled(moneyClean(e.target.value))}
+                  className={`${numCls} w-full text-right font-mono tabular-nums`}
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelCls}>They claim (₹)</span>
+                <input
+                  inputMode="decimal"
+                  placeholder="their statement"
+                  value={claimed}
+                  onChange={(e) => setClaimed(moneyClean(e.target.value))}
+                  className={`${numCls} w-full text-right font-mono tabular-nums`}
+                />
+              </label>
+            </div>
+            {billed.trim() !== '' && claimed.trim() !== '' && (
+              <p className="mt-2 text-sm">
+                Gap:{' '}
+                <span
+                  className={`font-mono font-bold tabular-nums ${
+                    Number(billed) - Number(claimed) === 0 ? 'text-emerald-700' : 'text-red-700'
+                  }`}
+                >
+                  {formatMoneyString((Number(billed) - Number(claimed)).toFixed(2))}
+                </span>
+                <span className="ml-1 text-xs text-stone-500">
+                  — the database recomputes this on save; this is only the preview
+                </span>
+              </p>
+            )}
+          </div>
+
+          {/* itemised deductions */}
+          <div className="rounded-xl border border-rule bg-stone-50 p-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className={sectionHeadCls}>Deductions, itemised</h3>
+              <span className="text-xs text-stone-500">optional — but this is where the argument starts</span>
+            </div>
+            {lines.length > 0 && (
+              <div className="mt-2 space-y-2">
+                {lines.map((l, i) => (
+                  <div key={l.key} className="grid grid-cols-[1fr_7rem_1fr_2rem] gap-2">
+                    <select
+                      value={l.type}
+                      aria-label={`Deduction type, line ${i + 1}`}
+                      onChange={(e) =>
+                        setLines((ls) => ls.map((x) => (x.key === l.key ? { ...x, type: e.target.value } : x)))
+                      }
+                      className={selectCls}
+                    >
+                      <option value="">—</option>
+                      {deductionTypes.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      aria-label={`Deduction amount, line ${i + 1}`}
+                      value={l.amount}
+                      onChange={(e) =>
+                        setLines((ls) =>
+                          ls.map((x) => (x.key === l.key ? { ...x, amount: moneyClean(e.target.value) } : x)),
+                        )
+                      }
+                      className={`${numCls} w-full text-right font-mono tabular-nums`}
+                    />
+                    <input
+                      placeholder="note"
+                      aria-label={`Deduction note, line ${i + 1}`}
+                      value={l.note}
+                      onChange={(e) =>
+                        setLines((ls) => ls.map((x) => (x.key === l.key ? { ...x, note: e.target.value } : x)))
+                      }
+                      className={`${numCls} w-full`}
+                      maxLength={200}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
+                      aria-label={`Remove deduction ${i + 1}`}
+                      className="rounded-md text-stone-300 hover:bg-stone-100 hover:text-stone-600"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {deductionTypes.length === 0 ? (
+              <p className="mt-2 text-xs text-amber-900">
+                No deduction types are set up — add them in Settings → Lists.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setLines((ls) => [...ls, { key: nextKey, type: '', amount: '', note: '' }])
+                  setNextKey((k) => k + 1)
+                }}
+                className="mt-2 w-full rounded-lg border border-dashed border-stone-300 py-2 text-xs font-medium text-stone-500 hover:border-emerald-400 hover:text-emerald-700"
+              >
+                ＋ Add a deduction
+              </button>
+            )}
+          </div>
+
           <div className="grid grid-cols-3 gap-3">
             <label className="block">
               <span className={fieldLabelCls}>Received (₹)</span>

@@ -166,6 +166,35 @@ export type PaymentRow = {
   created_at: string
 }
 
+/** The partners MASTER — the aggregators themselves, not a text list.
+ *  agreed_commission_pct is the whole point: it is what the settlement gap
+ *  card compares their actual deduction against, and list_options could
+ *  never carry it. */
+export type Partner = {
+  id: string
+  name: string
+  kind: string
+  agreed_commission_pct: string | null
+  status: 'active' | 'inactive'
+}
+
+export type SavePartnerInput = {
+  name: string
+  kind: string
+  agreedCommissionPct: string
+  status: 'active' | 'inactive'
+}
+
+export type SavePartnerResult = { ok: true; partner: Partner } | { ok: false; error: string }
+
+/** One itemised deduction under a settlement. */
+export type SettlementDeductionRow = {
+  id: string
+  deduction_type: string
+  amount: string
+  note: string | null
+}
+
 /** A vendor who is owed money — the payment queue, worst first. */
 export type VendorDueRow = {
   id: string
@@ -1234,6 +1263,12 @@ export type SaveSettlementInput = {
   amountReceived: string
   receivedDate: string
   note: string
+  /** what OUR books say we sold through them — the left side of the gap */
+  billedByUs: string
+  /** what THEIR statement admits to — the right side */
+  claimedByThem: string
+  /** itemised deductions; deduction_type comes from the settlement_deduction list */
+  deductions: { type: string; amount: string; note: string }[]
 }
 
 export type SaveSettlementResult = { ok: true; settlement: SettlementRow } | { ok: false; error: string }
