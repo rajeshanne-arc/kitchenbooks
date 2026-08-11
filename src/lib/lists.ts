@@ -12,6 +12,7 @@ export type ListKey =
   | 'partner'
   | 'non_revenue_reason'
   | 'expense_category'
+  | 'return_reason'
 
 export const LIST_KEYS: { key: ListKey; name: string; usedBy: string }[] = [
   { key: 'waste_reason', name: 'Wastage reasons', usedBy: 'store wastage · kitchen wastage' },
@@ -21,6 +22,7 @@ export const LIST_KEYS: { key: ListKey; name: string; usedBy: string }[] = [
   { key: 'partner', name: 'Partners', usedBy: 'settlements (Swiggy, Zomato…)' },
   { key: 'non_revenue_reason', name: 'Non-revenue reasons', usedBy: 'giveaways / staff meals' },
   { key: 'expense_category', name: 'Expense categories', usedBy: 'expenses' },
+  { key: 'return_reason', name: 'Return reasons', usedBy: 'stock coming back from a section' },
 ]
 
 export const ALL_LIST_KEYS: ListKey[] = LIST_KEYS.map((k) => k.key)

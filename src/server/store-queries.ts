@@ -11,6 +11,8 @@ import type {
   IssuableItemHit,
   IssueDetail,
   IssueLineRow,
+  ReturnDetail,
+  ReturnLineRow,
   Section,
   SectionMonthRow,
   StockRow,
@@ -127,6 +129,36 @@ export async function getIssueLines(issueId: string): Promise<IssueLineRow[]> {
     join items it on it.id = il.item_id
     where il.issue_id = ${issueId}
     order by it.code asc, il.id asc`
+}
+
+// Returns run the same shape backwards. stock_on_hand already ADDS
+// returned_qty back and section_consumption already SUBTRACTS return value
+// from issued value — the views own that arithmetic, nothing recomputes it.
+const RETURN_SELECT = `
+  select r.id, r.return_date::text as return_date, r.section_id, s.code as section_code, s.name as section_name,
+         r.reason, r.note, r.reverses_id, r.entered_by, r.created_at::text as created_at,
+         (r.reverses_id is not null) as is_reversal,
+         exists (select 1 from returns v where v.reverses_id = r.id) as is_voided,
+         (select count(*)::int from return_lines rl where rl.return_id = r.id) as line_count,
+         (select coalesce(sum(rl.value), 0)::text from return_lines rl where rl.return_id = r.id) as total_value
+  from returns r
+  join sections s on s.id = r.section_id`
+
+export async function getReturn(restaurantId: string, id: string): Promise<ReturnDetail | null> {
+  const rows = await sql<ReturnDetail[]>`
+    ${sql.unsafe(RETURN_SELECT)}
+    where r.restaurant_id = ${restaurantId} and r.id = ${id}`
+  return rows[0] ?? null
+}
+
+export async function getReturnLines(returnId: string): Promise<ReturnLineRow[]> {
+  return sql<ReturnLineRow[]>`
+    select rl.id, rl.item_id, it.code as item_code, it.name as item_name, it.purchase_unit,
+           rl.qty::text as qty, rl.unit_cost::text as unit_cost, rl.value::text as value
+    from return_lines rl
+    join items it on it.id = rl.item_id
+    where rl.return_id = ${returnId}
+    order by it.code asc, rl.id asc`
 }
 
 export async function getIssueVoidedBy(issueId: string): Promise<{ id: string } | null> {

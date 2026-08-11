@@ -8,11 +8,26 @@
 // section) prefills the form from the ask. The issue records what was
 // GIVEN — edit lines freely; the gap against the ask lives on the indent's
 // page. Saving stamps issues.indent_id and marks the indent issued.
+//
+// DIRECTION. Stock moves both ways through this one form: OUT to a section,
+// or BACK to the store when a section did not use it. Everything else about
+// the form is identical — same sections, same items, same quantities — so a
+// return is a toggle, not a second screen the store has to go find. A return
+// is not a void: the trip out really happened and stays on record.
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import type { IndentPrefill, IndentRow, IssuableItemHit, SaveIssueInput, SaveIssueResult, Section } from '@/lib/types'
-import { saveIssue } from '@/server/store-actions'
+import type {
+  IndentPrefill,
+  IndentRow,
+  IssuableItemHit,
+  SaveIssueInput,
+  SaveIssueResult,
+  SaveReturnInput,
+  SaveReturnResult,
+  Section,
+} from '@/lib/types'
+import { saveIssue, saveReturn } from '@/server/store-actions'
 import { parseQty, formatMoneyString } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, numCls, sectionHeadCls } from '@/components/ui'
@@ -31,14 +46,24 @@ const cleanQty = (raw: string) => {
 const prefillLines = (p: IndentPrefill, startKey: number): Line[] =>
   p.lines.map((l, i) => ({ key: startKey + i, item: l.item, qty: l.qty }))
 
+type Direction = 'out' | 'back'
+
+type Saved =
+  | { kind: 'out'; res: Extract<SaveIssueResult, { ok: true }> }
+  | { kind: 'back'; res: Extract<SaveReturnResult, { ok: true }> }
+
 export default function IssueEntry({
   sections,
+  returnReasons,
   initialIndent = null,
 }: {
   sections: Section[]
+  returnReasons: string[]
   initialIndent?: IndentPrefill | null
 }) {
   const [issueDate, setIssueDate] = useState(todayLocal)
+  const [direction, setDirection] = useState<Direction>('out')
+  const [reason, setReason] = useState('')
   const [indent, setIndent] = useState<IndentPrefill | null>(initialIndent)
   const [sectionId, setSectionId] = useState(initialIndent?.section_id ?? '')
   const [lines, setLines] = useState<Line[]>(
@@ -49,7 +74,17 @@ export default function IssueEntry({
   const { label } = useLang()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [saved, setSaved] = useState<Extract<SaveIssueResult, { ok: true }> | null>(null)
+  const [saved, setSaved] = useState<Saved | null>(null)
+
+  // An indent is a request to be GIVEN something; it has no meaning on the
+  // way back, so turning the form around drops the stamp rather than
+  // silently carrying it onto a return.
+  function switchDirection(next: Direction) {
+    if (next === direction) return
+    setDirection(next)
+    setError(null)
+    if (next === 'back') setIndent(null)
+  }
 
   // Picking a section (with no indent bound) surfaces that section's open
   // indents as one-tap suggestions — the most recent first, chooser if
@@ -65,7 +100,9 @@ export default function IssueEntry({
       .catch(() => {})
     return () => ctl.abort()
   }, [sectionId, indent])
-  const suggested = indent === null && suggestions?.sectionId === sectionId ? suggestions.rows : []
+  // Open indents are an offer to fill a request — meaningless on a return.
+  const suggested =
+    direction === 'out' && indent === null && suggestions?.sectionId === sectionId ? suggestions.rows : []
 
   async function adoptIndent(id: string) {
     try {
@@ -104,27 +141,41 @@ export default function IssueEntry({
     const q = parseQty(l.qty)
     return l.item !== null && q !== null && q > 0
   }
-  const canSave = !saving && sectionId !== '' && lines.length > 0 && lines.every(lineReady)
+  const canSave =
+    !saving &&
+    sectionId !== '' &&
+    lines.length > 0 &&
+    lines.every(lineReady) &&
+    (direction === 'out' || reason !== '')
 
   async function onSave() {
     if (!canSave) return
     setSaving(true)
     setError(null)
-    const payload: SaveIssueInput = {
-      issueDate,
-      sectionId,
-      lines: lines.map((l) => ({ itemId: (l.item as IssuableItemHit).id, qty: l.qty.trim() })),
-      ...(indent !== null ? { indentId: indent.id } : {}),
-    }
+    const movedLines = lines.map((l) => ({ itemId: (l.item as IssuableItemHit).id, qty: l.qty.trim() }))
     try {
-      const res = await saveIssue(payload)
-      if (res.ok) {
-        setSaved(res)
+      if (direction === 'back') {
+        const payload: SaveReturnInput = { returnDate: issueDate, sectionId, reason, lines: movedLines }
+        const res = await saveReturn(payload)
+        if (res.ok) setSaved({ kind: 'back', res })
+        else setError(res.error)
       } else {
-        setError(res.error)
+        const payload: SaveIssueInput = {
+          issueDate,
+          sectionId,
+          lines: movedLines,
+          ...(indent !== null ? { indentId: indent.id } : {}),
+        }
+        const res = await saveIssue(payload)
+        if (res.ok) setSaved({ kind: 'out', res })
+        else setError(res.error)
       }
     } catch {
-      setError('Could not reach the server — the issue was not saved. Please retry.')
+      setError(
+        direction === 'back'
+          ? 'Could not reach the server — the return was not saved. Please retry.'
+          : 'Could not reach the server — the issue was not saved. Please retry.',
+      )
     } finally {
       setSaving(false)
     }
@@ -134,6 +185,7 @@ export default function IssueEntry({
     setSaved(null)
     setIndent(null)
     setSectionId('')
+    setReason('')
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
@@ -141,7 +193,23 @@ export default function IssueEntry({
   }
 
   if (saved !== null) {
-    const { issue, lines: savedLines, stock } = saved
+    const back = saved.kind === 'back'
+    const head = back
+      ? {
+          title: `Returned from ${saved.res.ret.section_name}`,
+          sub: `${fmtDate(saved.res.ret.return_date)} · ${saved.res.ret.line_count} ${
+            saved.res.ret.line_count === 1 ? 'item' : 'items'
+          } · ${saved.res.ret.reason}`,
+        }
+      : {
+          title: `Issued to ${saved.res.issue.section_name}`,
+          sub: `${fmtDate(saved.res.issue.issue_date)} · ${saved.res.issue.line_count} ${
+            saved.res.issue.line_count === 1 ? 'item' : 'items'
+          }${saved.res.issue.indent_id !== null ? ' · indent marked issued' : ''}`,
+        }
+    const savedLines = saved.res.lines
+    const stock = saved.res.stock
+    const totalValue = back ? saved.res.ret.total_value : saved.res.issue.total_value
     return (
       <div className="space-y-4">
         <section className={cardCls}>
@@ -152,11 +220,8 @@ export default function IssueEntry({
               </svg>
             </span>
             <div>
-              <h2 className="text-lg font-bold text-stone-900">Issued to {issue.section_name}</h2>
-              <p className="text-sm text-stone-500">
-                {fmtDate(issue.issue_date)} · {issue.line_count} {issue.line_count === 1 ? 'item' : 'items'}
-                {issue.indent_id !== null && ' · indent marked issued'}
-              </p>
+              <h2 className="text-lg font-bold text-stone-900">{head.title}</h2>
+              <p className="text-sm text-stone-500">{head.sub}</p>
             </div>
           </div>
           <ul className="mt-4 divide-y divide-rule-soft border-t border-stone-100">
@@ -170,15 +235,19 @@ export default function IssueEntry({
             ))}
           </ul>
           <div className="flex items-center justify-between border-t border-stone-100 pt-3">
-            <span className="text-sm font-medium text-stone-500">Total value</span>
+            <span className="text-sm font-medium text-stone-500">
+              {back ? 'Value returned' : 'Total value'}
+            </span>
             <span className="text-2xl font-bold tabular-nums tracking-tight text-stone-900">
-              {formatMoneyString(issue.total_value)}
+              {formatMoneyString(totalValue)}
             </span>
           </div>
         </section>
 
         <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-emerald-800">Stock remaining</h3>
+          <h3 className="text-xs font-medium uppercase tracking-wide text-emerald-800">
+            {back ? 'Stock back in the store' : 'Stock remaining'}
+          </h3>
           <ul className="mt-2 space-y-1.5">
             {stock.map((s) => (
               <li key={s.item_id} className="flex items-center justify-between gap-3 text-[15px] text-stone-900">
@@ -197,28 +266,66 @@ export default function IssueEntry({
           onClick={startAnother}
           className="w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
         >
-          Enter another issue
+          {back ? 'Enter another movement' : 'Enter another issue'}
         </button>
-        {issue.indent_id !== null && (
+        {!back && saved.res.issue.indent_id !== null && (
           <Link
-            href={`/kitchen/indent/${issue.indent_id}`}
+            href={`/kitchen/indent/${saved.res.issue.indent_id}`}
             className="block text-center text-sm font-medium text-emerald-700 hover:underline"
           >
             See asked vs given on the indent →
           </Link>
         )}
-        <Link
-          href={`/store/books/issues/${issue.id}`}
-          className="block text-center text-sm font-medium text-emerald-700 hover:underline"
-        >
-          See it in the store log →
-        </Link>
+        {!back && (
+          <Link
+            href={`/store/books/issues/${saved.res.issue.id}`}
+            className="block text-center text-sm font-medium text-emerald-700 hover:underline"
+          >
+            See it in the store log →
+          </Link>
+        )}
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
+      {/* Which way the stock is moving. Two taps wide, stated in the store's
+          own words rather than "issue"/"return" — the direction is the thing
+          being chosen, so it sits above everything it changes. */}
+      <div className="grid grid-cols-2 gap-2" role="group" aria-label="Direction of the movement">
+        {(
+          [
+            { key: 'out', title: 'Out to section', sub: 'store → kitchen' },
+            { key: 'back', title: 'Back to store', sub: 'kitchen → store' },
+          ] as const
+        ).map((d) => (
+          <button
+            key={d.key}
+            type="button"
+            aria-pressed={direction === d.key}
+            onClick={() => switchDirection(d.key)}
+            className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+              direction === d.key
+                ? 'border-emerald-700 bg-emerald-700 text-white'
+                : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
+            }`}
+          >
+            <span className="block text-[15px] font-semibold">{d.title}</span>
+            <span className={`block text-xs ${direction === d.key ? 'text-emerald-100' : 'text-stone-500'}`}>
+              {d.sub}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {direction === 'back' && (
+        <p className="rounded-xl border border-rule bg-stone-50 px-3 py-2 text-xs text-stone-600">
+          A return is not a correction. The issue really happened and stays on record — this books the stock
+          back into the store and takes the value off the section&apos;s consumption.
+        </p>
+      )}
+
       {indent !== null && (
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-sky-300 bg-sky-50 p-3">
           <span className="min-w-0 text-sm text-sky-900">
@@ -269,6 +376,34 @@ export default function IssueEntry({
             </div>
           </div>
         </div>
+        {direction === 'back' && (
+          <div className="mt-4">
+            <span className={fieldLabelCls}>Why is it coming back?</span>
+            {returnReasons.length === 0 ? (
+              <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                No return reasons are set up yet — add them in Settings → Lists before recording a return.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {returnReasons.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    aria-pressed={reason === r}
+                    onClick={() => setReason(r)}
+                    className={`rounded-full border px-3 py-2 text-sm font-medium ${
+                      reason === r
+                        ? 'border-emerald-700 bg-emerald-700 text-white'
+                        : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {suggested.length > 0 && (
           <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
             <p className="text-xs font-medium text-amber-900">
@@ -292,7 +427,7 @@ export default function IssueEntry({
       </section>
 
       <section className={cardCls}>
-        <h2 className={sectionHeadCls}>Items issued</h2>
+        <h2 className={sectionHeadCls}>{direction === 'back' ? 'Items coming back' : 'Items issued'}</h2>
         <div className="mt-1 divide-y divide-rule-soft">
           {lines.map((line, i) => (
             <div key={line.key} className="space-y-2 py-3">
@@ -347,7 +482,7 @@ export default function IssueEntry({
         disabled={!canSave}
         className="w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
       >
-        {saving ? label('saving') : label('save_issue')}
+        {saving ? label('saving') : direction === 'back' ? 'Save return' : label('save_issue')}
       </button>
       <p className="text-center text-xs text-stone-400">
         Costs are attached automatically from purchase history — nothing to type.

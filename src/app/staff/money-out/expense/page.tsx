@@ -4,6 +4,7 @@ import {
   getAttendanceMonthSummary,
   getExpensesByCategory,
   getLabourMonth,
+  getRecurringExpenseOffers,
   listExpenses,
 } from '@/server/expenses-queries'
 import { getList, getNameHistory } from '@/server/settings'
@@ -17,7 +18,7 @@ export const dynamic = 'force-dynamic'
 export default async function ExpensesPage() {
   const restaurant = await getRestaurant()
   const month = monthStartIST()
-  const [categories, modes, payeeNames, rows, byCategory, labour, attendance] = await Promise.all([
+  const [categories, modes, payeeNames, rows, byCategory, labour, attendance, recurring] = await Promise.all([
     getList(restaurant.id, 'expense_category'),
     getList(restaurant.id, 'payment_mode'),
     getNameHistory(restaurant.id, 'expense_payee'),
@@ -25,6 +26,7 @@ export default async function ExpensesPage() {
     getExpensesByCategory(restaurant.id, month),
     getLabourMonth(restaurant.id, month),
     getAttendanceMonthSummary(restaurant.id, month),
+    getRecurringExpenseOffers(restaurant.id, month),
   ])
   const unassigned = labour.reduce((n, l) => n + l.unassigned_marks, 0)
   const unsalaried = labour.reduce((n, l) => n + l.unsalaried_marks, 0)
@@ -37,7 +39,13 @@ export default async function ExpensesPage() {
       </header>
 
       <div className="space-y-4">
-        <ExpensesClient categories={categories} modes={modes} payeeNames={payeeNames} rows={rows} />
+        <ExpensesClient
+          categories={categories}
+          modes={modes}
+          payeeNames={payeeNames}
+          rows={rows}
+          recurring={recurring}
+        />
 
         {byCategory.length > 0 && (
           <section className={cardCls}>

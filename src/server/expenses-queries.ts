@@ -4,7 +4,13 @@
 // law as uncosted_lines: surface whenever non-zero).
 import 'server-only'
 import { sql } from '@/lib/db'
-import type { AttendanceStatus, ExpenseCategoryMonthRow, ExpenseRow, LabourMonthRow } from '@/lib/types'
+import type {
+  AttendanceStatus,
+  ExpenseCategoryMonthRow,
+  ExpenseRow,
+  LabourMonthRow,
+  RecurringExpenseOffer,
+} from '@/lib/types'
 
 const EXPENSE_SELECT = `
   select e.id, e.expense_date::text as expense_date, e.category, e.payee,
@@ -36,6 +42,58 @@ export async function getExpensesByCategory(restaurantId: string, monthStart: st
     from expenses_by_category
     where restaurant_id = ${restaurantId} and month = ${monthStart}::date
     order by amount desc`
+}
+
+/** The recurring bills, offered back at last month's figure.
+ *
+ * Rent, electricity, internet, the accountant — the same categories arrive
+ * every month at nearly the same number, and retyping them is where the
+ * sheet used to lose an evening. A category that had money last month is
+ * offered again with THAT month's figure, its payee and its payment mode;
+ * the amount is a STARTING POINT the manager overwrites, never an assumed
+ * charge — nothing is written until they press save.
+ *
+ * amount sums net of voids on its own: a void is a negative twin row, so
+ * a cancelled expense falls out of the sum without special handling. The
+ * `having` clause therefore drops categories that netted to nothing.
+ */
+export async function getRecurringExpenseOffers(
+  restaurantId: string,
+  monthStart: string,
+): Promise<RecurringExpenseOffer[]> {
+  return sql<RecurringExpenseOffer[]>`
+    with prev as (
+      select category, sum(amount) as amount
+      from expenses
+      where restaurant_id = ${restaurantId}
+        and date_trunc('month', expense_date)::date = (${monthStart}::date - interval '1 month')::date
+      group by category
+      having sum(amount) > 0
+    ),
+    detail as (
+      select distinct on (category) category, payee, paid_via
+      from expenses
+      where restaurant_id = ${restaurantId}
+        and date_trunc('month', expense_date)::date = (${monthStart}::date - interval '1 month')::date
+        and amount > 0
+      order by category, expense_date desc, created_at desc
+    ),
+    current_month as (
+      select category, sum(amount) as amount
+      from expenses
+      where restaurant_id = ${restaurantId}
+        and date_trunc('month', expense_date)::date = ${monthStart}::date
+      group by category
+    )
+    select p.category,
+           p.amount::text as last_amount,
+           d.payee, d.paid_via,
+           coalesce(c.amount, 0)::text as this_amount,
+           (coalesce(c.amount, 0) <> 0) as done_this_month
+    from prev p
+    left join detail d on d.category = p.category
+    left join current_month c on c.category = p.category
+    order by p.amount desc, p.category asc`
 }
 
 /** Labour cost per section for a month from labour_cost_by_section — the

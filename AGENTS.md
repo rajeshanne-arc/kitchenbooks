@@ -534,3 +534,112 @@ and was not:**
 
 WhatsApp's green is a named token (`--color-whatsapp`) rather than an
 exception in the hex gate: every colour in the app is either a token or a bug.
+
+## Phase A-2 — the dashboard, the gap, and two-way stock (2026-08-11)
+
+**The dashboard is ordered by what is most wrong.** `/owner` builds an array
+of question cards, each computing its own `urgency` from what it actually
+found, and sorts on it — a broken thing rises to the top of the screen the
+day it breaks and sinks when it is fixed. The weights live in one `URGENCY`
+table at the top of the file (impossible 900 → people 100); a healthy card
+scores 0. Ties break on the card key so a quiet dashboard does not reshuffle
+between reloads.
+
+**Every card carries a SENTENCE**, not just a figure — "Kitchen costs more
+than it earns", "₹4,200 of what we billed has not been accepted by Swiggy".
+A number alone makes the owner do the interpreting.
+
+**ONE period control** (`?period=this-month|last-month|last-3-months`),
+`src/lib/period.ts`, above everything it scopes — never a filter per card, or
+two cards answer about two different months. `resolvePeriod` is PURE (takes
+today as an argument) and returns BOTH a date range and the month-starts it
+covers: event tables filter on the range, monthly views are read per month
+and summed. A three-month period reports food cost for its LAST month only,
+named on screen — a blended percentage across months would be a lie.
+
+**Charts, in `src/components/dashboard/Charts.tsx` (recharts).** Four named
+forms chosen by the job the data does; deliberately no generic `<Chart type=>`,
+because picking the form is the design decision. A single day renders as a
+hero figure, not a one-point line. Colours are `var(--color-*)` only — a hex
+here is a bug the smoke gate catches.
+
+**RED AND GREEN NEVER CARRY MEANING ALONE.** Measured with the dataviz
+palette validator, `emerald-700` against `red-600` separates by ΔE 4.2 under
+deuteranopia — indistinguishable. The palette is Rajesh's sheet and does not
+change, so every diverging chart encodes the same fact three ways: which side
+of the zero baseline the bar sits on, the sign printed in the label, and
+colour last. `emerald-700` against `amber-400` (the only two-series chart)
+passes at ΔE 23.8, but gold fails contrast on white, so both series are
+direct-labelled and repeated as text.
+
+**The honest empty state is the common case.** With two bills and no sales
+the page says so — `getEntryPulse` counts what was actually entered, and the
+dashboard leads with "Nothing entered for this period" or "Costs are in,
+sales are not" rather than drawing nine zeroes that read as a catastrophic
+month.
+
+**The aggregator gap card** reads `partner_settlements.gap` (a GENERATED
+column, `billed_by_us − claimed_by_them`, so positive = money they have not
+accepted) joined to `partners.agreed_commission_pct`. It states the effective
+commission they actually took beside the rate agreed, and never picks one and
+calls it truth. Settlements with only one side filled in are counted as
+`uncompared` and wear an honesty strip — they are not treated as zero.
+
+**Stock moves both ways through ONE form.** `/store/issue` carries a
+direction toggle (Out to section / Back to store); "back" writes `returns` +
+`return_lines` via `saveReturn`, reason from the `return_reason` managed list.
+`unit_cost` is snapshotted from `item_costs.issue_cost` exactly as an issue
+is, because `section_consumption` computes issued − returned and both sides
+must be valued on the same scale. A return is NOT a void: the trip out really
+happened and stays on record. Turning the form around drops any indent stamp —
+an indent is a request to be given something and has no meaning backwards.
+`stock_on_hand` already adds `returned_qty` back and `section_consumption`
+already subtracts return value; the views own that arithmetic, nothing
+recomputes it.
+
+**Recurring expenses offer last month's figure.** `getRecurringExpenseOffers`
+returns every category that had money last month with its payee and mode, and
+whether this month already has one. Tapping fills the form and stops — the
+figure lands in an editable field and nothing is written until save.
+
+`npm run smoke:a2` is the third gate: the period maths asserted BY VALUE
+(including the January year-roll and February in a leap year), then every new
+query executed against the real database. It is read-only and safe against
+live data. It caught an invented column (`kitchen_closing_current.closing_date`
+— the real name is `close_date`) on its first run, which is the whole reason
+it exists.
+
+## Phase B worklist — schema that exists with no UI
+
+Read the schema before building any of these; do not invent columns.
+
+| Table | State | What is missing |
+|---|---|---|
+| `returns` / `return_lines` | **UI shipped in A-2** (direction toggle) | no VOID path, and the store log does not list returns |
+| `contract_bills` | no UI | contract-vendor billing; `pnl_monthly.contract_vendors` already reads it |
+| `casual_labour` | no UI | daily-wage labour; `pnl_monthly.casual_labour` already reads it |
+| `catering_events` / `catering_expenses` | no UI | `catering_summary` view exists; `issues.catering_id` is already a column |
+| `off_book_lines` | header only has UI | per-line detail under `off_book_orders` |
+| `settlement_deductions` | no UI | itemised deductions under a settlement; the `settlement_deduction` list is already seeded |
+| `expense_category_kinds` | no UI | classifies expense categories (controllable vs occupancy) for the P&L |
+| `list_suggestions` | no UI | unknown |
+| `starter_library` | no UI | unknown |
+
+**The list registry in `src/lib/lists.ts` has drifted from the database** and
+this is load-bearing, not cosmetic. The DB holds 14 `list_key` values; the
+code declared 7 (8 after A-2 added `return_reason`). Three keys the code reads
+have **no active rows at all**, which silently disables the forms that need
+them:
+
+- `expense_category` — the Expense form's dropdown is empty and
+  `saveExpense` refuses every category, so **no expense can be recorded**
+- `payment_mode` — empty "paid via" on Expense, Off-book and Vendor payment
+  (the DB instead has `off_book_payment_mode`, seeded with six values)
+- `partner` — empty picker on Settlements (the `partners` TABLE, 5 rows with
+  agreed rates, has superseded it)
+
+Seeded in the DB but unknown to `lists.ts`: `bank`, `card_machine`,
+`cash_handler`, `off_book_payment_mode`, `order_type`, `other_income_unit`,
+`session`, `settlement_deduction`, `upi_machine`. Deciding which of these
+replace the three dead keys is Rajesh's call — the values are his restaurant's
+vocabulary, and the Lists screen exists so nobody has to guess them in code.

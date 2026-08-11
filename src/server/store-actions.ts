@@ -16,13 +16,18 @@ import { enteredBy } from '@/server/current-user'
 import {
   getIssue,
   getIssueLines,
+  getReturn,
+  getReturnLines,
   getStockSnaps,
   getWastage,
 } from '@/server/store-queries'
+import { getList } from '@/server/settings'
 import { parseQty } from '@/lib/money'
 import type {
   SaveIssueInput,
   SaveIssueResult,
+  SaveReturnInput,
+  SaveReturnResult,
   SaveWastageInput,
   SaveWastageResult,
   VoidIssueResult,
@@ -141,6 +146,91 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
     const lines = await getIssueLines(saved.issueId)
     const stock = await getStockSnaps(rid, [...new Set(input.lines.map((l) => l.itemId))])
     return { ok: true, issue, lines, stock }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ------------------------------------------------------------- save return
+//
+// The same movement as an issue, with the sign of reality reversed: stock the
+// section did not use coming back to the store. It is NOT a void — the issue
+// really happened, and pretending otherwise would erase the trip.
+//
+// unit_cost is snapshotted from item_costs.issue_cost exactly as an issue is.
+// section_consumption computes issued − returned, so both sides must be
+// valued on the same scale or the subtraction would be meaningless.
+
+const ReturnSchema = z.object({
+  returnDate: z.string().regex(DATE_RE),
+  sectionId: z.string().regex(UUID),
+  reason: z.string().trim().min(1, 'Pick a reason').max(60),
+  lines: z.array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr })).min(1).max(40),
+})
+
+export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult> {
+  try {
+    const input = ReturnSchema.parse(raw)
+    assertRealDate(input.returnDate, 'Return date')
+    for (const [i, l] of input.lines.entries()) {
+      const q = parseQty(l.qty)
+      if (q === null || q <= 0) throw new StoreError(`Line ${i + 1}: quantity must be more than zero`)
+    }
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const reasons = await getList(rid, 'return_reason')
+    if (!reasons.includes(input.reason)) {
+      throw new StoreError(`Reason must come from the list — add “${input.reason}” in Settings → Lists first`)
+    }
+    const by = await enteredBy()
+
+    const saved = await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+
+      const section = await tx<{ id: string; name: string }[]>`
+        select id, name from sections
+        where id = ${input.sectionId} and restaurant_id = ${rid} and status = 'active'`
+      if (!section[0]) throw new StoreError('Section not found')
+
+      const costs = new Map<string, string>()
+      for (const [i, l] of input.lines.entries()) {
+        if (costs.has(l.itemId)) continue
+        const rows = await tx<{ name: string; issue_cost: string | null }[]>`
+          select ic.name, ic.issue_cost::text as issue_cost
+          from item_costs ic
+          join items it on it.id = ic.item_id
+          where ic.item_id = ${l.itemId} and ic.restaurant_id = ${rid} and it.status = 'active'`
+        if (!rows[0]) throw new StoreError(`Line ${i + 1}: item not found`)
+        if (rows[0].issue_cost === null) {
+          throw new StoreError(`“${rows[0].name}” has no cost on record — enter its purchase bill first`)
+        }
+        costs.set(l.itemId, rows[0].issue_cost)
+      }
+
+      const [ret] = await tx<{ id: string }[]>`
+        insert into returns (restaurant_id, return_date, section_id, reason, entered_by)
+        values (${rid}, ${input.returnDate}, ${input.sectionId}, ${input.reason}, ${by})
+        returning id`
+
+      const lineRows = input.lines.map((l) => ({
+        return_id: ret.id,
+        item_id: l.itemId,
+        qty: l.qty.trim(),
+        unit_cost: costs.get(l.itemId)!,
+      }))
+      await tx`insert into return_lines ${tx(lineRows, 'return_id', 'item_id', 'qty', 'unit_cost')}`
+      return { returnId: ret.id }
+    })
+
+    const ret = await getReturn(rid, saved.returnId)
+    if (!ret) throw new StoreError('Could not verify the save — return missing after commit')
+    if (ret.line_count !== input.lines.length) {
+      throw new StoreError(`Verification failed: expected ${input.lines.length} lines, found ${ret.line_count}`)
+    }
+    const lines = await getReturnLines(saved.returnId)
+    const stock = await getStockSnaps(rid, [...new Set(input.lines.map((l) => l.itemId))])
+    return { ok: true, ret, lines, stock }
   } catch (e) {
     return fail(e)
   }

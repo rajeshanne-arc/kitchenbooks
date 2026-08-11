@@ -7,7 +7,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ExpenseRow, SaveExpenseResult } from '@/lib/types'
+import type { ExpenseRow, RecurringExpenseOffer, SaveExpenseResult } from '@/lib/types'
 import { saveExpense, voidExpense } from '@/server/expenses-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
@@ -19,12 +19,15 @@ export default function ExpensesClient({
   modes,
   payeeNames,
   rows,
+  recurring,
 }: {
   categories: string[]
   /** payment_mode list values — 'Cash' is filtered out here AND refused server-side */
   modes: string[]
   payeeNames: string[]
   rows: ExpenseRow[]
+  /** last month's bills, offered back at last month's figure */
+  recurring: RecurringExpenseOffer[]
 }) {
   const router = useRouter()
   const nonCashModes = modes.filter((m) => m.toLowerCase() !== 'cash')
@@ -41,6 +44,19 @@ export default function ExpensesClient({
 
   const canSave =
     !saving && category !== '' && paidVia !== '' && parseMoney(amount.trim()) !== null && Number(amount.trim()) > 0
+
+  // Tapping a recurring bill fills the form and stops. The figure is last
+  // month's, sitting in an editable field — the manager confirms or corrects
+  // it and presses save like any other expense. Nothing is written by the tap.
+  function offerRecurring(o: RecurringExpenseOffer) {
+    setCategory(o.category)
+    setAmount(o.last_amount)
+    if (o.payee !== null) setPayee(o.payee)
+    if (o.paid_via !== null && o.paid_via.toLowerCase() !== 'cash') setPaidVia(o.paid_via)
+    setError(null)
+  }
+
+  const outstanding = recurring.filter((o) => !o.done_this_month)
 
   async function onSave() {
     if (!canSave) return
@@ -91,6 +107,47 @@ export default function ExpensesClient({
 
   return (
     <div className="space-y-4">
+      {recurring.length > 0 && (
+        <section className={cardCls}>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>Last month&apos;s bills</h2>
+            <span className="text-xs text-stone-400">
+              {outstanding.length === 0
+                ? 'all recorded this month'
+                : `${outstanding.length} not recorded yet this month`}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-stone-500">
+            Tap one to fill the form with last month&apos;s figure — then correct it and save.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {recurring.map((o) => (
+              <button
+                key={o.category}
+                type="button"
+                onClick={() => offerRecurring(o)}
+                className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                  o.done_this_month
+                    ? 'border-rule bg-stone-50 text-stone-500 hover:border-stone-400'
+                    : 'border-amber-300 bg-field text-stone-900 hover:border-emerald-500'
+                }`}
+              >
+                <span className="block text-sm font-medium">
+                  {o.category}
+                  {o.done_this_month && (
+                    <span className="ml-1.5 text-[11px] font-normal text-emerald-700">✓ done</span>
+                  )}
+                </span>
+                <span className="block font-mono text-xs tabular-nums">
+                  {formatMoneyString(o.last_amount)}
+                  <span className="ml-1 font-sans text-stone-500">last month</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Record an expense</h2>
         {saved !== null && (

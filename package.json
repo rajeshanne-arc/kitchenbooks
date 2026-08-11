@@ -22,7 +22,8 @@
     "smoke:auth": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-auth.ts",
     "smoke:dashboard": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-dashboard.ts",
     "audit:matrix": "NODE_OPTIONS='--conditions react-server' tsx scripts/audit-matrix.ts",
-    "smoke:phase-a": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-phase-a.ts"
+    "smoke:phase-a": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-phase-a.ts",
+    "smoke:a2": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-a2.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -30,6 +31,7 @@
     "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "recharts": "^3.10.1",
     "server-only": "^0.0.1",
     "zod": "^4.4.3"
   },

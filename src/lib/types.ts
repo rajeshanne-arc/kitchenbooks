@@ -374,6 +374,39 @@ export type SaveIssueResult =
   | { ok: true; issue: IssueDetail; lines: IssueLineRow[]; stock: StockSnap[] }
   | { ok: false; error: string }
 
+/** A return is an issue running backwards: stock coming back off a section.
+ * Same shape as IssueDetail minus the indent stamp, plus the reason. */
+export type ReturnDetail = {
+  id: string
+  return_date: string
+  section_id: string
+  section_code: string
+  section_name: string
+  reason: string
+  note: string | null
+  reverses_id: string | null
+  entered_by: string | null
+  created_at: string
+  is_reversal: boolean
+  is_voided: boolean
+  line_count: number
+  total_value: string
+}
+
+export type ReturnLineRow = IssueLineRow
+
+export type SaveReturnInput = {
+  returnDate: string
+  sectionId: string
+  /** from the return_reason managed list — membership enforced server-side */
+  reason: string
+  lines: { itemId: string; qty: string }[]
+}
+
+export type SaveReturnResult =
+  | { ok: true; ret: ReturnDetail; lines: ReturnLineRow[]; stock: StockSnap[] }
+  | { ok: false; error: string }
+
 export type SaveWastageInput = {
   wasteDate: string
   itemId: string
@@ -1272,7 +1305,58 @@ export type SaveExpenseInput = {
 export type SaveExpenseResult = { ok: true; expense: ExpenseRow } | { ok: false; error: string }
 export type VoidExpenseResult = { ok: true; original: ExpenseRow; reversal: ExpenseRow } | { ok: false; error: string }
 
+/** One day on the sales line. Absent days are absent, never zero-filled. */
+export type SalesSeriesPoint = { date: string; revenue: string; orders: number; covers: number }
+
+/** One aggregator's period: what we billed vs what they admit to. */
+export type SettlementGapRow = {
+  partner: string
+  billed: string
+  claimed: string
+  /** billed − claimed, the GENERATED column summed; positive = unexplained */
+  gap: string
+  gross_sales: string
+  commission: string
+  received: string
+  /** from partners.agreed_commission_pct — null when the partner is unknown */
+  agreed_pct: string | null
+  /** settlements where one side of the comparison was never filled in */
+  uncompared: number
+  settlements: number
+}
+
+export type SectionCostRangeRow = {
+  section_code: string
+  section_name: string
+  dept_group: DeptGroup | null
+  total_cost: string
+  sales: string
+  margin: string
+}
+
+/** What was actually entered in the period — the basis of an honest empty state. */
+export type EntryPulse = {
+  bills: number
+  issues: number
+  salesDays: number
+  closes: number
+  kitchenClosings: number
+  expenses: number
+}
+
 export type ExpenseCategoryMonthRow = { category: string; month: string; amount: string }
+
+/** A category that had money last month, offered back at that figure. */
+export type RecurringExpenseOffer = {
+  category: string
+  /** last month's net total for this category */
+  last_amount: string
+  payee: string | null
+  paid_via: string | null
+  /** this month's net total so far — 0 when nothing recorded yet */
+  this_amount: string
+  done_this_month: boolean
+}
 
 export type PnlRow = {
   month: string

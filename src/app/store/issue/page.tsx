@@ -2,6 +2,7 @@ import Link from 'next/link'
 import IssueEntry from '@/components/store/IssueEntry'
 import { getRestaurant } from '@/server/queries'
 import { getIndentPrefill, getSections, listOpenIndents } from '@/server/store-queries'
+import { getList } from '@/server/settings'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
@@ -11,19 +12,20 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
   const { indent: indentParam } = await searchParams
   const restaurant = await getRestaurant()
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  const [sections, openIndents, prefill] = await Promise.all([
+  const [sections, openIndents, prefill, returnReasons] = await Promise.all([
     getSections(restaurant.id),
     listOpenIndents(restaurant.id),
     indentParam !== undefined && UUID.test(indentParam)
       ? getIndentPrefill(restaurant.id, indentParam)
       : Promise.resolve(null),
+    getList(restaurant.id, 'return_reason'),
   ])
 
   return (
     <>
       <header className="pb-4">
-        <h1 className={pageTitleCls}>Issue to section</h1>
-        <p className={pageSubCls}>{restaurant.name} store</p>
+        <h1 className={pageTitleCls}>Stock movement</h1>
+        <p className={pageSubCls}>{restaurant.name} store — out to a section, or back from one</p>
       </header>
 
       <div className="space-y-4">
@@ -57,7 +59,7 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
           </section>
         )}
 
-        <IssueEntry sections={sections} initialIndent={prefill} />
+        <IssueEntry sections={sections} returnReasons={returnReasons} initialIndent={prefill} />
       </div>
     </>
   )

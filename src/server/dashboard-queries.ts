@@ -4,7 +4,13 @@
 import 'server-only'
 import { sql } from '@/lib/db'
 import { getSalesDay, yesterdayIST } from '@/server/sales-queries'
-import type { SalesDayRow } from '@/lib/types'
+import type {
+  EntryPulse,
+  SalesDayRow,
+  SalesSeriesPoint,
+  SectionCostRangeRow,
+  SettlementGapRow,
+} from '@/lib/types'
 
 export type YesterdayCard = {
   date: string
@@ -113,6 +119,137 @@ export async function getMissingCloses(restaurantId: string, limit = 14): Promis
     order by business_date desc
     limit ${limit}`
   return rows.map((r) => r.business_date)
+}
+
+// ─────────────────────────── period-scoped reads ───────────────────────────
+// Everything below takes the ONE period the control resolved. Event tables
+// filter on the date range; the monthly views are read per month-start and
+// summed, so a three-month period never blends a percentage.
+
+/** Daily revenue across the period — the sales line. Days with no fetch are
+ * simply absent: a missing day is not a zero-rupee day, and drawing it as
+ * one would invent a collapse that did not happen. */
+export async function getSalesSeries(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<SalesSeriesPoint[]> {
+  return sql<SalesSeriesPoint[]>`
+    select business_date::text as date, revenue::text as revenue, orders, covers
+    from sales_by_day
+    where restaurant_id = ${restaurantId}
+      and business_date between ${from}::date and ${to}::date
+    order by business_date asc`
+}
+
+/** The aggregator gap: what we billed against what they admit to.
+ *
+ * gap is a GENERATED column (billed_by_us − claimed_by_them), so a positive
+ * gap is money we say we earned and they have not accepted. The agreed rate
+ * comes off the partners master; the effective rate is what they actually
+ * deducted. Both are stated — the card never picks one and calls it truth.
+ *
+ * Rows with nothing to compare (billed or claimed still null) are counted
+ * separately rather than silently treated as zero. */
+export async function getSettlementGap(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<SettlementGapRow[]> {
+  return sql<SettlementGapRow[]>`
+    select ps.partner,
+           coalesce(sum(ps.billed_by_us), 0)::text as billed,
+           coalesce(sum(ps.claimed_by_them), 0)::text as claimed,
+           coalesce(sum(ps.gap), 0)::text as gap,
+           coalesce(sum(ps.gross_sales), 0)::text as gross_sales,
+           coalesce(sum(ps.commission), 0)::text as commission,
+           coalesce(sum(ps.amount_received), 0)::text as received,
+           max(p.agreed_commission_pct)::text as agreed_pct,
+           count(*) filter (where ps.billed_by_us is null or ps.claimed_by_them is null)::int as uncompared,
+           count(*)::int as settlements
+    from partner_settlements ps
+    left join partners p
+      on p.restaurant_id = ps.restaurant_id
+     and lower(trim(p.name)) = lower(trim(ps.partner))
+    where ps.restaurant_id = ${restaurantId}
+      and ps.period_start >= ${from}::date
+      and ps.period_end <= ${to}::date
+    group by ps.partner
+    having count(*) > 0
+    order by coalesce(sum(ps.gap), 0) desc, ps.partner asc`
+}
+
+/** Store + kitchen waste across the period, by reason. Reversal pairs net
+ * themselves out of the sums. */
+export async function getWasteRange(restaurantId: string, from: string, to: string): Promise<WasteCard> {
+  const [store] = await sql<{ v: string }[]>`
+    select coalesce(sum(value), 0)::text as v from wastage
+    where restaurant_id = ${restaurantId} and waste_date between ${from}::date and ${to}::date`
+  const [kitchen] = await sql<{ v: string }[]>`
+    select coalesce(sum(value), 0)::text as v from kitchen_wastage
+    where restaurant_id = ${restaurantId} and waste_date between ${from}::date and ${to}::date`
+  const reasons = await sql<{ reason: string; value: string }[]>`
+    select reason, sum(value)::text as value from (
+      select reason, value from wastage
+      where restaurant_id = ${restaurantId} and waste_date between ${from}::date and ${to}::date
+      union all
+      select reason, value from kitchen_wastage
+      where restaurant_id = ${restaurantId} and waste_date between ${from}::date and ${to}::date
+    ) w
+    where reason <> 'void'
+    group by reason
+    having sum(value) > 0
+    order by sum(value) desc
+    limit 6`
+  return { storeValue: store?.v ?? '0', kitchenValue: kitchen?.v ?? '0', reasons }
+}
+
+/** section_costs summed over every month the period touches. Sales, cost and
+ * margin are additive, so summing them is arithmetic on what the view already
+ * stated — not a second implementation of its logic. */
+export async function getSectionCostsRange(
+  restaurantId: string,
+  months: string[],
+): Promise<SectionCostRangeRow[]> {
+  return sql<SectionCostRangeRow[]>`
+    select s.code as section_code, s.name as section_name, s.dept_group,
+           coalesce(sum(sc.total_cost), 0)::text as total_cost,
+           coalesce(sum(sc.sales), 0)::text as sales,
+           coalesce(sum(sc.margin), 0)::text as margin
+    from sections s
+    left join section_costs sc
+      on sc.restaurant_id = s.restaurant_id
+     and sc.section_code = s.code
+     and sc.month = any(${months}::date[])
+    where s.restaurant_id = ${restaurantId} and s.status = 'active'
+    group by s.code, s.name, s.dept_group, s.sort_order
+    having coalesce(sum(sc.sales), 0) <> 0 or coalesce(sum(sc.total_cost), 0) <> 0
+    order by array_position(array['Management','Support','Kitchen','Service','Bar'], s.dept_group) asc,
+             s.sort_order asc`
+}
+
+/** What has actually been entered in the period. This is what makes an empty
+ * dashboard honest: with two bills and no sales the page must say so plainly
+ * rather than draw nine zeroes and imply a catastrophic month. */
+export async function getEntryPulse(restaurantId: string, from: string, to: string): Promise<EntryPulse> {
+  const [row] = await sql<EntryPulse[]>`
+    select
+      (select count(*)::int from purchases
+        where restaurant_id = ${restaurantId} and bill_date between ${from}::date and ${to}::date
+          and reverses_id is null) as bills,
+      (select count(*)::int from issues
+        where restaurant_id = ${restaurantId} and issue_date between ${from}::date and ${to}::date
+          and reverses_id is null) as issues,
+      (select count(*)::int from sales_by_day
+        where restaurant_id = ${restaurantId} and business_date between ${from}::date and ${to}::date) as "salesDays",
+      (select count(*)::int from day_close_current
+        where restaurant_id = ${restaurantId} and close_date between ${from}::date and ${to}::date) as closes,
+      (select count(*)::int from kitchen_closing_current
+        where restaurant_id = ${restaurantId} and close_date between ${from}::date and ${to}::date) as "kitchenClosings",
+      (select count(*)::int from expenses
+        where restaurant_id = ${restaurantId} and expense_date between ${from}::date and ${to}::date
+          and reverses_id is null) as expenses`
+  return row ?? { bills: 0, issues: 0, salesDays: 0, closes: 0, kitchenClosings: 0, expenses: 0 }
 }
 
 export type StaffCard = {
