@@ -12,15 +12,25 @@ import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
-import { getExpense } from '@/server/expenses-queries'
+import { getCasualLabour, getContractBill, getExpense } from '@/server/expenses-queries'
 import { parseMoney } from '@/lib/money'
-import type { SaveExpenseInput, SaveExpenseResult, VoidExpenseResult } from '@/lib/types'
+import type {
+  SaveCasualLabourInput,
+  SaveCasualLabourResult,
+  SaveContractBillInput,
+  SaveContractBillResult,
+  SaveExpenseInput,
+  SaveExpenseResult,
+  VoidExpenseResult,
+} from '@/lib/types'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const moneyStr = z.string().regex(/^\d{1,7}(\.\d{1,2})?$/, 'plain amount, up to 2 decimals')
 
 class ExpenseError extends Error {}
+
+const trimmedOrNull = (v: string): string | null => (v.trim() === '' ? null : v.trim())
 
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof ExpenseError) return { ok: false, error: e.message }
@@ -121,6 +131,166 @@ export async function voidExpense(id: string): Promise<VoidExpenseResult> {
       throw new ExpenseError('Verification failed: could not read the voided pair back')
     }
     return { ok: true, original, reversal }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/* ── contract bills and casual labour ──────────────────────────────────────
+ *
+ * Both feed the P&L's labour line: pnl_monthly reads contract_vendors from
+ * contract_bills and casual_labour from casual_labour. Until now both were
+ * empty, so total_labour counted only salaried staff and understated what
+ * labour actually costs.
+ *
+ * THE DRAWER RULE APPLIES HERE TOO, and for a checkable reason:
+ * day_close_ladder reads cash_vouchers and does NOT read either of these
+ * tables. Money paid out of the till and recorded here alone would leave
+ * the drawer short at close with nothing to explain it. So till cash is
+ * refused by name, exactly as it is on an expense.
+ */
+
+const ContractSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  vendorName: z.string().trim().min(1, 'Who sent the bill?').max(120),
+  service: z.string().trim().max(80),
+  headcount: z.union([z.literal(''), z.string().regex(/^\d{1,4}$/)]),
+  periodStart: z.union([z.literal(''), z.string().regex(DATE_RE)]),
+  periodEnd: z.union([z.literal(''), z.string().regex(DATE_RE)]),
+  amount: moneyStr,
+  paidVia: z.string().trim().min(1, 'Pick how it was paid').max(30),
+  note: z.string().trim().max(300),
+})
+
+export async function saveContractBill(raw: SaveContractBillInput): Promise<SaveContractBillResult> {
+  try {
+    const input = ContractSchema.parse(raw)
+    const amount = parseMoney(input.amount)
+    if (amount === null || amount <= 0) throw new ExpenseError('Amount must be more than zero')
+    if (input.paidVia.toLowerCase() === 'cash') {
+      throw new ExpenseError(
+        'Paid from the drawer? That is a Cash Voucher — record it on the Cash page, where the day’s ladder can see it',
+      )
+    }
+    if (input.periodStart !== '' && input.periodEnd !== '' && input.periodStart > input.periodEnd) {
+      throw new ExpenseError('The period ends before it starts')
+    }
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+    const modes = await getList(rid, 'payment_mode')
+    if (!modes.some((m) => m.toLowerCase() === input.paidVia.toLowerCase())) {
+      await noteListSuggestion(rid, 'payment_mode', input.paidVia, by)
+    }
+
+    const [row] = await sql<{ id: string }[]>`
+      insert into contract_bills (restaurant_id, bill_date, vendor_name, service, headcount,
+                                  period_start, period_end, amount, paid_via, note, entered_by)
+      values (${rid}, ${input.date}, ${input.vendorName}, ${trimmedOrNull(input.service)},
+              ${input.headcount === '' ? null : Number(input.headcount)},
+              ${input.periodStart === '' ? null : input.periodStart},
+              ${input.periodEnd === '' ? null : input.periodEnd},
+              ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by})
+      returning id`
+
+    const bill = await getContractBill(rid, row.id)
+    if (!bill) throw new ExpenseError('Could not verify the save — bill missing after commit')
+    return { ok: true, bill }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function voidContractBill(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    if (!UUID.test(id)) throw new ExpenseError('Malformed bill id')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+    const [orig] = await sql<{ reverses_id: string | null }[]>`
+      select reverses_id from contract_bills where id = ${id} and restaurant_id = ${rid}`
+    if (!orig) throw new ExpenseError('Bill not found')
+    if (orig.reverses_id !== null) throw new ExpenseError('This is a reversal — reversals cannot be voided')
+    const already = await sql<{ id: string }[]>`select id from contract_bills where reverses_id = ${id} limit 1`
+    if (already[0]) throw new ExpenseError('This bill is already voided')
+    await sql`
+      insert into contract_bills (restaurant_id, bill_date, vendor_name, service, headcount,
+                                  period_start, period_end, amount, paid_via, note, reverses_id, entered_by)
+      select restaurant_id, bill_date, vendor_name, service, headcount,
+             period_start, period_end, -amount, paid_via, 'void', id, ${by}
+      from contract_bills where id = ${id}`
+    return { ok: true }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+const CasualSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  sectionId: z.union([z.literal(''), z.string().regex(UUID)]),
+  persons: z.string().regex(/^\d{1,4}$/, 'How many people?'),
+  description: z.string().trim().max(200),
+  amount: moneyStr,
+  paidVia: z.string().trim().min(1, 'Pick how it was paid').max(30),
+  note: z.string().trim().max(300),
+})
+
+export async function saveCasualLabour(raw: SaveCasualLabourInput): Promise<SaveCasualLabourResult> {
+  try {
+    const input = CasualSchema.parse(raw)
+    const amount = parseMoney(input.amount)
+    if (amount === null || amount <= 0) throw new ExpenseError('Amount must be more than zero')
+    if (Number(input.persons) <= 0) throw new ExpenseError('At least one person worked')
+    if (input.paidVia.toLowerCase() === 'cash') {
+      throw new ExpenseError(
+        'Paid from the drawer? That is a Cash Voucher — record it on the Cash page, where the day’s ladder can see it',
+      )
+    }
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+    const modes = await getList(rid, 'payment_mode')
+    if (!modes.some((m) => m.toLowerCase() === input.paidVia.toLowerCase())) {
+      await noteListSuggestion(rid, 'payment_mode', input.paidVia, by)
+    }
+
+    const [row] = await sql<{ id: string }[]>`
+      insert into casual_labour (restaurant_id, work_date, section_id, persons, description,
+                                 amount, paid_via, note, entered_by)
+      values (${rid}, ${input.date}, ${input.sectionId === '' ? null : input.sectionId},
+              ${Number(input.persons)}, ${trimmedOrNull(input.description)},
+              ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by})
+      returning id`
+
+    const entry = await getCasualLabour(rid, row.id)
+    if (!entry) throw new ExpenseError('Could not verify the save — entry missing after commit')
+    return { ok: true, entry }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function voidCasualLabour(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    if (!UUID.test(id)) throw new ExpenseError('Malformed entry id')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+    const [orig] = await sql<{ reverses_id: string | null }[]>`
+      select reverses_id from casual_labour where id = ${id} and restaurant_id = ${rid}`
+    if (!orig) throw new ExpenseError('Entry not found')
+    if (orig.reverses_id !== null) throw new ExpenseError('This is a reversal — reversals cannot be voided')
+    const already = await sql<{ id: string }[]>`select id from casual_labour where reverses_id = ${id} limit 1`
+    if (already[0]) throw new ExpenseError('This entry is already voided')
+    await sql`
+      insert into casual_labour (restaurant_id, work_date, section_id, persons, description,
+                                 amount, paid_via, note, reverses_id, entered_by)
+      select restaurant_id, work_date, section_id, persons, description,
+             -amount, paid_via, 'void', id, ${by}
+      from casual_labour where id = ${id}`
+    return { ok: true }
   } catch (e) {
     return fail(e)
   }

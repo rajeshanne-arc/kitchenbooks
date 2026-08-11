@@ -131,9 +131,11 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       key: 'moneyout',
       href: '/staff/money-out',
       label: 'Money out',
-      // contract_bills and casual_labour are real tables with no form yet —
-      // their chips arrive in Phase B, beside the corrected sheet forms.
-      chips: [{ key: 'expense', label: 'Expense' }],
+      chips: [
+        { key: 'expense', label: 'Expense' },
+        { key: 'contract', label: 'Contract bill' },
+        { key: 'casual', label: 'Casual labour' },
+      ],
     },
     { key: 'books', href: '/staff/books', label: 'Books' },
   ],

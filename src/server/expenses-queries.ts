@@ -6,6 +6,8 @@ import 'server-only'
 import { sql } from '@/lib/db'
 import type {
   AttendanceStatus,
+  CasualLabourRow,
+  ContractBillRow,
   ExpenseCategoryMonthRow,
   ExpenseRow,
   LabourMonthRow,
@@ -127,4 +129,52 @@ export async function getAttendanceMonthSummary(
       and date_trunc('month', a.att_date)::date = ${monthStart}::date
     group by a.status
     order by count(*) desc`
+}
+
+/* ── contract bills and casual labour ──────────────────────────────────── */
+
+const CONTRACT_SELECT = `
+  select c.id, c.bill_date::text as bill_date, c.vendor_name, c.service, c.headcount,
+         c.period_start::text as period_start, c.period_end::text as period_end,
+         c.amount::text as amount, c.paid_via, c.note, c.entered_by,
+         (c.reverses_id is not null) as is_reversal,
+         exists (select 1 from contract_bills v where v.reverses_id = c.id) as is_voided
+  from contract_bills c`
+
+export async function getContractBill(restaurantId: string, id: string): Promise<ContractBillRow | null> {
+  const rows = await sql<ContractBillRow[]>`
+    ${sql.unsafe(CONTRACT_SELECT)}
+    where c.restaurant_id = ${restaurantId} and c.id = ${id}`
+  return rows[0] ?? null
+}
+
+export async function listContractBills(restaurantId: string, limit = 40): Promise<ContractBillRow[]> {
+  return sql<ContractBillRow[]>`
+    ${sql.unsafe(CONTRACT_SELECT)}
+    where c.restaurant_id = ${restaurantId}
+    order by c.bill_date desc, c.created_at desc
+    limit ${limit}`
+}
+
+const CASUAL_SELECT = `
+  select cl.id, cl.work_date::text as work_date, cl.section_id, s.name as section_name,
+         cl.persons, cl.description, cl.amount::text as amount, cl.paid_via, cl.note, cl.entered_by,
+         (cl.reverses_id is not null) as is_reversal,
+         exists (select 1 from casual_labour v where v.reverses_id = cl.id) as is_voided
+  from casual_labour cl
+  left join sections s on s.id = cl.section_id`
+
+export async function getCasualLabour(restaurantId: string, id: string): Promise<CasualLabourRow | null> {
+  const rows = await sql<CasualLabourRow[]>`
+    ${sql.unsafe(CASUAL_SELECT)}
+    where cl.restaurant_id = ${restaurantId} and cl.id = ${id}`
+  return rows[0] ?? null
+}
+
+export async function listCasualLabour(restaurantId: string, limit = 40): Promise<CasualLabourRow[]> {
+  return sql<CasualLabourRow[]>`
+    ${sql.unsafe(CASUAL_SELECT)}
+    where cl.restaurant_id = ${restaurantId}
+    order by cl.work_date desc, cl.created_at desc
+    limit ${limit}`
 }

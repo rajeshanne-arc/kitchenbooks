@@ -1076,3 +1076,27 @@ only one would answer the wrong question half the time.
 The panel LEFT JOINs from `partners`, so a partner with no settlement still
 appears — "we have never reconciled Zomato" is a finding, and an absent row
 cannot say it.
+
+## Commit 5a — contract bills and casual labour
+
+Both feed the P&L's labour line: `pnl_monthly` reads `contract_vendors`
+from `contract_bills` and `casual_labour` from `casual_labour`. Both tables
+were empty, so `total_labour` counted only salaried staff and understated
+what labour actually costs.
+
+**The drawer rule applies here too, and it is CHECKABLE rather than a
+habit.** `day_close_ladder` reads `cash_vouchers` and does NOT read either
+of these tables — verified against the view definition. Money paid out of
+the till and recorded only here would leave the drawer short at close with
+nothing to explain it. So till cash is refused by name, exactly as on an
+expense, and both forms say where it belongs.
+
+**This is a judgement call worth revisiting:** casual labour in an Indian
+restaurant is very often paid in cash from the drawer, and today that means
+two entries — a Cash Voucher for the drawer, and nothing here. Either
+`day_close_ladder` learns to read `casual_labour`, or a cash voucher grows
+a "this was casual labour" flag the way it grew `is_stock_purchase`. The
+second is the smaller change and matches the precedent. Not decided here.
+
+Casual labour's department is OPTIONAL — blank means the whole place, which
+is a real answer for a day's unloading, not a missing one.

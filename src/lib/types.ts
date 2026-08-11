@@ -1396,6 +1396,69 @@ export type VoidSettlementResult =
  *  BOTH ways — the rupee gap and the effective-vs-agreed rate. They are
  *  different findings: a small gap on a huge period can hide a rate that
  *  drifted, and a big gap can be one disputed invoice at the agreed rate. */
+/* ── contract bills and casual labour: money out that is LABOUR ────────── */
+
+export type ContractBillRow = {
+  id: string
+  bill_date: string
+  vendor_name: string
+  service: string | null
+  headcount: number | null
+  period_start: string | null
+  period_end: string | null
+  amount: string
+  paid_via: string | null
+  note: string | null
+  entered_by: string | null
+  is_reversal: boolean
+  is_voided: boolean
+}
+
+export type SaveContractBillInput = {
+  date: string
+  vendorName: string
+  service: string
+  headcount: string
+  periodStart: string
+  periodEnd: string
+  amount: string
+  paidVia: string
+  note: string
+}
+
+export type SaveContractBillResult =
+  | { ok: true; bill: ContractBillRow }
+  | { ok: false; error: string }
+
+export type CasualLabourRow = {
+  id: string
+  work_date: string
+  section_id: string | null
+  section_name: string | null
+  persons: number
+  description: string | null
+  amount: string
+  paid_via: string | null
+  note: string | null
+  entered_by: string | null
+  is_reversal: boolean
+  is_voided: boolean
+}
+
+export type SaveCasualLabourInput = {
+  date: string
+  sectionId: string
+  persons: string
+  description: string
+  amount: string
+  paidVia: string
+  note: string
+}
+
+export type SaveCasualLabourResult =
+  | { ok: true; entry: CasualLabourRow }
+  | { ok: false; error: string }
+
 export type PartnerPanelRow = {
   partner: string
   kind: string | null
