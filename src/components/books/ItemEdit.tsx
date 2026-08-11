@@ -1,9 +1,9 @@
 'use client'
 
 // The whole item master, in five bands. Every column kb_app may UPDATE is
-// here except yield_pct, which is retired by rule: recipes state GROSS
-// quantities, so trim yield lives in the recipe and an item-level yield
-// field must not come back.
+// here. yield_pct is NOT — the grant was revoked and yield now lives on the
+// RECIPE LINE, editable there. See AGENTS.md: that rule has been reversed
+// twice and the current ruling is per-line.
 //
 // code, category and purchase_unit have no UPDATE grant — shown LOCKED with
 // the reason. Those three are the item's identity; changing them would

@@ -12,6 +12,7 @@ import type {
   ClosingRow,
   FoodCostRow,
   IndentDetail,
+  IndentFulfilmentRow,
   IndentLineRow,
   IndentRow,
   IssueDetail,
@@ -342,4 +343,42 @@ export async function getFoodCost(restaurantId: string, monthStart: string): Pro
     where s.restaurant_id = ${restaurantId} and s.status = 'active'
       and s.dept_group in ('Kitchen', 'Bar')
     order by s.sort_order asc`
+}
+
+/** One indent as ONE TABLE — asked, given, and the gap between them.
+ *
+ * Request, received and return are three states of one document, not three
+ * screens. indent_fulfilment computes the gap; nothing here recomputes it,
+ * and nothing hides it: a kitchen that asked for 5 and got 3 needs to see
+ * the 2, because that is the conversation the sheet used to force. */
+export async function getIndentFulfilment(
+  restaurantId: string,
+  indentId: string,
+): Promise<IndentFulfilmentRow[]> {
+  return sql<IndentFulfilmentRow[]>`
+    select indent_id, indent_date::text as indent_date, session,
+           section_code, section_name, status,
+           item_code, item_name, purchase_unit,
+           qty_requested::text as qty_requested,
+           coalesce(qty_given, 0)::text as qty_given,
+           coalesce(gap, qty_requested)::text as gap
+    from indent_fulfilment
+    where restaurant_id = ${restaurantId} and indent_id = ${indentId}
+    order by item_name asc`
+}
+
+/** The most recent indent for a department + session — what "refill from
+ *  last request" copies. The single biggest daily saving in the product:
+ *  the evening kitchen asks for nearly the same things every evening. */
+export async function getLastIndentFor(
+  restaurantId: string,
+  sectionId: string,
+  session: string,
+): Promise<string | null> {
+  const rows = await sql<{ id: string }[]>`
+    select id from indents
+    where restaurant_id = ${restaurantId} and section_id = ${sectionId} and session = ${session}
+    order by indent_date desc, created_at desc
+    limit 1`
+  return rows[0]?.id ?? null
 }

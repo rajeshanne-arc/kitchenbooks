@@ -4,11 +4,23 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
-import { getIndentDetail } from '@/server/kitchen-queries'
+import { getIndentDetail, getIndentFulfilment } from '@/server/kitchen-queries'
 import CancelIndent from '@/components/kitchen/CancelIndent'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
-import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import {
+  cardCls,
+  dataTableCls,
+  pageSubCls,
+  pageTitleCls,
+  sectionHeadCls,
+  tdCls,
+  tdNumCls,
+  thCls,
+  thNumCls,
+  trCls,
+} from '@/components/ui'
+import { sql } from '@/lib/db'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
 
@@ -40,7 +52,23 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
   const canOpenIssues = user !== null && canAccess(user.role, '/store/books/issues')
   const detail = await getIndentDetail(restaurant.id, id)
   if (!detail) notFound()
-  const { indent, lines, issues, gap } = detail
+  const fulfilment = await getIndentFulfilment(restaurant.id, id)
+  // Returns are not tied to an indent — they are department-level stock
+  // going back. Matched by item since the indent date, and captioned as
+  // context rather than presented as this document's own line.
+  const returnedRows = await sql<{ item_code: string; qty: string }[]>`
+    select it.code as item_code, sum(rl.qty)::text as qty
+    from return_lines rl
+    join returns r on r.id = rl.return_id
+    join items it on it.id = rl.item_id
+    where r.restaurant_id = ${restaurant.id}
+      and r.section_id = ${detail.indent.section_id}
+      and r.return_date >= ${detail.indent.indent_date}::date
+    group by it.code`
+  const returnedByItem: Record<string, number> = Object.fromEntries(
+    returnedRows.map((r) => [r.item_code, Number(r.qty)]),
+  )
+  const { indent, issues } = detail
   const liveIssues = issues.filter((i) => !i.is_reversal && !i.is_voided)
 
   return (
@@ -69,44 +97,6 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
           </div>
         )}
 
-        <section className={cardCls}>
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className={sectionHeadCls}>Asked vs given</h2>
-            <span className="text-xs text-stone-400">the gap is information — never hidden</span>
-          </div>
-          <div className="mt-2 grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_4.5rem] gap-1 border-b border-stone-200 pb-1.5 text-right">
-            <span />
-            <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Asked</span>
-            <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Given</span>
-            <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Gap</span>
-          </div>
-          <ul className="divide-y divide-rule-soft">
-            {gap.map((g) => {
-              const gapNum = Number(g.gap)
-              return (
-                <li key={g.item_id} className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_4.5rem] items-center gap-1 py-2 text-right">
-                  <span className="min-w-0 text-left">
-                    <span className="block truncate text-sm text-stone-900">{g.item_name}</span>
-                    <span className="block text-xs text-stone-400">{g.purchase_unit}</span>
-                  </span>
-                  <span className="tabular-nums text-sm text-stone-700">{g.qty_requested ?? '—'}</span>
-                  <span className="tabular-nums text-sm text-stone-700">{g.qty_issued ?? '—'}</span>
-                  <span
-                    className={`tabular-nums text-sm font-semibold ${
-                      gapNum === 0 ? 'text-emerald-700' : gapNum < 0 ? 'text-amber-700' : 'text-sky-700'
-                    }`}
-                  >
-                    {gapNum > 0 ? `+${g.gap}` : g.gap}
-                  </span>
-                </li>
-              )
-            })}
-          </ul>
-          <p className="mt-2 text-xs text-stone-400">
-            negative gap = given less than asked · positive = given more (or unasked) · from indent_lines vs the
-            stamped issues&apos; lines
-          </p>
-        </section>
 
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>Issues answering this indent</h2>
@@ -135,18 +125,71 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
           )}
         </section>
 
+        {/* ONE TABLE. Request, received and return are three states of one
+            document, not three screens — so they are three columns. The GAP
+            is the column the screen exists for and is never hidden: a
+            kitchen that asked for 5 and got 3 needs to see the 2. */}
         <section className={cardCls}>
-          <h2 className={sectionHeadCls}>As asked</h2>
-          <ul className="mt-1 divide-y divide-rule-soft">
-            {lines.map((l) => (
-              <li key={l.id} className="flex items-center justify-between gap-3 py-2">
-                <span className="min-w-0 truncate text-sm text-stone-900">{l.item_name}</span>
-                <span className="shrink-0 text-sm text-stone-500">
-                  {l.qty_requested} {l.purchase_unit}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>Asked, given, and the gap</h2>
+            <span className="font-mono text-[10px] text-stone-400">indent_fulfilment</span>
+          </div>
+          <div className="mt-2 overflow-x-auto">
+            <table className={dataTableCls}>
+              <thead>
+                <tr>
+                  <th className={thCls}>Item</th>
+                  <th className={thNumCls}>Asked</th>
+                  <th className={thNumCls}>Given</th>
+                  <th className={thNumCls}>Gap</th>
+                  <th className={thNumCls}>Returned</th>
+                  <th className={thCls}>Unit</th>
+                  <th className={thCls}>
+                    <span className="sr-only">Return</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {fulfilment.map((f) => {
+                  const gap = Number(f.gap)
+                  const returned = returnedByItem[f.item_code] ?? 0
+                  return (
+                    <tr key={f.item_code} className={trCls}>
+                      <td className={tdCls}>{f.item_name}</td>
+                      <td className={tdNumCls}>{f.qty_requested}</td>
+                      <td className={tdNumCls}>{f.qty_given}</td>
+                      <td
+                        className={`${tdNumCls} font-semibold ${
+                          gap > 0 ? 'text-red-700' : gap < 0 ? 'text-amber-800' : 'text-stone-400'
+                        }`}
+                      >
+                        {gap === 0 ? '—' : gap > 0 ? `−${f.gap}` : `+${Math.abs(gap)}`}
+                      </td>
+                      <td className={`${tdNumCls} ${returned > 0 ? 'text-stone-900' : 'text-stone-400'}`}>
+                        {returned > 0 ? returned : '—'}
+                      </td>
+                      <td className={`${tdCls} text-stone-500`}>{f.purchase_unit}</td>
+                      <td className={`${tdCls} text-right`}>
+                        {canOpenIssues && Number(f.qty_given) > 0 && (
+                          <Link
+                            href="/store/issue"
+                            className="text-xs font-medium text-emerald-700 hover:underline"
+                          >
+                            return →
+                          </Link>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-xs text-stone-500">
+            A gap in red is short — asked for more than was given. Amber is over-issue. Returned counts stock
+            this department sent back since the indent was raised, matched by item; a return is not tied to one
+            indent, so read it as context rather than as this document&apos;s own line.
+          </p>
         </section>
       </div>
     </>

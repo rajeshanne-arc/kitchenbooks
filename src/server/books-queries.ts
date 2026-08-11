@@ -180,7 +180,6 @@ export async function getItemDetail(restaurantId: string, id: string): Promise<I
            i.conversion_factor::text as conversion_factor,
            i.opening_rate::text as opening_rate,
            i.gst_rate::text as gst_rate,
-           i.yield_pct::text as yield_pct,
            i.par_level::text as par_level,
            i.brand, i.status, i.created_at::text as created_at,
            i.reorder_level::text as reorder_level,

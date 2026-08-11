@@ -6,18 +6,43 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { Category, Unit } from '@/lib/types'
+import type { Category, Unit, VendorHit } from '@/lib/types'
 import { createItem } from '@/server/books-actions'
-import { cardCls, fieldLabelCls, inputCls, selectCls } from '@/components/ui'
+import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
+import { FormGroup, Wide } from '@/components/books/FormGroup'
 import { toast } from '@/components/Toasts'
 
-export default function ItemNew({ categories, units }: { categories: Category[]; units: Unit[] }) {
+// The five fields that cannot wait are asked first; every other column the
+// database will accept sits behind a fold. It is one form, not two trips —
+// a reorder level nobody set on the way past is a reorder level nobody ever
+// sets, and the Reorder tab stays empty forever.
+
+export default function ItemNew({
+  categories,
+  units,
+  vendors,
+}: {
+  categories: Category[]
+  units: Unit[]
+  vendors: VendorHit[]
+}) {
   const router = useRouter()
   const [name, setName] = useState('')
   const [category, setCategory] = useState('')
   const [purchaseUnit, setPurchaseUnit] = useState('')
   const [openingRate, setOpeningRate] = useState('')
   const [brand, setBrand] = useState('')
+  const [more, setMore] = useState(false)
+  const [x, setX] = useState({
+    stockUnit: '',
+    conversionFactor: '',
+    gstRate: '',
+    parLevel: '',
+    reorderLevel: '',
+    defaultVendorId: '',
+    itemType: '',
+    notes: '',
+  })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -28,7 +53,14 @@ export default function ItemNew({ categories, units }: { categories: Category[];
     setSaving(true)
     setError(null)
     try {
-      const res = await createItem({ name: name.trim(), category, purchaseUnit, openingRate: openingRate.trim(), brand })
+      const res = await createItem({
+        name: name.trim(),
+        category,
+        purchaseUnit,
+        openingRate: openingRate.trim(),
+        brand,
+        ...x,
+      })
       if (res.ok) {
         toast(`${res.item.code} — ${res.item.name} created`)
         router.push(`/store/masters/items/${res.item.id}`)
@@ -91,6 +123,125 @@ export default function ItemNew({ categories, units }: { categories: Category[];
             <input value={brand} onChange={(e) => setBrand(e.target.value)} className={inputCls} maxLength={80} />
           </label>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setMore((m) => !m)}
+          aria-expanded={more}
+          className="w-full rounded-xl border border-dashed border-stone-300 py-2.5 text-sm font-medium text-stone-600 hover:border-emerald-400 hover:text-emerald-700"
+        >
+          {more ? '− Fewer details' : '＋ More details — units, costing, ordering'}
+        </button>
+
+        {more && (
+          <div className="space-y-4 rounded-xl border border-rule bg-stone-50 p-3">
+            <FormGroup title="Units & conversion" hint="Leave blank if you buy and issue in the same unit.">
+              <label className="block">
+                <span className={fieldLabelCls}>Stock unit</span>
+                <select
+                  value={x.stockUnit}
+                  onChange={(e) => setX((v) => ({ ...v, stockUnit: e.target.value }))}
+                  className={selectCls}
+                >
+                  <option value="">— same as purchase unit —</option>
+                  {units.map((u) => (
+                    <option key={u.code} value={u.code}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className={fieldLabelCls}>Conversion factor</span>
+                <input
+                  value={x.conversionFactor}
+                  onChange={(e) => setX((v) => ({ ...v, conversionFactor: e.target.value.replace(/[^\d.]/g, '') }))}
+                  inputMode="decimal"
+                  placeholder="1"
+                  className={`${numCls} w-full text-right font-mono tabular-nums`}
+                />
+              </label>
+            </FormGroup>
+
+            <FormGroup title="Costing">
+              <label className="block">
+                <span className={fieldLabelCls}>GST rate (%)</span>
+                <input
+                  value={x.gstRate}
+                  onChange={(e) => setX((v) => ({ ...v, gstRate: e.target.value.replace(/[^\d.]/g, '') }))}
+                  inputMode="decimal"
+                  className={`${numCls} w-full text-right font-mono tabular-nums`}
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelCls}>Item type</span>
+                <input
+                  value={x.itemType}
+                  onChange={(e) => setX((v) => ({ ...v, itemType: e.target.value }))}
+                  placeholder="raw, packaged…"
+                  className={inputCls}
+                  maxLength={40}
+                />
+              </label>
+            </FormGroup>
+
+            <FormGroup
+              title="Ordering"
+              hint="Set a reorder level now and this item joins the Reorder tab the moment stock falls to it."
+            >
+              <label className="block">
+                <span className={fieldLabelCls}>Reorder level</span>
+                <input
+                  value={x.reorderLevel}
+                  onChange={(e) => setX((v) => ({ ...v, reorderLevel: e.target.value.replace(/[^\d.]/g, '') }))}
+                  inputMode="decimal"
+                  className={`${numCls} w-full text-right font-mono tabular-nums`}
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelCls}>Par level</span>
+                <input
+                  value={x.parLevel}
+                  onChange={(e) => setX((v) => ({ ...v, parLevel: e.target.value.replace(/[^\d.]/g, '') }))}
+                  inputMode="decimal"
+                  className={`${numCls} w-full text-right font-mono tabular-nums`}
+                />
+              </label>
+              <Wide>
+                <label className="block">
+                  <span className={fieldLabelCls}>Usual vendor</span>
+                  <select
+                    value={x.defaultVendorId}
+                    onChange={(e) => setX((v) => ({ ...v, defaultVendorId: e.target.value }))}
+                    className={selectCls}
+                  >
+                    <option value="">— none —</option>
+                    {vendors.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name} ({v.code})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </Wide>
+            </FormGroup>
+
+            <FormGroup title="Notes">
+              <Wide>
+                <label className="block">
+                  <span className={fieldLabelCls}>Notes</span>
+                  <textarea
+                    value={x.notes}
+                    onChange={(e) => setX((v) => ({ ...v, notes: e.target.value }))}
+                    rows={2}
+                    className={`${inputCls} resize-y`}
+                    maxLength={2000}
+                  />
+                </label>
+              </Wide>
+            </FormGroup>
+          </div>
+        )}
       </div>
       {error && (
         <div role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">

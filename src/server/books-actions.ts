@@ -240,9 +240,9 @@ export async function updateVendor(id: string, raw: UpdateVendorInput): Promise<
 
 const numStr = (maxDp: number, re = `^\\d{1,5}(\\.\\d{1,${maxDp}})?$`) => z.string().regex(new RegExp(re))
 
-// Every column kb_app may UPDATE on items EXCEPT yield_pct, which stays out
-// of the UI by rule: recipes state gross quantities, so trim yield lives in
-// the recipe and an item-level yield field must not come back.
+// Every column kb_app may UPDATE on items. yield_pct is absent because the
+// GRANT is absent — it moved to recipe_lines. The database enforces this;
+// adding it back here would fail at the grant, which is the point.
 // code, category and purchase_unit have no grant — shown locked.
 const ItemSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -320,6 +320,18 @@ const CreateVendorSchema = z.object({
   gstin: z.string().trim().max(20),
   phone: z.string().trim().max(20),
   paymentTerms: z.string().trim().max(120),
+  contactPerson: z.string().trim().max(120),
+  altPhone: z.string().trim().max(20),
+  email: z.string().trim().max(160),
+  address: z.string().trim().max(400),
+  bankName: z.string().trim().max(120),
+  accountNo: z.string().trim().max(40),
+  ifsc: z.string().trim().max(20),
+  upiId: z.string().trim().max(80),
+  natureOfSupply: z.string().trim().max(80),
+  openingBalance: z.union([z.literal(''), z.string().regex(/^-?\d{1,9}(\.\d{1,2})?$/)]),
+  supplies: z.string().trim().max(400),
+  notes: z.string().trim().max(2000),
 })
 
 export async function createVendor(raw: CreateVendorInput): Promise<CreateVendorResult> {
@@ -344,9 +356,20 @@ export async function createVendor(raw: CreateVendorInput): Promise<CreateVendor
         where restaurant_id = ${rid} and code like ${'V-' + input.category + '-%'}`
       const vcode = `V-${input.category}-${String(next).padStart(2, '0')}`
       const [v] = await tx<{ id: string }[]>`
-        insert into vendors (restaurant_id, code, name, primary_category, gstin, phone, payment_terms)
+        insert into vendors (restaurant_id, code, name, primary_category, gstin, phone, payment_terms,
+                             contact_person, alt_phone, email, address,
+                             bank_name, account_no, ifsc, upi_id,
+                             nature_of_supply, opening_balance, supplies, notes)
         values (${rid}, ${vcode}, ${input.name}, ${input.category},
-                ${trimmedOrNull(input.gstin)}, ${trimmedOrNull(input.phone)}, ${trimmedOrNull(input.paymentTerms)})
+                ${trimmedOrNull(input.gstin)}, ${trimmedOrNull(input.phone)}, ${trimmedOrNull(input.paymentTerms)},
+                ${trimmedOrNull(input.contactPerson)}, ${trimmedOrNull(input.altPhone)},
+                ${trimmedOrNull(input.email)}, ${trimmedOrNull(input.address)},
+                ${trimmedOrNull(input.bankName)}, ${trimmedOrNull(input.accountNo)},
+                ${input.ifsc.trim() === '' ? null : input.ifsc.trim().toUpperCase()},
+                ${trimmedOrNull(input.upiId)}, ${trimmedOrNull(input.natureOfSupply)},
+                ${input.openingBalance === '' ? '0' : input.openingBalance}::numeric,
+                ${input.supplies.split(',').map((x) => x.trim()).filter(Boolean)},
+                ${trimmedOrNull(input.notes)})
         returning id`
       return { id: v.id }
     })
@@ -365,6 +388,14 @@ const CreateItemSchema = z.object({
   purchaseUnit: z.string().min(1).max(16),
   openingRate: z.union([z.literal(''), z.string().regex(/^\d{1,5}(\.\d{1,2})?$/)]),
   brand: z.string().trim().max(80),
+  stockUnit: z.string().trim().max(16),
+  conversionFactor: z.union([z.literal(''), numStr(4)]),
+  gstRate: z.union([z.literal(''), numStr(2)]),
+  parLevel: z.union([z.literal(''), numStr(3)]),
+  reorderLevel: z.union([z.literal(''), numStr(3)]),
+  defaultVendorId: z.union([z.literal(''), z.string().regex(UUID)]),
+  itemType: z.string().trim().max(40),
+  notes: z.string().trim().max(2000),
 })
 
 export async function createItem(raw: CreateItemInput): Promise<CreateItemResult> {
@@ -391,9 +422,18 @@ export async function createItem(raw: CreateItemInput): Promise<CreateItemResult
         where restaurant_id = ${rid} and code like ${input.category + '-%'}`
       const icode = `${input.category}-${String(n + 1).padStart(3, '0')}`
       const [row] = await tx<{ id: string }[]>`
-        insert into items (restaurant_id, code, name, category, purchase_unit, opening_rate, brand)
+        insert into items (restaurant_id, code, name, category, purchase_unit, opening_rate, brand,
+                           stock_unit, conversion_factor, gst_rate, par_level, reorder_level,
+                           default_vendor_id, item_type, notes)
         values (${rid}, ${icode}, ${input.name}, ${input.category}, ${input.purchaseUnit},
-                ${input.openingRate === '' ? null : input.openingRate}::numeric, ${trimmedOrNull(input.brand)})
+                ${input.openingRate === '' ? null : input.openingRate}::numeric, ${trimmedOrNull(input.brand)},
+                ${input.stockUnit === '' ? null : input.stockUnit},
+                ${input.conversionFactor === '' ? '1' : input.conversionFactor}::numeric,
+                ${input.gstRate === '' ? null : input.gstRate}::numeric,
+                ${input.parLevel === '' ? null : input.parLevel}::numeric,
+                ${input.reorderLevel === '' ? null : input.reorderLevel}::numeric,
+                ${input.defaultVendorId === '' ? null : input.defaultVendorId},
+                ${trimmedOrNull(input.itemType)}, ${trimmedOrNull(input.notes)})
         returning id`
       return { id: row.id }
     })

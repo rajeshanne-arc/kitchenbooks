@@ -94,10 +94,9 @@ issue_cost are un-issuable until a bill exists.
 Negative stock is shown loudly (red, "a bill is probably missing"), never
 hidden or clamped.
 
-**items.yield_pct is retired from the UI** (column stays, reserved): recipes
-will state GROSS quantities (what is taken from the store, trim included), so
-trim yield lives in the recipe quantities themselves; batch yield is a
-sub-recipe's output quantity. Do not resurface an item-level yield field.
+**items.yield_pct — SUPERSEDED TWICE. See "Where yield lives" at the end of
+this file for the current ruling.** The rule as written here (gross
+quantities in the recipe, no yield field anywhere) is no longer in force.
 
 ## Phase 4 — Recipes (gross quantities, live costing)
 
@@ -872,3 +871,62 @@ screen looking wrong. The voucher form now asks it as a plain question:
 "Was this stock for the kitchen?" Also added: `off_book_orders.customer` and
 `received_into`, and `partner_settlements.reference` (their statement/UTR —
 what you quote when the gap is disputed).
+
+
+## Where yield lives — a rule reversed twice, and why
+
+This has moved three times. The history matters more than the conclusion,
+because each move was made for a real reason and the next person will be
+tempted to move it again.
+
+1. **Phase 3 — nowhere.** Recipes would state GROSS quantities (what leaves
+   the store, trim included), so yield would be baked into the quantity a
+   chef wrote. `items.yield_pct` stayed as a reserved column with no UI.
+   *Why it failed:* it asks the chef to do the arithmetic in their head and
+   leaves no record of the assumption. Nobody can audit a number that was
+   silently folded into a quantity.
+
+2. **Commit 3 brief — on the ITEM, read-only on the line.** "The same kilo
+   of mutton cannot cost two different things in two different dishes."
+   Cost per usable unit = weighted average ÷ (yield ÷ 100); Basha fish at
+   ₹350/kg at 55% yield costs ₹636.36 per usable kilo, and a recipe ignoring
+   that undercosts every dish using it.
+   *Why it failed:* it requires a yield figure on all 319 items before any
+   dish costs correctly, and most of those items are never trimmed.
+
+3. **NOW — on the RECIPE LINE, editable** (`recipe_lines.yield_pct`,
+   default 100, CHECK > 0). `items.yield_pct` UPDATE is **revoked**;
+   `recipe_costs` and `supplier_costs` divide by the LINE's yield.
+
+   **The accepted trade-off, stated plainly:** the same item can now carry
+   different yields in different dishes. That is a real inconsistency and it
+   was chosen deliberately — only the lines actually used need a figure,
+   rather than all 319 items needing one before anything is right. If two
+   dishes disagree about the same fish, that is now a thing a human can see
+   on the two cards and reconcile, instead of a thing nobody can enter.
+
+**`item_costs.yield_pct` and `item_costs.usable_cost` are VESTIGIAL.** They
+remain only because a view's columns cannot be dropped without cascading
+nine dependents. Nothing reads them. Do not use them. The item-level read
+was removed from `getItemDetail` so nothing can start.
+
+## Commit 2 — create forms, and the indent as one table
+
+**Create forms now carry every INSERT-granted column behind a "more
+details" fold.** The Store-phase report said the masters covered every
+granted column; that was true of the EDIT pages and I did not say it was
+edit-only. `ItemNew` asked 5 of 19, `VendorNew` 5 of 22. A reorder level
+nobody set on the way past is a reorder level nobody ever sets, and the
+Reorder tab stays empty forever — so the fold is one form, not a second trip.
+
+**The indent is ONE TABLE** reading `indent_fulfilment`: item, asked, given,
+gap, returned. Request / received / return are three states of one document,
+so they are three columns rather than three screens. The ad-hoc gap grid it
+replaces is deleted, not left beside it. Returns are matched by item since
+the indent date and captioned as CONTEXT — a return is department-level
+stock going back and is not tied to one indent, so the screen says that
+rather than implying a link the data does not carry.
+
+**Line prefill was already fixed** — the `key={prefill?.id}` remount from the
+Store phase. Verified against the live database: `initialIndent` arrives
+with both lines and their quantities. The screenshot predated the fix.

@@ -234,7 +234,6 @@ export type ItemDetail = {
   conversion_factor: string
   opening_rate: string | null
   gst_rate: string | null
-  yield_pct: string
   par_level: string | null
   brand: string | null
   status: 'active' | 'inactive'
@@ -284,9 +283,8 @@ export type UpdateVendorInput = {
   notes: string
 }
 
-/** Every column-granted item field EXCEPT yield_pct, which has a grant but
- *  is retired from the UI: recipes state gross quantities, so trim yield
- *  lives in the recipe, and an item-level yield field must not come back. */
+/** Every column-granted item field. yield_pct is absent because its UPDATE
+ *  grant was revoked — yield lives on the recipe LINE now. */
 export type UpdateItemInput = {
   name: string
   brand: string
@@ -462,6 +460,23 @@ export type StockSnap = {
 export type ChecklistRow = { id: string; code: string; name: string; sort_order: number; issues_today: number }
 
 /** One row of reorder_due — an item at or below its reorder level. */
+/** One line of indent_fulfilment: what was asked, what was given, and the
+ *  gap between them. The gap is the point of the whole screen. */
+export type IndentFulfilmentRow = {
+  indent_id: string
+  indent_date: string
+  session: string
+  section_code: string
+  section_name: string
+  status: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  qty_requested: string
+  qty_given: string
+  gap: string
+}
+
 export type ReorderRow = {
   item_id: string
   code: string
@@ -1569,22 +1584,49 @@ export type PnlRow = {
 /** A row of pnl_diagnostics — the view's own honesty column, in words. */
 export type PnlDiagnostic = { month: string; severity: string; what: string }
 
+/** Same shape for vendors: the code-bearing essentials up front, every
+ *  other INSERT-granted column behind the fold — including the banking
+ *  block, which is the whole reason anyone opens a vendor again. */
 export type CreateVendorInput = {
   name: string
   category: string
   gstin: string
   phone: string
   paymentTerms: string
+  contactPerson: string
+  altPhone: string
+  email: string
+  address: string
+  bankName: string
+  accountNo: string
+  ifsc: string
+  upiId: string
+  natureOfSupply: string
+  openingBalance: string
+  supplies: string
+  notes: string
 }
 
 export type CreateVendorResult = { ok: true; vendor: VendorDetail } | { ok: false; error: string }
 
+/** Creating an item asks the five fields that cannot wait, and offers the
+ *  rest behind a fold. Everything optional here is a column kb_app may
+ *  INSERT — a second trip to the edit page to set a reorder level was a
+ *  trip nobody made. yield_pct is absent: yield lives on the recipe line. */
 export type CreateItemInput = {
   name: string
   category: string
   purchaseUnit: string
   openingRate: string
   brand: string
+  stockUnit: string
+  conversionFactor: string
+  gstRate: string
+  parLevel: string
+  reorderLevel: string
+  defaultVendorId: string
+  itemType: string
+  notes: string
 }
 
 export type CreateItemResult = { ok: true; item: ItemDetail } | { ok: false; error: string }

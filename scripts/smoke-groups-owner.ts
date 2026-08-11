@@ -59,16 +59,16 @@ async function main() {
   const [{ next_v: expectedVendorN }] = await sql<{ next_v: number }[]>`
     select coalesce(max(nullif(split_part(code, '-', 3), '')::int), 0) + 1 as next_v
     from vendors where restaurant_id = ${rid} and code like 'V-VEG-%'`
-  const vend = await createVendor({ name: 'Zz Groups Vendor', category: 'VEG', gstin: '', phone: '98765', paymentTerms: 'weekly' })
+  const vend = await createVendor({ name: 'Zz Groups Vendor', category: 'VEG', gstin: '', phone: '98765', paymentTerms: 'weekly', contactPerson: '', altPhone: '', email: '', address: '', bankName: '', accountNo: '', ifsc: '', upiId: '', natureOfSupply: '', openingBalance: '', supplies: '', notes: '' })
   assert.ok(vend.ok, `createVendor failed: ${vend.ok === false ? vend.error : ''}`)
   assert.equal(vend.vendor.code, `V-VEG-${String(expectedVendorN).padStart(2, '0')}`, 'vendor code continues the series')
-  const vendDup = await createVendor({ name: 'zz groups vendor', category: 'VEG', gstin: '', phone: '', paymentTerms: '' })
+  const vendDup = await createVendor({ name: 'zz groups vendor', category: 'VEG', gstin: '', phone: '', paymentTerms: '', contactPerson: '', altPhone: '', email: '', address: '', bankName: '', accountNo: '', ifsc: '', upiId: '', natureOfSupply: '', openingBalance: '', supplies: '', notes: '' })
   assert.ok(!vendDup.ok && /already exists/i.test(vendDup.error))
 
   const [{ next_i: expectedItemN }] = await sql<{ next_i: number }[]>`
     select coalesce(max(nullif(split_part(code, '-', 2), '')::int), 0) + 1 as next_i
     from items where restaurant_id = ${rid} and code like 'VEG-%'`
-  const item = await createItem({ name: 'Zz Groups Item', category: 'VEG', purchaseUnit: 'kg', openingRate: '40', brand: '' })
+  const item = await createItem({ name: 'Zz Groups Item', category: 'VEG', purchaseUnit: 'kg', openingRate: '40', brand: '', stockUnit: '', conversionFactor: '', gstRate: '', parLevel: '', reorderLevel: '', defaultVendorId: '', itemType: '', notes: '' })
   assert.ok(item.ok, `createItem failed: ${item.ok === false ? item.error : ''}`)
   assert.equal(item.item.code, `VEG-${String(expectedItemN).padStart(3, '0')}`, 'item code continues the series')
   assert.equal(item.item.opening_rate, '40')
