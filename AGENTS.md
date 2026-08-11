@@ -982,3 +982,34 @@ rolled-back transaction: ₹305 at 100% becomes ₹554.55 at 55% — ratio
 
 Yield is capped at 100: it is a percentage of what you bought, so more than
 all of it is not a thing.
+
+## Commit 3, part 2 — the dish card
+
+**Inputs are what a human decides; answers are what `dish_costs` works out.**
+The card is split on exactly that line, and nothing in the answers block is
+recomputed here — a rate change on a bill moves the card with no re-cost
+step, which is the phase-4 rule still holding.
+
+**FLAG and COLOUR answer different questions and the card keeps both:**
+
+- the FIGURE is coloured absolutely — amber over 35%, red over 40% —
+  because a dish at 44% is expensive whatever it is;
+- the FLAG compares against THAT COURSE's target from `course_targets`,
+  because 30% is fine for a main and poor for a beverage.
+
+So a dish can read amber and still flag OK. That is not a contradiction, it
+is the two findings being different: "expensive" and "off target" are not
+the same sentence.
+
+**CHECK is neither of those.** It means the dish costs zero — a broken link,
+an ingredient with no bill behind it — and it is a repair job, never
+reported as a cheap dish. Verified against the view: a dish with no costed
+lines returns `dish_cost 0, food_cost_pct 0.0, flag CHECK`.
+
+**Food cost % is ingredients only, and the card says so in words.** Overhead
+is a manual figure for pricing decisions; folding it into the ratio the
+kitchen is judged by would make the kitchen answer for the owner's estimate.
+
+**No portions, no answers.** A batch cost divided by nothing is nothing, so
+the answers block is replaced by an honesty strip naming what is missing
+rather than four dashes or four zeroes.

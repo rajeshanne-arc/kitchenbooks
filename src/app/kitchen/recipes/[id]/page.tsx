@@ -1,11 +1,18 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getMasters, getRestaurant } from '@/server/queries'
-import { getRecipeDetail, getRecipeLines } from '@/server/recipes-queries'
+import {
+  getDishCard,
+  getRecipeDetail,
+  getRecipeLines,
+  getRecipeMedia,
+  listCourses,
+} from '@/server/recipes-queries'
 import { getQtySold } from '@/server/sales-queries'
 import { monthStartIST } from '@/server/store-queries'
 import { formatMoneyString } from '@/lib/money'
 import RecipeEditor from '@/components/recipes/RecipeEditor'
+import DishCardPanel from '@/components/recipes/DishCardPanel'
 import { RetiredBadge } from '@/components/books/Badges'
 
 export const dynamic = 'force-dynamic'
@@ -19,10 +26,13 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
   const recipe = await getRecipeDetail(restaurant.id, id)
   if (!recipe) notFound()
 
-  const [lines, { units }, sold] = await Promise.all([
+  const [lines, { units }, sold, card, media, courses] = await Promise.all([
     getRecipeLines(id),
     getMasters(),
     recipe.kind === 'dish' ? getQtySold(restaurant.id, monthStartIST()) : Promise.resolve([]),
+    recipe.kind === 'dish' ? getDishCard(restaurant.id, id) : Promise.resolve(null),
+    getRecipeMedia(restaurant.id, id),
+    recipe.kind === 'dish' ? listCourses(restaurant.id) : Promise.resolve([]),
   ])
   const soldRow = sold.find((s) => s.recipe_id === id) ?? null
 
@@ -54,6 +64,14 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
         </p>
       )}
       <RecipeEditor key={recipe.id} initialRecipe={recipe} initialLines={lines} units={units} />
+
+      {/* The dish card sits BELOW the lines because the lines are what it
+          is made of — batch cost, then what a portion of it costs. */}
+      {card !== null && (
+        <div className="mt-4">
+          <DishCardPanel card={card} media={media} courses={courses} />
+        </div>
+      )}
     </div>
   )
 }

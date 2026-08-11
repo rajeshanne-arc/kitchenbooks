@@ -566,6 +566,52 @@ export type VoidWastageResult =
 // ---------- Recipes (phase 4) ----------
 
 /** dish_costs view row (+ section sort for grouping) */
+/** The whole dish card, exactly as dish_costs computes it. Every figure
+ *  below is the VIEW's — this app renders them and never recomputes one. */
+export type DishCard = {
+  recipe_id: string
+  code: string
+  name: string
+  section_code: string
+  section_name: string
+  pos_code: string | null
+  course: string | null
+  diet: string | null
+  dish_cost: string
+  portions: string | null
+  portion_size: string | null
+  portion_unit: string | null
+  overhead_pct: string | null
+  /** ingredients only, per portion */
+  cost_per_portion: string | null
+  /** with the manual overhead added */
+  loaded_per_portion: string | null
+  selling_price: string | null
+  /** ingredients only — NOT loaded. Said on the card. */
+  food_cost_pct: string | null
+  margin_per_portion: string | null
+  /** this course's target, from course_targets */
+  target_pct: string | null
+  /** OK | HIGH | CHECK — CHECK means the dish costs zero */
+  flag: string | null
+  uncosted_lines: number
+  status: 'active' | 'inactive'
+}
+
+/** The header + inputs a chef may edit on a dish card. */
+export type SaveDishCardInput = {
+  posCode: string
+  course: string
+  diet: string
+  photoUrl: string
+  videoUrl: string
+  portions: string
+  portionSize: string
+  portionUnit: string
+  overheadPct: string
+  sellingPrice: string
+}
+
 export type DishCostRow = {
   recipe_id: string
   code: string

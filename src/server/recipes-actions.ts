@@ -22,6 +22,7 @@ import type {
   CreateRecipeInput,
   CreateRecipeResult,
   RecipeMutationResult,
+  SaveDishCardInput,
   UpdateRecipeInput,
 } from '@/lib/types'
 
@@ -30,6 +31,8 @@ const qtyStr = z.string().regex(/^\d{1,5}(\.\d{1,3})?$/, 'plain quantity, up to 
 const moneyStr = z.string().regex(/^\d{1,5}(\.\d{1,2})?$/, 'plain amount, up to 2 decimals')
 
 class RecipeError extends Error {}
+
+const trimOrNull = (v: string): string | null => (v.trim() === '' ? null : v.trim())
 
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof RecipeError) return { ok: false, error: e.message }
@@ -295,6 +298,71 @@ export async function deleteLine(lineId: string): Promise<RecipeMutationResult> 
     if (!deleted[0]) throw new RecipeError('Line not found — nothing was removed')
 
     return await freshState(rid, deleted[0].recipe_id)
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/** The dish card's header strip and inputs.
+ *
+ * Every one of these is an INPUT — a thing a human decides. The ANSWERS
+ * (cost per portion, food cost %, margin, the flag) are dish_costs' and are
+ * never written here. Overhead % is manual on purpose: labour and fuel are
+ * a pricing judgement, not a measurement, and the app does not pretend to
+ * know them.
+ */
+const DishCardSchema = z.object({
+  posCode: z.string().trim().max(40),
+  course: z.string().trim().max(40),
+  diet: z.string().trim().max(20),
+  photoUrl: z.string().trim().max(500),
+  videoUrl: z.string().trim().max(500),
+  portions: z.union([z.literal(''), z.string().regex(/^\d{1,5}(\.\d{1,2})?$/)]),
+  portionSize: z.union([z.literal(''), z.string().regex(/^\d{1,6}(\.\d{1,3})?$/)]),
+  portionUnit: z.string().trim().max(20),
+  overheadPct: z.union([z.literal(''), z.string().regex(/^\d{1,3}(\.\d{1,2})?$/)]),
+  sellingPrice: z.union([z.literal(''), z.string().regex(/^\d{1,7}(\.\d{1,2})?$/)]),
+})
+
+const httpish = (u: string) => u === '' || /^https?:\/\//i.test(u)
+
+export async function updateDishCard(
+  recipeId: string,
+  raw: SaveDishCardInput,
+): Promise<RecipeMutationResult> {
+  try {
+    if (!UUID.test(recipeId)) throw new RecipeError('Malformed recipe id')
+    const input = DishCardSchema.parse(raw)
+    if (input.overheadPct !== '' && Number(input.overheadPct) > 100) {
+      throw new RecipeError('Overhead is a percentage — 100 is the most it can be')
+    }
+    if (input.portions !== '' && Number(input.portions) <= 0) {
+      throw new RecipeError('A batch makes at least one portion')
+    }
+    if (!httpish(input.photoUrl) || !httpish(input.videoUrl)) {
+      throw new RecipeError('A link should start with http:// or https://')
+    }
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    const updated = await sql<{ id: string }[]>`
+      update recipes set
+        pos_code = ${trimOrNull(input.posCode)},
+        course = ${trimOrNull(input.course)},
+        diet = ${trimOrNull(input.diet)},
+        photo_url = ${trimOrNull(input.photoUrl)},
+        video_url = ${trimOrNull(input.videoUrl)},
+        portions = ${input.portions === '' ? null : input.portions}::numeric,
+        portion_size = ${input.portionSize === '' ? null : input.portionSize}::numeric,
+        portion_unit = ${trimOrNull(input.portionUnit)},
+        overhead_pct = ${input.overheadPct === '' ? null : input.overheadPct}::numeric,
+        selling_price = ${input.sellingPrice === '' ? null : input.sellingPrice}::numeric
+      where id = ${recipeId} and restaurant_id = ${rid}
+      returning id`
+    if (!updated[0]) throw new RecipeError('Dish not found — nothing was changed')
+
+    return await freshState(rid, recipeId)
   } catch (e) {
     return fail(e)
   }

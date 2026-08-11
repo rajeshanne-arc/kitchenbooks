@@ -3,7 +3,14 @@
 // same named views server-side; nothing money-shaped is computed client-side.
 import 'server-only'
 import { sql } from '@/lib/db'
-import type { ComponentHit, DishCostRow, RecipeDetail, RecipeLineRow, SubCostRow } from '@/lib/types'
+import type {
+  ComponentHit,
+  DishCard,
+  DishCostRow,
+  RecipeDetail,
+  RecipeLineRow,
+  SubCostRow,
+} from '@/lib/types'
 
 export async function listDishCosts(restaurantId: string): Promise<DishCostRow[]> {
   return sql<DishCostRow[]>`
@@ -117,4 +124,50 @@ export async function searchComponents(
     ...items.map((r) => ({ kind: 'item' as const, ...r })),
     ...subs.map((r) => ({ kind: 'sub' as const, ...r })),
   ]
+}
+
+/** One dish card, straight from dish_costs. Nothing here is recomputed:
+ *  cost per portion, loaded cost, food cost %, margin, the course target
+ *  and the flag are all the view's own arithmetic. */
+export async function getDishCard(restaurantId: string, recipeId: string): Promise<DishCard | null> {
+  const rows = await sql<DishCard[]>`
+    select recipe_id, code, name, section_code, section_name,
+           pos_code, course, diet,
+           dish_cost::text as dish_cost,
+           portions::text as portions,
+           portion_size::text as portion_size,
+           portion_unit,
+           overhead_pct::text as overhead_pct,
+           cost_per_portion::text as cost_per_portion,
+           loaded_per_portion::text as loaded_per_portion,
+           selling_price::text as selling_price,
+           food_cost_pct::text as food_cost_pct,
+           margin_per_portion::text as margin_per_portion,
+           target_pct::text as target_pct,
+           flag,
+           coalesce(uncosted_lines, 0)::int as uncosted_lines,
+           status
+    from dish_costs
+    where restaurant_id = ${restaurantId} and recipe_id = ${recipeId}`
+  return rows[0] ?? null
+}
+
+/** The courses an owner has set targets for — the card's course picker. */
+export async function listCourses(restaurantId: string): Promise<{ course: string; target_pct: string }[]> {
+  return sql<{ course: string; target_pct: string }[]>`
+    select course, target_pct::text as target_pct
+    from course_targets
+    where restaurant_id = ${restaurantId} and course <> 'DEFAULT'
+    order by sort_order asc`
+}
+
+/** The photo and video links, which dish_costs does not carry. */
+export async function getRecipeMedia(
+  restaurantId: string,
+  recipeId: string,
+): Promise<{ photo_url: string | null; video_url: string | null }> {
+  const rows = await sql<{ photo_url: string | null; video_url: string | null }[]>`
+    select photo_url, video_url from recipes
+    where restaurant_id = ${restaurantId} and id = ${recipeId}`
+  return rows[0] ?? { photo_url: null, video_url: null }
 }
