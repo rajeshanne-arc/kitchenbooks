@@ -33,6 +33,11 @@ export const TAB_GROUP_NAMES: Record<TabGroup, string> = {
 
 export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
   kitchen: [
+    // The group root IS the kitchen dashboard and always has been; until now
+    // no tab pointed at it, so the only way in was the top nav and no tab
+    // ever showed as active while you were on it. That is what "dashboards
+    // not visible" meant. Same for the store below.
+    { key: 'dashboard', href: '/kitchen', label: 'Dashboard' },
     { key: 'indent', href: '/kitchen/indent', label: 'Indent' },
     {
       // Production and closing are the same person at the same moment, so
@@ -50,6 +55,7 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     { key: 'books', href: '/kitchen/books', label: 'Books' },
   ],
   store: [
+    { key: 'dashboard', href: '/store', label: 'Dashboard' },
     {
       key: 'receive',
       href: '/store/receive',
@@ -59,6 +65,7 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         { key: 'pay', label: 'Pay vendor' },
       ],
     },
+    { key: 'reorder', href: '/store/reorder', label: 'Reorder' },
     { key: 'issue', href: '/store/issue', label: 'Issue' },
     { key: 'loss', href: '/store/loss', label: 'Loss' },
     { key: 'count', href: '/store/count', label: 'Count' },
@@ -148,6 +155,11 @@ export function resolveTabs(group: TabGroup, raw: string | null): TabDef[] {
   for (const def of defaults) if (!seen.has(def.key)) out.push(def)
   return out
 }
+
+/** Counts painted on tabs, keyed by tab key. A tab with no entry, or a
+ *  count of zero, wears NO badge — a "0" is a thing to read and dismiss
+ *  every time, where absence is silence. */
+export type TabBadges = Partial<Record<string, number>>
 
 /** The chips of a tab, for the settings editor and the chip row alike. */
 export const chipsOf = (group: TabGroup, tabKey: string): ChipDef[] =>

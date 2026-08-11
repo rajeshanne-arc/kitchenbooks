@@ -59,7 +59,19 @@ export default async function IssuePage({ searchParams }: { searchParams: Promis
           </section>
         )}
 
-        <IssueEntry sections={sections} returnReasons={returnReasons} initialIndent={prefill} />
+        {/* KEYED ON THE INDENT, deliberately. Tapping "fill it →" is a SOFT
+            navigation to this same route: the server re-renders with the new
+            prefill, but React keeps the existing IssueEntry instance, and
+            that component seeds its state from initialIndent in useState —
+            which only runs on mount. Without this key the URL changed and
+            the form did not, which is exactly the "autofill lands nowhere"
+            report. The key forces a remount so the seeds re-run. */}
+        <IssueEntry
+          key={prefill?.id ?? 'blank'}
+          sections={sections}
+          returnReasons={returnReasons}
+          initialIndent={prefill}
+        />
       </div>
     </>
   )

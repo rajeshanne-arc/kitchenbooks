@@ -11,6 +11,7 @@ import type {
   IssuableItemHit,
   IssueDetail,
   IssueLineRow,
+  ReorderRow,
   ReturnDetail,
   ReturnLineRow,
   Section,
@@ -245,6 +246,107 @@ export async function listStoreLog(restaurantId: string, limit = 150): Promise<S
 // The store side of indents: the badge count, the pick list, and an open
 // indent shaped to prefill the issue form. The indent records what was
 // ASKED; the issue records what was GIVEN — two documents, one stamp.
+
+// ───────────────────────── the store's own dashboard ─────────────────────
+// Period-scoped, same rules as the owner's: event tables filter on the range,
+// absent days stay absent rather than being drawn as zero.
+
+/** Money in the door, by day — purchases net of voids. */
+export async function getPurchaseSeries(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<{ date: string; total: string }[]> {
+  return sql<{ date: string; total: string }[]>`
+    select bill_date::text as date, sum(bill_total)::text as total
+    from purchases
+    where restaurant_id = ${restaurantId} and bill_date between ${from}::date and ${to}::date
+    group by bill_date
+    having sum(bill_total) <> 0
+    order by bill_date asc`
+}
+
+/** Issue value per section across the period — where the stock went. */
+export async function getIssuesBySection(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<{ section: string; value: string }[]> {
+  return sql<{ section: string; value: string }[]>`
+    select s.name as section, sum(l.value)::text as value
+    from issue_lines l
+    join issues i on i.id = l.issue_id
+    join sections s on s.id = i.section_id
+    where i.restaurant_id = ${restaurantId} and i.issue_date between ${from}::date and ${to}::date
+    group by s.name, s.sort_order
+    having sum(l.value) > 0
+    order by sum(l.value) desc`
+}
+
+/** Payments made in the period, and what they totalled. */
+export async function getPaymentsTotal(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<{ total: string; count: number }> {
+  const [row] = await sql<{ total: string; count: number }[]>`
+    select coalesce(sum(p.amount), 0)::text as total, count(*)::int as count
+    from payments p
+    join vendors v on v.id = p.vendor_id
+    where v.restaurant_id = ${restaurantId} and p.paid_date between ${from}::date and ${to}::date`
+  return row ?? { total: '0', count: 0 }
+}
+
+/** What the store bought in the period, per vendor — the trip ledger. */
+export async function getPurchasesByVendor(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<{ vendor: string; total: string }[]> {
+  return sql<{ vendor: string; total: string }[]>`
+    select v.name as vendor, sum(p.bill_total)::text as total
+    from purchases p
+    join vendors v on v.id = p.vendor_id
+    where p.restaurant_id = ${restaurantId} and p.bill_date between ${from}::date and ${to}::date
+    group by v.name
+    having sum(p.bill_total) <> 0
+    order by sum(p.bill_total) desc
+    limit 8`
+}
+
+/** Items at or below their reorder level, straight from reorder_due.
+ *
+ * The view returns nothing until somebody sets a reorder_level on an item —
+ * that is an empty answer, not a broken one, and the tab says so rather
+ * than implying everything is well stocked. */
+export async function listReorderDue(restaurantId: string): Promise<ReorderRow[]> {
+  return sql<ReorderRow[]>`
+    select item_id, code, name, category, purchase_unit,
+           on_hand_qty::text as on_hand_qty,
+           reorder_level::text as reorder_level,
+           par_level::text as par_level,
+           suggested_qty::text as suggested_qty,
+           usual_vendor, vendor_id,
+           issue_cost::text as issue_cost
+    from reorder_due
+    where restaurant_id = ${restaurantId}
+    order by usual_vendor nulls last, name asc`
+}
+
+export async function countReorderDue(restaurantId: string): Promise<number> {
+  const [row] = await sql<{ n: number }[]>`
+    select count(*)::int as n from reorder_due where restaurant_id = ${restaurantId}`
+  return row?.n ?? 0
+}
+
+/** How many items carry a reorder_level at all — the honesty denominator
+ *  behind an empty Reorder tab. */
+export async function countItemsWithReorderLevel(restaurantId: string): Promise<number> {
+  const [row] = await sql<{ n: number }[]>`
+    select count(*)::int as n from items
+    where restaurant_id = ${restaurantId} and status = 'active' and reorder_level is not null`
+  return row?.n ?? 0
+}
 
 export async function countOpenIndents(restaurantId: string): Promise<number> {
   const rows = await sql<{ n: number }[]>`

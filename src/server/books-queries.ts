@@ -14,6 +14,8 @@ import type {
   ItemListRow,
   PaymentRow,
   VendorDetail,
+  VendorDueRow,
+  VendorHit,
   VendorListRow,
 } from '@/lib/types'
 
@@ -69,6 +71,43 @@ export async function getVendorBills(restaurantId: string, vendorId: string): Pr
     limit 200`
 }
 
+/** Active vendors for the usual-supplier picker on an item. */
+export async function listActiveVendors(restaurantId: string): Promise<VendorHit[]> {
+  return sql<VendorHit[]>`
+    select v.id, v.code, v.name, v.primary_category, c.name as category_name,
+           coalesce(d.balance, 0)::text as balance
+    from vendors v
+    join categories c on c.code = v.primary_category
+    left join vendor_dues d on d.vendor_id = v.id
+    where v.restaurant_id = ${restaurantId} and v.status = 'active'
+    order by v.name asc`
+}
+
+/** Vendors carrying a balance, worst first — the payment queue.
+ *
+ * days_since_payment is null when they have never been paid: that is a
+ * different fact from "paid a long time ago" and the screen says so. */
+export async function listVendorsWithDues(restaurantId: string): Promise<VendorDueRow[]> {
+  return sql<VendorDueRow[]>`
+    select v.id, v.code, v.name, c.name as category_name,
+           v.payment_terms, v.phone,
+           d.balance::text as balance,
+           d.purchased::text as purchased,
+           d.paid::text as paid,
+           lp.last_paid_date::text as last_paid_date,
+           case when lp.last_paid_date is null then null
+                else (current_date - lp.last_paid_date)::int end as days_since_payment
+    from vendor_dues d
+    join vendors v on v.id = d.vendor_id
+    join categories c on c.code = v.primary_category
+    left join (
+      select vendor_id, max(paid_date) as last_paid_date
+      from payments group by vendor_id
+    ) lp on lp.vendor_id = v.id
+    where v.restaurant_id = ${restaurantId} and d.balance <> 0
+    order by d.balance desc, v.name asc`
+}
+
 export async function listVendors(restaurantId: string, q: string): Promise<VendorListRow[]> {
   const like = `%${q}%`
   return sql<VendorListRow[]>`
@@ -86,6 +125,9 @@ export async function getVendorDetail(restaurantId: string, id: string): Promise
   const rows = await sql<VendorDetail[]>`
     select v.id, v.code, v.name, v.primary_category, c.name as category_name,
            v.supplies, v.gstin, v.phone, v.payment_terms, v.status, v.created_at::text as created_at,
+           v.contact_person, v.alt_phone, v.email, v.address,
+           v.bank_name, v.account_no, v.ifsc, v.upi_id,
+           v.nature_of_supply, coalesce(v.opening_balance, 0)::text as opening_balance, v.notes,
            coalesce(d.balance, 0)::text as balance,
            coalesce(d.purchased, 0)::text as purchased,
            coalesce(d.paid, 0)::text as paid
@@ -141,6 +183,9 @@ export async function getItemDetail(restaurantId: string, id: string): Promise<I
            i.yield_pct::text as yield_pct,
            i.par_level::text as par_level,
            i.brand, i.status, i.created_at::text as created_at,
+           i.reorder_level::text as reorder_level,
+           i.default_vendor_id, dv.name as default_vendor_name,
+           i.item_type, i.notes,
            r.prefill_rate::text as prefill_rate,
            r.last_rate::text as last_rate,
            r.last_rate_date::text as last_rate_date
@@ -148,6 +193,7 @@ export async function getItemDetail(restaurantId: string, id: string): Promise<I
     join categories c on c.code = i.category
     join units pu on pu.code = i.purchase_unit
     left join units su on su.code = i.stock_unit
+    left join vendors dv on dv.id = i.default_vendor_id
     left join item_rates r on r.item_id = i.id
     where i.restaurant_id = ${restaurantId} and i.id = ${id}`
   return rows[0] ?? null

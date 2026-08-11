@@ -5,14 +5,31 @@
 import { getSessionUser } from '@/server/current-user'
 import { getRestaurant } from '@/server/queries'
 import { tabsFor } from '@/server/settings'
-import type { TabGroup } from '@/lib/tabs'
+import { countOpenIndents, countReorderDue } from '@/server/store-queries'
+import type { TabBadges, TabGroup } from '@/lib/tabs'
 import TabStrip from '@/components/TabStrip'
+
+/** Counts that belong on a group's tabs. Server-rendered with the strip
+ *  itself, so the number is as fresh as the page and there is no flash of
+ *  an empty badge. Only counted for a group that shows them — the kitchen
+ *  strip does not pay for a store query. */
+async function badgesFor(group: TabGroup, restaurantId: string): Promise<TabBadges> {
+  if (group !== 'store') return {}
+  const [reorder, issue] = await Promise.all([
+    countReorderDue(restaurantId),
+    countOpenIndents(restaurantId),
+  ])
+  return { reorder, issue }
+}
 
 export default async function GroupTabs({ group }: { group: TabGroup }) {
   const user = await getSessionUser()
   if (!user) return null
   const restaurant = await getRestaurant()
-  const tabs = await tabsFor(restaurant.id, group, user.role)
+  const [tabs, badges] = await Promise.all([
+    tabsFor(restaurant.id, group, user.role),
+    badgesFor(group, restaurant.id),
+  ])
   if (tabs.length === 0) return null
-  return <TabStrip tabs={tabs} />
+  return <TabStrip tabs={tabs} badges={badges} />
 }

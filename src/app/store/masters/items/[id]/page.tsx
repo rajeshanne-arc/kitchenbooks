@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant, getMasters } from '@/server/queries'
-import { getItemDetail, getItemHistory } from '@/server/books-queries'
+import { getItemDetail, getItemHistory, listActiveVendors } from '@/server/books-queries'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { RetiredBadge } from '@/components/books/Badges'
@@ -19,7 +19,11 @@ export default async function ItemDetailPage({ params }: { params: Promise<{ id:
   const item = await getItemDetail(restaurant.id, id)
   if (!item) notFound()
 
-  const [{ units }, history] = await Promise.all([getMasters(), getItemHistory(restaurant.id, id)])
+  const [{ units }, history, vendors] = await Promise.all([
+    getMasters(),
+    getItemHistory(restaurant.id, id),
+    listActiveVendors(restaurant.id),
+  ])
 
   return (
     <div className="mt-4 space-y-4">
@@ -64,7 +68,7 @@ export default async function ItemDetailPage({ params }: { params: Promise<{ id:
         </div>
       </section>
 
-      <ItemEdit item={item} units={units} />
+      <ItemEdit item={item} units={units} vendors={vendors} />
 
       <section className={cardCls}>
         <h3 className={sectionHeadCls}>Purchase history</h3>

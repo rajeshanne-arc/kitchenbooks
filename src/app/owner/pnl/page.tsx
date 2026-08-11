@@ -1,149 +1,209 @@
-// The owner's P&L — one card per month from pnl_monthly, every line named
-// for what it is. sections_pending_closing renders as an honesty banner:
-// COGS is understated until every active kitchen closes its month.
-// Staff food sits OUTSIDE cogs (a stated policy); giveaway cost is
-// informational — that food is already inside consumption.
-import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import { getPnlMonthly } from '@/server/pnl-queries'
-import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
-import { cardCls, pageSubCls, pageTitleCls } from '@/components/ui'
-import Honesty, { Doubted } from '@/components/Honesty'
+import { getPnlDiagnostics, getPnlMonthly } from '@/server/pnl-queries'
+import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
+import { monthLabel } from '@/lib/period'
+import {
+  cardCls,
+  dataTableCls,
+  heroNumCls,
+  pageSubCls,
+  pageTitleCls,
+  sectionHeadCls,
+  tdCls,
+  tdNumCls,
+  thCls,
+  thNumCls,
+  trCls,
+} from '@/components/ui'
+import Honesty from '@/components/Honesty'
 
 export const dynamic = 'force-dynamic'
 
-const monthName = (iso: string) =>
-  new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+// pnl_monthly, rendered verbatim. The view owns every figure; this page adds
+// only the arithmetic of stacking them, and says out loud where a number is
+// missing rather than printing a confident zero.
+//
+// cogs is NULL — not zero — until the month has ending closings. A NULL cogs
+// makes the net line unstatable, and the page says so instead of subtracting
+// nothing and calling the result profit.
 
-function Line({
-  label,
-  value,
-  sign,
-  strong,
-  muted,
-  caption,
-}: {
-  label: string
-  value: string | null
-  sign?: '+' | '−'
-  strong?: boolean
-  muted?: boolean
-  caption?: string
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 py-1">
-      <span className={`text-sm ${strong ? 'font-semibold text-stone-900' : muted ? 'text-stone-400' : 'text-stone-600'}`}>
-        {sign !== undefined && <span className="mr-1 inline-block w-3 text-stone-400">{sign}</span>}
-        {label}
-        {caption !== undefined && <span className="ml-1.5 text-[11px] font-normal text-stone-400">{caption}</span>}
-      </span>
-      <span
-        className={`shrink-0 tabular-nums ${
-          strong ? 'text-[15px] font-bold text-stone-900' : muted ? 'text-sm text-stone-400' : 'text-sm text-stone-800'
-        }`}
-      >
-        {value === null ? (
-          <span className="font-mono text-[13px] font-medium text-amber-800">pending closing</span>
-        ) : (
-          formatMoneyString(value)
-        )}
-      </span>
-    </div>
-  )
+const p = (s: string | null) => (s === null ? null : decimalStringToPaise(s))
+
+function Money({ value, bold = false }: { value: string | null; bold?: boolean }) {
+  if (value === null) return <span className="text-stone-400">—</span>
+  return <span className={bold ? 'font-semibold' : ''}>{formatMoneyString(value)}</span>
 }
 
 export default async function PnlPage() {
   const restaurant = await getRestaurant()
-  const months = await getPnlMonthly(restaurant.id)
+  const [rows, diagnostics] = await Promise.all([
+    getPnlMonthly(restaurant.id),
+    getPnlDiagnostics(restaurant.id),
+  ])
+
+  const latest = rows[0] ?? null
+  const latestDiag = latest === null ? [] : diagnostics.filter((d) => d.month === latest.month)
+
+  // Stated only when cogs is stated. Everything else is additive.
+  const netOf = (r: PnlRowLike): number | null => {
+    const cogs = p(r.cogs)
+    if (cogs === null) return null
+    return (
+      decimalStringToPaise(r.net_sales) +
+      decimalStringToPaise(r.other_income) -
+      cogs -
+      decimalStringToPaise(r.total_labour) -
+      decimalStringToPaise(r.total_expenses)
+    )
+  }
 
   return (
     <>
       <header className="pb-4">
         <h1 className={pageTitleCls}>P&amp;L</h1>
-        <p className={pageSubCls}>
-          {restaurant.name} · month by month · pnl_monthly — every line reads the books, nothing is typed here
-        </p>
+        <p className={pageSubCls}>{restaurant.name} — pnl_monthly, month by month</p>
       </header>
 
-      {months.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-10 text-center">
-          <p className="text-lg font-semibold text-stone-900">Nothing to add up yet.</p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-stone-500">
-            The P&amp;L assembles itself from sales, closings, labour and expenses as they are entered.
+      {rows.length === 0 ? (
+        <section className={cardCls}>
+          <h2 className={sectionHeadCls}>No months yet</h2>
+          <p className="mt-1.5 text-sm text-stone-700">
+            The P&amp;L starts once a month has bills, sales or wages against it.
           </p>
-        </div>
+        </section>
       ) : (
         <div className="space-y-4">
-          {months.map((m) => {
-            const net = decimalStringToPaise(m.net_before_purch_overheads)
-            return (
-              <section key={m.month} className={cardCls}>
-                <div className="flex items-baseline justify-between gap-3">
-                  <h2 className="font-display text-lg font-bold tracking-[-0.01em] text-stone-900">
-                    {monthName(m.month)}
-                  </h2>
-                  <span
-                    className={`font-display text-lg font-bold tabular-nums tracking-[-0.02em] ${
-                      net < 0 ? 'text-red-700' : 'text-emerald-700'
-                    }`}
-                  >
-                    {m.sections_pending_closing > 0 ? (
-                      <Doubted title="cost of goods is missing sections that have not closed — the real figure is lower">
-                        {formatMoneyString(m.net_before_purch_overheads)}
-                      </Doubted>
-                    ) : (
-                      formatMoneyString(m.net_before_purch_overheads)
+          {latest !== null && (
+            <section className={cardCls}>
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className={sectionHeadCls}>{monthLabel(latest.month)}</h2>
+                <span className="font-mono text-[10px] text-stone-400">pnl_monthly</span>
+              </div>
+              {(() => {
+                const net = netOf(latest)
+                return (
+                  <>
+                    <p className={`mt-1 text-[32px] ${heroNumCls} ${net === null ? 'text-stone-400' : net < 0 ? 'text-red-700' : 'text-stone-900'}`}>
+                      {net === null ? 'not stated' : formatPaise(net)}
+                    </p>
+                    <p className="text-xs text-stone-500">
+                      net sales {formatMoneyString(latest.net_sales)} + other income{' '}
+                      {formatMoneyString(latest.other_income)} − cogs{' '}
+                      {latest.cogs === null ? '(pending)' : formatMoneyString(latest.cogs)} − labour{' '}
+                      {formatMoneyString(latest.total_labour)} − expenses{' '}
+                      {formatMoneyString(latest.total_expenses)}
+                    </p>
+                    {latest.cogs === null && (
+                      <div className="mt-2">
+                        <Honesty verdict="cogs pending" compact>
+                          Cost of goods cannot be stated until the month has its ending closings, so the net line
+                          stays blank rather than counting the whole store as consumed.
+                        </Honesty>
+                      </div>
                     )}
-                  </span>
-                </div>
+                  </>
+                )
+              })()}
+              {latestDiag.length > 0 && (
+                <ul className="mt-3 space-y-1 border-t border-rule-soft pt-2">
+                  {latestDiag.map((d, i) => (
+                    <li key={`${d.severity}-${i}`} className="text-xs">
+                      <span
+                        className={`mr-1.5 rounded-full px-1.5 py-0.5 font-medium ${
+                          d.severity === 'error'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-amber-100 text-amber-900'
+                        }`}
+                      >
+                        {d.severity}
+                      </span>
+                      <span className="text-stone-700">{d.what}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
 
-                {m.sections_pending_closing > 0 && (
-                  <div className="mt-3">
-                    <Honesty
-                      verdict="incomplete"
-                      action={{ href: '/kitchen/shift/closing', label: 'File the closings' }}
-                    >
-                      {m.sections_pending_closing}{' '}
-                      {m.sections_pending_closing === 1 ? 'section has' : 'sections have'} no ending closing for
-                      this month, so cost of goods is missing part of what was eaten. Every line below it reads
-                      better than the month was.
-                    </Honesty>
-                  </div>
-                )}
-
-                <div className="mt-2 divide-y divide-rule-soft">
-                  <Line label="POS revenue" value={m.revenue} sign="+" />
-                  <Line label="Off-book revenue" value={m.off_book_revenue} sign="+" />
-                  <Line label="Other income" value={m.other_income} sign="+" caption="oil, scrap, cartons" />
-                  <Line label="COGS (consumed)" value={m.cogs} sign="−" caption="opening + issued − closing" />
-                  <Line label="Gross margin" value={m.gross_margin} strong caption="revenue + off-book − COGS" />
-                  <Line label="Staff food" value={m.staff_food} sign="−" caption="outside COGS — a stated policy" />
-                  <Line label="Labour" value={m.labour} sign="−" />
-                  <Line label="Expenses" value={m.expenses} sign="−" caption="non-drawer only" />
-                  <Line
-                    label="Giveaway cost"
-                    value={m.giveaway_cost}
-                    muted
-                    caption="informational — already inside consumption, not subtracted again"
-                  />
-                  <Line
-                    label="Net before purchase-time overheads"
-                    value={m.net_before_purch_overheads}
-                    strong
-                    caption="not a statutory P&L — GST, depreciation and owner purchases are not in these books yet"
-                  />
-                </div>
-              </section>
-            )
-          })}
-          <p className="text-center text-xs text-stone-400">
-            Drill down: <Link href="/staff/money-out/expense" className="text-emerald-700 hover:underline">expenses</Link> ·{' '}
-            <Link href="/kitchen/books/food-cost" className="text-emerald-700 hover:underline">food cost</Link> ·{' '}
-            <Link href="/sales/books/sales" className="text-emerald-700 hover:underline">sales</Link> ·{' '}
-            <Link href="/staff/people/employees" className="text-emerald-700 hover:underline">labour</Link>
-          </p>
+          <section className={cardCls}>
+            <h2 className={sectionHeadCls}>Month by month</h2>
+            <div className="mt-2 overflow-x-auto">
+              <table className={dataTableCls}>
+                <thead>
+                  <tr>
+                    <th className={thCls}>Month</th>
+                    <th className={thNumCls}>Food &amp; bev</th>
+                    <th className={thNumCls}>Off-book</th>
+                    <th className={thNumCls}>Net sales</th>
+                    <th className={thNumCls}>Purchases</th>
+                    <th className={thNumCls}>COGS</th>
+                    <th className={thNumCls}>Staff food</th>
+                    <th className={thNumCls}>Labour</th>
+                    <th className={thNumCls}>Expenses</th>
+                    <th className={thNumCls}>Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => {
+                    const net = netOf(r)
+                    return (
+                      <tr key={r.month} className={trCls}>
+                        <td className={tdCls}>{monthLabel(r.month)}</td>
+                        <td className={tdNumCls}>
+                          <Money value={r.food_beverage} />
+                        </td>
+                        <td className={tdNumCls}>
+                          <Money value={r.off_book} />
+                        </td>
+                        <td className={tdNumCls}>
+                          <Money value={r.net_sales} bold />
+                        </td>
+                        <td className={tdNumCls}>
+                          <Money value={r.purchases} />
+                        </td>
+                        <td className={tdNumCls}>
+                          <Money value={r.cogs} />
+                        </td>
+                        <td className={tdNumCls}>
+                          <Money value={r.staff_food} />
+                        </td>
+                        <td className={tdNumCls}>
+                          <Money value={r.total_labour} />
+                        </td>
+                        <td className={tdNumCls}>
+                          <Money value={r.total_expenses} />
+                        </td>
+                        <td
+                          className={`${tdNumCls} font-semibold ${
+                            net === null ? 'text-stone-400' : net < 0 ? 'text-red-700' : 'text-stone-900'
+                          }`}
+                        >
+                          {net === null ? '—' : formatPaise(net)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-xs text-stone-500">
+              Staff food is its own line, OUTSIDE cost of goods — it is fed to the staff, not sold. A dash means
+              the view could not state that figure, never that it is zero.
+            </p>
+            <p className="mt-1 text-xs text-stone-400">
+              Net is before purchase-time overheads — not a statutory P&amp;L.
+            </p>
+          </section>
         </div>
       )}
     </>
   )
+}
+
+type PnlRowLike = {
+  net_sales: string
+  other_income: string
+  cogs: string | null
+  total_labour: string
+  total_expenses: string
 }

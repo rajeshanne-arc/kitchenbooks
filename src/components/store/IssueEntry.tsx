@@ -30,12 +30,20 @@ import type {
 import { saveIssue, saveReturn } from '@/server/store-actions'
 import { parseQty, formatMoneyString } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
-import { cardCls, fieldLabelCls, numCls, sectionHeadCls } from '@/components/ui'
+import {
+  cardCls,
+  dataTableCls,
+  fieldLabelCls,
+  numCls,
+  sectionHeadCls,
+  thCls,
+  thNumCls,
+} from '@/components/ui'
 import IssueItemPicker from './IssueItemPicker'
 import { useLang } from '@/components/useLang'
 
-type Line = { key: number; item: IssuableItemHit | null; qty: string }
-const newLine = (key: number): Line => ({ key, item: null, qty: '' })
+type Line = { key: number; item: IssuableItemHit | null; qty: string; note: string }
+const newLine = (key: number): Line => ({ key, item: null, qty: '', note: '' })
 const cleanQty = (raw: string) => {
   const cleaned = raw.replace(/[^\d.]/g, '')
   const firstDot = cleaned.indexOf('.')
@@ -44,7 +52,7 @@ const cleanQty = (raw: string) => {
 }
 
 const prefillLines = (p: IndentPrefill, startKey: number): Line[] =>
-  p.lines.map((l, i) => ({ key: startKey + i, item: l.item, qty: l.qty }))
+  p.lines.map((l, i) => ({ key: startKey + i, item: l.item, qty: l.qty, note: '' }))
 
 type Direction = 'out' | 'back'
 
@@ -152,7 +160,11 @@ export default function IssueEntry({
     if (!canSave) return
     setSaving(true)
     setError(null)
-    const movedLines = lines.map((l) => ({ itemId: (l.item as IssuableItemHit).id, qty: l.qty.trim() }))
+    const movedLines = lines.map((l) => ({
+      itemId: (l.item as IssuableItemHit).id,
+      qty: l.qty.trim(),
+      note: l.note.trim(),
+    }))
     try {
       if (direction === 'back') {
         const payload: SaveReturnInput = { returnDate: issueDate, sectionId, reason, lines: movedLines }
@@ -426,40 +438,76 @@ export default function IssueEntry({
         )}
       </section>
 
+      {/* A TABLE, not a stack of cards. Entering ten lines means reading down
+          one column — every quantity in the same place, every unit beside it —
+          and tab moves across a row then down to the next, the way the sheet
+          did. Stacked cards make the eye hunt for the same field ten times. */}
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>{direction === 'back' ? 'Items coming back' : 'Items issued'}</h2>
-        <div className="mt-1 divide-y divide-rule-soft">
-          {lines.map((line, i) => (
-            <div key={line.key} className="space-y-2 py-3">
-              <div className="flex items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  <IssueItemPicker
-                    value={line.item}
-                    onPick={(hit) => patchLine(line.key, { item: hit })}
-                    onClear={() => patchLine(line.key, { item: null })}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeLine(line.key)}
-                  aria-label={`Remove line ${i + 1}`}
-                  className="mt-1.5 shrink-0 rounded-md p-1 text-stone-300 hover:bg-stone-100 hover:text-stone-600"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  inputMode="decimal"
-                  placeholder="Qty"
-                  value={line.qty}
-                  onChange={(e) => patchLine(line.key, { qty: cleanQty(e.target.value) })}
-                  className={`${numCls} w-24`}
-                />
-                {line.item !== null && <span className="text-sm text-stone-500">{line.item.unit_name}</span>}
-              </div>
-            </div>
-          ))}
+        <div className="mt-2 overflow-x-auto">
+          <table className={dataTableCls}>
+            <thead>
+              <tr>
+                <th className={`${thCls} w-[38%]`}>Item</th>
+                <th className={`${thNumCls} w-[6.5rem]`}>Qty</th>
+                <th className={`${thCls} w-[5rem]`}>Unit</th>
+                <th className={`${thNumCls} w-[6rem]`}>On hand</th>
+                <th className={thCls}>Note</th>
+                <th className={`${thCls} w-8`}>
+                  <span className="sr-only">Remove</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line, i) => (
+                <tr key={line.key} className="h-12 align-middle">
+                  <td className="border-b border-rule-soft px-1 py-1.5">
+                    <IssueItemPicker
+                      value={line.item}
+                      onPick={(hit) => patchLine(line.key, { item: hit })}
+                      onClear={() => patchLine(line.key, { item: null })}
+                    />
+                  </td>
+                  <td className="border-b border-rule-soft px-1 py-1.5">
+                    <input
+                      inputMode="decimal"
+                      placeholder="0"
+                      aria-label={`Quantity, line ${i + 1}`}
+                      value={line.qty}
+                      onChange={(e) => patchLine(line.key, { qty: cleanQty(e.target.value) })}
+                      className={`${numCls} w-full text-right font-mono tabular-nums`}
+                    />
+                  </td>
+                  <td className="border-b border-rule-soft px-2 py-1.5 text-sm text-stone-500">
+                    {line.item?.unit_name ?? '—'}
+                  </td>
+                  <td className="border-b border-rule-soft px-2 py-1.5 text-right font-mono text-sm tabular-nums text-stone-500">
+                    {line.item?.on_hand_qty ?? '—'}
+                  </td>
+                  <td className="border-b border-rule-soft px-1 py-1.5">
+                    <input
+                      placeholder="optional"
+                      aria-label={`Note, line ${i + 1}`}
+                      value={line.note}
+                      onChange={(e) => patchLine(line.key, { note: e.target.value })}
+                      maxLength={200}
+                      className={`${numCls} w-full`}
+                    />
+                  </td>
+                  <td className="border-b border-rule-soft px-1 py-1.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => removeLine(line.key)}
+                      aria-label={`Remove line ${i + 1}`}
+                      className="rounded-md p-1 text-stone-300 hover:bg-stone-100 hover:text-stone-600"
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
         <button
           type="button"

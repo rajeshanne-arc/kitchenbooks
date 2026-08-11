@@ -50,3 +50,33 @@ export const theadCls =
   'bg-stone-100 font-display text-[11px] font-semibold uppercase tracking-[0.08em] text-stone-500'
 
 export const gridRowsCls = 'divide-y divide-rule-soft'
+
+/* ── data tables ────────────────────────────────────────────────────────
+   A column drifts when the header and the body are styled in two places
+   with two sets of padding. These pair up: thCls with tdCls, thNumCls with
+   tdNumCls, same horizontal padding on both, so a heading always sits over
+   its own column. Numbers are right-aligned and tabular-figured so the
+   rupees and the decimal points line up down the column; words are left.
+   Row height is fixed rather than content-derived, so a row with a wrapped
+   note does not stand taller than its neighbours. */
+
+export const dataTableCls = 'w-full border-collapse text-sm'
+
+/** header cell — words */
+export const thCls =
+  'border-b border-rule px-3 py-2 text-left align-bottom font-display text-[11px] font-semibold uppercase tracking-[0.08em] text-stone-500'
+
+/** header cell — numbers. Right-aligned to sit over its column's digits. */
+export const thNumCls = `${thCls} text-right`
+
+/** body cell — words */
+export const tdCls = 'border-b border-rule-soft px-3 py-2 align-middle text-stone-900'
+
+/** body cell — numbers: mono, tabular, right-aligned */
+export const tdNumCls = `${tdCls} text-right font-mono tabular-nums`
+
+/** body cell — a code (V-PLT-01, CH-001, E014): mono, left, muted */
+export const tdCodeCls = `${tdCls} font-mono text-[12px] text-stone-500`
+
+/** put on <tr> so every row is the same height regardless of its content */
+export const trCls = 'h-11 hover:bg-stone-50'

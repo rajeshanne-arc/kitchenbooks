@@ -62,7 +62,10 @@ function assertRealDate(s: string, label: string) {
 const IssueSchema = z.object({
   issueDate: z.string().regex(DATE_RE),
   sectionId: z.string().regex(UUID),
-  lines: z.array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr })).min(1).max(40),
+  lines: z
+    .array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr, note: z.string().trim().max(200) }))
+    .min(1)
+    .max(40),
   indentId: z.string().regex(UUID).optional(),
 })
 
@@ -128,8 +131,9 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
         item_id: l.itemId,
         qty: l.qty.trim(),
         unit_cost: costs.get(l.itemId)!,
+        note: l.note === '' ? null : l.note,
       }))
-      await tx`insert into issue_lines ${tx(lineRows, 'issue_id', 'item_id', 'qty', 'unit_cost')}`
+      await tx`insert into issue_lines ${tx(lineRows, 'issue_id', 'item_id', 'qty', 'unit_cost', 'note')}`
       return { issueId: issue.id }
     })
 
@@ -165,7 +169,10 @@ const ReturnSchema = z.object({
   returnDate: z.string().regex(DATE_RE),
   sectionId: z.string().regex(UUID),
   reason: z.string().trim().min(1, 'Pick a reason').max(60),
-  lines: z.array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr })).min(1).max(40),
+  lines: z
+    .array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr, note: z.string().trim().max(200) }))
+    .min(1)
+    .max(40),
 })
 
 export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult> {
@@ -218,8 +225,9 @@ export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult
         item_id: l.itemId,
         qty: l.qty.trim(),
         unit_cost: costs.get(l.itemId)!,
+        note: l.note === '' ? null : l.note,
       }))
-      await tx`insert into return_lines ${tx(lineRows, 'return_id', 'item_id', 'qty', 'unit_cost')}`
+      await tx`insert into return_lines ${tx(lineRows, 'return_id', 'item_id', 'qty', 'unit_cost', 'note')}`
       return { returnId: ret.id }
     })
 

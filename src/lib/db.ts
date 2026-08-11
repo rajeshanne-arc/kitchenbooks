@@ -15,7 +15,16 @@ function connect() {
   return postgres(url, {
     prepare: false, // Supavisor transaction mode does not support prepared statements
     ssl: 'require',
-    max: 4,
+    // 12, not 4. At max:4 the pool DEADLOCKED in production: a group layout
+    // (session + restaurant + tab list + tab badges) and the page it wraps
+    // check out connections concurrently, and the heaviest page — the item
+    // master, which also fans out — needed more than four at once. Postgres
+    // showed every kb_app connection parked at wait_event ClientRead while
+    // the request waited forever for a free one, until a statement timeout
+    // (57014) finally killed it. The page hung on EVERY load, in dev and in
+    // production, and it predates Phase B. Raise this before adding another
+    // concurrent read to a layout.
+    max: 12,
     idle_timeout: 20,
     connect_timeout: 10,
   })

@@ -58,9 +58,9 @@ async function main() {
   assert.equal(c0.closing.filings, 1)
 
   // ---- 2. issues feed the month (voided at the end to restore stock)
-  const issueCH = await saveIssue({ issueDate: ISSUE_DATE, sectionId: ch.id, lines: [{ itemId: plt1.id, qty: '2' }] })
+  const issueCH = await saveIssue({ issueDate: ISSUE_DATE, sectionId: ch.id, lines: [{ itemId: plt1.id, qty: '2', note: '' }] })
   assert.ok(issueCH.ok, `issue CH failed: ${issueCH.ok === false ? issueCH.error : ''}`)
-  const issueTD = await saveIssue({ issueDate: '2001-04-10', sectionId: td.id, lines: [{ itemId: plt1.id, qty: '1' }] })
+  const issueTD = await saveIssue({ issueDate: '2001-04-10', sectionId: td.id, lines: [{ itemId: plt1.id, qty: '1', note: '' }] })
   assert.ok(issueTD.ok, `issue TD failed: ${issueTD.ok === false ? issueTD.error : ''}`)
   const issuedCH = Number(issueCH.issue.total_value)
   const issuedTD = Number(issueTD.issue.total_value)

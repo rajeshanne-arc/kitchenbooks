@@ -643,3 +643,100 @@ Seeded in the DB but unknown to `lists.ts`: `bank`, `card_machine`,
 `session`, `settlement_deduction`, `upi_machine`. Deciding which of these
 replace the three dead keys is Rajesh's call — the values are his restaurant's
 vocabulary, and the Lists screen exists so nobody has to guess them in code.
+
+## Phase B — Store first (2026-08-11)
+
+**THE POOL WAS TOO SMALL AND IT DEADLOCKED.** `src/lib/db.ts` ran `max: 4`.
+A group layout checks out connections (session, restaurant, tab list, tab
+badges) at the same time as the page it wraps, and the heaviest page — the
+item master — needed more than four at once. Postgres showed every `kb_app`
+connection parked at `wait_event ClientRead` while the request waited
+forever for a free one, until a statement timeout (57014) killed it.
+`/store/masters/items/[id]` hung on EVERY load, in dev and in production,
+and it predated Phase B. Now `max: 12`. **Raise it again before adding
+another concurrent read to a layout** — this failure is invisible in
+isolation (every query is fast on its own) and only appears under the real
+layout+page fan-out.
+
+**pnl_monthly was renamed and /owner/pnl 500'd on every load.** The view now
+says `food_beverage` / `off_book` / `net_sales`, `total_labour`,
+`total_expenses`; the query still asked for `revenue`, `labour`, `expenses`,
+`gross_margin`, `net_before_purch_overheads` and `sections_pending_closing`.
+The honesty column moved into its own view, `pnl_diagnostics`
+(month, severity, what), which the page now renders in words. Read the view
+before editing this page; the schema has moved under it once already.
+
+**The three reported bugs, and what each really was:**
+
+1. *Payment mode picker* — REAL, and it was two faults. `list_options`
+   `payment_mode` was empty (fixed in the database, not here), AND
+   `PaymentForm` carried `modes = MODES`, a hardcoded default. A JS default
+   only applies to `undefined`, so the caller passing the genuinely empty
+   list got an empty `<select>` and no fallback, while the vendor page —
+   which omitted the prop entirely — silently offered a hardcoded "Other"
+   that the list does not contain. Two call sites, two different sets of
+   modes, neither of them the list. `modes` is now REQUIRED with no
+   fallback; an empty list says so and refuses to save.
+2. *Issue autofill "lands nowhere"* — REAL, and purely client-side. The
+   server prefill was always correct. Tapping "fill it →" is a SOFT
+   navigation to the same route: the server re-rendered with the new indent,
+   but React kept the existing `IssueEntry` instance, and that component
+   seeds its state from `initialIndent` inside `useState`, which only runs on
+   mount. The URL changed and the form did not. Fixed with
+   `key={prefill?.id ?? 'blank'}` so the component remounts.
+3. *Dashboards not visible* — REAL, and it was navigation, not the pages.
+   `/kitchen` and `/store` ARE dashboards and were built and deployed; no tab
+   in `tabs.ts` pointed at either, so the only way in was the top-level nav
+   link and no tab ever lit while you were on one. `TabStrip`'s own comment
+   already anticipated a Dashboard tab. Both groups now have one, first in
+   the strip.
+
+Also found and fixed: **the legacy shims dropped their query strings.**
+`goLegacy` took only a pathname, so a bookmarked `/issue?indent=<id>` landed
+on a blank form — the same symptom as bug 2 from a different cause. Every
+shim now forwards `searchParams`.
+
+**Masters cover every column the grant allows.** Vendor: Identity / Contact /
+Banking / Terms & opening balance / Notes. Item: Identity / Units &
+conversion / Costing / Ordering / Notes. `opening_balance` is fillable at
+last — `vendor_dues` is opening + purchased − paid, so carried-over debt was
+unrepresentable before. Locked-with-reason: vendor `code`,
+`primary_category`; item `code`, `category`, `purchase_unit`. **`yield_pct`
+has an UPDATE grant and stays OUT of the UI** — recipes state gross
+quantities and an item-level yield field must not come back.
+
+**Vendor profile** leads with what people came for: balance, then a BANKING
+CARD with per-field copy buttons (an account number is retyped into a bank
+app under time pressure — the machine does the copying), then contact, then
+payment and bill history, then the editor.
+
+**Reorder** reads `reorder_due`, grouped BY VENDOR because the trip is the
+unit of work. Zero rows with zero items carrying a reorder level is an
+honesty state, not an empty one: the list says the question has not been
+asked rather than implying a full store. Tab badges (Reorder, Issue) are
+server-rendered and **silent at zero** — a "0" is a thing to read and
+dismiss every time.
+
+**Payment opens on the QUEUE**, not a search box: `vendor_dues` sorted worst
+first with days since last payment, "never paid" distinguished from "paid
+long ago". Search remains underneath for vendors owed nothing.
+
+**Multi-line entry is a TABLE.** The issue form is item / qty / unit /
+on-hand / note in aligned columns; tab crosses a row then drops. Line notes
+now persist (`issue_lines.note`, `return_lines.note` — both were already
+INSERT-granted and unused). The shared table vocabulary lives in
+`components/ui.ts` — `dataTableCls`, `thCls`/`tdCls`, `thNumCls`/`tdNumCls`,
+`tdCodeCls`, `trCls` — paired so a heading always sits over its own column,
+numbers right-aligned and tabular, row height fixed rather than
+content-derived. Use these rather than styling a table by hand.
+
+**The store has its own dashboard** at `/store`, sharing the owner's period
+control and chart rules: goods in, stock out by section, outstanding dues,
+paid out, with the alarm tiles (negative stock, reorder, open indents) above
+everything measured.
+
+**Still empty, still blocking:** `list_options` `expense_category` and
+`partner` have no active rows, so the Expense form still refuses every
+category and the Settlements partner picker is still empty. `payment_mode`
+was seeded and works. These are Rajesh's vocabulary — add them in
+Settings → Lists.

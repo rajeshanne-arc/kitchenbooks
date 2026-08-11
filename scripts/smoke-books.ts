@@ -92,6 +92,10 @@ async function main() {
     stockUnit: item.stock_unit ?? '',
     openingRate: '',
     status: 'active',
+    reorderLevel: '',
+    defaultVendorId: '',
+    itemType: '',
+    notes: '',
   })
   assert.ok(upd.ok, `updateItem failed: ${upd.ok === false ? upd.error : ''}`)
   const persisted = await getItemDetail(restaurant.id, itemId)
@@ -106,6 +110,17 @@ async function main() {
     paymentTerms: '15 days credit',
     supplies: ['Tomatoes', 'Greens'],
     status: 'active',
+    contactPerson: '',
+    altPhone: '',
+    email: '',
+    address: '',
+    bankName: '',
+    accountNo: '',
+    ifsc: '',
+    upiId: '',
+    natureOfSupply: '',
+    openingBalance: '',
+    notes: '',
   })
   assert.ok(vupd.ok, `updateVendor failed: ${vupd.ok === false ? vupd.error : ''}`)
   assert.equal(vupd.vendor.phone, '9000000000')

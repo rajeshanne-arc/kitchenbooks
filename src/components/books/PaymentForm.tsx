@@ -8,21 +8,25 @@ import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
 
-const MODES = ['Cash', 'UPI', 'Bank transfer', 'Cheque', 'Other']
-
 export default function PaymentForm({
   vendorId,
   vendorName,
-  modes = MODES,
+  modes,
 }: {
   vendorId: string
   vendorName: string
-  /** payment_mode list values (LAW 2); the hardcoded set is the fallback */
-  modes?: string[]
+  /** payment_mode list values (LAW 2). REQUIRED — there is deliberately no
+   *  hardcoded fallback. The old default was `modes = MODES`, which a JS
+   *  default only applies for `undefined`: a caller passing the genuinely
+   *  empty list got an empty <select> and no fallback, while a caller that
+   *  omitted the prop got a hardcoded 'Other' that the list does not
+   *  contain. Two call sites, two different sets of modes, neither of them
+   *  the list. LAW 2 means the list or nothing. */
+  modes: string[]
 }) {
   const [paidDate, setPaidDate] = useState(todayLocal)
   const [amount, setAmount] = useState('')
-  const [mode, setMode] = useState(modes[0] ?? 'Cash')
+  const [mode, setMode] = useState(modes[0] ?? '')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -30,7 +34,9 @@ export default function PaymentForm({
   const router = useRouter()
 
   const amountPaise = parseMoney(amount.trim())
-  const canSave = !busy && paidDate !== '' && amountPaise !== null && amountPaise > 0
+  // An empty list means the payment cannot be classified, so it cannot be
+  // recorded — said out loud rather than saved under a blank mode.
+  const canSave = !busy && paidDate !== '' && amountPaise !== null && amountPaise > 0 && mode !== ''
 
   async function submit() {
     if (!canSave) return
@@ -88,13 +94,19 @@ export default function PaymentForm({
         </label>
         <label className="block">
           <span className={fieldLabelCls}>Mode</span>
-          <select value={mode} onChange={(e) => setMode(e.target.value)} className={selectCls}>
-            {modes.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
+          {modes.length === 0 ? (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+              No payment modes are set up — add them in Settings → Lists.
+            </p>
+          ) : (
+            <select value={mode} onChange={(e) => setMode(e.target.value)} className={selectCls}>
+              {modes.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          )}
         </label>
         <label className="block">
           <span className={fieldLabelCls}>Note</span>

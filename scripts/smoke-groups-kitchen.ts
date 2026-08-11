@@ -81,13 +81,13 @@ async function main() {
   assert.ok(prefill && prefill.lines.length === 1 && prefill.lines[0].qty === '2', 'prefill carries the asked qty')
 
   // ---- 2. the issue answers it: mismatch refused, stamp + status flip
-  const wrongSection = await saveIssue({ issueDate: D1, sectionId: td.id, lines: [{ itemId: plt1.id, qty: '1' }], indentId: ind1.indent.id })
+  const wrongSection = await saveIssue({ issueDate: D1, sectionId: td.id, lines: [{ itemId: plt1.id, qty: '1', note: '' }], indentId: ind1.indent.id })
   assert.ok(!wrongSection.ok && /belongs to/i.test(wrongSection.error), 'section mismatch is refused, named')
-  const issue1 = await saveIssue({ issueDate: D1, sectionId: ch.id, lines: [{ itemId: plt1.id, qty: '1.5' }], indentId: ind1.indent.id })
+  const issue1 = await saveIssue({ issueDate: D1, sectionId: ch.id, lines: [{ itemId: plt1.id, qty: '1.5', note: '' }], indentId: ind1.indent.id })
   assert.ok(issue1.ok, `issue failed: ${issue1.ok === false ? issue1.error : ''}`)
   assert.equal(issue1.issue.indent_id, ind1.indent.id, 'the stamp ties GIVE to ASK')
   assert.equal((await listOpenIndents(rid, ch.id)).some((i) => i.id === ind1.indent.id), false, 'issued indents leave the queue')
-  const again = await saveIssue({ issueDate: D1, sectionId: ch.id, lines: [{ itemId: plt1.id, qty: '1' }], indentId: ind1.indent.id })
+  const again = await saveIssue({ issueDate: D1, sectionId: ch.id, lines: [{ itemId: plt1.id, qty: '1', note: '' }], indentId: ind1.indent.id })
   assert.ok(!again.ok && /already issued/i.test(again.error))
 
   // ---- 3. the gap is the point

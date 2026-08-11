@@ -167,6 +167,10 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
 
 const trimmedOrNull = (s: string): string | null => (s.trim() === '' ? null : s.trim())
 
+// Every column kb_app may UPDATE on vendors. code and primary_category are
+// deliberately absent: the database refuses them, so the form shows them
+// locked rather than offering an edit that would fail at the grant.
+// opening_balance is signed — a vendor can be owed money or hold an advance.
 const VendorSchema = z.object({
   name: z.string().trim().min(1).max(120),
   gstin: z.string().trim().max(20),
@@ -174,6 +178,17 @@ const VendorSchema = z.object({
   paymentTerms: z.string().trim().max(120),
   supplies: z.array(z.string().trim().min(1).max(60)).max(30),
   status: z.enum(['active', 'inactive']),
+  contactPerson: z.string().trim().max(120),
+  altPhone: z.string().trim().max(20),
+  email: z.string().trim().max(160),
+  address: z.string().trim().max(400),
+  bankName: z.string().trim().max(120),
+  accountNo: z.string().trim().max(40),
+  ifsc: z.string().trim().max(20),
+  upiId: z.string().trim().max(80),
+  natureOfSupply: z.string().trim().max(80),
+  openingBalance: z.union([z.literal(''), z.string().regex(/^-?\d{1,9}(\.\d{1,2})?$/)]),
+  notes: z.string().trim().max(2000),
 })
 
 export async function updateVendor(id: string, raw: UpdateVendorInput): Promise<UpdateVendorResult> {
@@ -184,6 +199,13 @@ export async function updateVendor(id: string, raw: UpdateVendorInput): Promise<
     const rid = restaurant.id
     const supplies = [...new Set(input.supplies.map((s) => s.trim()).filter(Boolean))]
 
+    if (input.email !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) {
+      throw new BooksError('That email address does not look right')
+    }
+    if (input.ifsc !== '' && !/^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(input.ifsc)) {
+      throw new BooksError('An IFSC is 4 letters, a zero, then 6 characters — e.g. HDFC0001234')
+    }
+
     // Only the column-granted fields ever appear in this SET.
     const updated = await sql<{ id: string }[]>`
       update vendors set
@@ -192,7 +214,18 @@ export async function updateVendor(id: string, raw: UpdateVendorInput): Promise<
         phone = ${trimmedOrNull(input.phone)},
         payment_terms = ${trimmedOrNull(input.paymentTerms)},
         supplies = ${supplies},
-        status = ${input.status}
+        status = ${input.status},
+        contact_person = ${trimmedOrNull(input.contactPerson)},
+        alt_phone = ${trimmedOrNull(input.altPhone)},
+        email = ${trimmedOrNull(input.email)},
+        address = ${trimmedOrNull(input.address)},
+        bank_name = ${trimmedOrNull(input.bankName)},
+        account_no = ${trimmedOrNull(input.accountNo)},
+        ifsc = ${input.ifsc.trim() === '' ? null : input.ifsc.trim().toUpperCase()},
+        upi_id = ${trimmedOrNull(input.upiId)},
+        nature_of_supply = ${trimmedOrNull(input.natureOfSupply)},
+        opening_balance = ${input.openingBalance === '' ? '0' : input.openingBalance}::numeric,
+        notes = ${trimmedOrNull(input.notes)}
       where id = ${id} and restaurant_id = ${rid}
       returning id`
     if (!updated[0]) throw new BooksError('Vendor not found — nothing was changed')
@@ -207,6 +240,10 @@ export async function updateVendor(id: string, raw: UpdateVendorInput): Promise<
 
 const numStr = (maxDp: number, re = `^\\d{1,5}(\\.\\d{1,${maxDp}})?$`) => z.string().regex(new RegExp(re))
 
+// Every column kb_app may UPDATE on items EXCEPT yield_pct, which stays out
+// of the UI by rule: recipes state gross quantities, so trim yield lives in
+// the recipe and an item-level yield field must not come back.
+// code, category and purchase_unit have no grant — shown locked.
 const ItemSchema = z.object({
   name: z.string().trim().min(1).max(120),
   brand: z.string().trim().max(80),
@@ -216,6 +253,10 @@ const ItemSchema = z.object({
   stockUnit: z.string().trim().max(16),
   openingRate: z.union([z.literal(''), numStr(2)]),
   status: z.enum(['active', 'inactive']),
+  reorderLevel: z.union([z.literal(''), numStr(3)]),
+  defaultVendorId: z.union([z.literal(''), z.string().regex(UUID)]),
+  itemType: z.string().trim().max(40),
+  notes: z.string().trim().max(2000),
 })
 
 export async function updateItem(id: string, raw: UpdateItemInput): Promise<UpdateItemResult> {
@@ -235,6 +276,12 @@ export async function updateItem(id: string, raw: UpdateItemInput): Promise<Upda
       if (!unit[0]) throw new BooksError(`Unknown unit “${input.stockUnit}”`)
     }
 
+    if (input.defaultVendorId !== '') {
+      const v = await sql<{ id: string }[]>`
+        select id from vendors where id = ${input.defaultVendorId} and restaurant_id = ${rid}`
+      if (!v[0]) throw new BooksError('That vendor does not belong to this restaurant')
+    }
+
     // Only the column-granted fields ever appear in this SET.
     const updated = await sql<{ id: string }[]>`
       update items set
@@ -245,7 +292,11 @@ export async function updateItem(id: string, raw: UpdateItemInput): Promise<Upda
         conversion_factor = ${input.conversionFactor}::numeric,
         stock_unit = ${input.stockUnit === '' ? null : input.stockUnit},
         opening_rate = ${input.openingRate === '' ? null : input.openingRate}::numeric,
-        status = ${input.status}
+        status = ${input.status},
+        reorder_level = ${input.reorderLevel === '' ? null : input.reorderLevel}::numeric,
+        default_vendor_id = ${input.defaultVendorId === '' ? null : input.defaultVendorId},
+        item_type = ${trimmedOrNull(input.itemType)},
+        notes = ${trimmedOrNull(input.notes)}
       where id = ${id} and restaurant_id = ${rid}
       returning id`
     if (!updated[0]) throw new BooksError('Item not found — nothing was changed')

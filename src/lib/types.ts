@@ -140,6 +140,21 @@ export type VendorDetail = {
   payment_terms: string | null
   status: 'active' | 'inactive'
   created_at: string
+  // contact
+  contact_person: string | null
+  alt_phone: string | null
+  email: string | null
+  address: string | null
+  // banking — read and copied far more often than edited
+  bank_name: string | null
+  account_no: string | null
+  ifsc: string | null
+  upi_id: string | null
+  // terms
+  nature_of_supply: string | null
+  /** load-bearing: vendor_dues is opening_balance + purchased − paid */
+  opening_balance: string
+  notes: string | null
 } & DuesSnap
 
 export type PaymentRow = {
@@ -149,6 +164,22 @@ export type PaymentRow = {
   mode: string | null
   note: string | null
   created_at: string
+}
+
+/** A vendor who is owed money — the payment queue, worst first. */
+export type VendorDueRow = {
+  id: string
+  code: string
+  name: string
+  category_name: string
+  payment_terms: string | null
+  phone: string | null
+  balance: string
+  purchased: string
+  paid: string
+  last_paid_date: string | null
+  /** null = never paid, which is not the same as "paid long ago" */
+  days_since_payment: number | null
 }
 
 export type ItemListRow = {
@@ -179,6 +210,11 @@ export type ItemDetail = {
   brand: string | null
   status: 'active' | 'inactive'
   created_at: string
+  reorder_level: string | null
+  default_vendor_id: string | null
+  default_vendor_name: string | null
+  item_type: string | null
+  notes: string | null
   /** from item_rates */
   prefill_rate: string | null
   last_rate: string | null
@@ -196,6 +232,9 @@ export type ItemHistoryRow = {
   landed: string
 }
 
+/** Every column-granted vendor field. `code` and `primary_category` are
+ *  absent on purpose — the database refuses to UPDATE them, so the form
+ *  shows them locked-with-reason rather than pretending. */
 export type UpdateVendorInput = {
   name: string
   gstin: string
@@ -203,8 +242,22 @@ export type UpdateVendorInput = {
   paymentTerms: string
   supplies: string[]
   status: 'active' | 'inactive'
+  contactPerson: string
+  altPhone: string
+  email: string
+  address: string
+  bankName: string
+  accountNo: string
+  ifsc: string
+  upiId: string
+  natureOfSupply: string
+  openingBalance: string
+  notes: string
 }
 
+/** Every column-granted item field EXCEPT yield_pct, which has a grant but
+ *  is retired from the UI: recipes state gross quantities, so trim yield
+ *  lives in the recipe, and an item-level yield field must not come back. */
 export type UpdateItemInput = {
   name: string
   brand: string
@@ -214,6 +267,10 @@ export type UpdateItemInput = {
   stockUnit: string
   openingRate: string
   status: 'active' | 'inactive'
+  reorderLevel: string
+  defaultVendorId: string
+  itemType: string
+  notes: string
 }
 
 export type PaymentInput = {
@@ -362,10 +419,26 @@ export type StockSnap = {
 
 export type ChecklistRow = { id: string; code: string; name: string; sort_order: number; issues_today: number }
 
+/** One row of reorder_due — an item at or below its reorder level. */
+export type ReorderRow = {
+  item_id: string
+  code: string
+  name: string
+  category: string
+  purchase_unit: string
+  on_hand_qty: string
+  reorder_level: string
+  par_level: string | null
+  suggested_qty: string
+  usual_vendor: string | null
+  vendor_id: string | null
+  issue_cost: string | null
+}
+
 export type SaveIssueInput = {
   issueDate: string
   sectionId: string
-  lines: { itemId: string; qty: string }[]
+  lines: { itemId: string; qty: string; note: string }[]
   /** open indent this issue answers — stamped on the issue, marks the indent issued */
   indentId?: string
 }
@@ -400,7 +473,7 @@ export type SaveReturnInput = {
   sectionId: string
   /** from the return_reason managed list — membership enforced server-side */
   reason: string
-  lines: { itemId: string; qty: string }[]
+  lines: { itemId: string; qty: string; note: string }[]
 }
 
 export type SaveReturnResult =
@@ -1358,20 +1431,34 @@ export type RecurringExpenseOffer = {
   done_this_month: boolean
 }
 
+/** One month of pnl_monthly, exactly as the view now names its columns.
+ *  cogs stays NULL — never zero — until the month has ending closings. */
 export type PnlRow = {
   month: string
-  revenue: string
-  off_book_revenue: string
-  other_income: string
+  food_beverage: string
+  off_book: string
+  net_sales: string
+  opening_store: string | null
+  opening_kitchen: string | null
+  purchases: string
+  closing_store: string | null
+  closing_kitchen: string | null
   cogs: string | null
   staff_food: string | null
-  sections_pending_closing: number
-  giveaway_cost: string
-  labour: string
-  expenses: string
-  gross_margin: string
-  net_before_purch_overheads: string
+  wages: string
+  contract_vendors: string
+  casual_labour: string
+  total_labour: string
+  controllable: string
+  occupancy: string
+  total_expenses: string
+  other_income: string
+  orders: number
+  covers: number
 }
+
+/** A row of pnl_diagnostics — the view's own honesty column, in words. */
+export type PnlDiagnostic = { month: string; severity: string; what: string }
 
 export type CreateVendorInput = {
   name: string

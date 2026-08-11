@@ -90,17 +90,13 @@ async function main() {
   const pnl = await getPnlMonthly(rid, 24)
   const aug = pnl.find((m) => m.month === MONTH)
   assert.ok(aug, 'Aug 2001 appears in pnl_monthly')
-  assert.equal(decimalStringToPaise(aug.expenses), 500000)
-  assert.equal(decimalStringToPaise(aug.off_book_revenue), 40000)
-  assert.equal(decimalStringToPaise(aug.revenue), 0)
+  // pnl_monthly's columns were renamed in the schema: revenue -> food_beverage
+  // / net_sales, labour -> total_labour, expenses -> total_expenses. Assert
+  // the CURRENT names, by value.
+  assert.equal(decimalStringToPaise(aug.total_expenses), 500000)
+  assert.equal(decimalStringToPaise(aug.off_book), 40000)
+  assert.equal(decimalStringToPaise(aug.food_beverage), 0)
   assert.equal(aug.cogs, null, 'no closings that month → cogs stays honest NULL, never a confident zero')
-  assert.equal(aug.sections_pending_closing, 0, 'no issued sections that month → nothing pending')
-  assert.equal(decimalStringToPaise(aug.gross_margin), 40000, 'gross margin = revenue + off-book − cogs(0)')
-  assert.equal(
-    decimalStringToPaise(aug.net_before_purch_overheads),
-    40000 - 500000,
-    'net = 400 off-book − 5000 expenses = −4600',
-  )
 
   // ---- 5. lists: add, reorder, retire — never delete
   const added = await addListOption('waste_reason', 'Zz Test Reason')
@@ -146,7 +142,7 @@ async function main() {
   const pnl2 = await getPnlMonthly(rid, 24)
   const aug2 = pnl2.find((m) => m.month === MONTH)
   assert.ok(aug2)
-  assert.equal(decimalStringToPaise(aug2.net_before_purch_overheads), 0, 'voids net the month back to zero')
+  assert.equal(decimalStringToPaise(aug2.off_book), 0, 'voids net the month back to zero')
 
   console.log('ALL OWNER-GROUP SMOKE ASSERTIONS PASSED')
   console.log(

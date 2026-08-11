@@ -2,6 +2,10 @@ import { goLegacy } from '@/components/LegacyRedirect'
 
 export const dynamic = 'force-dynamic'
 
-export default async function Page() {
-  await goLegacy('/wastage')
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  await goLegacy('/wastage', await searchParams)
 }

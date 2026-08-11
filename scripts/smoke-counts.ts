@@ -48,7 +48,7 @@ async function main() {
   const ch = sections.find((s) => s.code === 'CH')
   assert.ok(ch, 'CH section must exist')
 
-  const issue = await saveIssue({ issueDate: twentyDaysAgo, sectionId: ch.id, lines: [{ itemId: plt1.id, qty: '0.5' }] })
+  const issue = await saveIssue({ issueDate: twentyDaysAgo, sectionId: ch.id, lines: [{ itemId: plt1.id, qty: '0.5', note: '' }] })
   assert.ok(issue.ok, `saveIssue failed: ${issue.ok === false ? issue.error : ''}`)
   const daysWithIssue = await getIssueHistoryDays(rid)
   assert.ok(daysWithIssue >= 21, `an issue 20 days back gives ≥21 days of history, got ${daysWithIssue}`)
