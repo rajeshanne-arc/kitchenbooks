@@ -1052,3 +1052,27 @@ Security. Creating one sets `dept_kind` from the active tab, and
 `codes_dishes` is a deliberate tick shown only for kitchen departments —
 the server refuses it for operational ones, because the code becomes part of
 every dish code and cannot be moved afterwards.
+
+## Commit 4 — partners as a section, and a NOT NULL DEFAULT sweep
+
+**Settlements live INSIDE Partners now.** They were sibling tabs, which put
+the master and the thing it governs in two places and made the agreed rate
+read as trivia rather than the number every settlement is measured against.
+`/sales/settlements` is a retired URL redirecting into the section.
+
+**Variance is stated BOTH ways and the screen refuses to collapse them:**
+
+- the **rupee gap** is `billed_by_us − claimed_by_them` — money we say we
+  earned and they have not accepted. An argument about one number.
+- the **effective rate** is `commission ÷ gross` against
+  `partners.agreed_commission_pct` — what they actually kept against what
+  they said they would. An argument about the deal, which can be wrong
+  while every individual invoice reconciles perfectly.
+
+A small gap on a large period can hide a rate that drifted a point; a large
+gap can be one disputed invoice charged at exactly the agreed rate. Showing
+only one would answer the wrong question half the time.
+
+The panel LEFT JOINs from `partners`, so a partner with no settlement still
+appears — "we have never reconciled Zomato" is a finding, and an absent row
+cannot say it.

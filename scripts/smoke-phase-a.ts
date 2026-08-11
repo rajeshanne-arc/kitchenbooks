@@ -135,6 +135,8 @@ const RETIRED = [
   '/bill', '/issue', '/wastage', '/store/payment',
   '/cash', '/cash/vouchers', '/cash/other-income', '/cash/off-book', '/cash/non-revenue',
   '/cash/dues', '/cash/settlements', '/cash/fetch',
+  // settlements moved INSIDE partners — a settlement is something a partner does
+  '/sales/settlements',
   '/attendance', '/expenses', '/dashboard', '/pnl', '/settings',
   // '/kitchen/production' is a REAL route again — production split out of
   // End of shift — so it is no longer a retired URL and maps nowhere.

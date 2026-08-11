@@ -11,6 +11,7 @@ import type {
   NonRevenueRow,
   OffBookRow,
   Partner,
+  PartnerPanelRow,
   PartnerSummaryRow,
   SettlementDeductionRow,
   SettlementRow,
@@ -243,4 +244,43 @@ export async function getSettlementDeductions(settlementId: string): Promise<Set
     from settlement_deductions
     where settlement_id = ${settlementId}
     order by amount desc, deduction_type asc`
+}
+
+/** Every partner on the master, with what has been settled against them.
+ *
+ * LEFT JOIN from partners, so a partner with no settlement still appears —
+ * "we have never reconciled Zomato" is a finding, and a row that is absent
+ * cannot say it.
+ *
+ * effective_pct is commission ÷ gross: what they actually kept. agreed_pct
+ * is what they said they would. The DIFFERENCE is the point of the screen,
+ * and it is a separate question from the rupee gap: a small gap on a large
+ * period can hide a rate that drifted, and a large gap can be one disputed
+ * invoice charged at exactly the agreed rate.
+ */
+export async function getPartnerPanel(restaurantId: string): Promise<PartnerPanelRow[]> {
+  return sql<PartnerPanelRow[]>`
+    select p.name as partner,
+           p.kind,
+           p.agreed_commission_pct::text as agreed_pct,
+           count(ps.id) filter (where ps.reverses_id is null)::int as settlements,
+           coalesce(sum(ps.gross_sales), 0)::text as gross_sales,
+           coalesce(sum(ps.commission), 0)::text as commission,
+           coalesce(sum(ps.billed_by_us), 0)::text as billed,
+           coalesce(sum(ps.claimed_by_them), 0)::text as claimed,
+           coalesce(sum(ps.gap), 0)::text as gap,
+           coalesce(sum(ps.amount_received), 0)::text as received,
+           (coalesce(sum(ps.gross_sales), 0) - coalesce(sum(ps.commission), 0)
+            - coalesce(sum(ps.other_deductions), 0) - coalesce(sum(ps.amount_received), 0))::text as outstanding,
+           count(ps.id) filter (where ps.billed_by_us is null or ps.claimed_by_them is null)::int as uncompared,
+           case when coalesce(sum(ps.gross_sales), 0) > 0
+                then round(coalesce(sum(ps.commission), 0) / sum(ps.gross_sales) * 100, 2)::text
+                else null end as effective_pct
+    from partners p
+    left join partner_settlements ps
+      on ps.restaurant_id = p.restaurant_id
+     and lower(trim(ps.partner)) = lower(trim(p.name))
+    where p.restaurant_id = ${restaurantId} and p.status = 'active'
+    group by p.name, p.kind, p.agreed_commission_pct
+    order by coalesce(sum(ps.gap), 0) desc, p.name asc`
 }

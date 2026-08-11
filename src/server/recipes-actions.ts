@@ -356,7 +356,10 @@ export async function updateDishCard(
         portions = ${input.portions === '' ? null : input.portions}::numeric,
         portion_size = ${input.portionSize === '' ? null : input.portionSize}::numeric,
         portion_unit = ${trimOrNull(input.portionUnit)},
-        overhead_pct = ${input.overheadPct === '' ? null : input.overheadPct}::numeric,
+        -- NOT NULL DEFAULT 0. Blank means "no overhead applied", which is
+        -- 0 and not NULL; writing NULL here threw a not-null violation and
+        -- made the whole card unsaveable whenever the field was left empty.
+        overhead_pct = ${input.overheadPct === '' ? '0' : input.overheadPct}::numeric,
         selling_price = ${input.sellingPrice === '' ? null : input.sellingPrice}::numeric
       where id = ${recipeId} and restaurant_id = ${rid}
       returning id`

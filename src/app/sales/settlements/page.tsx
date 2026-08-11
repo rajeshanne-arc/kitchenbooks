@@ -1,32 +1,13 @@
-import { getRestaurant } from '@/server/queries'
-import { getPartnerSummaries, listPartners, listSettlements } from '@/server/cashier-queries'
-import { getList } from '@/server/settings'
-import SettlementsClient from '@/components/cash/SettlementsClient'
-import { pageSubCls, pageTitleCls } from '@/components/ui'
+import { goLegacy } from '@/components/LegacyRedirect'
 
 export const dynamic = 'force-dynamic'
 
-export default async function SettlementsPage() {
-  const restaurant = await getRestaurant()
-  const [partners, rows, summaries, deductionTypes] = await Promise.all([
-    listPartners(restaurant.id),
-    listSettlements(restaurant.id, 15),
-    getPartnerSummaries(restaurant.id),
-    getList(restaurant.id, 'settlement_deduction'),
-  ])
-
-  return (
-    <>
-      <header className="pb-4">
-        <h1 className={pageTitleCls}>Settlements</h1>
-        <p className={pageSubCls}>what Swiggy and Zomato grossed, kept, and paid</p>
-      </header>
-      <SettlementsClient
-        partners={partners}
-        deductionTypes={deductionTypes}
-        rows={rows}
-        summaries={summaries}
-      />
-    </>
-  )
+// Settlements moved INSIDE Partners — a settlement is something a partner
+// does. Phones have this one bookmarked.
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  await goLegacy('/sales/settlements', await searchParams)
 }

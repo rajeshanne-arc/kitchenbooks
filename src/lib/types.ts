@@ -1392,6 +1392,30 @@ export type VoidSettlementResult =
   | { ok: true; original: SettlementRow; reversal: SettlementRow }
   | { ok: false; error: string }
 
+/** A partner and everything settled with them, with the variance stated
+ *  BOTH ways — the rupee gap and the effective-vs-agreed rate. They are
+ *  different findings: a small gap on a huge period can hide a rate that
+ *  drifted, and a big gap can be one disputed invoice at the agreed rate. */
+export type PartnerPanelRow = {
+  partner: string
+  kind: string | null
+  /** what they said they would take */
+  agreed_pct: string | null
+  settlements: number
+  gross_sales: string
+  commission: string
+  billed: string
+  claimed: string
+  /** billed − claimed, the GENERATED column summed */
+  gap: string
+  received: string
+  outstanding: string
+  /** settlements with only one side of the comparison filled in */
+  uncompared: number
+  /** commission ÷ gross × 100 — what they ACTUALLY kept */
+  effective_pct: string | null
+}
+
 export type PartnerSummaryRow = {
   partner: string
   settlements: number
