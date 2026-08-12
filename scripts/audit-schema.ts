@@ -44,6 +44,11 @@ const SQL_KEYWORDS = new Set([
   'lag', 'lead', 'jsonb_agg', 'json_agg', 'generate_series', 'unnest', 'pg_advisory_xact_lock',
   'hashtextextended', 'gen_random_uuid', 'bool_and', 'bool_or', 'position', 'strpos', 'split_part',
   'char_length', 'ceil', 'floor', 'mod', 'power', 'sqrt', 'sign', 'width_bucket',
+  // trim(BOTH ' · ' FROM x) — these three read as bare identifiers to a
+  // word-level scanner and are keywords, not columns. Added after the gate
+  // flagged `both` as a missing column on purchase_register: a gate that
+  // cries wolf is a gate people start ignoring.
+  'both', 'leading', 'trailing',
 ])
 
 /* ── read every sql template out of the server layer ───────────────────── */

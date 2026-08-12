@@ -280,3 +280,26 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Print. One screen in this app is genuinely printed — a vendor statement,
+   because vendors ask for their account on paper — and what came out
+   carried the nav and the tab strip across the top of it. The chrome is
+   navigation; a vendor holding the sheet cannot navigate anywhere.
+
+   Marked here rather than on the components so that every future printable
+   screen inherits it: the rule is "app furniture does not print", not "this
+   one page hides these three things". */
+@media print {
+  nav,
+  [data-chrome='true'] {
+    display: none !important;
+  }
+  body {
+    background: #ffffff;
+  }
+  /* Cards are separated by rules on paper, not by shadow and fill. */
+  .rounded-2xl {
+    border-color: #e2dfd6 !important;
+    box-shadow: none !important;
+  }
+}

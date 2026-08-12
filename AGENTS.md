@@ -1413,3 +1413,106 @@ answers; it never decides.
 accountant reaches records through the registers, and the registers are the
 next commit; a half-wired deep link now would be a worse answer than the
 entity picker.
+
+### Commit 4 — the accountant's group
+
+Seven tabs, all under `/accounts`: **Review · Registers · Parties · Tax ·
+Money · Close · Export.**
+
+**Registers are ONE table, seven times.** date · doc · party · narration ·
+debit · credit, totalled at the foot, with the view it came from named
+under the title. That shape is not a design choice — it is the shape every
+accountant on earth already reads, and the app's contribution is putting
+the right rows under the right word. One route (`registers/[key]`) serves
+all seven, because seven pages would have been seven chances to drift
+apart. Sources: `purchase_register`, `sales_register`, and `money_movements`
+filtered by kind (payment · expense · wages) or by ACCOUNT KIND (cash ·
+bank). The wages register unions casual labour, contract bills and staff
+advances: the five money-out tables are an artefact of porting the sheets
+one tab at a time, and the register is where that artefact must not show.
+
+**Export is generic tabular, deliberately.** Every accounting package on
+earth takes a CSV and none of them agree on anything more specific;
+Tally/Zoho/QuickBooks layouts arrive as configuration the restaurant
+chooses, never as an assumption about which software they bought. Numbers
+go out UNFORMATTED — ₹1,04,500.00 is a string to every one of them. Two
+details in `src/lib/csv.ts` that are not fussiness: a leading `=`, `+`, `-`
+or `@` makes Excel treat a cell as a FORMULA (a vendor called "-Sons
+Traders" would execute), so those are prefixed; and the BOM makes Excel
+read UTF-8 instead of mangling every rupee sign. Both are asserted.
+
+**The one tax assumption, made configurable.** `settings.input_tax_creditable`
+— anything but the exact string `'true'` means input tax is a COST, which
+is the conservative reading and the only one safe in a country nobody has
+configured yet. The Tax screen STATES which way it is set rather than
+quietly assuming, and offers the toggle. **The screen never prints a net
+tax payable figure**: output minus input is a filing position, and this app
+does not take filing positions.
+
+**Withholdings: record what was withheld, NEVER compute a rate.** This is
+the phase's global rule in one function. TDS in India, PAYG withholding in
+Australia, backup withholding in the US — every country has the shape
+(someone kept part of a payment and owes it to a revenue authority) and no
+two agree on rates, thresholds or codes. The form takes the amount paid and
+the amount withheld; `rate_pct` is DERIVED server-side for display from
+those two, and is not an input. If it were, the next question would be
+"which rate applies?", and answering that is filing advice. `regime_code`
+is free text the customer names, never a dropdown of one country's
+sections. The only UPDATE grant is deposited_on / challan_ref / note — the
+amounts are what was withheld and never move.
+
+**The staff fund is a LIABILITY, not income** — collected on behalf of the
+staff, less what has been handed to them. The local word may be "service
+charge" or "tips"; the shape is identical, so `source` is a free-text
+column rather than a concept in the schema. A distribution moves real
+money, so it names its account like every other payment.
+
+**Bank payments follow the hands.** `/accounts/money` carries a Pay-a-vendor
+form calling the SAME `recordPayment` as the store's — one action, one
+`payments` table, one PAY series. Two screens exist because two people are
+in two places, not because there are two kinds of payment: the store
+manager hands cash to a vegetable vendor at the door and records that; the
+accountant makes the transfer at eleven at night and records this.
+
+**Opening balances** are on the money-account master, and the accountant is
+admitted to `/owner/accounts` rather than given a second copy of the same
+master. The owner tab strip filters to that single tab on its own, which is
+LAW 1 doing its job rather than a special case.
+
+**NOT BUILT, and the screen says so: reconciliation.** There is no
+reconciliation table in the schema — nothing can record that a statement
+line was matched. `/accounts/money` therefore carries an honesty strip
+saying that comparing a bank statement against these movements needs a
+table to remember what was matched, and until it exists the balances shown
+are what the app knows rather than what the bank confirms. No fake UI, no
+local-only state. **The migration it needs is the one thing this commit is
+missing** — say so rather than shipping a button that forgets.
+
+Gated in `smoke:a2`: all seven registers executed against the live database
+with a debit-XOR-credit assertion on every row (both sides filled would
+double the totals); every `money_movements.kind` claimed by exactly one
+register, so money can never appear in none; the CSV formula and BOM
+guards; the input-tax setting defaulting to cost; and — statically — that
+**every exported accountant action calls the role gate**, because a server
+action is a public endpoint and the route gate is not the check.
+
+**Two things the verify pass caught, both the same fault:** a column of
+zeroes reading as good news. The Parties screen showed every delivery
+partner at ₹0.00 outstanding when the truth was that nothing has arrived to
+compare, and the Tax screen showed "collected on sales ₹0.00" when no POS
+day had been fetched. Both now wear an honesty strip instead. **A sum over
+no rows is not a zero**, and the difference is the whole product.
+
+**Printing was carrying the app chrome.** The vendor statement is the one
+screen in this app genuinely printed — vendors ask for their account on
+paper — and the nav and tab strip came out across the top of it. `globals.css`
+now has a print block keyed on `nav` and `data-chrome="true"`, written as
+"app furniture does not print" rather than "this page hides these three
+things", so the next printable screen inherits it.
+
+**The schema gate cried wolf once and was fixed rather than worked around.**
+`trim(BOTH ' · ' FROM x)` reads as a bare identifier to a word-level
+scanner, so `both` was reported as a missing column. `both`/`leading`/
+`trailing` joined the keyword set; the `--self-test` still catches the
+`pnl_monthly.revenue` regression it was written for. A gate that cries wolf
+is a gate people start ignoring.

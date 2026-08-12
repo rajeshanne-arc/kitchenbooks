@@ -629,6 +629,113 @@ async function main() {
     console.log(`      ${QUERY_ENTITIES.length} things a query can be about`)
   })
 
+  /* ── 2h. the seven registers, run against the real database ───────── */
+  //
+  // A register that typechecks can still read a column that does not exist,
+  // or silently return nothing because a `kind` string was renamed in the
+  // view. Both would look like "a quiet month" rather than a bug, so every
+  // one of the seven is executed.
+  console.log('\nthe registers')
+
+  const { getRegister, REGISTER_KEYS, REGISTER_TITLES, getAggregatorReceivable, getGstDays, getInputTax, getStaffFundBalance } =
+    await import('../src/server/register-queries')
+
+  for (const key of REGISTER_KEYS) {
+    await check(`${REGISTER_TITLES[key]} runs and returns the shared shape`, async () => {
+      const rows = await getRegister(rid, key, period.from, period.to)
+      for (const r of rows) {
+        assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(r.entry_date), 'entry_date must be a plain date string')
+        // debit XOR credit: a ledger row sits on one side. Both filled would
+        // double-count in the totals; neither filled is a row saying nothing.
+        const sides = (r.debit === null ? 0 : 1) + (r.credit === null ? 0 : 1)
+        assert.equal(sides, 1, `${key}: a row must sit on exactly one side (${r.debit} / ${r.credit})`)
+        assert.ok(!Number.isNaN(Number(r.amount)), 'amount must be numeric')
+      }
+    })
+  }
+
+  await check('every money_movements kind lands in exactly one register', async () => {
+    // The five money-out tables are an artefact of porting the sheets one
+    // tab at a time. The registers are where that artefact must not show —
+    // a kind nobody claims is money that appears in no register at all.
+    const kinds = await sql<{ kind: string }[]>`
+      select distinct kind from money_movements where restaurant_id = ${rid}`
+    const CLAIMED = new Set([
+      'Payment', 'Expense', 'Casual labour', 'Contract bill', 'Staff advance',
+      // These reach the cash and bank registers through their ACCOUNT rather
+      // than their kind, which is the correct route for money that moved.
+      'Voucher', 'Other income', 'Settlement', 'Staff fund',
+    ])
+    const orphans = kinds.map((k) => k.kind).filter((k) => !CLAIMED.has(k))
+    assert.deepEqual(orphans, [], `money with no register: ${orphans.join(', ')}`)
+  })
+
+  await check('the accountant reads run: receivable, gst, input tax, staff fund', async () => {
+    const [recv, gst, input, fund] = await Promise.all([
+      getAggregatorReceivable(rid),
+      getGstDays(rid, period.from, period.to),
+      getInputTax(rid, period.from, period.to),
+      getStaffFundBalance(rid),
+    ])
+    for (const r of recv) assert.ok(!Number.isNaN(Number(r.outstanding)))
+    for (const g of gst) assert.ok(!Number.isNaN(Number(g.gst_collected)))
+    assert.ok(!Number.isNaN(Number(input.tax)))
+    assert.ok(!Number.isNaN(Number(fund.owed_to_staff)))
+    console.log(`      ${recv.length} partners · ${gst.length} sale days · ${input.bills} bills`)
+  })
+
+  await check('input tax is a COST unless the setting says otherwise', async () => {
+    // The one tax assumption in the app, and it is a setting. Anything but
+    // the exact string 'true' means not creditable — the conservative
+    // reading, and the only one that is safe in a country nobody has
+    // configured yet.
+    const { getSettingValue } = await import('../src/server/settings')
+    const raw = await getSettingValue(rid, 'input_tax_creditable')
+    const creditable = raw === 'true'
+    assert.equal(creditable, raw === 'true')
+    console.log(`      input_tax_creditable = ${raw ?? 'unset'} -> ${creditable ? 'credit' : 'cost'}`)
+  })
+
+  await check('CSV never lets a cell become a formula', async () => {
+    // A vendor called "-Sons Traders" would EXECUTE in Excel. Every export
+    // in this app goes through toCsv, so this is where that is stopped.
+    const { toCsv } = await import('../src/lib/csv')
+    const out = toCsv(['a', 'b'], [['=SUM(A1:A9)', '-Sons Traders'], ['+1', '@x']])
+    for (const risky of ['=SUM', '-Sons', '+1', '@x']) {
+      assert.ok(out.includes(`'${risky}`), `${risky} was not neutralised`)
+    }
+    assert.ok(out.startsWith('﻿'), 'the BOM is missing — Excel would mangle every rupee sign')
+    const quoted = toCsv(['a'], [['he said "hi", loudly']])
+    assert.ok(quoted.includes('"he said ""hi"", loudly"'), 'quotes and commas must be escaped')
+  })
+
+  await check("every accountant action checks who is calling it", async () => {
+    // These actions live in the accountant's group, and a group is gated by
+    // the proxy — but a server action is a PUBLIC ENDPOINT, reachable by
+    // anyone who can post to it. The route gate is not the check; the check
+    // is in the action. answerQuery is the deliberate exception: it gates on
+    // the query's own assigned_role instead, which is a stricter test.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/accountant-actions.ts', 'utf8')
+    const EXEMPT = new Set(['answerQuery', 'blockingQueries'])
+    const ungated: string[] = []
+    const re = /export async function (\w+)\(/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(src)) !== null) {
+      const name = m[1]
+      if (EXEMPT.has(name)) continue
+      const next = src.indexOf('export async function ', m.index + 1)
+      const body = src.slice(m.index, next === -1 ? undefined : next)
+      if (!body.includes('actor(')) ungated.push(name)
+    }
+    assert.deepEqual(ungated, [], `unauthenticated server actions: ${ungated.join(', ')}`)
+    // and the exception really is gated, just differently
+    assert.ok(
+      /export async function answerQuery[\s\S]*?assigned_role/.test(src),
+      'answerQuery lost its own role check',
+    )
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

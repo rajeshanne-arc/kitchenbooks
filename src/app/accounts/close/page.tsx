@@ -1,8 +1,13 @@
 // Closing a period. The gate — no close while a query is open — is enforced
 // in closePeriod and re-read inside its lock; this page only shows it early
 // enough to be useful.
+//
+// The staff fund shares the screen because it is the other thing that has to
+// be square before a month is finished — money held for the staff, not earned.
 import { getRestaurant } from '@/server/queries'
 import { listClosedPeriods, listOpenQueries } from '@/server/accountant-queries'
+import { getStaffFundBalance } from '@/server/register-queries'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import { todayIST } from '@/server/store-queries'
 import CloseClient from '@/components/accountant/CloseClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
@@ -24,9 +29,12 @@ function lastMonth(today: string): { from: string; to: string } {
 export default async function ClosePeriodPage() {
   const restaurant = await getRestaurant()
   const today = todayIST()
-  const [blocking, closed] = await Promise.all([
+  // one fan-out, not four awaits — the pool is shared with the group layout
+  const [blocking, closed, fund, accounts] = await Promise.all([
     listOpenQueries(restaurant.id),
     listClosedPeriods(restaurant.id),
+    getStaffFundBalance(restaurant.id),
+    listMoneyAccounts(restaurant.id),
   ])
   const offered = lastMonth(today)
 
@@ -43,6 +51,9 @@ export default async function ClosePeriodPage() {
         closed={closed}
         defaultStart={offered.from}
         defaultEnd={offered.to}
+        fund={fund}
+        accounts={accounts}
+        today={today}
       />
     </>
   )

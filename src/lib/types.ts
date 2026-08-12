@@ -1976,3 +1976,94 @@ export type ClosedPeriodRow = {
   closed_at: string
   closed_by: string | null
 }
+
+// ---------- Phase C: the accountant's registers ----------
+
+export type RegisterKey = 'purchase' | 'sales' | 'payment' | 'expense' | 'cash' | 'bank' | 'wages'
+
+/** ONE shape for all seven registers. debit and credit are nullable rather
+ *  than zero: an empty cell is how a ledger says "not this side". */
+export type RegisterRow = {
+  entry_date: string
+  doc_no: string | null
+  kind: string
+  party: string
+  narration: string
+  debit: string | null
+  credit: string | null
+  amount: string
+  account_name: string | null
+}
+
+export type VendorStatementRow = {
+  code: string
+  name: string
+  gstin: string | null
+  opening_balance: string
+  move_date: string
+  kind: string
+  doc_no: string | null
+  narration: string
+  debit: string
+  credit: string
+}
+
+export type AggregatorReceivableRow = {
+  partner: string
+  agreed_commission_pct: string | null
+  gross_billed: string
+  received: string
+  outstanding: string
+  last_settled: string | null
+}
+
+export type GstDayRow = {
+  business_date: string
+  food_bev: string
+  gst_collected: string
+  service_charge: string
+  container: string
+  effective_gst_pct: string | null
+}
+
+/** What was withheld. rate_pct is RECORDED — it is what the deduction
+ *  worked out to, never a rate this app applied. */
+export type WithholdingRow = {
+  id: string
+  wh_date: string
+  entity_type: string
+  party: string
+  regime_code: string | null
+  base_amount: string
+  rate_pct: string | null
+  amount: string
+  deposited_on: string | null
+  challan_ref: string | null
+  note: string | null
+  entered_by: string | null
+}
+
+export type SaveWithholdingInput = {
+  date: string
+  party: string
+  entityType: string
+  regimeCode: string
+  baseAmount: string
+  amount: string
+  note: string
+}
+
+export type SaveWithholdingResult = { ok: true; withholding: WithholdingRow } | { ok: false; error: string }
+
+export type StaffFundBalance = { collected: string; distributed: string; owed_to_staff: string }
+
+export type StaffFundInput = {
+  date: string
+  direction: 'collected' | 'distributed'
+  amount: string
+  source: string
+  accountId: string
+  note: string
+}
+
+export type StaffFundResult = { ok: true } | { ok: false; error: string }

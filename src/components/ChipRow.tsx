@@ -13,7 +13,12 @@ export default function ChipRow({ base, chips }: { base: string; chips: ChipDef[
   const pathname = usePathname()
   if (chips.length === 0) return null
   return (
-    <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto whitespace-nowrap px-4 sm:mx-0 sm:px-0">
+    // data-chrome: app furniture, and furniture does not print. A vendor
+    // holding a printed statement cannot navigate anywhere.
+    <div
+      data-chrome="true"
+      className="-mx-4 mb-4 flex gap-2 overflow-x-auto whitespace-nowrap px-4 sm:mx-0 sm:px-0"
+    >
       {chips.map((c) => {
         const href = `${base}/${c.key}`
         const active = pathname === href || pathname.startsWith(`${href}/`)

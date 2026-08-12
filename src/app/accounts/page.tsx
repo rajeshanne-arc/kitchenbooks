@@ -3,6 +3,7 @@
 //
 // books_completeness is rendered VERBATIM — the view owns both the wording
 // and the severity, so this page can never quietly soften what it says.
+import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import {
   getBooksCompleteness,
@@ -10,9 +11,11 @@ import {
   listQueries,
 } from '@/server/accountant-queries'
 import { countUnaccountedMovements } from '@/server/accounts-queries'
+import { getAggregatorReceivable } from '@/server/register-queries'
 import QueueClient from '@/components/accountant/QueueClient'
 import Honesty from '@/components/Honesty'
-import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { formatMoneyString } from '@/lib/money'
+import { cardCls, moneyCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,12 +27,17 @@ const TONE: Record<string, 'alarm' | 'pending'> = {
 
 export default async function AccountsReviewPage() {
   const restaurant = await getRestaurant()
-  const [completeness, open, all, unaccounted] = await Promise.all([
+  const [completeness, open, all, unaccounted, receivable] = await Promise.all([
     getBooksCompleteness(restaurant.id),
     listOpenQueries(restaurant.id),
     listQueries(restaurant.id, 40),
     countUnaccountedMovements(restaurant.id),
+    getAggregatorReceivable(restaurant.id),
   ])
+
+  // Only partners who actually owe something. A row at zero is settled, and
+  // a settled partner on a queue is a thing to read and dismiss every day.
+  const owed = receivable.filter((p) => Number(p.outstanding) > 0)
 
   const resolved = all.filter((q) => q.status === 'resolved').slice(0, 10)
 
@@ -71,6 +79,31 @@ export default async function AccountsReviewPage() {
             </p>
           )}
         </section>
+
+        {owed.length > 0 && (
+          <section className={cardCls}>
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className={sectionHeadCls}>Owed by partners</h2>
+              <Link href="/accounts/parties" className="text-xs text-stone-500 underline underline-offset-2">
+                Parties →
+              </Link>
+            </div>
+            <ul className="mt-2 divide-y divide-rule-soft">
+              {owed.map((p) => (
+                <li key={p.partner} className="flex items-center justify-between gap-3 py-1.5">
+                  <span className="min-w-0 truncate text-sm text-stone-900">{p.partner}</span>
+                  <span className={`shrink-0 text-sm ${moneyCls} text-stone-900`}>
+                    {formatMoneyString(p.outstanding)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-stone-500">
+              Billed less commission, deductions and what has actually been received. A partner with no
+              agreed rate cannot be checked against one.
+            </p>
+          </section>
+        )}
 
         <QueueClient open={open} recent={resolved} />
       </div>

@@ -34,9 +34,13 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // --- owner group ---------------------------------------------------
   ['/owner/users', ['owner']],
   ['/owner/pnl', ['owner']],
-  // The account master is owner-only. Every role uses the PICKER; only the
-  // owner decides what the accounts are called and what they opened at.
-  ['/owner/accounts', ['owner']],
+  // The money-account master. Every role uses the PICKER; only these two
+  // decide what the accounts are called and what they opened at — opening
+  // balances are an accountant's write, and this is the one screen that
+  // holds them, so they are admitted here rather than given a second copy
+  // of the same master under their own group. It is reached from
+  // /accounts/money; the owner tab strip filters to it on its own.
+  ['/owner/accounts', ['owner', 'accountant']],
   ['/owner/lists', ['manager', 'owner']],
   ['/owner/settings', ['manager', 'owner']],
   ['/owner/snapshots', ['owner']],
@@ -64,6 +68,9 @@ const RULES: [prefix: string, roles: Role[]][] = [
   ['/api/kitchen', ['chef', 'manager', 'owner']],
   ['/api/indents', ['store', 'chef', 'manager', 'owner']],
   ['/api/cash', ['cashier', 'manager', 'owner']],
+  // The CSV download. Gated exactly like the screen it comes from — a
+  // download link is the easiest thing in an app to forward onward.
+  ['/api/accounts', ['accountant', 'owner']],
 
   // --- retired URLs -----------------------------------------------------
   // Every pre-Phase-A path still resolves, as a permanent redirect into the

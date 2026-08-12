@@ -159,7 +159,27 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
   // tax, money, export) land with the rest of the accountant phase.
   accounts: [
     { key: 'review', href: '/accounts', label: 'Review' },
+    {
+      key: 'registers',
+      href: '/accounts/registers',
+      label: 'Registers',
+      // Seven registers, one shape. An accountant already knows what each of
+      // these words means; the app's job is to put the rows under them.
+      chips: [
+        { key: 'purchase', label: 'Purchase' },
+        { key: 'sales', label: 'Sales' },
+        { key: 'payment', label: 'Payment' },
+        { key: 'expense', label: 'Expense' },
+        { key: 'cash', label: 'Cash' },
+        { key: 'bank', label: 'Bank' },
+        { key: 'wages', label: 'Wages' },
+      ],
+    },
+    { key: 'parties', href: '/accounts/parties', label: 'Parties' },
+    { key: 'tax', href: '/accounts/tax', label: 'Tax' },
+    { key: 'money', href: '/accounts/money', label: 'Money' },
     { key: 'close', href: '/accounts/close', label: 'Close' },
+    { key: 'export', href: '/accounts/export', label: 'Export' },
   ],
 }
 
