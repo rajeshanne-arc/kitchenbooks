@@ -38,10 +38,10 @@ async function main() {
 
   // ---- 1. sessions: sign, verify, expire, tamper
   const secret = 'test-secret-not-the-real-one'
-  const good = await signSession({ u: 'someone', r: 'chef', exp: Math.floor(Date.now() / 1000) + 60 }, secret)
+  const good = await signSession({ u: 'someone', r: 'chef', t: rid, exp: Math.floor(Date.now() / 1000) + 60 }, secret)
   const verified = await verifySession(good, secret)
   assert.ok(verified && verified.u === 'someone' && verified.r === 'chef')
-  const expired = await signSession({ u: 'someone', r: 'chef', exp: Math.floor(Date.now() / 1000) - 5 }, secret)
+  const expired = await signSession({ u: 'someone', r: 'chef', t: rid, exp: Math.floor(Date.now() / 1000) - 5 }, secret)
   assert.equal(await verifySession(expired, secret), null, 'expired tokens die')
   const tampered = `${good.slice(0, -4)}beef`
   assert.equal(await verifySession(tampered, secret), null, 'tampered signature dies')
@@ -105,10 +105,10 @@ async function main() {
 
   // ---- 4. login: generic and slow on failure, case-insensitive on success
   const t1 = Date.now()
-  assert.equal(await verifyCredentials(rid, 'zz-rajesh', 'wrong-password'), null)
+  assert.equal(await verifyCredentials('zz-rajesh', 'wrong-password'), null)
   assert.ok(Date.now() - t1 >= 300, 'a wrong password costs a delay')
-  assert.equal(await verifyCredentials(rid, 'zz-nobody', 'first-owner-pw1'), null, 'unknown user, same null')
-  const logged = await verifyCredentials(rid, 'ZZ-RAJESH', 'first-owner-pw1')
+  assert.equal(await verifyCredentials('zz-nobody', 'first-owner-pw1'), null, 'unknown user, same null')
+  const logged = await verifyCredentials('ZZ-RAJESH', 'first-owner-pw1')
   assert.ok(logged && logged.username === 'zz-rajesh')
 
   // ---- 5. owner-only admin: one account per role, duplicates refused
@@ -152,13 +152,13 @@ async function main() {
 
   // ---- 7. reset password + retire (never delete)
   await resetPassword('owner', rid, second.id, 'a-new-password1')
-  assert.equal(await verifyCredentials(rid, 'zz-owner2', 'second-owner1'), null, 'old password dead')
-  assert.ok(await verifyCredentials(rid, 'zz-owner2', 'a-new-password1'), 'new password lives')
+  assert.equal(await verifyCredentials('zz-owner2', 'second-owner1'), null, 'old password dead')
+  assert.ok(await verifyCredentials('zz-owner2', 'a-new-password1'), 'new password lives')
   const retired = await updateUser('owner', rid, second.id, {
     displayName: 'Zz Second', role: 'owner', staffId: '', status: 'inactive',
   })
   assert.equal(retired.status, 'inactive')
-  assert.equal(await verifyCredentials(rid, 'zz-owner2', 'a-new-password1'), null, 'a retired key stops working')
+  assert.equal(await verifyCredentials('zz-owner2', 'a-new-password1'), null, 'a retired key stops working')
 
   // ---- 8. the database refuses DELETE — retire is the only removal
   await assert.rejects(

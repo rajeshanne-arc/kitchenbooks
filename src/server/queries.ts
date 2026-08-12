@@ -5,14 +5,46 @@ import 'server-only'
 import { sql } from '@/lib/db'
 import type { Category, ItemHit, ItemHitExisting, ItemHitStarter, Restaurant, Unit, VendorHit } from '@/lib/types'
 
-let restaurantCache: Restaurant | null = null
 
-/** The single restaurant row (Thrayam for now). Cached per server instance. */
+/**
+ * WHICH BOOKS AM I IN. Derived from the session, never from a query.
+ *
+ * This used to be `select … from restaurants order by created_at asc
+ * limit 1` — the OLDEST row, with no reference to who was logged in — and
+ * `getSessionUser` matched on username alone. Together those were ONE
+ * fault, not two: anyone holding valid credentials for tenant #2 logged in
+ * and operated on tenant #1's books. Reads AND writes.
+ *
+ * The result was also cached in a module-level variable, which on Fluid
+ * Compute is process-wide across concurrent requests on the same instance —
+ * so even a correct per-request lookup would have been poisoned by whoever
+ * asked first. That cache is gone and must not come back.
+ *
+ * THE FALLBACK IS PROVABLY UNAMBIGUOUS, which is why it is allowed to
+ * exist. Outside a request — smoke suites, build-time — there is no
+ * session; the fallback answers only while the database holds EXACTLY ONE
+ * restaurant, because then there is only one possible answer and it cannot
+ * be the wrong one. The moment a second tenant exists it refuses by name.
+ * A guess that cannot be wrong is not a guess; a guess that could be is the
+ * bug this replaced.
+ */
 export async function getRestaurant(): Promise<Restaurant> {
-  if (restaurantCache) return restaurantCache
-  const rows = await sql<Restaurant[]>`select id, name from restaurants order by created_at asc limit 1`
+  const { getSessionUser } = await import('@/server/current-user')
+  const user = await getSessionUser()
+  if (user) {
+    const rows = await sql<Restaurant[]>`
+      select id, name from restaurants where id = ${user.restaurantId}`
+    if (!rows[0]) throw new Error('The signed-in account points at a restaurant that no longer exists')
+    return rows[0]
+  }
+
+  const rows = await sql<Restaurant[]>`select id, name from restaurants order by created_at asc limit 2`
   if (!rows[0]) throw new Error('No restaurant row found — seed the restaurants table first')
-  restaurantCache = rows[0]
+  if (rows.length > 1) {
+    throw new Error(
+      'More than one restaurant exists and this call has no session to say which — every path must carry a tenant before a second tenant is created',
+    )
+  }
   return rows[0]
 }
 

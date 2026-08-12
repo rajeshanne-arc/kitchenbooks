@@ -26,11 +26,11 @@ function fail(e: unknown): { ok: false; error: string } {
   return { ok: false, error: 'Something went wrong — nothing was saved' }
 }
 
-async function setSessionCookie(username: string, role: string) {
+async function setSessionCookie(username: string, role: string, restaurantId: string) {
   const secret = process.env.KB_SESSION_SECRET
   if (!secret) throw new AuthError('KB_SESSION_SECRET is not configured')
   const exp = Math.floor(Date.now() / 1000) + SESSION_DAYS * 24 * 3600
-  const token = await signSession({ u: username, r: role, exp }, secret)
+  const token = await signSession({ u: username, r: role, t: restaurantId, exp }, secret)
   const jar = await cookies()
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
@@ -46,10 +46,12 @@ const LoginSchema = z.object({ username: z.string().trim().min(1).max(60), passw
 export async function login(raw: { username: string; password: string }): Promise<LoginResult> {
   try {
     const input = LoginSchema.parse(raw)
-    const restaurant = await getRestaurant()
-    const user = await verifyCredentials(restaurant.id, input.username, input.password)
+    // No getRestaurant() here on purpose: the credentials RESOLVE the
+    // tenant. Asking which restaurant before knowing who is asking was the
+    // fault — it answered "the oldest one" every time.
+    const user = await verifyCredentials(input.username, input.password)
     if (!user) return { ok: false, error: 'Wrong username or password' }
-    await setSessionCookie(user.username, user.role)
+    await setSessionCookie(user.username, user.role, user.restaurant_id)
     return { ok: true, role: user.role }
   } catch (e) {
     return fail(e)
@@ -79,7 +81,11 @@ export async function setupFirstOwner(raw: {
     const input = SetupSchema.parse(raw)
     const restaurant = await getRestaurant()
     const user = await createFirstOwner(restaurant.id, input)
-    await setSessionCookie(user.username, user.role)
+    // /setup has no session yet, so getRestaurant() answers from the
+    // single-restaurant fallback — which refuses once a second tenant
+    // exists. Bootstrap for a new tenant will name its restaurant
+    // explicitly when provisioning lands in Phase 3.
+    await setSessionCookie(user.username, user.role, restaurant.id)
     return { ok: true, username: user.username }
   } catch (e) {
     return fail(e)

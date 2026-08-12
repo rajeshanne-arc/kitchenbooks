@@ -9,7 +9,15 @@ import { sql } from '@/lib/db'
 import { SESSION_COOKIE, verifySession } from '@/lib/session'
 import type { Role } from '@/lib/roles'
 
-export type SessionUser = { username: string; displayName: string; role: Role }
+export type SessionUser = {
+  username: string
+  displayName: string
+  role: Role
+  /** WHICH BOOKS. Resolved from the app_users row, not from the cookie's
+   *  claim, so a re-tenanted or retired account cannot keep operating on
+   *  the tenant its old token named. */
+  restaurantId: string
+}
 
 export async function getSessionUser(): Promise<SessionUser | null> {
   let token: string | undefined
@@ -22,12 +30,22 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!secret) return null
   const payload = await verifySession(token, secret)
   if (!payload) return null
-  const rows = await sql<{ username: string; display_name: string; role: Role }[]>`
-    select username, display_name, role from app_users
+  const rows = await sql<{ username: string; display_name: string; role: Role; restaurant_id: string }[]>`
+    select username, display_name, role, restaurant_id from app_users
     where lower(username) = lower(${payload.u}) and status = 'active'`
+  if (rows.length !== 1) return null // ambiguous or absent is not a session
   const user = rows[0]
-  if (!user || user.role !== payload.r) return null
-  return { username: user.username, displayName: user.display_name, role: user.role }
+  if (user.role !== payload.r) return null
+  // The cookie's tenant must still be the row's tenant. They can only differ
+  // if the token predates a change, and a stale claim about WHICH BOOKS is
+  // the one claim that must never be honoured.
+  if (payload.t !== user.restaurant_id) return null
+  return {
+    username: user.username,
+    displayName: user.display_name,
+    role: user.role,
+    restaurantId: user.restaurant_id,
+  }
 }
 
 /** The username that goes into entered_by everywhere. */

@@ -46,7 +46,8 @@ export async function addListOption(rawKey: string, rawValue: string): Promise<L
         where restaurant_id = ${rid} and list_key = ${key} and lower(value) = lower(${value})`
       if (existing) {
         if (existing.status === 'active') throw new SettingsError('That value is already on the list')
-        await tx`update list_options set status = 'active' where id = ${existing.id}`
+        await tx`update list_options set status = 'active'
+                 where id = ${existing.id} and restaurant_id = ${rid}`
         return
       }
       const [{ next }] = await tx<{ next: number }[]>`
@@ -88,7 +89,8 @@ export async function moveListOption(id: string, dir: 'up' | 'down'): Promise<Li
       const order = all.map((o) => o.id)
       ;[order[idx], order[swapWith]] = [order[swapWith], order[idx]]
       for (const [i, oid] of order.entries()) {
-        await tx`update list_options set sort_order = ${i + 1} where id = ${oid}`
+        await tx`update list_options set sort_order = ${i + 1}
+                 where id = ${oid} and restaurant_id = ${rid}`
       }
     })
 
@@ -275,7 +277,8 @@ export async function noteListSuggestion(
       where restaurant_id = ${restaurantId} and list_key = ${listKey}
         and lower(value) = ${clean.toLowerCase()}`
     if (existing) {
-      await sql`update list_suggestions set seen_count = ${existing.seen_count + 1} where id = ${existing.id}`
+      await sql`update list_suggestions set seen_count = ${existing.seen_count + 1}
+                where id = ${existing.id} and restaurant_id = ${restaurantId}`
     } else {
       await sql`
         insert into list_suggestions (restaurant_id, list_key, value, suggested_by, seen_count, status)
@@ -332,7 +335,8 @@ export async function approveSuggestion(
         select id from list_options
         where restaurant_id = ${rid} and list_key = ${sug.list_key} and lower(value) = ${sug.value.toLowerCase()}`
       if (dup) {
-        await tx`update list_options set status = 'active' where id = ${dup.id}`
+        await tx`update list_options set status = 'active'
+                 where id = ${dup.id} and restaurant_id = ${rid}`
       } else {
         const [{ next }] = await tx<{ next: number }[]>`
           select coalesce(max(sort_order), 0) + 1 as next from list_options
@@ -340,7 +344,8 @@ export async function approveSuggestion(
         await tx`insert into list_options (restaurant_id, list_key, value, sort_order)
                  values (${rid}, ${sug.list_key}, ${sug.value}, ${next})`
       }
-      await tx`update list_suggestions set status = 'accepted' where id = ${id}`
+      await tx`update list_suggestions set status = 'accepted'
+                 where id = ${id} and restaurant_id = ${rid}`
     })
 
     return { ok: true, options: await getAllListOptions(rid) }

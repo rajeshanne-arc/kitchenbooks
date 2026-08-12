@@ -48,18 +48,34 @@ export async function anyUsers(restaurantId: string): Promise<boolean> {
 
 /** Login check. Wrong anything → null after a uniform small delay; the
  * error the caller shows stays generic on purpose. */
+/**
+ * The credential check RESOLVES THE TENANT rather than being told it.
+ *
+ * It used to take a restaurantId, which the caller got from "the oldest row
+ * in restaurants" — so the password was checked against the wrong tenant's
+ * users the moment there were two. Now the matched row carries the tenant,
+ * and that is what the session is signed with.
+ *
+ * Usernames are globally unique by decision (see AGENTS.md): a person
+ * belongs to exactly one restaurant. Until the unique index lands this
+ * REFUSES a username that matches in more than one tenant rather than
+ * picking one — an ambiguous login is not a login.
+ */
 export async function verifyCredentials(
-  restaurantId: string,
   username: string,
   password: string,
-): Promise<AppUserRow | null> {
-  const rows = await sql<(AppUserRow & { password_hash: string })[]>`
+): Promise<(AppUserRow & { restaurant_id: string }) | null> {
+  const rows = await sql<(AppUserRow & { password_hash: string; restaurant_id: string })[]>`
     select u.id, u.username, u.display_name, u.role, u.staff_id,
            null as staff_name, null as staff_code,
-           u.status, u.created_at::text as created_at, u.password_hash
+           u.status, u.created_at::text as created_at, u.password_hash,
+           u.restaurant_id
     from app_users u
-    where u.restaurant_id = ${restaurantId} and lower(u.username) = lower(${username})
-      and u.status = 'active'`
+    where lower(u.username) = lower(${username}) and u.status = 'active'`
+  if (rows.length > 1) {
+    await sleep(350)
+    return null
+  }
   const user = rows[0]
   const ok = user !== undefined && (await bcrypt.compare(password, user.password_hash))
   if (!ok) {
@@ -183,13 +199,20 @@ export async function updateUser(
         select id from staff where id = ${input.staffId} and restaurant_id = ${restaurantId}`
       if (!st[0]) throw new AuthError('Staff link not found')
     }
-    await tx`
+    // TENANT-SCOPED, and this one mattered most of the ten: without it an
+    // owner of tenant #1 could change the role or status of tenant #2's
+    // user — a cross-tenant write on the table that decides who may do
+    // anything at all.
+    const [changed] = await tx<{ id: string }[]>`
       update app_users
       set display_name = ${displayName}, role = ${input.role},
           staff_id = ${input.staffId === '' ? null : input.staffId}, status = ${input.status}
-      where id = ${userId}`
+      where id = ${userId} and restaurant_id = ${restaurantId}
+      returning id`
+    if (!changed) throw new AuthError('User not found')
   })
-  const rows = await sql<AppUserRow[]>`${sql.unsafe(USER_SELECT)} where u.id = ${userId}`
+  const rows = await sql<AppUserRow[]>`
+    ${sql.unsafe(USER_SELECT)} where u.id = ${userId} and u.restaurant_id = ${restaurantId}`
   if (!rows[0]) throw new AuthError('Could not read the user back after save')
   return rows[0]
 }

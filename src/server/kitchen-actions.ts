@@ -361,7 +361,8 @@ export async function cancelIndent(id: string): Promise<IndentStatusResult> {
         select status from indents where id = ${id} and restaurant_id = ${rid}`
       if (!row) throw new KitchenError('Indent not found')
       if (row.status !== 'open') throw new KitchenError(`This indent is ${row.status} — only open indents cancel`)
-      await tx`update indents set status = 'cancelled' where id = ${id}`
+      await tx`update indents set status = 'cancelled'
+                 where id = ${id} and restaurant_id = ${rid}`
     })
     const indent = await getIndent(rid, id)
     if (!indent || indent.status !== 'cancelled') throw new KitchenError('Verification failed: indent not cancelled')

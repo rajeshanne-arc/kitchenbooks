@@ -121,7 +121,8 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
         if (indent.section_id !== input.sectionId) {
           throw new StoreError(`That indent belongs to ${indent.section_name} — issue to that section, or drop the indent`)
         }
-        await tx`update indents set status = 'issued' where id = ${input.indentId}`
+        await tx`update indents set status = 'issued'
+                 where id = ${input.indentId} and restaurant_id = ${rid}`
       }
 
       // Snapshot each item's cost from item_costs inside the transaction.

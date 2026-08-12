@@ -3,7 +3,13 @@
 // is KB_SESSION_SECRET (32 random bytes, generated once, lives only in the
 // environment). Format: v1.<hex payload>.<hex signature>.
 
-export type SessionPayload = { u: string; r: string; exp: number }
+/** u = username, r = role, t = TENANT (restaurant id), exp = expiry.
+ *
+ *  `t` is the whole of Phase 1.5. Before it, the session named who you were
+ *  and not which books you were in, and the app answered that second
+ *  question by taking the OLDEST row in `restaurants` — so anyone with
+ *  valid credentials for tenant #2 logged in and operated on tenant #1. */
+export type SessionPayload = { u: string; r: string; t: string; exp: number }
 
 const enc = new TextEncoder()
 

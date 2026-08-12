@@ -767,7 +767,10 @@ async function main() {
         const m = (e as Error).message
         // no staff yet is a valid state, not a failure of the constraint
         if (m === 'CHECK_UNTESTABLE') return true
-        return /days_paid/.test(m)
+        // the constraint is named payroll_lines_check, so Postgres's message
+        // names the CONSTRAINT and not the column — matching on 'days_paid'
+        // passed only while there were no staff to test it against
+        return /check constraint/i.test(m) && /payroll_lines/.test(m)
       },
       '34 days in a 30-day month was accepted — the CHECK is gone',
     )
@@ -1685,6 +1688,74 @@ async function main() {
       readFileSync('src/app/api/accounts/export/route.ts', 'utf8').includes('isRegisterKey'),
       'the export route must survive the screen folding away',
     )
+  })
+
+  /* ── 2o. which books am I in ──────────────────────────────────────── */
+  console.log('\ntenancy')
+
+  await check('the session carries the tenant, and the cache is gone', async () => {
+    const { readFileSync } = await import('node:fs')
+    const session = readFileSync('src/lib/session.ts', 'utf8')
+    assert.match(session, /t: string/, 'SessionPayload lost its tenant')
+
+    const queries = readFileSync('src/server/queries.ts', 'utf8')
+    assert.ok(!/restaurantCache/.test(queries), 'the module-level restaurant cache came back')
+    assert.ok(
+      !/order by created_at asc\s*\n?\s*limit 1`/.test(queries),
+      'getRestaurant is picking the oldest row again',
+    )
+    assert.match(queries, /getSessionUser\(\)/, 'getRestaurant no longer derives from the session')
+
+    const cur = readFileSync('src/server/current-user.ts', 'utf8')
+    assert.match(cur, /payload\.t !== user\.restaurant_id/, 'a stale tenant claim would be honoured')
+    assert.match(cur, /rows\.length !== 1/, 'an ambiguous username would resolve to a tenant')
+
+    const core = readFileSync('src/server/auth-core.ts', 'utf8')
+    const start = core.indexOf('export async function verifyCredentials(')
+    const body = core.slice(start, core.indexOf('\nexport ', start + 1))
+    assert.ok(!/restaurantId: string/.test(body), 'verifyCredentials is told the tenant again')
+    assert.match(body, /rows\.length > 1/, 'an ambiguous login would pick a tenant')
+  })
+
+  await check('the no-session fallback answers only while it cannot be wrong', async () => {
+    // Outside a request there is no session. The fallback is allowed to
+    // exist because it reads limit 2 and REFUSES when a second restaurant
+    // exists — a guess that cannot be wrong is not a guess.
+    const { readFileSync } = await import('node:fs')
+    const q = readFileSync('src/server/queries.ts', 'utf8')
+    assert.match(q, /limit 2`/, 'the fallback stopped checking for a second tenant')
+    assert.match(q, /rows\.length > 1/, 'the fallback would silently pick one of two tenants')
+    // and it still works today, because there is exactly one
+    const { getRestaurant } = await import('../src/server/queries')
+    const r = await getRestaurant()
+    assert.ok(r.id.length === 36, 'the fallback stopped answering for the single tenant')
+  })
+
+  await check('every UPDATE names its tenant', async () => {
+    // A cross-tenant WRITE is worse than a cross-tenant read: it corrupts
+    // another restaurant's workflow rather than merely exposing it.
+    const { readdirSync, readFileSync } = await import('node:fs')
+    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    const scoped = new Set(
+      (
+        await sql<{ table_name: string }[]>`
+          select table_name from information_schema.columns
+          where table_schema = 'public' and column_name = 'restaurant_id'`
+      ).map((r) => r.table_name),
+    )
+    const bad: string[] = []
+    for (const f of files) {
+      // ${…} holes are flattened FIRST: a set list containing sql`sort_order`
+      // carries a backtick inside an expression, which would end the match
+      // before the where clause and report a scoped update as unscoped.
+      const src = readFileSync(f, 'utf8').replace(/\$\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, ' ? ')
+      for (const m of src.matchAll(/update\s+([a-z_]+)\s+set[\s\S]{0,1200}?`/g)) {
+        const table = m[1]
+        if (!scoped.has(table) || table === 'restaurants') continue
+        if (!/restaurant_id/.test(m[0])) bad.push(`${f}: update ${table}`)
+      }
+    }
+    assert.deepEqual(bad, [], `cross-tenant writes:\n      ${bad.join('\n      ')}`)
   })
 
   /* ── 3. the return path's list is real ────────────────────────────── */

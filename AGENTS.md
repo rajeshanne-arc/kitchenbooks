@@ -2050,3 +2050,63 @@ the component, do not infer from the tab's label.** Two screens about
 departments are not the same screen. `/store` and `/sales` Books kept every
 entry — none is reachable from a tab in their own group, so they are reports
 rather than second doors.
+
+## Multi-tenancy — the one fault, and Phase 1.5
+
+**ONE FAULT, NOT TWO.** `getRestaurant()` returned the OLDEST row in
+`restaurants`, and `getSessionUser` matched on username alone. Neither is
+harmless on its own and together they are not two bugs but one sentence:
+
+> **Anyone holding valid credentials for tenant #2 logs in and operates on
+> tenant #1's books.** Reads and writes.
+
+RLS fed from that source would have been worse than no RLS: it would have
+looked secure and faithfully enforced the wrong tenant. **Order is not
+negotiable — the source of truth is fixed first, the GUC second, RLS
+third.**
+
+### Phase 1.5, done
+
+- `SessionPayload` carries `t`, the restaurant id, signed at login from the
+  authenticated `app_users` row. `verifyCredentials` RESOLVES the tenant
+  rather than being told it — it used to be handed one by a caller that got
+  it from "the oldest row".
+- `getSessionUser` matches the username, reads the tenant from that row, and
+  **refuses when the cookie's `t` disagrees with it** — a stale claim about
+  WHICH BOOKS is the one claim that must never be honoured. It also refuses
+  when more than one row matches, which is the state the unique index will
+  make impossible.
+- `getRestaurant()` derives from the session. **`restaurantCache` is
+  deleted and must not come back**: a module-level variable is process-wide
+  across concurrent requests on the same Fluid Compute instance, so even a
+  correct per-request lookup would have been poisoned by whoever asked
+  first.
+- **The no-session fallback is allowed to exist because it cannot be
+  wrong.** Outside a request — smoke suites, build — it reads `limit 2` and
+  answers only while the database holds exactly ONE restaurant; with two it
+  refuses by name. A guess that cannot be wrong is not a guess.
+
+### The writes are closed first
+
+A cross-tenant WRITE corrupts another restaurant's workflow; a read merely
+exposes it. Ten unscoped `UPDATE`s are now scoped, and a gate asserts every
+`UPDATE` on a tenant table names its tenant. **The worst was
+`updateUser`** — `where id = ${userId}` with no tenant, on the table that
+decides who may do anything at all: an owner of one restaurant could change
+the role or status of another's user.
+
+Two lessons from writing that gate, both about the instrument rather than
+the code: flatten `${…}` holes before matching, because a `SET` list
+containing ``sql`sort_order` `` carries a backtick that ends the match early
+and reports a scoped statement as unscoped; and match a CHECK violation on
+the CONSTRAINT name, since Postgres names the constraint and not the column
+— `payroll_lines_check` never contains the string `days_paid`, so that
+assertion had been passing only because there were no staff to test it
+against.
+
+### Still open
+
+`audit:tenancy` reports **50** statements that read a tenant table and name
+no tenant, down from 58. They are reads, and RLS will close them
+wholesale — but the audit stays, and `--strict` becomes a gate once the
+count reaches zero.
