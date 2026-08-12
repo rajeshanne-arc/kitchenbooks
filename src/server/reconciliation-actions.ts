@@ -168,13 +168,14 @@ export async function importStatement(raw: ImportStatementInput): Promise<Import
       if (!statement) throw new ReconcileError('The statement could not be saved')
 
       const rows = lines.map((l) => ({
+        restaurant_id: restaurant.id,
         statement_id: statement.id,
         stmt_date: l.date,
         description: l.description === '' ? null : l.description,
         reference: l.reference === '' ? null : l.reference,
         amount: l.amount,
       }))
-      await tx`insert into statement_lines ${tx(rows, 'statement_id', 'stmt_date', 'description', 'reference', 'amount')}`
+      await tx`insert into statement_lines ${tx(rows, 'restaurant_id', 'statement_id', 'stmt_date', 'description', 'reference', 'amount')}`
 
       // Read back inside the transaction: if the count the view reports is
       // not the count that was pasted, nothing at all is written.

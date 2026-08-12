@@ -205,6 +205,7 @@ export async function persistFetch(
         returning id`
       if (o.lines.length > 0) {
         const lineRows = o.lines.map((l) => ({
+          restaurant_id: restaurantId,
           order_id: order.id,
           pos_item_id: l.pos_item_id,
           item_name: l.item_name,
@@ -213,7 +214,7 @@ export async function persistFetch(
           tax: l.tax,
           discount: l.discount,
         }))
-        await tx`insert into pos_lines ${tx(lineRows, 'order_id', 'pos_item_id', 'item_name', 'qty', 'amount', 'tax', 'discount')}`
+        await tx`insert into pos_lines ${tx(lineRows, 'restaurant_id', 'order_id', 'pos_item_id', 'item_name', 'qty', 'amount', 'tax', 'discount')}`
         insertedLines += lineRows.length
       }
     }

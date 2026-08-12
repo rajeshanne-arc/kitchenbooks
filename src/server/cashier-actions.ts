@@ -178,12 +178,13 @@ export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSett
         returning id`
       if (input.deductions.length > 0) {
         const rows = input.deductions.map((d) => ({
+          restaurant_id: rid,
           settlement_id: row.id,
           deduction_type: d.type,
           amount: d.amount,
           note: d.note === '' ? null : d.note,
         }))
-        await tx`insert into settlement_deductions ${tx(rows, 'settlement_id', 'deduction_type', 'amount', 'note')}`
+        await tx`insert into settlement_deductions ${tx(rows, 'restaurant_id', 'settlement_id', 'deduction_type', 'amount', 'note')}`
       }
       return { id: row.id }
     })

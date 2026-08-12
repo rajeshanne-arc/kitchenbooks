@@ -149,13 +149,14 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
         returning id`
 
       const lineRows = input.lines.map((l) => ({
+        restaurant_id: rid,
         issue_id: issue.id,
         item_id: l.itemId,
         qty: l.qty.trim(),
         unit_cost: costs.get(l.itemId)!,
         note: l.note === '' ? null : l.note,
       }))
-      await tx`insert into issue_lines ${tx(lineRows, 'issue_id', 'item_id', 'qty', 'unit_cost', 'note')}`
+      await tx`insert into issue_lines ${tx(lineRows, 'restaurant_id', 'issue_id', 'item_id', 'qty', 'unit_cost', 'note')}`
       return { issueId: issue.id }
     })
 
@@ -253,13 +254,14 @@ export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult
         returning id`
 
       const lineRows = input.lines.map((l) => ({
+        restaurant_id: rid,
         return_id: ret.id,
         item_id: l.itemId,
         qty: l.qty.trim(),
         unit_cost: costs.get(l.itemId)!,
         note: l.note === '' ? null : l.note,
       }))
-      await tx`insert into return_lines ${tx(lineRows, 'return_id', 'item_id', 'qty', 'unit_cost', 'note')}`
+      await tx`insert into return_lines ${tx(lineRows, 'restaurant_id', 'return_id', 'item_id', 'qty', 'unit_cost', 'note')}`
       return { returnId: ret.id }
     })
 

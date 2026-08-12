@@ -67,7 +67,12 @@ function walk(dir: string, out: string[] = []): string[] {
 /** Pull out sql`…` / tx`…` bodies, with ${…} holes replaced by a marker. */
 function extractStatements(file: string, src: string): Stmt[] {
   const out: Stmt[] = []
-  const re = /\b(?:sql|tx)\s*(?:<[^`]*?>)?\s*`/g
+  // tsql TOO. When every read was renamed sql -> tsql for the tenancy GUC,
+  // this regex stopped matching them and the gate quietly fell from 2088
+  // column references to 234 — still green, checking almost nothing. That is
+  // the "an assertion that cannot fail has not been tested" rule biting the
+  // instrument that enforces it, so the count is now printed and watched.
+  const re = /\b(?:tsql|sql|tx)\s*(?:<[^`]*?>)?\s*`/g
   let m: RegExpExecArray | null
   while ((m = re.exec(src)) !== null) {
     let i = m.index + m[0].length

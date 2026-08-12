@@ -60,6 +60,29 @@ export async function txn<T>(fn: (tx: postgres.TransactionSql) => Promise<T>): P
     const { getSessionUser } = await import('@/server/current-user')
     tenant = (await getSessionUser())?.restaurantId ?? null
   }
+  // THE SESSIONLESS PATHS, and the outage they caused.
+  //
+  // Login runs BEFORE there is a session: it looks a username up in order to
+  // discover which restaurant the person belongs to. Under RLS that read has
+  // no tenant to announce, so the policy casts an empty setting to uuid and
+  // raises 22P02 — and `restaurants` is RLS'd too, so there is nothing left
+  // to discover the tenant FROM. The morning RLS went on, /login returned
+  // 500 for everyone and the whole app was unreachable.
+  //
+  // KB_TENANT names the restaurant THIS DEPLOYMENT serves. It is a
+  // deployment fact, not a user's answer, so it is a legitimate default in a
+  // way `issues.session` defaulting to 'Morning' never was — it is not
+  // standing in for a question anybody was asked.
+  //
+  // BUT IT MAKES LOGIN SINGLE-TENANT, and that is the limitation to remove
+  // before a second restaurant signs in: a second tenant's users would not
+  // be found by this lookup at all. The permanent fix is a SECURITY DEFINER
+  // function that resolves a username to its tenant across the pool —
+  // authentication crosses tenants BY DEFINITION, so it is the one read that
+  // has to, and a definer function is the narrow hole to do it through
+  // rather than loosening a policy. Everything after login stays scoped by
+  // the session, which is why this hole is one lookup wide.
+  if (tenant === null) tenant = process.env.KB_TENANT ?? null
   const guc = tenantGuc(tenant)
   return sql.begin(async (tx) => {
     if (guc !== null) await tx.unsafe(guc)

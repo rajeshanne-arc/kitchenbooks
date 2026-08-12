@@ -128,8 +128,8 @@ export async function addCateringExpense(
     if (!event) throw new CateringError('That event does not exist')
 
     await tsql`
-      insert into catering_expenses (catering_id, description, amount, paid_via)
-      values (${input.cateringId}, ${input.description === '' ? null : input.description},
+      insert into catering_expenses (restaurant_id, catering_id, description, amount, paid_via)
+      values (${rid}, ${input.cateringId}, ${input.description === '' ? null : input.description},
               ${input.amount}, ${input.paidVia === '' ? null : input.paidVia})`
     return { ok: true }
   } catch (e) {

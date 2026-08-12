@@ -38,7 +38,25 @@ const check = (name: string, fn: () => void | Promise<void>) => {
   }
 }
 
+/**
+ * A SCRIPT HAS NO SESSION, and under RLS an unannounced read sees nothing —
+ * every tenant table raises 22P02, because the policy casts an empty
+ * current_setting to uuid. So the suite announces its tenant explicitly, the
+ * way a background job would. KB_TENANT lives in .env.local; it is a
+ * restaurant id, not a secret.
+ */
 async function main() {
+  const { withTenant } = await import('../src/lib/tenant')
+  const tenant = process.env.KB_TENANT
+  if (!tenant) {
+    console.log('\nKB_TENANT is not set. Under RLS a script must name the tenant it is testing —')
+    console.log('add KB_TENANT=<restaurant id> to .env.local.\n')
+    process.exit(1)
+  }
+  return withTenant(tenant, run)
+}
+
+async function run() {
   /* ── 1. the period control, by value ──────────────────────────────── */
   console.log('\nthe period control resolves by value')
 
@@ -173,14 +191,14 @@ async function main() {
   // inside a transaction that rolls back so nothing is left behind.
   console.log('\na flagged voucher reaches the P&L labour line')
 
-  const { sql } = await import('../src/lib/db')
+  const { sql, tsql, txn } = await import('../src/lib/db')
 
   await check('a cash voucher flagged as casual labour lands on pnl_monthly.casual_labour', async () => {
     const month = `${new Date().toISOString().slice(0, 7)}-01`
     let before = 0
     let after = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [b] = await tx<{ v: string }[]>`
           select coalesce(casual_labour, 0)::text as v from pnl_monthly
           where restaurant_id = ${rid} and month = ${month}::date`
@@ -210,7 +228,7 @@ async function main() {
     let before = 0
     let after = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [b] = await tx<{ v: string }[]>`
           select coalesce(casual_labour, 0)::text as v from pnl_monthly
           where restaurant_id = ${rid} and month = ${month}::date`
@@ -245,7 +263,7 @@ async function main() {
     let before = 0
     let after = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [b] = await tx<{ v: string }[]>`
           select coalesce(cogs, 0)::text as v from pnl_monthly
           where restaurant_id = ${rid} and month = ${month}::date`
@@ -310,7 +328,7 @@ async function main() {
     let moved = 0
     let rows = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [acct] = await tx<{ id: string }[]>`
           insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
           values (${rid}, 'Zz gate probe account', 'cash', 0, 999)
@@ -427,7 +445,7 @@ async function main() {
   await check('next_doc_no runs, is sequential, and never repeats', async () => {
     const seen: string[] = []
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         for (let i = 0; i < 3; i++) {
           const [row] = await tx<{ n: string }[]>`select next_doc_no(${rid}, 'ZZT', '9999') as n`
           seen.push(row.n)
@@ -448,7 +466,7 @@ async function main() {
     const draw = async () => {
       let n = ''
       try {
-        await sql.begin(async (tx) => {
+        await txn(async (tx) => {
           const [row] = await tx<{ n: string }[]>`select next_doc_no(${rid}, 'ZZT', '9998') as n`
           n = row.n
           throw new Error('KB_ROLLBACK')
@@ -470,7 +488,7 @@ async function main() {
     let balance = -1
     let both = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [acct] = await tx<{ id: string }[]>`
           insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
           values (${rid}, 'Zz void probe account', 'cash', 0, 999)
@@ -558,7 +576,7 @@ async function main() {
     let blockedWhileAnswered = false
     let blockedWhenResolved = false
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const countBlockers = async () => {
           const [row] = await tx<{ n: number }[]>`
             select count(*)::int as n from queries
@@ -609,7 +627,7 @@ async function main() {
     assert.ok(!ASSIGNABLE_ROLES.includes('accountant'), 'the accountant cannot be asked their own question')
     await assert.rejects(
       () =>
-        sql.begin(async (tx) => {
+        txn(async (tx) => {
           await tx`
             insert into queries (restaurant_id, entity_type, question, assigned_role, status)
             values (${rid}, 'day', 'zz', 'accountant', 'open')`
@@ -658,7 +676,7 @@ async function main() {
     // The five money-out tables are an artefact of porting the sheets one
     // tab at a time. The registers are where that artefact must not show —
     // a kind nobody claims is money that appears in no register at all.
-    const kinds = await sql<{ kind: string }[]>`
+    const kinds = await tsql<{ kind: string }[]>`
       select distinct kind from money_movements where restaurant_id = ${rid}`
     const CLAIMED = new Set([
       'Payment', 'Expense', 'Casual labour', 'Contract bill', 'Staff advance',
@@ -751,7 +769,7 @@ async function main() {
   await check('the database refuses more days paid than the period holds', async () => {
     await assert.rejects(
       () =>
-        sql.begin(async (tx) => {
+        txn(async (tx) => {
           const [run] = await tx<{ id: string }[]>`
             insert into payroll_runs (restaurant_id, period_start, period_end, status)
             values (${rid}, '2001-06-01', '2001-06-30', 'draft') returning id`
@@ -780,7 +798,7 @@ async function main() {
     // The freeze is not politeness in the action layer: kb_app physically
     // has no UPDATE on any amount, so a run says forever what it said the
     // day it was approved. If this list ever grows, a run became editable.
-    const rows = await sql<{ column_name: string }[]>`
+    const rows = await tsql<{ column_name: string }[]>`
       select column_name from information_schema.column_privileges
       where grantee = 'kb_app' and table_name = 'payroll_lines' and privilege_type = 'UPDATE'
       order by column_name`
@@ -795,7 +813,7 @@ async function main() {
     // present 1 · half 0.5 · off 1 (PAID) · leave and absent 0. If the draft
     // and labour_cost_by_section ever disagreed, the wage slip and the P&L
     // would state different labour for the same month.
-    const [row] = await sql<{ factor: string }[]>`
+    const [row] = await tsql<{ factor: string }[]>`
       select sum(case a.status
                    when 'present' then 1::numeric
                    when 'half' then 0.5
@@ -803,7 +821,7 @@ async function main() {
                    else 0::numeric end)::text as factor
       from (values ('present'),('half'),('off'),('leave'),('absent')) as a(status)`
     assert.equal(row.factor, '2.5', 'the pay law changed: 1 + 0.5 + 1 + 0 + 0 = 2.5')
-    const def = await sql<{ d: string }[]>`
+    const def = await tsql<{ d: string }[]>`
       select pg_get_viewdef('labour_cost_by_section'::regclass, true) as d`
     assert.ok(def[0].d.includes("WHEN 'off'::text THEN 1"), 'off stopped being paid in the view')
     assert.ok(def[0].d.includes("employment_type <> 'contract'"), 'contract staff re-entered the pay law')
@@ -819,11 +837,11 @@ async function main() {
       assert.ok(Number(l.days_paid) <= 30, 'a draft line may never exceed the period')
       assert.ok(!Number.isNaN(Number(l.earned)))
     }
-    const contract = await sql<{ n: number }[]>`
+    const contract = await tsql<{ n: number }[]>`
       select count(*)::int as n from staff
       where restaurant_id = ${rid} and status = 'active' and employment_type = 'contract'`
     const codes = new Set(draft.map((l) => l.staff_code))
-    const contractCodes = await sql<{ code: string }[]>`
+    const contractCodes = await tsql<{ code: string }[]>`
       select code from staff
       where restaurant_id = ${rid} and status = 'active' and employment_type = 'contract'`
     for (const c of contractCodes) {
@@ -861,7 +879,7 @@ async function main() {
     let statuses: string[] = []
     let frozen = ''
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [acct] = await tx<{ id: string }[]>`
           insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
           values (${rid}, 'Zz payroll probe account', 'bank', 0, 999) returning id`
@@ -947,7 +965,7 @@ async function main() {
     let inRegister = 0
     let unpaidInRegister = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [acct] = await tx<{ id: string }[]>`
           insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
           values (${rid}, 'Zz 0016 probe', 'bank', 0, 999) returning id`
@@ -990,7 +1008,7 @@ async function main() {
     let basis = ''
     let balance = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [acct] = await tx<{ id: string }[]>`
           insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order, is_till)
           values (${rid}, 'Zz till probe', 'cash', 5000, 999, true) returning id`
@@ -1011,7 +1029,7 @@ async function main() {
   })
 
   await check('only one account can be the till', async () => {
-    const [row] = await sql<{ n: number }[]>`
+    const [row] = await tsql<{ n: number }[]>`
       select count(*)::int as n from money_accounts
       where restaurant_id = ${rid} and is_till and status = 'active'`
     assert.ok(row.n <= 1, `${row.n} accounts are marked as the till — each would claim the whole drawer`)
@@ -1058,7 +1076,7 @@ async function main() {
     let acctMovements = 0
     let unaccountedDelta = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [before] = await tx<{ n: number }[]>`
           select count(*)::int as n from money_movements
           where restaurant_id = ${rid} and account_id is null`
@@ -1113,13 +1131,13 @@ async function main() {
     // Checked at TABLE level: DELETE is a table privilege and never appears
     // in column_privileges — reading the wrong catalogue is exactly how this
     // was got wrong once already.
-    const rows = await sql<{ privilege_type: string }[]>`
+    const rows = await tsql<{ privilege_type: string }[]>`
       select privilege_type from information_schema.table_privileges
       where grantee = 'kb_app' and table_name = 'reconciliation_matches'`
     const held = rows.map((r) => r.privilege_type).sort()
     assert.deepEqual(held, ['DELETE', 'INSERT', 'SELECT'], 'the match grants changed')
     // and one match per statement line, so unmatching frees the line cleanly
-    const [uniq] = await sql<{ def: string }[]>`
+    const [uniq] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
       where conrelid = 'reconciliation_matches'::regclass and contype = 'u'`
     assert.match(uniq.def, /statement_line_id/, 'a statement line may hold more than one match')
@@ -1130,7 +1148,7 @@ async function main() {
     let afterUnmatch = 0
     let freed = false
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [acct] = await tx<{ id: string }[]>`
           insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
           values (${rid}, 'Zz recon probe', 'bank', 0, 999) returning id`
@@ -1191,7 +1209,7 @@ async function main() {
     // a discrepancy in the accounts.
     let selfCheck = -1
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [acct] = await tx<{ id: string }[]>`
           insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
           values (${rid}, 'Zz selfcheck probe', 'bank', 0, 999) returning id`
@@ -1229,7 +1247,7 @@ async function main() {
     assert.ok(!/coalesce\(qty_given/.test(body), 'qty_given is coalesced — cancelled would read as zero')
     assert.ok(!/coalesce\(gap/.test(body), 'gap is coalesced — cancelled would read as no shortage')
 
-    const def = await sql<{ d: string }[]>`
+    const def = await tsql<{ d: string }[]>`
       select pg_get_viewdef('indent_fulfilment'::regclass, true) as d`
     assert.match(def[0].d, /'cancelled'::text THEN NULL/, 'the view stopped nulling cancelled rows')
     // and the sign convention the words are built on
@@ -1320,7 +1338,7 @@ async function main() {
   })
 
   await check('the database agrees: 12 receive, 4 do not', async () => {
-    const rows = await sql<{ receives_stock: boolean; n: number }[]>`
+    const rows = await tsql<{ receives_stock: boolean; n: number }[]>`
       select receives_stock, count(*)::int as n from sections
       where restaurant_id = ${rid} and status = 'active'
       group by receives_stock order by receives_stock desc`
@@ -1413,7 +1431,7 @@ async function main() {
   console.log('\nstock adjustments')
 
   await check('stock_on_hand now reads adjustments and vendor returns', async () => {
-    const def = await sql<{ d: string }[]>`
+    const def = await tsql<{ d: string }[]>`
       select pg_get_viewdef('stock_on_hand'::regclass, true) as d`
     assert.match(def[0].d, /stock_adjustments/, 'the count still cannot correct the book')
     assert.match(def[0].d, /vendor_return_lines/, 'goods sent back to a vendor still sit on the shelf')
@@ -1423,7 +1441,7 @@ async function main() {
     let before = 0
     let after = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [item] = await tx<{ id: string }[]>`
           select id from items where restaurant_id = ${rid} and status = 'active' limit 1`
         if (!item) throw new Error('KB_NO_ITEMS')
@@ -1455,12 +1473,12 @@ async function main() {
     // The whole modification: recording a variance changes nothing until a
     // person accepts it. If accepted_at were ever defaulted, the book would
     // be corrected by a bad count without anybody deciding.
-    const [col] = await sql<{ d: string | null; nn: string }[]>`
+    const [col] = await tsql<{ d: string | null; nn: string }[]>`
       select column_default as d, is_nullable as nn from information_schema.columns
       where table_name = 'stock_counts' and column_name = 'accepted_at'`
     assert.equal(col.d, null, 'accepted_at has a default — a count would accept itself')
     assert.equal(col.nn, 'YES', 'accepted_at must be nullable: unaccepted is a real state')
-    const grants = await sql<{ column_name: string }[]>`
+    const grants = await tsql<{ column_name: string }[]>`
       select column_name from information_schema.column_privileges
       where grantee = 'kb_app' and table_name = 'stock_counts' and privilege_type = 'UPDATE'
       order by column_name`
@@ -1475,13 +1493,13 @@ async function main() {
     // The reason shorts are their own table. If purchase_lines.qty ever
     // meant "billed", stock and COGS would both inherit goods that never
     // came through the door.
-    const def = await sql<{ d: string }[]>`
+    const def = await tsql<{ d: string }[]>`
       select pg_get_viewdef('stock_on_hand'::regclass, true) as d`
     assert.ok(!def[0].d.includes('purchase_line_shorts'), 'a short is moving stock — it must not')
   })
 
   await check('vendor_performance runs and states what it counts', async () => {
-    const rows = await sql<{ name: string; bills: number; unsettled: number }[]>`
+    const rows = await tsql<{ name: string; bills: number; unsettled: number }[]>`
       select name, bills::int as bills, unsettled::int as unsettled
       from vendor_performance where restaurant_id = ${rid}`
     for (const r of rows) {
@@ -1500,7 +1518,7 @@ async function main() {
     let vendor: number[] = []
     let kitchen: number[] = []
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [item] = await tx<{ item_id: string; q: string }[]>`
           select item_id, on_hand_qty::text as q from stock_on_hand
           where restaurant_id = ${rid} and on_hand_qty > 5 limit 1`
@@ -1567,7 +1585,7 @@ async function main() {
     let final = 0
     let book = 0
     try {
-      await sql.begin(async (tx) => {
+      await txn(async (tx) => {
         const [item] = await tx<{ item_id: string; q: string }[]>`
           select item_id, on_hand_qty::text as q from stock_on_hand
           where restaurant_id = ${rid} and on_hand_qty > 5 limit 1`
@@ -1738,7 +1756,7 @@ async function main() {
     const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
     const scoped = new Set(
       (
-        await sql<{ table_name: string }[]>`
+        await tsql<{ table_name: string }[]>`
           select table_name from information_schema.columns
           where table_schema = 'public' and column_name = 'restaurant_id'`
       ).map((r) => r.table_name),
@@ -1787,7 +1805,10 @@ async function main() {
     )
     assert.equal(seen, rid, 'the transaction did not announce its tenant to Postgres')
 
-    // and it does NOT survive the transaction — that is what `local` buys
+    // and it does NOT survive the transaction — that is what `local` buys.
+    // DELIBERATELY on the bare pool: tsql would announce the tenant itself
+    // and the check would pass by making the thing it is testing for. It
+    // touches no tenant table, so RLS has nothing to say about it.
     const [after] = await sql<{ v: string | null }[]>`
       select current_setting('app.restaurant_id', true) as v`
     assert.ok(after.v === null || after.v === '', 'the tenant leaked out of its transaction')
@@ -1808,7 +1829,7 @@ async function main() {
     // a row RLS cannot place.
     const { readdirSync, readFileSync } = await import('node:fs')
     const lineTables = (
-      await sql<{ table_name: string }[]>`
+      await tsql<{ table_name: string }[]>`
         select c.table_name from information_schema.columns c
         where c.table_schema = 'public' and c.column_name = 'restaurant_id'
           and c.table_name like '%_lines'`

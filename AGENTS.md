@@ -2221,3 +2221,82 @@ Measured, not assumed: three concurrent page renders (24 reads) settle at
    optional handle so the caller lends its own `tx`. That removes the
    starvation path AND makes the comment literally true: the chain law is
    now re-checked in the same transaction as the write, not beside it.
+
+## RLS went on and took the app down twice — the two failures, and the gates
+
+Isolation now HOLDS, proved as `kb_app` with BYPASSRLS off: `npm run
+smoke:tenancy`. Reads, writes and provisioning, against a stranger tenant,
+all inside transactions that roll back. Testing this as `postgres` proves
+nothing — that role bypasses every policy — so the test refuses to run at all
+if it finds itself privileged.
+
+**FAILURE 1 — nine multi-line saves broke silently.** Migration
+`tenant_column_on_line_tables_and_unique_usernames` put a NOT NULL
+`restaurant_id` on 15 line tables. Nine inserts never learned to fill it:
+purchase lines, issue lines, return lines, indent lines (×2), kitchen closing
+lines, POS lines, statement lines, settlement deductions, catering expenses.
+Under RLS every one of them died on `new row violates row-level security
+policy` — so every bill, issue, return, indent, closing and POS fetch refused
+to save.
+
+**Every gate stayed green through it**, and the reason is the lesson: the
+smoke suites write their OWN sql, so they named the tenant exactly where the
+app did not. **A probe that writes its own insert cannot test the app's
+column list.** The column list lives in the source, so it is now checked in
+the source — `audit:tenancy` gained a WRITE tier that reads the `${...}` hole
+contents too, because `tx(rows, 'restaurant_id', …)` is where a dynamic
+insert names its columns. Dropping the hole was how nine broken inserts read
+as fine.
+
+**FAILURE 2 — nobody could log in.** `/login` returned 500 for everyone.
+Login runs BEFORE a session exists: it looks a username up to discover which
+restaurant that person belongs to. With no tenant to announce, the policy
+casts an empty `current_setting` to uuid and raises 22P02 — and `restaurants`
+is RLS'd too, so there was nothing left to discover the tenant FROM.
+
+`KB_TENANT` (Vercel + .env.local) now names the restaurant THIS DEPLOYMENT
+serves, and `txn()` falls back to it when there is no ALS scope and no
+session. That is a deployment fact, not a human's answer, so it is not the
+`issues.session = 'Morning'` anti-pattern — it stands in for nothing anybody
+was asked. **It does make LOGIN single-tenant**, and that is the thing to fix
+before a second restaurant signs in: the permanent form is a SECURITY DEFINER
+function resolving a username to its tenant across the pool. Authentication
+crosses tenants BY DEFINITION — it is the one read that has to — and a
+definer function is the narrow hole for it rather than a loosened policy.
+Everything after login is scoped by the session, which is why the hole is one
+lookup wide.
+
+**`npm run audit:tenancy --strict` is the fifth gate, in three tiers:**
+
+1. **WRITES** — every insert names the tenant; every update/delete says whose
+   row it is. A HARD failure whatever the flags say: an insert with no tenant
+   does not leak data, it loses it.
+2. **READS** — scoped by `restaurant_id`, or KEYED by a uuid it was handed.
+   A keyed read cannot be steered to another tenant's row by a URL because
+   RLS makes that row invisible first. An UNKEYED read naming no tenant is
+   the real leak. Currently 392 scoped, 57 keyed, 0 unkeyed.
+3. **RLS ITSELF** — enabled, forced and policied on all 65 tenant tables.
+   Tier 2's exemption rests on it, so it is asserted rather than assumed; if
+   RLS is ever dropped from a table the gate says so on the same run.
+
+**`npm run smoke:tenancy` is the sixth.** Its assertions are built to be
+capable of failing: "a stranger saw 0 vendors" proves nothing about a table
+holding 0 vendors, so each table is counted as ourselves first, and one that
+is genuinely empty is printed as UNTESTED rather than counted as a pass.
+
+**And the gate that had gutted itself.** `audit:schema` fell from 2088 column
+references to 234 — still green, checking almost nothing — because renaming
+every read `sql` → `tsql` for the GUC stopped its regex matching. Both audit
+regexes now accept `tsql`, and both print their reference count so a collapse
+is visible. That is the sixth instance in this project of a check
+structurally incapable of finding what it exists to find, and the second time
+it was the instrument enforcing that very rule.
+
+**Scripts announce their tenant.** A script has no session; under RLS an
+unannounced read raises rather than returning nothing (loud, which is right).
+The smoke suites wrap in `withTenant(process.env.KB_TENANT)`, and their
+probes use `txn`/`tsql` rather than `sql.begin`/`sql` so they exercise the
+app's own path. The one deliberate exception is the check that `set local`
+does not survive its transaction — that reads on the bare pool on purpose,
+because `tsql` would announce the tenant itself and the assertion would pass
+by causing the thing it tests for.

@@ -331,8 +331,8 @@ export async function saveIndent(raw: SaveIndentInput): Promise<SaveIndentResult
         values (${rid}, ${input.date}, ${input.sectionId}, ${input.session},
                 ${input.note === '' ? null : input.note}, ${by})
         returning id`
-      const lineRows = input.lines.map((l) => ({ indent_id: indent.id, item_id: l.itemId, qty_requested: l.qty.trim() }))
-      await tx`insert into indent_lines ${tx(lineRows, 'indent_id', 'item_id', 'qty_requested')}`
+      const lineRows = input.lines.map((l) => ({ restaurant_id: rid, indent_id: indent.id, item_id: l.itemId, qty_requested: l.qty.trim() }))
+      await tx`insert into indent_lines ${tx(lineRows, 'restaurant_id', 'indent_id', 'item_id', 'qty_requested')}`
       return { indentId: indent.id }
     })
 
@@ -508,7 +508,8 @@ export async function updateIndent(raw: UpdateIndentInput): Promise<UpdateIndent
       // kept set is empty and every old line goes, which is correct.
       await tx`
         delete from indent_lines
-        where indent_id = ${input.indentId} and not (id = any(${keptIds}::text[]::uuid[]))`
+        where indent_id = ${input.indentId} and restaurant_id = ${rid}
+          and not (id = any(${keptIds}::text[]::uuid[]))`
       for (const l of input.lines) {
         if (l.id === null) continue
         await tx`
@@ -517,10 +518,10 @@ export async function updateIndent(raw: UpdateIndentInput): Promise<UpdateIndent
             and restaurant_id = ${rid}`
       }
       const fresh = input.lines.flatMap((l) =>
-        l.id === null ? [{ indent_id: input.indentId, item_id: l.itemId, qty_requested: l.qty.trim() }] : [],
+        l.id === null ? [{ restaurant_id: rid, indent_id: input.indentId, item_id: l.itemId, qty_requested: l.qty.trim() }] : [],
       )
       if (fresh.length > 0) {
-        await tx`insert into indent_lines ${tx(fresh, 'indent_id', 'item_id', 'qty_requested')}`
+        await tx`insert into indent_lines ${tx(fresh, 'restaurant_id', 'indent_id', 'item_id', 'qty_requested')}`
       }
     })
 
@@ -716,8 +717,8 @@ export async function saveItemizedClosing(raw: SaveItemizedClosingInput): Promis
                 ${input.note === '' ? null : input.note}, ${by})
         returning id`
       if (resolved.length > 0) {
-        const lineRows = resolved.map((r) => ({ closing_id: closing.id, component_item_id: r.item_id, component_recipe_id: r.recipe_id, qty: r.qty, unit_cost: r.unit_cost }))
-        await tx`insert into kitchen_closing_lines ${tx(lineRows, 'closing_id', 'component_item_id', 'component_recipe_id', 'qty', 'unit_cost')}`
+        const lineRows = resolved.map((r) => ({ restaurant_id: rid, closing_id: closing.id, component_item_id: r.item_id, component_recipe_id: r.recipe_id, qty: r.qty, unit_cost: r.unit_cost }))
+        await tx`insert into kitchen_closing_lines ${tx(lineRows, 'restaurant_id', 'closing_id', 'component_item_id', 'component_recipe_id', 'qty', 'unit_cost')}`
       }
 
       // The header must equal the stored generated line values — inside the
