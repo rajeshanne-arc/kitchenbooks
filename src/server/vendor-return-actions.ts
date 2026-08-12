@@ -204,12 +204,63 @@ export async function saveVendorReturn(raw: VendorReturnInput): Promise<VendorRe
  * count only LIVE returns — those with no reverses_id, and not themselves
  * reversed — exactly as `bills.is_voided` already does for purchases.
  */
+/**
+ * A negative twin, the way every other void in this app works — except that
+ * `vendor_return_lines` carries CHECK (qty > 0), so the LINES cannot be
+ * negated. They are copied EXACTLY and the reversal is marked on the
+ * PARENT instead; `stock_on_hand` and both consumption views count only
+ * returns that are neither a reversal nor themselves reversed, which is how
+ * the goods come back onto the shelf.
+ *
+ * This was refused for one commit because the views did not yet filter, and
+ * voiding took the stock off twice — 18.5, then 8.5, then −1.5. The rule
+ * that came out of it is in AGENTS.md: a CHECK (qty > 0) on a line table
+ * means that table can never use the negative-twin void, so every view
+ * reading it must filter on the parent's reversal state instead.
+ *
+ * The rate is copied exactly too. A void reverses the claim as it was made,
+ * not as the rate stands today.
+ */
 export async function voidVendorReturn(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (!UUID.test(id)) return { ok: false, error: 'Malformed return id' }
-  return {
-    ok: false,
-    error:
-      'Voiding a return would take the stock off twice — stock_on_hand cannot yet tell a reversal from a return. Until that view counts only live returns, correct it with a stock adjustment instead.',
+  try {
+    if (!UUID.test(id)) throw new VendorReturnRefusal('Malformed return id')
+    const by = await actor('Voiding a vendor return')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+
+      const [orig] = await tx<{ id: string; return_date: string; vendor_id: string; reverses_id: string | null }[]>`
+        select id, return_date::text as return_date, vendor_id, reverses_id
+        from vendor_returns where id = ${id} and restaurant_id = ${rid}`
+      if (!orig) throw new VendorReturnRefusal('That return no longer exists')
+      if (orig.reverses_id !== null) {
+        throw new VendorReturnRefusal('That is already a reversal — it cannot be voided in turn')
+      }
+      const [already] = await tx<{ id: string }[]>`
+        select id from vendor_returns where reverses_id = ${id} limit 1`
+      if (already) throw new VendorReturnRefusal('That return is already voided')
+
+      // same date as the original, so the months cancel cleanly
+      const [rev] = await tx<{ id: string }[]>`
+        insert into vendor_returns (restaurant_id, return_date, vendor_id, reason, reverses_id, entered_by)
+        values (${rid}, ${orig.return_date}, ${orig.vendor_id}, 'void', ${id}, ${by})
+        returning id`
+      // amount is GENERATED — absent from the column list by necessity
+      await tx`
+        insert into vendor_return_lines (vendor_return_id, item_id, qty, rate)
+        select ${rev.id}, item_id, qty, rate
+        from vendor_return_lines where vendor_return_id = ${id}`
+
+      const [check] = await tx<{ n: number }[]>`
+        select count(*)::int as n from vendor_return_lines where vendor_return_id = ${rev.id}`
+      if (!check || check.n === 0) throw new VendorReturnRefusal('The reversal copied no lines — nothing was written')
+    })
+
+    return { ok: true }
+  } catch (e) {
+    return fail(e)
   }
 }
 

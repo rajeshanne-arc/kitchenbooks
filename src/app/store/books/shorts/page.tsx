@@ -89,10 +89,14 @@ export default async function ShortsPage() {
                 <p className={`mt-1 ${heroNumCls} text-[34px] text-red-700`}>
                   {formatMoneyString(totals.open_value)}
                 </p>
+                {/* NOT money to claw back. purchase_lines.qty is what
+                    ARRIVED, so vendor_dues never owed it — the risk is
+                    paying the vendor's paper copy in full, which is a
+                    different thing and the one worth naming. */}
                 <p className="mt-1 text-sm text-stone-700">
                   across {totals.open_count} {totals.open_count === 1 ? 'line' : 'lines'}, valued at the rate on the
-                  bill. This money is only recoverable while somebody is chasing it — a credit note nobody asks for is
-                  never issued, and an unsettled short quietly becomes a cost we agreed to.
+                  bill. The bill says more than arrived. Our books already record only what arrived — so this is not
+                  money owed to us, it is money we must not pay. Settle it before the bill is paid.
                 </p>
 
                 <div className="mt-3 overflow-x-auto">

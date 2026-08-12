@@ -108,18 +108,51 @@ export async function acceptCount(countId: string): Promise<AcceptCountResult> {
         )
       }
 
-      // One row per non-zero variance. qty is the line's variance_qty
-      // (counted − book, GENERATED and stored), so a shortage writes a
-      // negative and stock_on_hand falls by exactly what was missing.
+      // THE CORRECTION IS COMPUTED LIVE; THE VARIANCE STAYS PHOTOGRAPHED.
+      //
+      //   adjustment = counted − frozen book − everything already corrected
+      //                for that item since this count was frozen
+      //
+      // A count freezes book_qty at save, and an adjustment is a DIFFERENCE
+      // rather than a new total — so two counts taken while neither was
+      // accepted both measure against the same uncorrected book and both
+      // claim the same shortage. Book 10, shelf 7, counted twice: accept the
+      // first and it writes 7−10−0 = −3, leaving 7; accept the second and it
+      // writes 7−10−(−3) = 0, leaving 7. Correct in EITHER order, and a
+      // standalone adjustment made in between is absorbed the same way.
+      //
+      // `since` is the count's own created_at, not its date: two counts on
+      // one day are ordered by when they were taken, and a date cannot
+      // separate them. variance_qty is untouched and still reads as what the
+      // shelf disagreed with on the day — only the CORRECTION moves.
+      //
       // `value` is GENERATED — absent from the column list by necessity.
       const [{ n }] = await tx<{ n: number }[]>`
-        with ins as (
+        with prior as (
+          -- >= rather than >, and this count's own rows excluded: created_at
+          -- defaults to now(), which is the TRANSACTION timestamp and does
+          -- not advance within one — so rows written together tie rather
+          -- than order. Production never writes two counts in one
+          -- transaction, but a rule that depends on that is a rule waiting
+          -- to be wrong.
+          select a.item_id, coalesce(sum(a.qty), 0) as already
+          from stock_adjustments a
+          join stock_counts c2 on c2.id = ${countId}
+          where a.restaurant_id = ${rid}
+            and a.created_at >= c2.created_at
+            and a.count_id is distinct from ${countId}::uuid
+          group by a.item_id
+        ),
+        ins as (
           insert into stock_adjustments
             (restaurant_id, adj_date, item_id, qty, unit_cost, reason, count_id, note, entered_by)
-          select ${rid}::uuid, ${count.count_date}::date, l.item_id, l.variance_qty, l.unit_cost,
+          select ${rid}::uuid, ${count.count_date}::date, l.item_id,
+                 l.variance_qty - coalesce(p.already, 0), l.unit_cost,
                  'Count correction'::text, ${countId}::uuid, null, ${by}::text
           from stock_count_lines l
-          where l.count_id = ${countId} and l.variance_qty <> 0
+          left join prior p on p.item_id = l.item_id
+          where l.count_id = ${countId}
+            and l.variance_qty - coalesce(p.already, 0) <> 0
           returning 1
         ) select count(*)::int as n from ins`
 

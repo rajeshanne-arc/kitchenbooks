@@ -1487,27 +1487,133 @@ async function main() {
     console.log(`      ${rows.length} vendors measured`)
   })
 
-  await check('voiding a vendor return is REFUSED while it would double-count', async () => {
-    // Measured, not feared: 18.5 on hand, a return of 10 leaves 8.5, and the
-    // void leaves −1.5. vendor_return_lines has CHECK (qty > 0) so a
-    // reversal cannot be a negative twin, and stock_on_hand subtracts every
-    // line without looking at vendor_returns.reverses_id. This assertion
-    // FAILS once the view is fixed, which is the point: it is the reminder
-    // to take the refusal back out.
-    const def = await sql<{ d: string }[]>`
-      select pg_get_viewdef('stock_on_hand'::regclass, true) as d`
-    const viewCountsReversals = !/reverses_id/.test(def[0].d)
-    const { readFileSync } = await import('node:fs')
-    const src = readFileSync('src/server/vendor-return-actions.ts', 'utf8')
-    const start = src.indexOf('export async function voidVendorReturn(')
-    assert.ok(start > -1, 'voidVendorReturn is gone')
-    const body = src.slice(start, src.indexOf('\nexport async function ', start + 1))
-    const refuses = /take the stock off twice/.test(body)
-    if (viewCountsReversals) {
-      assert.ok(refuses, 'the void is live while stock_on_hand still double-counts a reversal')
-    } else {
-      assert.ok(!refuses, 'stock_on_hand now handles reversals — take the refusal out and restore the void')
+  await check('voiding a return puts the stock back — BOTH return tables', async () => {
+    // This replaced a refusal. vendor_return_lines and return_lines both
+    // carry CHECK (qty > 0), so neither can use the negative-twin void; the
+    // reversal is marked on the PARENT and the views filter on it. Before
+    // that clause existed a void took the quantity off TWICE: 18.5 -> 8.5
+    // -> −1.5. Asserted for both tables because the kitchen one had the
+    // identical fault and nobody had tried it.
+    let vendor: number[] = []
+    let kitchen: number[] = []
+    try {
+      await sql.begin(async (tx) => {
+        const [item] = await tx<{ item_id: string; q: string }[]>`
+          select item_id, on_hand_qty::text as q from stock_on_hand
+          where restaurant_id = ${rid} and on_hand_qty > 5 limit 1`
+        if (!item) throw new Error('KB_NO_STOCK')
+        const [v] = await tx<{ id: string }[]>`
+          select id from vendors where restaurant_id = ${rid} limit 1`
+        const [sec] = await tx<{ id: string }[]>`
+          select id from sections where restaurant_id = ${rid} and receives_stock limit 1`
+        if (!v || !sec) throw new Error('KB_NO_STOCK')
+        const on = async () => {
+          const [r] = await tx<{ q: string }[]>`
+            select on_hand_qty::text as q from stock_on_hand where item_id = ${item.item_id}`
+          return Number(r.q)
+        }
+
+        const v0 = await on()
+        const [vr] = await tx<{ id: string }[]>`
+          insert into vendor_returns (restaurant_id, return_date, vendor_id, reason, entered_by)
+          values (${rid}, current_date, ${v.id}, 'zz gate', 'gate') returning id`
+        await tx`insert into vendor_return_lines (vendor_return_id, item_id, qty, rate)
+                 values (${vr.id}, ${item.item_id}, 5, 50)`
+        const v1 = await on()
+        const [vrev] = await tx<{ id: string }[]>`
+          insert into vendor_returns (restaurant_id, return_date, vendor_id, reason, reverses_id, entered_by)
+          values (${rid}, current_date, ${v.id}, 'void', ${vr.id}, 'gate') returning id`
+        await tx`insert into vendor_return_lines (vendor_return_id, item_id, qty, rate)
+                 select ${vrev.id}, item_id, qty, rate from vendor_return_lines where vendor_return_id = ${vr.id}`
+        vendor = [v0, v1, await on()]
+
+        const k0 = await on()
+        const [kr] = await tx<{ id: string }[]>`
+          insert into returns (restaurant_id, return_date, section_id, reason, entered_by)
+          values (${rid}, current_date, ${sec.id}, 'zz gate', 'gate') returning id`
+        await tx`insert into return_lines (return_id, item_id, qty, unit_cost)
+                 values (${kr.id}, ${item.item_id}, 4, 50)`
+        const k1 = await on()
+        const [krev] = await tx<{ id: string }[]>`
+          insert into returns (restaurant_id, return_date, section_id, reason, reverses_id, entered_by)
+          values (${rid}, current_date, ${sec.id}, 'void', ${kr.id}, 'gate') returning id`
+        await tx`insert into return_lines (return_id, item_id, qty, unit_cost)
+                 select ${krev.id}, item_id, qty, unit_cost from return_lines where return_id = ${kr.id}`
+        kitchen = [k0, k1, await on()]
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      const m = (e as Error).message
+      if (m === 'KB_NO_STOCK') return
+      if (m !== 'KB_ROLLBACK') throw e
     }
+    assert.equal(vendor[1], vendor[0] - 5, 'a vendor return did not take the stock off')
+    assert.equal(vendor[2], vendor[0], 'voiding a vendor return did not put the stock back')
+    assert.equal(kitchen[1], kitchen[0] + 4, 'a kitchen return did not put the stock back on the shelf')
+    assert.equal(kitchen[2], kitchen[0], 'voiding a kitchen return did not undo it')
+  })
+
+  await check('accepting a count twice corrects the book ONCE', async () => {
+    // The arithmetic is self-correcting rather than the warning carrying it:
+    //   adjustment = counted − frozen book − already corrected since frozen
+    // Two counts, book 10, shelf 7: the first writes −3, the second writes 0,
+    // in either order. The variance stays photographed; only the correction
+    // is computed live.
+    let first = 0
+    let second = 0
+    let final = 0
+    let book = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [item] = await tx<{ item_id: string; q: string }[]>`
+          select item_id, on_hand_qty::text as q from stock_on_hand
+          where restaurant_id = ${rid} and on_hand_qty > 5 limit 1`
+        if (!item) throw new Error('KB_NO_STOCK')
+        book = Number(item.q)
+        const mkCount = async () => {
+          const [c] = await tx<{ id: string }[]>`
+            insert into stock_counts (restaurant_id, count_date, entered_by)
+            values (${rid}, current_date, 'gate') returning id`
+          await tx`insert into stock_count_lines (count_id, item_id, counted_qty, book_qty, unit_cost)
+                   values (${c.id}, ${item.item_id}, ${book - 3}, ${book}, 100)`
+          return c.id
+        }
+        const accept = async (cid: string) => {
+          const [row] = await tx<{ n: string }[]>`
+            with prior as (
+              select a.item_id, coalesce(sum(a.qty), 0) as already
+              from stock_adjustments a join stock_counts c2 on c2.id = ${cid}
+              where a.restaurant_id = ${rid} and a.created_at >= c2.created_at
+                and a.count_id is distinct from ${cid}::uuid
+              group by a.item_id
+            ), ins as (
+              insert into stock_adjustments
+                (restaurant_id, adj_date, item_id, qty, unit_cost, reason, count_id, entered_by)
+              select ${rid}::uuid, current_date, l.item_id, l.variance_qty - coalesce(p.already, 0),
+                     l.unit_cost, 'Count correction'::text, ${cid}::uuid, 'gate'::text
+              from stock_count_lines l left join prior p on p.item_id = l.item_id
+              where l.count_id = ${cid} and l.variance_qty - coalesce(p.already, 0) <> 0
+              returning qty
+            ) select coalesce(sum(qty), 0)::text as n from ins`
+          return Number(row.n)
+        }
+        const c1 = await mkCount()
+        const c2 = await mkCount()
+        first = await accept(c1)
+        second = await accept(c2)
+        const [r] = await tx<{ q: string }[]>`
+          select on_hand_qty::text as q from stock_on_hand where item_id = ${item.item_id}`
+        final = Number(r.q)
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      const m = (e as Error).message
+      if (m === 'KB_NO_STOCK') return
+      if (m !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(first, -3, 'the first acceptance must write the whole variance')
+    assert.equal(second, 0, 'the second acceptance must write nothing — the book already carries it')
+    assert.equal(final, book - 3, 'the book was corrected twice')
   })
 
   /* ── 3. the return path's list is real ────────────────────────────── */

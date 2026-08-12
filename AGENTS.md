@@ -1866,13 +1866,28 @@ acceptance fields — a count cannot accept itself.
 **An unaccepted count is loud.** Leave one and the same variance reappears
 at the next count with nobody knowing why.
 
-**Two unaccepted counts double-correct, and the screen says so.** Each count
-freezes `book_qty` at save, and an adjustment is a DIFFERENCE rather than a
-new total — so two counts taken while neither was accepted both measure
-against the same uncorrected book, both claim the same variance, and
-accepting both takes it off twice: book 10, shelf 7, counted twice, accepted
-twice, book ends at 4. It is WARNED, not blocked: refusing would strand the
-count forever, and the judgement belongs to a person.
+**The correction is COMPUTED LIVE; the variance stays PHOTOGRAPHED.**
+
+    adjustment = counted − frozen book
+                 − everything already corrected for that item since this
+                   count was frozen
+
+A count freezes `book_qty` at save and an adjustment is a DIFFERENCE rather
+than a new total, so two counts taken while neither was accepted both
+measure against the same uncorrected book. Book 10, shelf 7, counted twice:
+the first acceptance writes 7−10−0 = −3 and the book becomes 7; the second
+writes 7−10−(−3) = 0 and the book stays 7. **Correct in either order**, and
+a standalone adjustment made in between is absorbed the same way.
+`variance_qty` is untouched and still reads as what the shelf disagreed with
+on the day — only the correction moves.
+
+The comparison is `>=` on `created_at`, excluding the count's own rows,
+because `created_at` defaults to `now()` — the TRANSACTION timestamp, which
+does not advance within one. Production never writes two counts in one
+transaction, but a rule that depends on that is a rule waiting to be wrong.
+
+The warning about other waiting counts stays, as information. It no longer
+carries the weight.
 
 **Opening stock is an explicit flow, in this order:** set `items.opening_rate`
 → count against the empty book → accept. The order matters and the screen
@@ -1897,19 +1912,30 @@ one to surface** — a short nobody chased is a different fact from one that
 was credited. `vendor_performance` turns the same events into the question
 a store manager actually asks about a supplier.
 
-**VOIDING A VENDOR RETURN IS REFUSED, and the refusal is measured.** 18.5 on
-hand, a return of 10 leaves 8.5, and voiding it leaves **−1.5**: the quantity
-comes off twice. `vendor_return_lines` carries `CHECK (qty > 0)`, so a
-reversal cannot be the negative twin every other void in this app is — the
-negation has to go on `rate`, which reverses the money and not the goods —
-and `stock_on_hand` subtracts every line without looking at
-`vendor_returns.reverses_id`.
+**A `CHECK (qty > 0)` ON A LINE TABLE MEANS THAT TABLE CAN NEVER USE THE
+NEGATIVE-TWIN VOID.** That is the rule; the two instances below are only how
+it was found.
 
-Writing a compensating `stock_adjustments` row would hide it and break the
-one-path rule: goods move through exactly one table. **A void that corrupts
-the book is worse than no void**, so the action refuses and names the fix:
-one clause in the view, counting only LIVE returns — no `reverses_id`, and
-not themselves reversed — exactly as `bills.is_voided` already does for
-purchases. `smoke:a2` asserts the refusal is in place WHILE the view still
-double-counts, and **fails once the view is fixed**, so the reminder to take
-it back out cannot be forgotten.
+Every other correction in this app is a negative twin — a reversal row
+carrying the same figures with the sign flipped. A line table that refuses
+negative quantities cannot do that: the negation has to go somewhere else,
+usually the rate, which reverses the MONEY and not the GOODS. So the
+reversal is marked on the PARENT, and **every view reading that line table
+must filter on the parent's reversal state** — no `reverses_id`, and not
+itself reversed — exactly as `bills.is_voided` has always done for
+purchases.
+
+Both `vendor_return_lines` and `return_lines` carry that CHECK, and neither
+view filtered. Voiding a vendor return took the quantity off TWICE — 18.5
+on hand, a return of 10 leaving 8.5, and the void leaving **−1.5**. The
+kitchen return had the identical fault in the opposite direction and nobody
+had tried it. `stock_on_hand` and both `section_consumption` views now
+filter, and `smoke:a2` walks a return and its void through BOTH tables and
+asserts the shelf ends where it started.
+
+The interim answer, while the views were wrong, was to REFUSE the void and
+say why: a void that corrupts the book is worse than no void. Writing a
+compensating `stock_adjustments` row would have hidden it and broken the
+one-path rule — goods move through exactly one table. The gate that held
+the refusal in place was written to FAIL once the view was fixed, which is
+how the refusal came back out on the same day the migration landed.
