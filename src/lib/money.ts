@@ -12,8 +12,17 @@ export function parseDecimal(raw: string, maxDp: number, maxIntDigits: number): 
   return Number.isSafeInteger(n) ? n : null
 }
 
-/** "12.5" -> 1250 paise; null unless a plain amount with ≤2 dp */
-export const parseMoney = (s: string): number | null => parseDecimal(s, 2, 5)
+/** "12.5" -> 1250 paise; null unless a plain amount with ≤2 dp
+ *
+ *  NINE integer digits, not five. At five the cap was ₹99,999.99 while every
+ *  server regex allowed seven digits or more — so a ₹1,00,000 vendor payment,
+ *  payroll advance or staff-fund payout left the save button disabled with
+ *  NOTHING ON SCREEN saying why. A client stricter than its server is the
+ *  worst of both: the entry is refused and the refusal is silent.
+ *
+ *  Nine keeps the result a safe integer (9 + 2 digits of paise is under 2^53),
+ *  and quantities stay at five — a count of a thing is not a sum of money. */
+export const parseMoney = (s: string): number | null => parseDecimal(s, 2, 9)
 
 /** "2.5" -> 2500 milli-units; null unless a plain quantity with ≤3 dp */
 export const parseQty = (s: string): number | null => parseDecimal(s, 3, 5)

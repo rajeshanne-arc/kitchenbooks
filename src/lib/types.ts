@@ -2067,3 +2067,138 @@ export type StaffFundInput = {
 }
 
 export type StaffFundResult = { ok: true } | { ok: false; error: string }
+
+// ---------- Phase C: payroll ----------
+
+export type PayrollStatus = 'draft' | 'approved' | 'paid' | 'cancelled'
+
+export type PayrollRunRow = {
+  id: string
+  doc_no: string | null
+  period_start: string
+  period_end: string
+  status: PayrollStatus
+  prepared_by: string | null
+  prepared_at: string
+  approved_by: string | null
+  approved_at: string | null
+  note: string | null
+  line_count: number
+  net_total: string
+}
+
+/** FROZEN at prepare time. payroll_lines has no UPDATE grant on any amount,
+ *  so what a run says the day it is approved is what it says forever. */
+export type PayrollLineRow = {
+  id: string
+  staff_id: string
+  staff_code: string
+  staff_name: string
+  section_name: string | null
+  grade: string | null
+  days_in_period: string
+  days_paid: string
+  base_salary: string
+  earned: string
+  overtime: string
+  advance_recovered: string
+  other_deduction: string
+  withholding: string
+  net_payable: string
+  pay_mode: string | null
+  account_id: string | null
+  paid_on: string | null
+  note: string | null
+}
+
+/** Computed, never stored — the screen the accountant edits BEFORE the
+ *  figures are frozen. `unsalaried` is an honesty column: they worked and
+ *  nobody has said what they are paid. */
+export type PayrollDraftLine = {
+  staff_id: string
+  staff_code: string
+  staff_name: string
+  section_name: string | null
+  grade: string | null
+  pay_mode: string | null
+  days_in_period: string
+  days_paid: string
+  base_salary: string
+  unsalaried: boolean
+  earned: string
+  advance_outstanding: string
+}
+
+export type PreparePayrollInput = {
+  periodStart: string
+  periodEnd: string
+  note: string
+  lines: {
+    staffId: string
+    daysInPeriod: string
+    daysPaid: string
+    baseSalary: string
+    earned: string
+    overtime: string
+    advanceRecovered: string
+    otherDeduction: string
+    withholding: string
+    note: string
+  }[]
+}
+
+export type PayrollResult = { ok: true; run: PayrollRunRow } | { ok: false; error: string }
+
+export type MarkPaidInput = { runId: string; paidOn: string; accountId: string; payMode: string }
+
+export type SaveAdvanceInput = {
+  date: string
+  staffId: string
+  amount: string
+  accountId: string
+  note: string
+}
+
+export type AdvanceOutstanding = {
+  staff_id: string
+  staff_code: string
+  staff_name: string
+  outstanding: string
+  last_advance: string | null
+}
+
+/** Owner and accountant only — never the manager. */
+export type StaffIdentity = {
+  id: string
+  code: string
+  name: string
+  designation: string | null
+  section_name: string | null
+  employment_type: string
+  pay_mode: string | null
+  base_salary: string | null
+  bank_name: string | null
+  account_no: string | null
+  ifsc: string | null
+  upi_id: string | null
+  pan: string | null
+  uan: string | null
+  pf_number: string | null
+  esic_number: string | null
+  dob: string | null
+  gender: string | null
+}
+
+export type UpdateStaffIdentityInput = {
+  bankName: string
+  accountNo: string
+  ifsc: string
+  upiId: string
+  pan: string
+  uan: string
+  pfNumber: string
+  esicNumber: string
+  dob: string
+  gender: string
+  payMode: string
+}

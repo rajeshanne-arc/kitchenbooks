@@ -178,6 +178,19 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     { key: 'parties', href: '/accounts/parties', label: 'Parties' },
     { key: 'tax', href: '/accounts/tax', label: 'Tax' },
     { key: 'money', href: '/accounts/money', label: 'Money' },
+    // PAYROLL sits between Money and Close because that is its moment: the
+    // month's wages are worked out after the money is reconciled and before
+    // the period is shut.
+    {
+      key: 'payroll',
+      href: '/accounts/payroll',
+      label: 'Payroll',
+      chips: [
+        { key: 'runs', label: 'Runs' },
+        { key: 'advances', label: 'Advances' },
+        { key: 'people', label: 'People' },
+      ],
+    },
     { key: 'close', href: '/accounts/close', label: 'Close' },
     { key: 'export', href: '/accounts/export', label: 'Export' },
   ],

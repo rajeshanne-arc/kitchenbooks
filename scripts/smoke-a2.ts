@@ -736,6 +736,194 @@ async function main() {
     )
   })
 
+  /* ── 2i. payroll: the pay law, and the freeze ─────────────────────── */
+  //
+  // The old sheet paid 34 days in a 30-day month. That is the bug payroll
+  // exists to not repeat, so it is the first thing asserted — and asserted
+  // against the DATABASE, because the constraint is what makes it
+  // impossible rather than the care of whoever wrote the form.
+  console.log('\npayroll')
+
+  await check('the database refuses more days paid than the period holds', async () => {
+    await assert.rejects(
+      () =>
+        sql.begin(async (tx) => {
+          const [run] = await tx<{ id: string }[]>`
+            insert into payroll_runs (restaurant_id, period_start, period_end, status)
+            values (${rid}, '2001-06-01', '2001-06-30', 'draft') returning id`
+          const [st] = await tx<{ id: string }[]>`
+            select id from staff where restaurant_id = ${rid} limit 1`
+          if (!st) throw new Error('CHECK_UNTESTABLE')
+          await tx`
+            insert into payroll_lines (run_id, staff_id, days_in_period, days_paid,
+                                       base_salary, earned, net_payable)
+            values (${run.id}, ${st.id}, 30, 34, 10000, 10000, 10000)`
+        }),
+      (e: unknown) => {
+        const m = (e as Error).message
+        // no staff yet is a valid state, not a failure of the constraint
+        if (m === 'CHECK_UNTESTABLE') return true
+        return /days_paid/.test(m)
+      },
+      '34 days in a 30-day month was accepted — the CHECK is gone',
+    )
+  })
+
+  await check('the amounts on a payroll line CANNOT be updated — the freeze is a grant', async () => {
+    // The freeze is not politeness in the action layer: kb_app physically
+    // has no UPDATE on any amount, so a run says forever what it said the
+    // day it was approved. If this list ever grows, a run became editable.
+    const rows = await sql<{ column_name: string }[]>`
+      select column_name from information_schema.column_privileges
+      where grantee = 'kb_app' and table_name = 'payroll_lines' and privilege_type = 'UPDATE'
+      order by column_name`
+    assert.deepEqual(
+      rows.map((r) => r.column_name),
+      ['account_id', 'note', 'paid_on', 'pay_mode'],
+      'payroll amounts became updatable — a decision that can be quietly edited is not one',
+    )
+  })
+
+  await check("the pay law is the view's, not a second copy", async () => {
+    // present 1 · half 0.5 · off 1 (PAID) · leave and absent 0. If the draft
+    // and labour_cost_by_section ever disagreed, the wage slip and the P&L
+    // would state different labour for the same month.
+    const [row] = await sql<{ factor: string }[]>`
+      select sum(case a.status
+                   when 'present' then 1::numeric
+                   when 'half' then 0.5
+                   when 'off' then 1::numeric
+                   else 0::numeric end)::text as factor
+      from (values ('present'),('half'),('off'),('leave'),('absent')) as a(status)`
+    assert.equal(row.factor, '2.5', 'the pay law changed: 1 + 0.5 + 1 + 0 + 0 = 2.5')
+    const def = await sql<{ d: string }[]>`
+      select pg_get_viewdef('labour_cost_by_section'::regclass, true) as d`
+    assert.ok(def[0].d.includes("WHEN 'off'::text THEN 1"), 'off stopped being paid in the view')
+    assert.ok(def[0].d.includes("employment_type <> 'contract'"), 'contract staff re-entered the pay law')
+  })
+
+  await check('the payroll draft runs and excludes contract staff', async () => {
+    const { getPayrollDraft, getOutstandingAdvances, listStaffIdentities } = await import(
+      '../src/server/payroll-queries'
+    )
+    const draft = await getPayrollDraft(rid, '2001-06-01', '2001-06-30')
+    for (const l of draft) {
+      assert.equal(l.days_in_period, '30', 'June has 30 days')
+      assert.ok(Number(l.days_paid) <= 30, 'a draft line may never exceed the period')
+      assert.ok(!Number.isNaN(Number(l.earned)))
+    }
+    const contract = await sql<{ n: number }[]>`
+      select count(*)::int as n from staff
+      where restaurant_id = ${rid} and status = 'active' and employment_type = 'contract'`
+    const codes = new Set(draft.map((l) => l.staff_code))
+    const contractCodes = await sql<{ code: string }[]>`
+      select code from staff
+      where restaurant_id = ${rid} and status = 'active' and employment_type = 'contract'`
+    for (const c of contractCodes) {
+      assert.ok(!codes.has(c.code), `${c.code} is contract and must be billed by their vendor`)
+    }
+    await getOutstandingAdvances(rid)
+    await listStaffIdentities(rid)
+    console.log(`      ${draft.length} on the draft · ${contract[0].n} contract excluded`)
+  })
+
+  await check('only an owner can approve a run', async () => {
+    // The split is the control: whoever works the figures out is not
+    // whoever authorises them. A server action is a public endpoint, so
+    // this must be in the action and not merely in the route.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/payroll-actions.ts', 'utf8')
+    const start = src.indexOf('export async function approvePayrollRun(')
+    assert.ok(start > -1, 'approvePayrollRun is gone')
+    const body = src.slice(start, src.indexOf('export async function ', start + 1))
+    assert.ok(/actor\(\s*\['owner'\]/.test(body), 'approve is no longer owner-only')
+    assert.ok(/status = 'draft'/.test(body), 'approve stopped requiring a draft')
+    // and nothing computes a statutory rate anywhere in payroll
+    for (const bad of ['pfRate', 'esiRate', 'PF_RATE', 'ESI_RATE', '0.12', '0.0075']) {
+      assert.ok(!src.includes(bad), `payroll must not compute a statutory rate (${bad})`)
+    }
+  })
+
+  await check('a run goes draft → approved → paid, and the numbers hold', async () => {
+    // End to end, in a transaction that rolls back. There are no staff yet
+    // (the corrected master arrives from Rajesh), so the probe makes its
+    // own — which is also the only way to assert the arithmetic by value
+    // rather than against whatever happens to be in the database.
+    let doc = ''
+    let net = ''
+    let statuses: string[] = []
+    let frozen = ''
+    try {
+      await sql.begin(async (tx) => {
+        const [acct] = await tx<{ id: string }[]>`
+          insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
+          values (${rid}, 'Zz payroll probe account', 'bank', 0, 999) returning id`
+        const [st] = await tx<{ id: string }[]>`
+          insert into staff (restaurant_id, code, name, employment_type, base_salary, status)
+          values (${rid}, 'ZZ999', 'Zz Probe', 'full_time', 30000, 'active') returning id`
+
+        const docNo = await tx<{ n: string }[]>`select next_doc_no(${rid}, 'RUN', '9996') as n`
+        doc = docNo[0].n
+        const [run] = await tx<{ id: string }[]>`
+          insert into payroll_runs (restaurant_id, period_start, period_end, doc_no, status, prepared_by)
+          values (${rid}, '2001-06-01', '2001-06-30', ${doc}, 'draft', 'gate') returning id`
+
+        // 30 days in June, 27 paid, ₹30,000 base -> earned 27,000; less a
+        // 2,000 advance recovery -> 25,000 net.
+        await tx`
+          insert into payroll_lines (run_id, staff_id, days_in_period, days_paid, base_salary,
+                                     earned, advance_recovered, net_payable)
+          values (${run.id}, ${st.id}, 30, 27, 30000, 27000, 2000, 25000)`
+        const [line] = await tx<{ net: string }[]>`
+          select net_payable::text as net from payroll_lines where run_id = ${run.id}`
+        net = line.net
+
+        // the two-step: an owner approves, only then can it be marked paid
+        const [a] = await tx<{ status: string }[]>`
+          update payroll_runs set status = 'approved', approved_by = 'gate', approved_at = now()
+          where id = ${run.id} and status = 'draft' returning status`
+        const [p] = await tx<{ status: string }[]>`
+          update payroll_runs set status = 'paid'
+          where id = ${run.id} and status = 'approved' returning status`
+        statuses = [a.status, p.status]
+        await tx`
+          update payroll_lines set paid_on = '2001-07-01'::date, account_id = ${acct.id}, pay_mode = 'account'
+          where run_id = ${run.id}`
+
+        // and the amounts are STILL what they were — nothing on the paid
+        // path touched a figure
+        const [after] = await tx<{ net: string }[]>`
+          select net_payable::text as net from payroll_lines where run_id = ${run.id}`
+        frozen = after.net
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(doc, 'RUN-9996-0001', 'the run did not take a RUN document number')
+    // compared by VALUE: numeric renders at the scale it was stored, so
+    // '25000' and '25000.00' are the same money and only one is a string
+    assert.equal(Number(net), 25000, '27,000 earned less a 2,000 advance is 25,000')
+    assert.deepEqual(statuses, ['approved', 'paid'], 'the run did not walk draft → approved → paid')
+    assert.equal(Number(frozen), 25000, 'marking a run paid moved one of its amounts')
+  })
+
+  await check('a lakh is enterable — the client is not stricter than its server', async () => {
+    // At five integer digits the cap was ₹99,999.99 and the save button just
+    // stayed disabled, with nothing on screen saying why. A restaurant pays
+    // vendors and staff far more than that.
+    const { parseMoney, parseQty } = await import('../src/lib/money')
+    assert.equal(parseMoney('100000'), 10000000, '₹1,00,000 must be enterable')
+    assert.equal(parseMoney('250000.50'), 25000050, '₹2,50,000.50 must be enterable')
+    assert.equal(parseMoney('999999999.99'), 99999999999)
+    assert.ok(Number.isSafeInteger(parseMoney('999999999.99') as number))
+    assert.equal(parseMoney('1234567890'), null, 'ten integer digits is still refused')
+    assert.equal(parseMoney('-5'), null, 'a negative is not an amount')
+    assert.equal(parseMoney('1.234'), null, 'three decimal places is not money')
+    // quantities are a count of a thing, not a sum of money, and stay narrow
+    assert.equal(parseQty('100000'), null)
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

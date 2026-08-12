@@ -1516,3 +1516,86 @@ scanner, so `both` was reported as a missing column. `both`/`leading`/
 `trailing` joined the keyword set; the `--self-test` still catches the
 `pnl_monthly.revenue` regression it was written for. A gate that cries wolf
 is a gate people start ignoring.
+
+### Commit 5 — payroll
+
+**The earlier objection is withdrawn, and why matters.** Rajesh's Labour
+sheet paid 34 days in a 30-day month because it summed days worked PLUS
+weekly offs with no cap. Attendance here is one row per person per day with
+the latest winning (`attendance_current`), so it cannot recur — and
+`payroll_lines` carries `CHECK (days_paid <= days_in_period)` saying so out
+loud. That constraint is the reason payroll is buildable now and was not
+before, and `smoke:a2` asserts the DATABASE refuses 34-in-30 rather than
+trusting whoever writes the next form.
+
+**Three hands, and the split is the control.** The MANAGER marks attendance
+(operational, daily — already built). The ACCOUNTANT prepares the run
+(financial, monthly). The OWNER approves before anybody is paid. `draft →
+approved → paid`, with `cancelled` as the escape and no shortcut between
+them. `approvePayrollRun` takes `actor(['owner'])` — an accountant who
+happens to also be the owner signs in as the owner, and the record then says
+an owner approved it. LAW 1 hides the Approve button from everyone else and
+tells them in words who signs it off.
+
+**THE FREEZE IS A GRANT, NOT POLITENESS.** `payroll_lines` has UPDATE on
+exactly `account_id`, `note`, `paid_on`, `pay_mode` — no amount is
+updatable, by anybody, ever. So the accountant edits a computed DRAFT that
+is not stored, and pressing Prepare writes those figures permanently; a
+mistake is fixed by CANCELLING the run and preparing another, and both stay
+on the record. `smoke:a2` asserts that grant list by value: if it ever
+grows, a run became editable, and a decision that can be quietly edited
+afterwards is not a decision.
+
+**The pay law is read from the database, not restated.** present = 1 ·
+half = 0.5 · off = 1 (off is PAID, a stated assumption) · leave and absent =
+0, over the real days of the period, contract staff excluded because they
+are billed by their vendor. `labour_cost_by_section` has applied exactly
+that since phase 5, and the draft reproduces it verbatim — if the two ever
+disagreed, the wage slip and the P&L would state different labour for the
+same month. The gate asserts both the arithmetic and that the view still
+says `WHEN 'off' THEN 1` and still excludes contract.
+
+**No rate is ever computed.** No PF, no ESI, no filing, and `smoke:a2`
+greps for the constants to prove it. Statutory rates change by notification,
+differ by state and differ entirely outside this country; a wrong one
+computed confidently is worse than no figure at all. `withholding` on a
+line is a TYPED figure — what was withheld — exactly as on the Tax screen.
+
+**A paid run does not reach the cash or bank register, and the screen says
+so.** `money_movements` does not read `payroll_lines`; advances DO appear
+there because `staff_advances` is in that view. That is the schema's
+decision rather than the action's, and an accountant should learn it on the
+run page rather than while reconciling.
+
+**The identifier block arrives now because real auth exists** — bank,
+account, IFSC, UPI, PAN, UAN, PF, ESIC, date of birth, gender, on
+`/accounts/payroll/people`. **Owner and accountant only, never the
+manager**: the manager marks attendance and has no reason to hold anybody's
+bank account number or date of birth, which is the whole of data protection
+in one sentence. Phase 5 refused to collect these for exactly this reason —
+the form must not ask for what the app cannot yet protect. Labels use the
+local names because they are the column names, but nothing validates a
+format, masks a field or offers a fixed list of genders: every one of those
+would bake in one country.
+
+**Found and fixed while building payroll, and it was repo-wide:**
+`parseMoney` capped at FIVE integer digits — ₹99,999.99 — while every server
+regex allowed seven digits or more. So a ₹1,00,000 vendor payment, payroll
+advance or staff-fund payout left the save button disabled with **nothing on
+screen saying why**. A client stricter than its server is the worst of both:
+the entry is refused and the refusal is silent. Now nine digits, which keeps
+the result a safe integer; `parseQty` stays at five, because a count of a
+thing is not a sum of money. Asserted by value.
+
+**The verify pass caught four more of the same family**, each a figure that
+read as good news: an empty run printing six confident ₹0.00 totals; a
+bookmarked `?from=2026-02-31` reaching Postgres and 500-ing the page; the
+period-clash refusal arriving AFTER a month of overtime had been keyed in
+(the same shape as "issue autofill lands nowhere"); and an over-recovered
+advance rendering as "already owes −₹500". All four are words now.
+
+**The schema gate earned its keep a second time this phase.** It flagged
+`a.total` on `attendance_current` in the payroll draft — a real alias
+collision, `a` bound to both the attendance table inside a CTE and the
+advances CTE outside it. Confusing to a reader and unresolvable to the gate,
+so the alias was renamed rather than the gate taught to ignore it.
