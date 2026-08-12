@@ -13,7 +13,7 @@
 // write — nothing shown to the user is an echo of what they typed.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
@@ -75,7 +75,7 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
     const duesBefore = before[0]?.balance ?? null
 
     const by = await enteredBy()
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<
         { id: string; vendor_id: string; bill_no: string | null; bill_date: string; reverses_id: string | null }[]
@@ -100,8 +100,8 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
         from purchases where id = ${purchaseId}
         returning id`
       await tx`
-        insert into purchase_lines (purchase_id, item_id, qty, rate, gst_amount, transport_alloc)
-        select ${rev.id}, item_id, -qty, rate, -gst_amount, -transport_alloc
+        insert into purchase_lines (restaurant_id, purchase_id, item_id, qty, rate, gst_amount, transport_alloc)
+        select restaurant_id, ${rev.id}, item_id, -qty, rate, -gst_amount, -transport_alloc
         from purchase_lines where purchase_id = ${purchaseId}`
       return { revId: rev.id, vendorId: orig.vendor_id, expectedLines: lineCount }
     })
@@ -164,7 +164,7 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
 
     // A transaction only so the number and the row it numbers commit together —
     // a failed insert must not burn a number out of the series.
-    const payment = await sql.begin(async (tx) => {
+    const payment = await txn(async (tx) => {
       const docNo = await nextDocNo(tx, rid, 'PAY', input.paidDate)
       const [row] = await tx<
         { id: string; doc_no: string | null; paid_date: string; amount: string; mode: string | null; note: string | null; created_at: string }[]
@@ -365,7 +365,7 @@ export async function createVendor(raw: CreateVendorInput): Promise<CreateVendor
       select code from categories where code = ${input.category} and status = 'active'`
     if (!cat[0]) throw new BooksError(`Unknown category “${input.category}”`)
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [dup] = await tx<{ code: string }[]>`
         select code from vendors
@@ -431,7 +431,7 @@ export async function createItem(raw: CreateItemInput): Promise<CreateItemResult
     const unit = await sql<{ code: string }[]>`select code from units where code = ${input.purchaseUnit}`
     if (!unit[0]) throw new BooksError(`Unknown unit “${input.purchaseUnit}”`)
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [dup] = await tx<{ code: string }[]>`
         select code from items

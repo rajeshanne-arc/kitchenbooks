@@ -7,7 +7,7 @@
 // math, so the server refuses it by name.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
@@ -86,7 +86,7 @@ export async function saveExpense(raw: SaveExpenseInput): Promise<SaveExpenseRes
     }
 
     const accountId = await assertAccount(rid, input.accountId, 'the account this expense was paid from')
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       // The expense's own date, not today: a receipt entered a week late
       // still belongs to the financial year the money left.
@@ -116,7 +116,7 @@ export async function voidExpense(id: string): Promise<VoidExpenseResult> {
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<{ id: string; reverses_id: string | null; expense_date: string }[]>`
         select id, reverses_id, expense_date::text as expense_date
@@ -208,7 +208,7 @@ export async function saveContractBill(raw: SaveContractBillInput): Promise<Save
 
     // The number is allocated on the transaction, so a failed insert takes
     // it back with it and the CON series stays gapless.
-    const row = await sql.begin(async (tx) => {
+    const row = await txn(async (tx) => {
       // The bill's own date — a March bill entered in April is March's.
       const docNo = await nextDocNo(tx, rid, 'CON', input.date)
       const [r] = await tx<{ id: string }[]>`
@@ -244,7 +244,7 @@ export async function voidContractBill(id: string): Promise<{ ok: true } | { ok:
     if (orig.reverses_id !== null) throw new ExpenseError('This is a reversal — reversals cannot be voided')
     const already = await sql<{ id: string }[]>`select id from contract_bills where reverses_id = ${id} limit 1`
     if (already[0]) throw new ExpenseError('This bill is already voided')
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       // Its own number, dated with the bill it reverses; the voided bill
       // keeps the number it was always known by.
       const revDocNo = await nextDocNo(tx, rid, 'CON', orig.bill_date)
@@ -297,7 +297,7 @@ export async function saveCasualLabour(raw: SaveCasualLabourInput): Promise<Save
 
     // Same reason as the contract bill: the number is allocated on the
     // transaction so a failed insert does not burn one.
-    const row = await sql.begin(async (tx) => {
+    const row = await txn(async (tx) => {
       // The day the work was done, not the day it was typed up.
       const docNo = await nextDocNo(tx, rid, 'CAS', input.date)
       const [r] = await tx<{ id: string }[]>`
@@ -331,7 +331,7 @@ export async function voidCasualLabour(id: string): Promise<{ ok: true } | { ok:
     if (orig.reverses_id !== null) throw new ExpenseError('This is a reversal — reversals cannot be voided')
     const already = await sql<{ id: string }[]>`select id from casual_labour where reverses_id = ${id} limit 1`
     if (already[0]) throw new ExpenseError('This entry is already voided')
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       // Its own number, dated with the day worked, so the correction sits
       // in the same year's series as the entry it cancels.
       const revDocNo = await nextDocNo(tx, rid, 'CAS', orig.work_date)

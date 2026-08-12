@@ -8,7 +8,7 @@
 //   order and labels only; routes always come from the hardcoded defaults.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getAllListOptions, getSettingValue } from '@/server/settings'
 import { ALL_LIST_KEYS, type ListOptionRow } from '@/lib/lists'
@@ -39,7 +39,7 @@ export async function addListOption(rawKey: string, rawValue: string): Promise<L
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [existing] = await tx<{ id: string; status: string }[]>`
         select id, status from list_options
@@ -72,7 +72,7 @@ export async function moveListOption(id: string, dir: 'up' | 'down'): Promise<Li
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string; list_key: string; sort_order: number }[]>`
         select id, list_key, sort_order from list_options
@@ -145,7 +145,7 @@ export async function saveTabsSetting(rawGroup: string, rawEntries: { key: strin
     const rid = restaurant.id
     const value = JSON.stringify(entries.map((e) => ({ key: e.key, label: e.label })))
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       await tx`
         insert into settings (restaurant_id, key, value)
@@ -205,7 +205,7 @@ export async function createDepartment(raw: {
     const rid = restaurant.id
     const code = input.code.toUpperCase()
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const dup = await tx<{ id: string }[]>`
         select id from sections where restaurant_id = ${rid} and code = ${code}`
@@ -305,7 +305,7 @@ export async function approveSuggestion(
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       const [sug] = await tx<{ list_key: string; value: string }[]>`
         select list_key, value from list_suggestions
         where id = ${id} and restaurant_id = ${rid} and status = 'pending'`

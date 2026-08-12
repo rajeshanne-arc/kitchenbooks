@@ -20,7 +20,7 @@
 // decided which of our rows it was.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
@@ -143,7 +143,7 @@ export async function importStatement(raw: ImportStatementInput): Promise<Import
     const restaurant = await getRestaurant()
     const accountId = await assertAccount(restaurant.id, input.accountId, 'the account this statement is for')
 
-    const statementId = await sql.begin(async (tx) => {
+    const statementId = await txn(async (tx) => {
       // The database refuses a duplicate period on the same account anyway;
       // asking first is only so the refusal is a sentence rather than a
       // constraint name.

@@ -22,7 +22,7 @@
 // GENERATED (qty × unit_cost) and must never appear in a column list.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { getList } from '@/server/settings'
@@ -91,7 +91,7 @@ export async function acceptCount(countId: string): Promise<AcceptCountResult> {
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const written = await sql.begin(async (tx) => {
+    const written = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       // Re-read inside the lock: two people on two phones both pressing
@@ -227,7 +227,7 @@ export async function saveAdjustment(raw: AdjustmentInput): Promise<AdjustmentRe
       await noteListSuggestion(rid, 'adjustment_reason', input.reason, by)
     }
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       // The cost is snapshotted server-side, full precision, inside the
       // transaction — the store never sees or types a rate on this screen,

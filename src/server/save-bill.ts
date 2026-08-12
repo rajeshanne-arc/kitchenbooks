@@ -8,7 +8,7 @@
 // database (purchases row + vendor_dues view), never echoed from the client.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
@@ -114,7 +114,7 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
     }
 
     const by = await enteredBy()
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       // One writer per restaurant at a time keeps V-CAT-NN / CAT-NNN series race-free.
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
@@ -204,6 +204,7 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
         returning id`
 
       const lineRows = input.lines.map((l, i) => ({
+        restaurant_id: rid,
         purchase_id: purchase.id,
         item_id: itemIds[i],
         qty: l.qty.trim(),
@@ -211,7 +212,7 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
         gst_amount: '0',
         transport_alloc: paiseToString(transportAlloc[i]),
       }))
-      await tx`insert into purchase_lines ${tx(lineRows, 'purchase_id', 'item_id', 'qty', 'rate', 'gst_amount', 'transport_alloc')}`
+      await tx`insert into purchase_lines ${tx(lineRows, 'restaurant_id', 'purchase_id', 'item_id', 'qty', 'rate', 'gst_amount', 'transport_alloc')}`
 
       return { purchaseId: purchase.id, vendorId, vendorCreated, createdItems }
     })

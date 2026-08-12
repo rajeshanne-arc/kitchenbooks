@@ -10,7 +10,7 @@
 // can never leave a residue in section_consumption or stock_on_hand.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import {
@@ -92,7 +92,7 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
       await noteListSuggestion(rid, 'session', input.session, by)
     }
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       // THE PICKER IS NOT THE CHECK. The form offers only departments that
@@ -215,7 +215,7 @@ export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult
       await noteListSuggestion(rid, 'return_reason', input.reason, by)
     }
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       // THE PICKER IS NOT THE CHECK. The form offers only departments that
@@ -297,7 +297,7 @@ export async function saveWastage(raw: SaveWastageInput): Promise<SaveWastageRes
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const rows = await tx<{ name: string; issue_cost: string | null }[]>`
         select ic.name, ic.issue_cost::text as issue_cost
@@ -334,7 +334,7 @@ export async function voidIssue(issueId: string): Promise<VoidIssueResult> {
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<
         { id: string; issue_date: string; section_id: string; reverses_id: string | null }[]
@@ -355,8 +355,8 @@ export async function voidIssue(issueId: string): Promise<VoidIssueResult> {
         returning id`
       // Copy each original line's unit_cost EXACTLY — never re-snapshot.
       await tx`
-        insert into issue_lines (issue_id, item_id, qty, unit_cost)
-        select ${rev.id}, item_id, -qty, unit_cost
+        insert into issue_lines (restaurant_id, issue_id, item_id, qty, unit_cost)
+        select restaurant_id, ${rev.id}, item_id, -qty, unit_cost
         from issue_lines where issue_id = ${issueId}`
       return { revId: rev.id, issueDate: orig.issue_date, sectionId: orig.section_id, expectedLines: lineCount }
     })
@@ -398,7 +398,7 @@ export async function voidWastage(wastageId: string): Promise<VoidWastageResult>
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<{ id: string; item_id: string; reverses_id: string | null }[]>`
         select id, item_id, reverses_id from wastage where id = ${wastageId} and restaurant_id = ${rid}`

@@ -10,7 +10,7 @@
 // the ladder view already filters those out; code must never re-add them.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
@@ -95,7 +95,7 @@ export async function saveOtherIncome(raw: SaveOtherIncomeInput): Promise<SaveOt
 
     const accountId = await assertAccount(rid, input.accountId, 'the account this income landed in')
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       if (input.unit !== '') {
         const unit = await tx<{ code: string }[]>`select code from units where code = ${input.unit}`
@@ -165,7 +165,7 @@ export async function saveVoucher(raw: SaveVoucherInput): Promise<SaveVoucherRes
     const by = await enteredBy()
 
     const accountId = await assertAccount(rid, input.accountId, 'the account this voucher was paid from')
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       // The voucher's own date, not today: a voucher written up late still
       // belongs to the financial year the money moved in.
@@ -197,7 +197,7 @@ export async function setFirstOpening(raw: { amount: string }): Promise<SetOpeni
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const closed = await tx<{ id: string }[]>`select id from day_closes where restaurant_id = ${rid} limit 1`
       if (closed[0]) {
@@ -253,7 +253,7 @@ export async function closeDay(raw: CloseDayInput): Promise<CloseDayResult> {
         ? null
         : await assertAccount(rid, input.bankAccountId, 'the account the bank settlement went into')
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       // The chain law re-checked inside the lock: HARD STOP if D-1 is open.
       const prefill = await getClosePrefill(rid, input.date)

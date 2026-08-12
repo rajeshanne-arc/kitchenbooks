@@ -10,7 +10,7 @@
 
 import { z } from 'zod'
 import type postgres from 'postgres'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
@@ -110,7 +110,7 @@ export async function saveClosing(raw: SaveClosingInput): Promise<SaveClosingRes
     await assertKitchenSection(rid, input.sectionId)
     const by = await enteredBy()
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       await tx`
         insert into kitchen_closings (restaurant_id, section_id, close_date, closing_value, note, entered_by)
@@ -190,7 +190,7 @@ export async function saveKitchenWastage(raw: SaveKitchenWastage2Input): Promise
     await assertKitchenSection(rid, input.sectionId)
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       let itemId: string | null = null
       let recipeId: string | null = null
@@ -245,7 +245,7 @@ export async function voidKitchenWastage(id: string): Promise<VoidKitchenWastage
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
         select id, reverses_id from kitchen_wastage where id = ${id} and restaurant_id = ${rid}`
@@ -319,7 +319,7 @@ export async function saveIndent(raw: SaveIndentInput): Promise<SaveIndentResult
       await noteListSuggestion(rid, 'session', input.session, by)
     }
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       for (const [i, l] of input.lines.entries()) {
         const item = await tx<{ id: string }[]>`
@@ -355,7 +355,7 @@ export async function cancelIndent(id: string): Promise<IndentStatusResult> {
     if (!UUID.test(id)) throw new KitchenError('Malformed indent id')
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ status: string }[]>`
         select status from indents where id = ${id} and restaurant_id = ${rid}`
@@ -443,7 +443,7 @@ export async function updateIndent(raw: UpdateIndentInput): Promise<UpdateIndent
       await noteListSuggestion(rid, 'session', input.session, user.username)
     }
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       // THE FREEZE, re-read INSIDE the lock. An issue filed while this form
@@ -513,7 +513,8 @@ export async function updateIndent(raw: UpdateIndentInput): Promise<UpdateIndent
         if (l.id === null) continue
         await tx`
           update indent_lines set qty_requested = ${l.qty.trim()}
-          where id = ${l.id} and indent_id = ${input.indentId}`
+          where id = ${l.id} and indent_id = ${input.indentId}
+            and restaurant_id = ${rid}`
       }
       const fresh = input.lines.flatMap((l) =>
         l.id === null ? [{ indent_id: input.indentId, item_id: l.itemId, qty_requested: l.qty.trim() }] : [],
@@ -577,7 +578,7 @@ export async function saveProduction(raw: SaveProductionInput): Promise<SaveProd
     await assertKitchenSection(rid, input.sectionId)
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [recipe] = await tx<{ kind: string; name: string; cost: string | null }[]>`
         select r.kind, r.name, rc.cost_per_output_unit::text as cost
@@ -614,7 +615,7 @@ export async function voidProduction(id: string): Promise<VoidProductionResult> 
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
         select id, reverses_id from productions where id = ${id} and restaurant_id = ${rid}`
@@ -682,7 +683,7 @@ export async function saveItemizedClosing(raw: SaveItemizedClosingInput): Promis
     await assertKitchenSection(rid, input.sectionId)
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       // Freeze each line's unit cost inside the transaction.

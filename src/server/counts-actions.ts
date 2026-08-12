@@ -9,7 +9,7 @@
 //     costs rewrite history, photographs don't.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { getCount, getCountVariances, getIssueHistoryDays } from '@/server/counts-queries'
@@ -66,7 +66,7 @@ export async function saveCount(raw: SaveCountInput): Promise<SaveCountResult> {
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       const [count] = await tx<{ id: string }[]>`
@@ -84,8 +84,8 @@ export async function saveCount(raw: SaveCountInput): Promise<SaveCountResult> {
           where i.id = ${l.itemId} and i.restaurant_id = ${rid} and i.status = 'active'`
         if (!item) throw new CountsError(`Line ${i + 1}: item not found`)
         await tx`
-          insert into stock_count_lines (count_id, item_id, counted_qty, book_qty, unit_cost)
-          values (${count.id}, ${l.itemId}, ${l.countedQty.trim()}, ${item.book_qty}, ${item.unit_cost ?? '0'})`
+          insert into stock_count_lines (restaurant_id, count_id, item_id, counted_qty, book_qty, unit_cost)
+          values (${rid}, ${count.id}, ${l.itemId}, ${l.countedQty.trim()}, ${item.book_qty}, ${item.unit_cost ?? '0'})`
       }
       return { countId: count.id }
     })
@@ -111,7 +111,7 @@ export async function photographMenu(): Promise<PhotographResult> {
     const rid = restaurant.id
     const snapDate = todayIST()
 
-    const inserted = await sql.begin(async (tx) => {
+    const inserted = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const already = await tx<{ id: string }[]>`
         select id from dish_cost_snapshots

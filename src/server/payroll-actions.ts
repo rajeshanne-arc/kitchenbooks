@@ -18,7 +18,7 @@
 // accountant's, and so is the filing.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
@@ -110,7 +110,7 @@ export async function preparePayrollRun(raw: PreparePayrollInput): Promise<Payro
       }
     }
 
-    const runId = await sql.begin(async (tx) => {
+    const runId = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       const [clash] = await tx<{ period_start: string }[]>`
@@ -136,6 +136,7 @@ export async function preparePayrollRun(raw: PreparePayrollInput): Promise<Payro
           Number(l.earned) + Number(l.overtime) - Number(l.advanceRecovered) -
           Number(l.otherDeduction) - Number(l.withholding)
         return {
+          restaurant_id: rid,
           run_id: run.id,
           staff_id: l.staffId,
           days_in_period: l.daysInPeriod,
@@ -152,7 +153,7 @@ export async function preparePayrollRun(raw: PreparePayrollInput): Promise<Payro
       })
       await tx`insert into payroll_lines ${tx(
         rows,
-        'run_id', 'staff_id', 'days_in_period', 'days_paid', 'base_salary', 'earned',
+        'restaurant_id', 'run_id', 'staff_id', 'days_in_period', 'days_paid', 'base_salary', 'earned',
         'overtime', 'advance_recovered', 'other_deduction', 'withholding', 'net_payable', 'note',
       )}`
       return run.id
@@ -247,7 +248,7 @@ export async function markPayrollPaid(raw: MarkPaidInput): Promise<PayrollResult
     const rid = restaurant.id
     const accountId = await assertAccount(rid, input.accountId, 'the account the wages were paid from')
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       const [run] = await tx<{ id: string }[]>`
         update payroll_runs set status = 'paid'
         where id = ${input.runId} and restaurant_id = ${rid} and status = 'approved'
@@ -257,7 +258,7 @@ export async function markPayrollPaid(raw: MarkPaidInput): Promise<PayrollResult
         update payroll_lines
         set paid_on = ${input.paidOn}::date, account_id = ${accountId},
             pay_mode = ${input.payMode === '' ? null : input.payMode}
-        where run_id = ${input.runId}`
+        where run_id = ${input.runId} and restaurant_id = ${rid}`
     })
 
     const run = await getPayrollRun(rid, input.runId)
@@ -292,7 +293,7 @@ export async function saveAdvance(raw: SaveAdvanceInput): Promise<{ ok: true } |
     const rid = restaurant.id
     const accountId = await assertAccount(rid, input.accountId, 'the account this advance was paid from')
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       const docNo = await nextDocNo(tx, rid, 'ADV', input.date)
       await tx`
         insert into staff_advances (restaurant_id, adv_date, staff_id, amount, account_id, doc_no, note, entered_by)

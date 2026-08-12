@@ -7,7 +7,7 @@
 // refuses updates on both fronts regardless.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { getDaySheet, getStaffDetail } from '@/server/labour-queries'
@@ -78,7 +78,7 @@ export async function createStaff(raw: StaffInput): Promise<StaffMutationResult>
     const rid = restaurant.id
     await validateStaffRefs(rid, input, null)
 
-    const created = await sql.begin(async (tx) => {
+    const created = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       // E### — flat series, zero-padded, permanent.
       const [{ next }] = await tx<{ next: number }[]>`
@@ -172,7 +172,7 @@ export async function saveAttendance(raw: {
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const inserted = await sql.begin(async (tx) => {
+    const inserted = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       const staffIds = [...new Set(input.marks.map((m) => m.staffId))]

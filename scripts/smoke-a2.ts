@@ -759,9 +759,9 @@ async function main() {
             select id from staff where restaurant_id = ${rid} limit 1`
           if (!st) throw new Error('CHECK_UNTESTABLE')
           await tx`
-            insert into payroll_lines (run_id, staff_id, days_in_period, days_paid,
+            insert into payroll_lines (restaurant_id, run_id, staff_id, days_in_period, days_paid,
                                        base_salary, earned, net_payable)
-            values (${run.id}, ${st.id}, 30, 34, 10000, 10000, 10000)`
+            values (${rid}, ${run.id}, ${st.id}, 30, 34, 10000, 10000, 10000)`
         }),
       (e: unknown) => {
         const m = (e as Error).message
@@ -878,9 +878,9 @@ async function main() {
         // 30 days in June, 27 paid, ₹30,000 base -> earned 27,000; less a
         // 2,000 advance recovery -> 25,000 net.
         await tx`
-          insert into payroll_lines (run_id, staff_id, days_in_period, days_paid, base_salary,
+          insert into payroll_lines (restaurant_id, run_id, staff_id, days_in_period, days_paid, base_salary,
                                      earned, advance_recovered, net_payable)
-          values (${run.id}, ${st.id}, 30, 27, 30000, 27000, 2000, 25000)`
+          values (${rid}, ${run.id}, ${st.id}, 30, 27, 30000, 27000, 2000, 25000)`
         const [line] = await tx<{ net: string }[]>`
           select net_payable::text as net from payroll_lines where run_id = ${run.id}`
         net = line.net
@@ -958,9 +958,9 @@ async function main() {
           insert into payroll_runs (restaurant_id, period_start, period_end, status, prepared_by)
           values (${rid}, '2001-06-01', '2001-06-30', 'paid', 'gate') returning id`
         await tx`
-          insert into payroll_lines (run_id, staff_id, days_in_period, days_paid, base_salary,
+          insert into payroll_lines (restaurant_id, run_id, staff_id, days_in_period, days_paid, base_salary,
                                      earned, net_payable)
-          values (${run.id}, ${st.id}, 30, 30, 30000, 30000, 30000)`
+          values (${rid}, ${run.id}, ${st.id}, 30, 30, 30000, 30000, 30000)`
 
         // UNPAID first: paid_on is null, so the view must not carry it
         const [before] = await tx<{ n: number }[]>`
@@ -1140,8 +1140,8 @@ async function main() {
           values (${rid}, ${acct.id}, '2001-06-01', '2001-06-30', 0, -500, 'gate')
           returning id`
         const [line] = await tx<{ id: string }[]>`
-          insert into statement_lines (statement_id, stmt_date, description, amount)
-          values (${stmt.id}, '2001-06-15', 'Zz probe line', -500) returning id`
+          insert into statement_lines (restaurant_id, statement_id, stmt_date, description, amount)
+          values (${rid}, ${stmt.id}, '2001-06-15', 'Zz probe line', -500) returning id`
 
         await tx`
           insert into reconciliation_matches (restaurant_id, statement_line_id, entity_type,
@@ -1201,8 +1201,8 @@ async function main() {
           values (${rid}, ${acct.id}, '2001-06-01', '2001-06-30', 1000, 700, 'gate')
           returning id`
         await tx`
-          insert into statement_lines (statement_id, stmt_date, description, amount)
-          values (${stmt.id}, '2001-06-10', 'Zz out', -300)`
+          insert into statement_lines (restaurant_id, statement_id, stmt_date, description, amount)
+          values (${rid}, ${stmt.id}, '2001-06-10', 'Zz out', -300)`
         const [row] = await tx<{ c: string }[]>`
           select statement_self_check::text as c from reconciliation_status
           where statement_id = ${stmt.id}`
@@ -1520,28 +1520,28 @@ async function main() {
         const [vr] = await tx<{ id: string }[]>`
           insert into vendor_returns (restaurant_id, return_date, vendor_id, reason, entered_by)
           values (${rid}, current_date, ${v.id}, 'zz gate', 'gate') returning id`
-        await tx`insert into vendor_return_lines (vendor_return_id, item_id, qty, rate)
-                 values (${vr.id}, ${item.item_id}, 5, 50)`
+        await tx`insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate)
+                 values (${rid}, ${vr.id}, ${item.item_id}, 5, 50)`
         const v1 = await on()
         const [vrev] = await tx<{ id: string }[]>`
           insert into vendor_returns (restaurant_id, return_date, vendor_id, reason, reverses_id, entered_by)
           values (${rid}, current_date, ${v.id}, 'void', ${vr.id}, 'gate') returning id`
-        await tx`insert into vendor_return_lines (vendor_return_id, item_id, qty, rate)
-                 select ${vrev.id}, item_id, qty, rate from vendor_return_lines where vendor_return_id = ${vr.id}`
+        await tx`insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate)
+                 select ${rid}, ${vrev.id}, item_id, qty, rate from vendor_return_lines where vendor_return_id = ${vr.id}`
         vendor = [v0, v1, await on()]
 
         const k0 = await on()
         const [kr] = await tx<{ id: string }[]>`
           insert into returns (restaurant_id, return_date, section_id, reason, entered_by)
           values (${rid}, current_date, ${sec.id}, 'zz gate', 'gate') returning id`
-        await tx`insert into return_lines (return_id, item_id, qty, unit_cost)
-                 values (${kr.id}, ${item.item_id}, 4, 50)`
+        await tx`insert into return_lines (restaurant_id, return_id, item_id, qty, unit_cost)
+                 values (${rid}, ${kr.id}, ${item.item_id}, 4, 50)`
         const k1 = await on()
         const [krev] = await tx<{ id: string }[]>`
           insert into returns (restaurant_id, return_date, section_id, reason, reverses_id, entered_by)
           values (${rid}, current_date, ${sec.id}, 'void', ${kr.id}, 'gate') returning id`
-        await tx`insert into return_lines (return_id, item_id, qty, unit_cost)
-                 select ${krev.id}, item_id, qty, unit_cost from return_lines where return_id = ${kr.id}`
+        await tx`insert into return_lines (restaurant_id, return_id, item_id, qty, unit_cost)
+                 select ${rid}, ${krev.id}, item_id, qty, unit_cost from return_lines where return_id = ${kr.id}`
         kitchen = [k0, k1, await on()]
         throw new Error('KB_ROLLBACK')
       })
@@ -1577,8 +1577,8 @@ async function main() {
           const [c] = await tx<{ id: string }[]>`
             insert into stock_counts (restaurant_id, count_date, entered_by)
             values (${rid}, current_date, 'gate') returning id`
-          await tx`insert into stock_count_lines (count_id, item_id, counted_qty, book_qty, unit_cost)
-                   values (${c.id}, ${item.item_id}, ${book - 3}, ${book}, 100)`
+          await tx`insert into stock_count_lines (restaurant_id, count_id, item_id, counted_qty, book_qty, unit_cost)
+                   values (${rid}, ${c.id}, ${item.item_id}, ${book - 3}, ${book}, 100)`
           return c.id
         }
         const accept = async (cid: string) => {
@@ -1756,6 +1756,80 @@ async function main() {
       }
     }
     assert.deepEqual(bad, [], `cross-tenant writes:\n      ${bad.join('\n      ')}`)
+  })
+
+  await check('every transaction announces its tenant', async () => {
+    // Phase 2(a). sql.begin must not be called directly any more: txn() is
+    // the only thing that emits `set local app.restaurant_id`, and a
+    // transaction that skips it will be denied wholesale once RLS is on.
+    const { readdirSync, readFileSync } = await import('node:fs')
+    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    const raw = files.filter((f) => /\bsql\.begin\(/.test(readFileSync(f, 'utf8')))
+    assert.deepEqual(raw, [], `these bypass the tenant GUC:\n      ${raw.join('\n      ')}`)
+
+    const db = readFileSync('src/lib/db.ts', 'utf8')
+    assert.match(db, /set local app\.restaurant_id/, 'the GUC statement is gone')
+    // `local` is not optional: Supavisor is in TRANSACTION mode, so a plain
+    // `set` rides the connection back into the pool and reaches whoever
+    // draws it next.
+    assert.ok(!/[^_]set app\.restaurant_id/.test(db), 'a non-local set would leak across tenants')
+  })
+
+  await check('the GUC actually reaches Postgres', async () => {
+    const { withTenant } = await import('../src/lib/tenant')
+    const { txn } = await import('../src/lib/db')
+    const seen = await withTenant(rid, async () =>
+      txn(async (tx) => {
+        const [row] = await tx<{ v: string }[]>`
+          select current_setting('app.restaurant_id', true) as v`
+        return row.v
+      }),
+    )
+    assert.equal(seen, rid, 'the transaction did not announce its tenant to Postgres')
+
+    // and it does NOT survive the transaction — that is what `local` buys
+    const [after] = await sql<{ v: string | null }[]>`
+      select current_setting('app.restaurant_id', true) as v`
+    assert.ok(after.v === null || after.v === '', 'the tenant leaked out of its transaction')
+  })
+
+  await check('a malformed tenant is never interpolated', async () => {
+    // set local takes no bind parameters, so this is the one place a value
+    // is concatenated into SQL. The shape check is the whole defence.
+    const { tenantGuc } = await import('../src/lib/tenant')
+    assert.equal(tenantGuc(null), null)
+    assert.match(tenantGuc(rid) ?? '', /^set local app\.restaurant_id = '[0-9a-f-]{36}'$/)
+    assert.throws(() => tenantGuc("' or 1=1 --"), /malformed tenant/i)
+  })
+
+  await check('every line insert carries the tenant it belongs to', async () => {
+    // The 14 line tables gained restaurant_id NOT NULL. The app must write
+    // it on every insert, from the parent — a line that names no tenant is
+    // a row RLS cannot place.
+    const { readdirSync, readFileSync } = await import('node:fs')
+    const lineTables = (
+      await sql<{ table_name: string }[]>`
+        select c.table_name from information_schema.columns c
+        where c.table_schema = 'public' and c.column_name = 'restaurant_id'
+          and c.table_name like '%_lines'`
+    ).map((r) => r.table_name)
+    assert.ok(lineTables.length >= 13, `expected the line tables to carry a tenant, found ${lineTables.length}`)
+
+    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    const missing: string[] = []
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8').replace(/\$\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, ' ? ')
+      for (const t of lineTables) {
+        const re = new RegExp(`insert into ${t}\\s*\\(`, 'g')
+        let m: RegExpExecArray | null
+        while ((m = re.exec(src)) !== null) {
+          const open = m.index + m[0].length - 1
+          const cols = src.slice(open + 1, src.indexOf(')', open))
+          if (!cols.includes('restaurant_id')) missing.push(`${f}: insert into ${t}`)
+        }
+      }
+    }
+    assert.deepEqual(missing, [], `line inserts with no tenant:\n      ${missing.join('\n      ')}`)
   })
 
   /* ── 3. the return path's list is real ────────────────────────────── */

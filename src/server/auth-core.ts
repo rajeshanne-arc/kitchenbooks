@@ -6,7 +6,7 @@
 // nothing arrives through chat), and /setup refuses forever after.
 import 'server-only'
 import bcrypt from 'bcryptjs'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { ALL_ROLES, type Role } from '@/lib/roles'
 import type { AppUserRow } from '@/lib/types'
 
@@ -105,7 +105,7 @@ export async function createFirstOwner(
   }
 
   const hash = await hashPassword(input.password)
-  const created = await sql.begin(async (tx) => {
+  const created = await txn(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${restaurantId}, 0))`
     const existing = await tx<{ id: string }[]>`
       select id from app_users where restaurant_id = ${restaurantId} limit 1`
@@ -147,7 +147,7 @@ export async function createUser(
   if (displayName === '') throw new AuthError('A display name is required')
 
   const hash = await hashPassword(input.password)
-  const created = await sql.begin(async (tx) => {
+  const created = await txn(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${restaurantId}, 0))`
     const dup = await tx<{ id: string }[]>`
       select id from app_users where restaurant_id = ${restaurantId} and lower(username) = ${username} limit 1`
@@ -182,7 +182,7 @@ export async function updateUser(
   const displayName = input.displayName.trim()
   if (displayName === '') throw new AuthError('A display name is required')
 
-  await sql.begin(async (tx) => {
+  await txn(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${restaurantId}, 0))`
     const [target] = await tx<{ id: string; role: Role; status: string }[]>`
       select id, role, status from app_users where id = ${userId} and restaurant_id = ${restaurantId}`

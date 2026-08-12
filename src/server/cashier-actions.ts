@@ -11,7 +11,7 @@
 // here re-adds it.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
@@ -158,7 +158,7 @@ export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSett
         ? null
         : await assertAccount(rid, input.accountId, 'the account this receipt landed in')
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string }[]>`
         insert into partner_settlements (restaurant_id, partner, period_start, period_end,
@@ -203,7 +203,7 @@ export async function voidSettlement(id: string): Promise<VoidSettlementResult> 
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
         select id, reverses_id from partner_settlements where id = ${id} and restaurant_id = ${rid}`
@@ -276,7 +276,7 @@ export async function saveOffBook(raw: SaveOffBookInput): Promise<SaveOffBookRes
     const by = await enteredBy()
 
     const accountId = await assertAccount(rid, input.accountId, 'the account this money landed in')
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string }[]>`
         insert into off_book_orders (restaurant_id, order_date, description, amount, payment_mode, note, entered_by,
@@ -305,9 +305,9 @@ export async function saveOffBook(raw: SaveOffBookInput): Promise<SaveOffBookRes
             cost = v.v
           }
           await tx`
-            insert into off_book_lines (off_book_id, recipe_id, description, qty,
+            insert into off_book_lines (restaurant_id, off_book_id, recipe_id, description, qty,
                                         menu_price, agreed_price, cost_value)
-            values (${row.id}, ${l.recipeId === '' ? null : l.recipeId},
+            values (${rid}, ${row.id}, ${l.recipeId === '' ? null : l.recipeId},
                     ${l.description === '' ? null : l.description},
                     ${l.qty}::numeric,
                     ${l.menuPrice === '' ? null : l.menuPrice}::numeric,
@@ -332,7 +332,7 @@ export async function voidOffBook(id: string): Promise<VoidOffBookResult> {
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
         select id, reverses_id from off_book_orders where id = ${id} and restaurant_id = ${rid}`
@@ -396,7 +396,7 @@ export async function saveNonRevenue(raw: SaveNonRevenueInput): Promise<SaveNonR
     await acceptListValue(rid, 'non_revenue_reason', input.reason, 'Reason')
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       let costValue = '0'
       if (input.recipeId !== '') {
@@ -442,7 +442,7 @@ export async function voidNonRevenue(id: string): Promise<VoidNonRevenueResult> 
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
         select id, reverses_id from non_revenue where id = ${id} and restaurant_id = ${rid}`
@@ -498,7 +498,7 @@ export async function saveDue(raw: SaveDueInput): Promise<SaveDueResult> {
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       // positive = credit given, negative = received back — sign carries direction
       const [row] = await tx<{ id: string }[]>`
@@ -527,7 +527,7 @@ export async function voidDue(id: string): Promise<VoidDueResult> {
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
         select id, reverses_id from due_payments where id = ${id} and restaurant_id = ${rid}`
@@ -577,7 +577,7 @@ export async function createPartner(raw: SavePartnerInput): Promise<SavePartnerR
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const dup = await tx<{ id: string }[]>`
         select id from partners

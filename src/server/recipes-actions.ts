@@ -14,7 +14,7 @@
 // cap is blast-radius control, not the guard.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getRecipeDetail, getRecipeLines } from '@/server/recipes-queries'
 import type {
@@ -79,7 +79,7 @@ export async function createRecipe(raw: CreateRecipeInput): Promise<CreateRecipe
     const unit = await sql<{ code: string }[]>`select code from units where code = ${input.outputUnit}`
     if (!unit[0]) throw new RecipeError(`Unknown unit “${input.outputUnit}”`)
 
-    const created = await sql.begin(async (tx) => {
+    const created = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       let prefix: string
@@ -183,7 +183,7 @@ export async function addLine(raw: AddLineInput): Promise<RecipeMutationResult> 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const recipe = await tx<{ id: string; name: string }[]>`
         select id, name from recipes where id = ${input.recipeId} and restaurant_id = ${rid}`
@@ -194,8 +194,8 @@ export async function addLine(raw: AddLineInput): Promise<RecipeMutationResult> 
           select id from items where id = ${input.component.id} and restaurant_id = ${rid} and status = 'active'`
         if (!item[0]) throw new RecipeError('Item not found')
         await tx`
-          insert into recipe_lines (recipe_id, component_item_id, qty)
-          values (${input.recipeId}, ${input.component.id}, ${input.qty}::numeric)`
+          insert into recipe_lines (restaurant_id, recipe_id, component_item_id, qty)
+          values (${rid}, ${input.recipeId}, ${input.component.id}, ${input.qty}::numeric)`
       } else {
         const sub = await tx<{ id: string; name: string }[]>`
           select id, name from recipes
@@ -221,8 +221,8 @@ export async function addLine(raw: AddLineInput): Promise<RecipeMutationResult> 
           )
         }
         await tx`
-          insert into recipe_lines (recipe_id, component_recipe_id, qty)
-          values (${input.recipeId}, ${input.component.id}, ${input.qty}::numeric)`
+          insert into recipe_lines (restaurant_id, recipe_id, component_recipe_id, qty)
+          values (${rid}, ${input.recipeId}, ${input.component.id}, ${input.qty}::numeric)`
       }
     })
 
@@ -254,7 +254,8 @@ export async function updateLineYield(lineId: string, yieldPct: string): Promise
     if (line.is_sub) {
       throw new RecipeError('A sub-recipe line has no yield of its own — the trim inside it is already costed')
     }
-    await sql`update recipe_lines set yield_pct = ${yieldPct}::numeric where id = ${lineId}`
+    await sql`update recipe_lines set yield_pct = ${yieldPct}::numeric
+              where id = ${lineId} and restaurant_id = ${rid}`
     return await freshState(rid, line.recipe_id)
   } catch (e) {
     return fail(e)

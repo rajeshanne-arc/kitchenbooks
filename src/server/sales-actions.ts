@@ -6,7 +6,7 @@
 // upsert (recipe_id, item_name only).
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { fetchPetpoojaOrders, PetpoojaError } from '@/server/petpooja'
 import { normalizePayload, persistFetch, SalesIngestError } from '@/server/sales-ingest'
@@ -96,7 +96,7 @@ export async function mapPosItem(raw: {
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const dish = await tx<{ id: string }[]>`
         select id from recipes

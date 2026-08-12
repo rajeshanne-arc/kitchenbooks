@@ -13,7 +13,7 @@
 // wrong. This is the tempting place to add one; do not.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { parseMoney, parseQty } from '@/lib/money'
@@ -106,7 +106,7 @@ export async function saveVendorReturn(raw: VendorReturnInput): Promise<VendorRe
     const vendor = await assertVendor(rid, input.vendorId)
     await assertItems(rid, input.lines.map((l) => l.itemId))
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [header] = await tx<{ id: string }[]>`
         insert into vendor_returns (restaurant_id, return_date, vendor_id, reason,
@@ -119,8 +119,8 @@ export async function saveVendorReturn(raw: VendorReturnInput): Promise<VendorRe
 
       for (const line of input.lines) {
         await tx`
-          insert into vendor_return_lines (vendor_return_id, item_id, qty, rate)
-          values (${header.id}, ${line.itemId}, ${line.qty}::numeric, ${line.rate}::numeric)`
+          insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate)
+          values (${rid}, ${header.id}, ${line.itemId}, ${line.qty}::numeric, ${line.rate}::numeric)`
       }
 
       // Read the lines back inside the transaction: if the count does not
@@ -228,7 +228,7 @@ export async function voidVendorReturn(id: string): Promise<{ ok: true } | { ok:
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    await sql.begin(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       const [orig] = await tx<{ id: string; return_date: string; vendor_id: string; reverses_id: string | null }[]>`
@@ -249,8 +249,8 @@ export async function voidVendorReturn(id: string): Promise<{ ok: true } | { ok:
         returning id`
       // amount is GENERATED — absent from the column list by necessity
       await tx`
-        insert into vendor_return_lines (vendor_return_id, item_id, qty, rate)
-        select ${rev.id}, item_id, qty, rate
+        insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate)
+        select restaurant_id, ${rev.id}, item_id, qty, rate
         from vendor_return_lines where vendor_return_id = ${id}`
 
       const [check] = await tx<{ n: number }[]>`

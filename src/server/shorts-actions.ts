@@ -10,7 +10,7 @@
 // a status the app infers from a credit note turning up.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { parseQty } from '@/lib/money'
 import { getRestaurant } from '@/server/queries'
 import {
@@ -66,7 +66,7 @@ export async function saveShort(raw: SaveShortInput): Promise<ShortResult> {
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       // The line must be OURS. A purchase_lines id is a uuid off the wire,
       // and this action is a public endpoint.
       const line = await tx<

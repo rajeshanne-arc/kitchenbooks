@@ -7,7 +7,7 @@
 // loudly, never banked. C-prefixed order ids are a secondary comp signal;
 // status wins, and every disagreement is logged on the fetch row.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { txn } from '@/lib/db'
 import type { StatusClass } from '@/lib/types'
 
 export class SalesIngestError extends Error {}
@@ -183,7 +183,7 @@ export async function persistFetch(
   businessDate: string,
   norm: NormalizedPayload,
 ): Promise<PersistedFetch> {
-  return sql.begin(async (tx) => {
+  return txn(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${restaurantId}, 0))`
 
     const [fetch] = await tx<{ id: string }[]>`

@@ -8,7 +8,7 @@
 // restaurant and wrong in a different way in every country.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getMoneyAccount } from '@/server/accounts-queries'
 import type { SaveMoneyAccountInput, SaveMoneyAccountResult } from '@/lib/types'
@@ -57,7 +57,7 @@ export async function createMoneyAccount(raw: SaveMoneyAccountInput): Promise<Sa
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const saved = await sql.begin(async (tx) => {
+    const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [dup] = await tx<{ id: string }[]>`
         select id from money_accounts

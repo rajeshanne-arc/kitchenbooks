@@ -4,6 +4,7 @@
 // DELETE grants — the append-only rule is enforced by the database itself.
 import 'server-only'
 import postgres from 'postgres'
+import { currentTenant, tenantGuc } from '@/lib/tenant'
 
 declare global {
   var __kbSql: ReturnType<typeof postgres> | undefined
@@ -31,3 +32,37 @@ function connect() {
 }
 
 export const sql = globalThis.__kbSql ?? (globalThis.__kbSql = connect())
+
+/**
+ * A transaction that ANNOUNCES ITS TENANT — Phase 2(a).
+ *
+ * `set local app.restaurant_id` is the first statement inside every
+ * transaction, so the RLS policies of Phase 2(b) have something true to
+ * read. `local` is not optional: Supavisor runs in TRANSACTION mode, so the
+ * connection under a plain `set` goes back to the pool and carries the value
+ * to whoever gets it next. Scoped to the transaction, it cannot leak.
+ *
+ * Use this everywhere `sql.begin` was used. Outside a request there is no
+ * tenant and nothing is announced, which is correct for the smoke suites.
+ */
+export async function txn<T>(fn: (tx: postgres.TransactionSql) => Promise<T>): Promise<T> {
+  // Resolved here rather than required at 65 call sites. An explicit
+  // withTenant() wins when one is in scope — that is how a background job
+  // or a provisioning script announces a tenant it was told about — and
+  // otherwise the session answers, which is every request path including
+  // the POS fetch, since that runs inside a server action.
+  //
+  // A dynamic import: current-user reaches for next/headers, and db.ts is
+  // loaded by smoke scripts that have no request. It already returns null
+  // outside one, so a null tenant simply announces nothing.
+  let tenant = currentTenant()
+  if (tenant === null) {
+    const { getSessionUser } = await import('@/server/current-user')
+    tenant = (await getSessionUser())?.restaurantId ?? null
+  }
+  const guc = tenantGuc(tenant)
+  return sql.begin(async (tx) => {
+    if (guc !== null) await tx.unsafe(guc)
+    return fn(tx)
+  }) as Promise<T>
+}

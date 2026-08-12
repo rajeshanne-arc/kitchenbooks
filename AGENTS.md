@@ -2110,3 +2110,73 @@ against.
 no tenant, down from 58. They are reads, and RLS will close them
 wholesale — but the audit stays, and `--strict` becomes a gate once the
 count reaches zero.
+
+## The worst defect this project found
+
+`updateUser` scoped by `id` alone — `where id = ${userId}`, no tenant — on
+`app_users`, the one table that decides who may do anything at all. **One
+restaurant's owner could change another restaurant's user's role or status.
+Cross-tenant privilege escalation, silent, with no screen looking wrong.**
+
+It is the reason `audit:tenancy` is a permanent gate and not a one-off
+report. A single missing `and restaurant_id = …` is invisible while there is
+one tenant, indistinguishable from correct code in review, and catastrophic
+the day there are two. Only a machine reading every statement finds them
+all.
+
+## AN ASSERTION THAT CANNOT FAIL ON EMPTY DATA HAS NOT BEEN TESTED
+
+The payroll CHECK assertion — "the database refuses more days paid than the
+period holds" — had been passing since the day it was written **because
+there were no staff rows to test it against**. The moment a real staff row
+appeared on production it failed, and the failure was in the assertion, not
+the database: Postgres names the CONSTRAINT in its error, and
+`payroll_lines_check` never contains the string `days_paid`.
+
+That is the **fifth** instance of a check structurally incapable of finding
+what it exists to find:
+
+| | What it could not see |
+|---|---|
+| `ensureLog_` on cell A3 | the sheet it was meant to guard |
+| `git push -q` to a stale branch | that nothing was being pushed |
+| `column_privileges` | DELETE, which is a TABLE privilege |
+| `created_at` ties in one transaction | that `now()` does not advance |
+| the payroll CHECK matcher | a constraint named for its table |
+
+**The general form, now the rule: every gate must be run once against data
+that ought to break it.** A green test over an empty set is not evidence;
+it is the absence of evidence wearing a tick. Where the breaking data cannot
+exist yet, the assertion should fail loudly rather than pass quietly — as
+the vendor-return void gate did, written to fail the day the view was fixed.
+
+## Phase 2(a) — the tenant is announced, and RLS is NOT yet safe to enable
+
+`txn()` in `src/lib/db.ts` replaces every `sql.begin` (65 of them, gated so
+none come back). It emits `set local app.restaurant_id` as the first
+statement of every transaction. **`local` is not optional**: Supavisor runs
+in TRANSACTION mode, so a plain `set` rides the connection back into the
+pool and reaches whoever draws it next.
+
+The tenant is resolved inside `txn` rather than demanded at 65 call sites —
+an explicit `withTenant()` wins where one is in scope (background jobs,
+provisioning), and otherwise the session answers, which covers every request
+path including the POS fetch, since that runs inside a server action.
+`AsyncLocalStorage`, never a module variable: that was the `restaurantCache`
+bug, and ALS is exactly its fix.
+
+`set local` takes no bind parameters, so the tenant is the ONE value
+concatenated into SQL anywhere in this app. It is UUID-shape-checked first,
+and a gate proves the checker refuses `' or 1=1 --`.
+
+### THE BLOCKER, and it must be cleared before RLS goes on
+
+**188 reads run outside any transaction** — plain ``await sql`select …` ``.
+They carry no GUC, so under RLS `current_setting('app.restaurant_id', true)`
+is NULL for them and every policy comparison yields NULL: **they return zero
+rows, silently, across the whole app.** Enabling RLS today would not leak
+data; it would take the product down while looking like an empty database.
+
+Those reads must move inside a tenant-announcing transaction before Phase
+2(b). That is the remaining work, and it is mechanical rather than
+delicate.

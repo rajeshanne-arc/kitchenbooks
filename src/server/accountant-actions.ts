@@ -15,7 +15,7 @@
 // `question` is never rewritten at all.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { sql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { getQuery, listOpenQueries } from '@/server/accountant-queries'
@@ -202,7 +202,7 @@ export async function closePeriod(raw: ClosePeriodInput): Promise<ClosePeriodRes
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const closed = await sql.begin(async (tx) => {
+    const closed = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       // Re-read inside the lock: a query raised while this form was open
