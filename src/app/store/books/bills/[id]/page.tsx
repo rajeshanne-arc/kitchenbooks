@@ -2,10 +2,12 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
 import { getBill, getBillLines, getVoidedBy } from '@/server/books-queries'
+import { listShortsForPurchase } from '@/server/shorts-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
 import { ReversalBadge, VoidedBadge } from '@/components/books/Badges'
 import VoidBill from '@/components/books/VoidBill'
+import BillShorts from '@/components/store/BillShorts'
 import { cardCls, docNoCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
@@ -19,11 +21,21 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
   const bill = await getBill(restaurant.id, id)
   if (!bill) notFound()
 
-  const [lines, voidedBy, original] = await Promise.all([
+  const [lines, voidedBy, original, shorts] = await Promise.all([
     getBillLines(bill.id),
     bill.is_voided ? getVoidedBy(bill.id) : Promise.resolve(null),
     bill.reverses_id !== null ? getBill(restaurant.id, bill.reverses_id) : Promise.resolve(null),
+    listShortsForPurchase(restaurant.id, bill.id),
   ])
+
+  // A short is owed on the bill that was actually delivered against. A
+  // reversal has no delivery of its own, and a voided bill has nothing left
+  // for the vendor to owe — both still SHOW what was recorded before.
+  const shortsLocked = bill.is_reversal
+    ? 'This is a reversal bill — a short belongs on the bill it cancels.'
+    : bill.is_voided
+      ? 'This bill was voided, so there is nothing left for the vendor to owe on it.'
+      : null
 
   return (
     <div className="mt-4 space-y-4">
@@ -133,6 +145,19 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
           </div>
         </dl>
       </section>
+
+      <BillShorts
+        lines={lines.map((l) => ({
+          id: l.id,
+          item_code: l.item_code,
+          item_name: l.item_name,
+          purchase_unit: l.purchase_unit,
+          qty: l.qty,
+          rate: l.rate,
+        }))}
+        shorts={shorts}
+        locked={shortsLocked}
+      />
 
       {!bill.is_reversal && !bill.is_voided && (
         <VoidBill

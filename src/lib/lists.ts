@@ -22,6 +22,7 @@ export type ListKey =
   | 'return_reason'
   | 'settlement_deduction'
   | 'session'
+  | 'adjustment_reason'
 
 export const LIST_KEYS: { key: ListKey; name: string; usedBy: string }[] = [
   { key: 'waste_reason', name: 'Wastage reasons', usedBy: 'store wastage · kitchen wastage' },
@@ -33,6 +34,11 @@ export const LIST_KEYS: { key: ListKey; name: string; usedBy: string }[] = [
   { key: 'return_reason', name: 'Return reasons', usedBy: 'stock coming back from a section' },
   { key: 'settlement_deduction', name: 'Settlement deductions', usedBy: 'itemised deductions on a settlement' },
   { key: 'session', name: 'Sessions', usedBy: 'indents and issues — Morning, Evening, Extra, Catering' },
+  {
+    key: 'adjustment_reason',
+    name: 'Adjustment reasons',
+    usedBy: 'corrections to the book — accepted counts, opening stock',
+  },
 ]
 
 export const ALL_LIST_KEYS: ListKey[] = LIST_KEYS.map((k) => k.key)

@@ -1403,6 +1403,113 @@ async function main() {
     }
   })
 
+  /* ── 2n. the count corrects the book, but only when accepted ──────── */
+  //
+  // ACCEPTING A VARIANCE IS A JUDGEMENT, NOT A CONSEQUENCE. A variance can
+  // be a counting error as easily as a stock error, so nothing is automatic.
+  console.log('\nstock adjustments')
+
+  await check('stock_on_hand now reads adjustments and vendor returns', async () => {
+    const def = await sql<{ d: string }[]>`
+      select pg_get_viewdef('stock_on_hand'::regclass, true) as d`
+    assert.match(def[0].d, /stock_adjustments/, 'the count still cannot correct the book')
+    assert.match(def[0].d, /vendor_return_lines/, 'goods sent back to a vendor still sit on the shelf')
+  })
+
+  await check('an adjustment moves the book by exactly its quantity', async () => {
+    let before = 0
+    let after = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [item] = await tx<{ id: string }[]>`
+          select id from items where restaurant_id = ${rid} and status = 'active' limit 1`
+        if (!item) throw new Error('KB_NO_ITEMS')
+        const [b] = await tx<{ q: string }[]>`
+          select on_hand_qty::text as q from stock_on_hand where item_id = ${item.id}`
+        before = Number(b?.q ?? 0)
+        // value is GENERATED — absent from the column list on purpose
+        await tx`
+          insert into stock_adjustments (restaurant_id, adj_date, item_id, qty, unit_cost, reason, entered_by)
+          values (${rid}, current_date, ${item.id}, -3, 100, 'Count correction', 'gate')`
+        const [a] = await tx<{ q: string; v: string }[]>`
+          select on_hand_qty::text as q,
+                 (select value::text from stock_adjustments where item_id = ${item.id}
+                  order by created_at desc limit 1) as v
+          from stock_on_hand where item_id = ${item.id}`
+        after = Number(a.q)
+        assert.equal(Number(a.v), -300, 'the generated value is not qty × unit_cost')
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      const m = (e as Error).message
+      if (m === 'KB_NO_ITEMS') return // no items yet is a valid state
+      if (m !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(after - before, -3, 'the adjustment did not move stock_on_hand')
+  })
+
+  await check('a count is NOT accepted by being saved', async () => {
+    // The whole modification: recording a variance changes nothing until a
+    // person accepts it. If accepted_at were ever defaulted, the book would
+    // be corrected by a bad count without anybody deciding.
+    const [col] = await sql<{ d: string | null; nn: string }[]>`
+      select column_default as d, is_nullable as nn from information_schema.columns
+      where table_name = 'stock_counts' and column_name = 'accepted_at'`
+    assert.equal(col.d, null, 'accepted_at has a default — a count would accept itself')
+    assert.equal(col.nn, 'YES', 'accepted_at must be nullable: unaccepted is a real state')
+    const grants = await sql<{ column_name: string }[]>`
+      select column_name from information_schema.column_privileges
+      where grantee = 'kb_app' and table_name = 'stock_counts' and privilege_type = 'UPDATE'
+      order by column_name`
+    assert.deepEqual(
+      grants.map((g) => g.column_name),
+      ['accepted_at', 'accepted_by'],
+      'the only thing updatable on a count is its acceptance',
+    )
+  })
+
+  await check('a short does not move stock — qty on the line is what ARRIVED', async () => {
+    // The reason shorts are their own table. If purchase_lines.qty ever
+    // meant "billed", stock and COGS would both inherit goods that never
+    // came through the door.
+    const def = await sql<{ d: string }[]>`
+      select pg_get_viewdef('stock_on_hand'::regclass, true) as d`
+    assert.ok(!def[0].d.includes('purchase_line_shorts'), 'a short is moving stock — it must not')
+  })
+
+  await check('vendor_performance runs and states what it counts', async () => {
+    const rows = await sql<{ name: string; bills: number; unsettled: number }[]>`
+      select name, bills::int as bills, unsettled::int as unsettled
+      from vendor_performance where restaurant_id = ${rid}`
+    for (const r of rows) {
+      assert.ok(r.bills >= 0 && r.unsettled >= 0)
+    }
+    console.log(`      ${rows.length} vendors measured`)
+  })
+
+  await check('voiding a vendor return is REFUSED while it would double-count', async () => {
+    // Measured, not feared: 18.5 on hand, a return of 10 leaves 8.5, and the
+    // void leaves −1.5. vendor_return_lines has CHECK (qty > 0) so a
+    // reversal cannot be a negative twin, and stock_on_hand subtracts every
+    // line without looking at vendor_returns.reverses_id. This assertion
+    // FAILS once the view is fixed, which is the point: it is the reminder
+    // to take the refusal back out.
+    const def = await sql<{ d: string }[]>`
+      select pg_get_viewdef('stock_on_hand'::regclass, true) as d`
+    const viewCountsReversals = !/reverses_id/.test(def[0].d)
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/vendor-return-actions.ts', 'utf8')
+    const start = src.indexOf('export async function voidVendorReturn(')
+    assert.ok(start > -1, 'voidVendorReturn is gone')
+    const body = src.slice(start, src.indexOf('\nexport async function ', start + 1))
+    const refuses = /take the stock off twice/.test(body)
+    if (viewCountsReversals) {
+      assert.ok(refuses, 'the void is live while stock_on_hand still double-counts a reversal')
+    } else {
+      assert.ok(!refuses, 'stock_on_hand now handles reversals — take the refusal out and restore the void')
+    }
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

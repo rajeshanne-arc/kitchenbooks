@@ -119,9 +119,24 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
             })}
           </ul>
         </section>
+        {/* The count has changed NOTHING yet, and this is the moment that
+            fact is least obvious — the variance is on screen and it looks
+            settled. Accepting is a separate judgement, so it is a separate
+            press, and it is offered here while the shelves are still fresh
+            in mind. */}
+        <p className="text-sm text-stone-600">
+          Nothing has moved in the book. A count records the difference; correcting the book is a decision somebody
+          makes, on the count&rsquo;s own screen.
+        </p>
+        <Link
+          href={`/store/count/${saved.count.id}`}
+          className="block w-full rounded-xl bg-emerald-700 py-3 text-center text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
+        >
+          Decide about this count →
+        </Link>
         <Link
           href="/store/count"
-          className="block w-full rounded-xl bg-emerald-700 py-3 text-center text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
+          className="block text-center text-sm font-medium text-stone-500 hover:text-stone-800"
         >
           Back to counts
         </Link>

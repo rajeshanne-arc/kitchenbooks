@@ -2313,3 +2313,139 @@ export type UpdateIndentInput = {
 }
 
 export type UpdateIndentResult = { ok: true } | { ok: false; error: string }
+
+// ---------- Stock adjustments, shorts and vendor returns ----------
+
+/** A signed correction to the book. An EVENT: append-only, reasoned, and
+ *  either standing alone (opening stock) or carrying the count it came
+ *  from. `value` is GENERATED — never in an insert column list. */
+export type StockAdjustmentRow = {
+  id: string
+  adj_date: string
+  item_id: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  qty: string
+  unit_cost: string
+  value: string
+  reason: string
+  count_id: string | null
+  note: string | null
+  entered_by: string | null
+}
+
+export type AdjustmentInput = {
+  date: string
+  itemId: string
+  qty: string
+  reason: string
+  note: string
+}
+
+export type AdjustmentResult = { ok: true } | { ok: false; error: string }
+
+/** ACCEPTING A VARIANCE IS A JUDGEMENT, NOT A CONSEQUENCE. A variance can
+ *  be a counting error as easily as a stock error, so the book is never
+ *  corrected automatically — a person accepts the count, and that writes
+ *  the adjustments. An unaccepted count is a thing to surface: leave it and
+ *  the same variance reappears at the next count with nobody knowing why. */
+export type CountAcceptance = {
+  count_id: string
+  count_date: string
+  entered_by: string | null
+  accepted_at: string | null
+  accepted_by: string | null
+  lines: number
+  variance_lines: number
+  variance_value: string
+}
+
+export type AcceptCountResult = { ok: true; adjustments: number } | { ok: false; error: string }
+
+export type ShortKind = 'short' | 'damaged' | 'rejected'
+export type ShortSettlement = 'open' | 'credit_note' | 'replaced' | 'absorbed'
+
+/** What the vendor billed but did not deliver. `purchase_lines.qty` still
+ *  means WHAT ARRIVED, so nothing downstream shifts. */
+export type ShortRow = {
+  id: string
+  purchase_line_id: string
+  purchase_id: string
+  bill_date: string
+  doc_no: string | null
+  vendor_id: string
+  vendor_name: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  qty_received: string
+  qty_short: string
+  rate: string
+  kind: ShortKind
+  settlement: ShortSettlement
+  credit_note_ref: string | null
+  note: string | null
+  entered_by: string | null
+}
+
+export type SaveShortInput = {
+  purchaseLineId: string
+  qtyShort: string
+  kind: ShortKind
+  settlement: ShortSettlement
+  creditNoteRef: string
+  note: string
+}
+
+export type SettleShortInput = {
+  id: string
+  settlement: ShortSettlement
+  creditNoteRef: string
+  note: string
+}
+
+export type ShortResult = { ok: true } | { ok: false; error: string }
+
+/** Goods going BACK to the vendor. Its own event rather than a negative
+ *  purchase, so purchase_register stays a record of what was bought. */
+export type VendorReturnRow = {
+  id: string
+  return_date: string
+  vendor_id: string
+  vendor_name: string
+  reason: string
+  credit_note_ref: string | null
+  settled_against_purchase_id: string | null
+  note: string | null
+  entered_by: string | null
+  is_reversal: boolean
+  is_voided: boolean
+  line_count: number
+  total: string
+}
+
+export type VendorReturnInput = {
+  date: string
+  vendorId: string
+  reason: string
+  creditNoteRef: string
+  note: string
+  /** rate is what the credit is claimed at — usually the bill rate */
+  lines: { itemId: string; qty: string; rate: string }[]
+}
+
+export type VendorReturnResult = { ok: true; id: string } | { ok: false; error: string }
+
+/** vendor_performance, verbatim. `unsettled` is the one to surface: a short
+ *  nobody chased is a different fact from one that was credited. */
+export type VendorPerformanceRow = {
+  vendor_id: string
+  code: string
+  name: string
+  bills: number
+  short_events: number
+  short_value: string
+  unsettled: number
+  returned_value: string
+}

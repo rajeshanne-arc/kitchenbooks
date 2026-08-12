@@ -18,6 +18,10 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
     { href: '/store/books/log', label: 'Store log' },
     { href: '/store/books/stock', label: 'Stock' },
     { href: '/store/books/purchases', label: 'Daily purchases' },
+    // what the vendor billed and did not deliver, and how each vendor does
+    // on that over time — the same question from the line and from the year
+    { href: '/store/books/shorts', label: 'Shorts' },
+    { href: '/store/books/vendors', label: 'Vendor performance' },
   ],
   sales: [
     { href: '/sales/books/sales', label: 'Sales' },

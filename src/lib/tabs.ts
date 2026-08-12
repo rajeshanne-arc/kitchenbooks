@@ -66,6 +66,8 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       chips: [
         { key: 'purchase', label: 'Purchase' },
         { key: 'pay', label: 'Pay vendor' },
+        // goods going BACK, with the credit note that follows them
+        { key: 'vendor-return', label: 'Return to vendor' },
       ],
     },
     {
@@ -82,6 +84,10 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     { key: 'issue', href: '/store/issue', label: 'Issue' },
     { key: 'loss', href: '/store/loss', label: 'Loss' },
     { key: 'count', href: '/store/count', label: 'Count' },
+    // Its own tab rather than a chip under Count: /store/count/[id] already
+    // owns that segment, and an adjustment can stand alone anyway — opening
+    // stock is one with no count behind it.
+    { key: 'adjustments', href: '/store/adjustments', label: 'Adjustments' },
     {
       key: 'masters',
       href: '/store/masters',

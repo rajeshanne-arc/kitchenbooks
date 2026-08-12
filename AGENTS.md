@@ -1851,3 +1851,65 @@ rather than on the login screen of every device. It stays in the stack, so
 those labels are still words and never tofu. Archivo is pinned to 600/700 —
 the only weights the display face is ever asked for — instead of shipping
 every weight from 100 to 900 as a variable font.
+
+## The count corrects the book — but only when somebody accepts it
+
+**ACCEPTING A VARIANCE IS A JUDGEMENT, NOT A CONSEQUENCE.** A variance can
+be a counting error as easily as a stock error, so auto-correcting the book
+from a bad count would corrupt the very number the count exists to protect.
+The count RECORDS the variance and changes nothing; `acceptCount` is a
+separate, deliberate act that writes `stock_adjustments` rows carrying
+`count_id` and a reason. `stock_counts.accepted_at` has no default and is
+nullable, and the only columns `kb_app` may update on a count are its two
+acceptance fields — a count cannot accept itself.
+
+**An unaccepted count is loud.** Leave one and the same variance reappears
+at the next count with nobody knowing why.
+
+**Two unaccepted counts double-correct, and the screen says so.** Each count
+freezes `book_qty` at save, and an adjustment is a DIFFERENCE rather than a
+new total — so two counts taken while neither was accepted both measure
+against the same uncorrected book, both claim the same variance, and
+accepting both takes it off twice: book 10, shelf 7, counted twice, accepted
+twice, book ends at 4. It is WARNED, not blocked: refusing would strand the
+count forever, and the judgement belongs to a person.
+
+**Opening stock is an explicit flow, in this order:** set `items.opening_rate`
+→ count against the empty book → accept. The order matters and the screen
+says why — `stock_count_lines.unit_cost` freezes from `item_costs.issue_cost`,
+which is NULL for an item with no purchases, so counting before the rate is
+set values the opening stock at ZERO and the books start wrong.
+
+The first count on an established book absorbs months of missing-bill drift
+into one large adjustment. The reason is required and the thin-history
+banner stays loud: this will not find theft, it will absorb whatever was
+never entered.
+
+## Shorts, and returns to the vendor
+
+**`purchase_lines.qty` still means WHAT ARRIVED.** That is why a short is its
+own table rather than a second quantity on the line: stock, costs and COGS
+all stay correct, and `stock_on_hand` deliberately does not read
+`purchase_line_shorts`. The short is recorded beside the line.
+
+`settlement` is `open | credit_note | replaced | absorbed`, and **open is the
+one to surface** — a short nobody chased is a different fact from one that
+was credited. `vendor_performance` turns the same events into the question
+a store manager actually asks about a supplier.
+
+**VOIDING A VENDOR RETURN IS REFUSED, and the refusal is measured.** 18.5 on
+hand, a return of 10 leaves 8.5, and voiding it leaves **−1.5**: the quantity
+comes off twice. `vendor_return_lines` carries `CHECK (qty > 0)`, so a
+reversal cannot be the negative twin every other void in this app is — the
+negation has to go on `rate`, which reverses the money and not the goods —
+and `stock_on_hand` subtracts every line without looking at
+`vendor_returns.reverses_id`.
+
+Writing a compensating `stock_adjustments` row would hide it and break the
+one-path rule: goods move through exactly one table. **A void that corrupts
+the book is worse than no void**, so the action refuses and names the fix:
+one clause in the view, counting only LIVE returns — no `reverses_id`, and
+not themselves reversed — exactly as `bills.is_voided` already does for
+purchases. `smoke:a2` asserts the refusal is in place WHILE the view still
+double-counts, and **fails once the view is fixed**, so the reminder to take
+it back out cannot be forgotten.
