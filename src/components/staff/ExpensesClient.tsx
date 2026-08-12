@@ -12,7 +12,15 @@ import { saveExpense, voidExpense } from '@/server/expenses-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
-import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
+import {
+  cardCls,
+  docNoCls,
+  fieldLabelCls,
+  inputCls,
+  numCls,
+  sectionHeadCls,
+  selectCls,
+} from '@/components/ui'
 import { toast } from '@/components/Toasts'
 
 export default function ExpensesClient({
@@ -261,6 +269,7 @@ export default function ExpensesClient({
                       </span>
                     )}
                   </span>
+                  {r.doc_no !== null && <span className={`block ${docNoCls}`}>{r.doc_no}</span>}
                   <span className="block text-xs text-stone-500">
                     {fmtDate(r.expense_date)} · {r.paid_via}
                     {r.entered_by !== null && ` · by ${r.entered_by}`}

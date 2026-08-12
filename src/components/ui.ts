@@ -38,6 +38,11 @@ export const heroNumCls = 'font-display font-bold tabular-nums tracking-[-0.02em
 export const codeCls =
   'rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] font-medium tracking-tight text-stone-600'
 
+/** a document number — PAY-2627-0018. Quieter than a master code because it
+ *  is a reference, not an identity: nobody names a vendor by it, but every
+ *  question an accountant asks starts with one. */
+export const docNoCls = 'font-mono text-[11px] tabular-nums tracking-tight text-stone-400'
+
 /** actions. 44px minimum, always says what it does. */
 export const btnCls =
   'rounded-xl bg-emerald-700 px-4 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-emerald-800 active:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-500'

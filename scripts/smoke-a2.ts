@@ -17,6 +17,7 @@ import assert from 'node:assert/strict'
 // period.ts is pure, so it imports statically; everything that touches the
 // database is pulled in AFTER the env file is loaded, as the other smokes do.
 import { resolvePeriod, isPeriodKey, PERIOD_KEYS } from '../src/lib/period'
+import { fyLabel, fyRange, parseFyStartMonth } from '../src/lib/fy'
 
 process.loadEnvFile('.env.local')
 
@@ -364,6 +365,185 @@ async function main() {
       if (!body.includes('assertAccount')) missing.push(`${fn} (${file}) never calls assertAccount`)
     }
     assert.deepEqual(missing, [], missing.join('; '))
+  })
+
+  /* ── 2e. the financial year, by value ─────────────────────────────── */
+  //
+  // The FY label is half of every document number, so a wrong one puts a
+  // whole month's paperwork in the wrong year — and nothing on screen would
+  // look odd, because '2526' and '2627' are equally plausible. Asserted by
+  // value, and asserted for a country that is NOT this one, because the
+  // point of reading fy_start_month from settings is that the product ships
+  // somewhere else.
+  console.log('\nthe financial year label resolves by value')
+
+  await check('April start: August 2026 is 2627, February 2026 is 2526', () => {
+    assert.equal(fyLabel('2026-08-11', 4), '2627')
+    assert.equal(fyLabel('2026-02-11', 4), '2526')
+    assert.equal(fyLabel('2026-04-01', 4), '2627', 'the first day of the year belongs to the new one')
+    assert.equal(fyLabel('2026-03-31', 4), '2526', 'the last day belongs to the old one')
+  })
+
+  await check('January start: the label is the calendar year, still four wide', () => {
+    assert.equal(fyLabel('2026-08-11', 1), '2026')
+    assert.equal(fyLabel('2026-01-01', 1), '2026')
+    assert.equal(fyLabel('2026-12-31', 1), '2026')
+  })
+
+  await check('July start (Australia) and October start (US federal) both work', () => {
+    assert.equal(fyLabel('2026-08-11', 7), '2627')
+    assert.equal(fyLabel('2026-06-30', 7), '2526')
+    assert.equal(fyLabel('2026-10-01', 10), '2627')
+    assert.equal(fyLabel('2026-09-30', 10), '2526')
+  })
+
+  await check('a missing or nonsense fy_start_month falls back to January, never April', () => {
+    // Defaulting to April would be hardcoding one country's tax law in the
+    // place the setting exists to avoid it.
+    assert.equal(parseFyStartMonth(null), 1)
+    assert.equal(parseFyStartMonth(''), 1)
+    assert.equal(parseFyStartMonth('13'), 1)
+    assert.equal(parseFyStartMonth('april'), 1)
+    assert.equal(parseFyStartMonth(' 4 '), 4, 'a real setting is never second-guessed')
+  })
+
+  await check('fyRange spans the year the label names', () => {
+    assert.deepEqual(fyRange('2026-08-11', 4), { from: '2026-04-01', to: '2027-03-31' })
+    assert.deepEqual(fyRange('2026-02-11', 4), { from: '2025-04-01', to: '2026-03-31' })
+    assert.deepEqual(fyRange('2026-08-11', 1), { from: '2026-01-01', to: '2026-12-31' })
+  })
+
+  /* ── 2f. document numbers are gapless, and a void keeps its own ────── */
+  console.log('\ndocument numbers')
+
+  await check('the settings row this restaurant actually has is readable', async () => {
+    const { getSettingValue } = await import('../src/server/settings')
+    const raw = await getSettingValue(rid, 'fy_start_month')
+    const month = parseFyStartMonth(raw)
+    console.log(`      fy_start_month = ${raw ?? 'unset'} -> ${fyLabel(new Date().toISOString().slice(0, 10), month)}`)
+    assert.ok(month >= 1 && month <= 12)
+  })
+
+  await check('next_doc_no runs, is sequential, and never repeats', async () => {
+    const seen: string[] = []
+    try {
+      await sql.begin(async (tx) => {
+        for (let i = 0; i < 3; i++) {
+          const [row] = await tx<{ n: string }[]>`select next_doc_no(${rid}, 'ZZT', '9999') as n`
+          seen.push(row.n)
+        }
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.deepEqual(seen, ['ZZT-9999-0001', 'ZZT-9999-0002', 'ZZT-9999-0003'])
+    assert.equal(new Set(seen).size, 3, 'a number was handed out twice')
+  })
+
+  await check('a rolled-back save burns no number — the series stays gapless', async () => {
+    // The reason nextDocNo takes the transaction handle. If it took the
+    // pool, a failed save would leave a hole, and a hole in a numbered
+    // series is exactly what an auditor asks about.
+    const draw = async () => {
+      let n = ''
+      try {
+        await sql.begin(async (tx) => {
+          const [row] = await tx<{ n: string }[]>`select next_doc_no(${rid}, 'ZZT', '9998') as n`
+          n = row.n
+          throw new Error('KB_ROLLBACK')
+        })
+      } catch (e) {
+        if ((e as Error).message !== 'KB_ROLLBACK') throw e
+      }
+      return n
+    }
+    assert.equal(await draw(), 'ZZT-9998-0001')
+    assert.equal(await draw(), 'ZZT-9998-0001', 'the rolled-back draw consumed a number')
+  })
+
+  await check('a voided expense nets its account back to nothing', async () => {
+    // The reversal must copy the ORIGINAL's account, not a fresh one and not
+    // none: money_movements negates the reversal too, so a void naming a
+    // different account would leave the first one permanently short and
+    // nothing on screen would say so. Exercises the real reversal SQL.
+    let balance = -1
+    let both = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [acct] = await tx<{ id: string }[]>`
+          insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
+          values (${rid}, 'Zz void probe account', 'cash', 0, 999)
+          returning id`
+        const [orig] = await tx<{ id: string }[]>`
+          insert into expenses (restaurant_id, expense_date, category, payee, amount,
+                                paid_via, note, entered_by, account_id, doc_no)
+          values (${rid}, current_date, 'zz-probe', 'Zz probe', 900, 'UPI', null, 'gate', ${acct.id}, 'ZZT-0000-0001')
+          returning id`
+        await tx`
+          insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via,
+                                note, reverses_id, entered_by, doc_no, account_id)
+          select restaurant_id, expense_date, category, payee, -amount, paid_via, 'void', id,
+                 'gate', 'ZZT-0000-0002', account_id
+          from expenses where id = ${orig.id}`
+        const [bal] = await tx<{ balance: string }[]>`
+          select balance::text as balance from account_balances where account_id = ${acct.id}`
+        balance = Number(bal?.balance ?? -1)
+        const [n] = await tx<{ n: number }[]>`
+          select count(*)::int as n from money_movements where account_id = ${acct.id}`
+        both = n?.n ?? 0
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(both, 2, 'the void did not reach money_movements on the same account')
+    assert.equal(balance, 0, 'the void left the account short — it did not copy the original account_id')
+  })
+
+  await check('every insert into a numbered table writes doc_no, voids included', async () => {
+    // Read statically, because the failure to catch is a path shipped LATER
+    // without a number — including a reversal written as `insert … select …`
+    // that would otherwise copy the original's number along with everything
+    // else. A void keeps its number; the reversal takes its own.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const NUMBERED = ['purchases', 'payments', 'expenses', 'cash_vouchers', 'contract_bills', 'casual_labour']
+    // Everything above except purchases moves money through an account — a
+    // purchase is a liability, the PAYMENT is the money. A reversal must
+    // carry the original's account or that account stays short forever.
+    const ACCOUNTED = NUMBERED.filter((t) => t !== 'purchases')
+    const files = readdirSync('src/server')
+      .filter((f) => f.endsWith('.ts'))
+      .map((f) => `src/server/${f}`)
+    const missing: string[] = []
+    let sites = 0
+    let allocations = 0
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8')
+      allocations += (src.match(/nextDocNo\(/g) ?? []).length
+      for (const table of NUMBERED) {
+        const re = new RegExp(`insert into ${table}\\s*\\(`, 'g')
+        let m: RegExpExecArray | null
+        while ((m = re.exec(src)) !== null) {
+          sites++
+          // the column list runs to the first ')' after the opening paren
+          const open = m.index + m[0].length - 1
+          const close = src.indexOf(')', open)
+          const columns = src.slice(open + 1, close)
+          if (!columns.includes('doc_no')) missing.push(`${file}: insert into ${table} has no doc_no`)
+          if (ACCOUNTED.includes(table) && !columns.includes('account_id')) {
+            missing.push(`${file}: insert into ${table} has no account_id — a void would leave its account short`)
+          }
+        }
+      }
+    }
+    assert.deepEqual(missing, [], missing.join('; '))
+    assert.ok(sites > 0, 'found no numbered insert sites at all — did the tables get renamed?')
+    assert.ok(
+      allocations >= sites,
+      `${sites} numbered inserts but only ${allocations} nextDocNo calls — a row is wearing someone else's number`,
+    )
+    console.log(`      ${sites} numbered inserts · ${allocations} allocations`)
   })
 
   /* ── 3. the return path's list is real ────────────────────────────── */

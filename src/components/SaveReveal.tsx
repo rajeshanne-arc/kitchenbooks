@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import type { SavedBill } from '@/lib/types'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
-import { sectionHeadCls } from '@/components/ui'
+import { docNoCls, sectionHeadCls } from '@/components/ui'
 
 const fmtDate = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -35,6 +35,9 @@ export default function SaveReveal({ saved, onAgain }: { saved: SavedBill; onAga
               {fmtDate(purchase.billDate)} · {vendor.name} · {purchase.lineCount}{' '}
               {purchase.lineCount === 1 ? 'line' : 'lines'}
             </p>
+            {/* the moment to write the number on the paper bill: it exists
+                now, it is unique, and it survives even a later void */}
+            {purchase.docNo !== null && <p className={`mt-1 ${docNoCls}`}>{purchase.docNo}</p>}
           </div>
         </div>
         <dl className="mt-4 space-y-1.5 border-t border-stone-100 pt-4 text-sm">

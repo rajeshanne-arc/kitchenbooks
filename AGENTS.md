@@ -1288,3 +1288,70 @@ not on the active list is refused; a voucher naming an account moves
 `money_movements` (rolled back); and — statically, because the real risk is
 a form shipped LATER without the refusal — every one of those nine
 functions is read from source and asserted to call `assertAccount`.
+
+### Commit 2 — document numbers
+
+`next_doc_no(restaurant, type, fy)` is a SECURITY DEFINER function: one
+upsert on `doc_sequences` that increments and returns in a single
+statement, so the series is gapless by construction. Eight series —
+**PUR** purchase · **PAY** vendor payment · **EXP** expense · **VCH** cash
+voucher · **CON** contract bill · **CAS** casual labour · **ADV** staff
+advance · **RUN** payroll run. ADV and RUN arrive with payroll; the other
+six are live.
+
+**Call it on the TRANSACTION handle, never the pool.** `nextDocNo`
+(`src/server/doc-numbers.ts`) takes `tx` as its first argument for exactly
+this reason: the number and the row it numbers commit or roll back
+together. Allocating before `sql.begin` would burn a number on every failed
+save, and a hole in a numbered series is precisely what an auditor asks
+about. `recordPayment` was rewritten to open a transaction it did not
+previously need — that is why.
+
+The FY label is the other half of every number and it is a SETTING, not a
+constant: `settings.fy_start_month`, 1–12. April is India, July is
+Australia, October is the US federal year, January is most of the rest.
+`src/lib/fy.ts` is pure so it can be asserted by value, and it is — for
+four different start months, in `smoke:a2`. The label is always four
+characters so numbers stay aligned in a column: a year that SPANS two
+calendar years wears both (`2627`), a year that IS a calendar year wears
+itself (`2026`). **A missing or malformed setting falls back to January,
+never April** — defaulting to April would hardcode one country's tax law
+in the very place the setting exists to avoid it.
+
+**A void keeps its number; the reversal takes its own.** Never reused,
+never renumbered. A document number is what a question names months later,
+so it has to mean exactly one thing forever — including when that thing was
+a mistake. Every reversal written as `insert … select … from <table>` puts
+its new number in as a LITERAL in the select list; copying `doc_no` along
+with the rest of the row is the failure this rule exists to prevent.
+
+`doc_no` is nullable because rows predate the numbering. Nothing is
+backfilled and nothing is rewritten; an unnumbered row shows a dash.
+
+Guarded in `smoke:a2`: the FY label by value for start months 1/4/7/10 and
+for the fallback; `next_doc_no` handing out a sequential, non-repeating
+series; a ROLLED-BACK draw consuming no number; and — statically, over all
+of `src/server` — every `insert into` one of the six numbered tables
+carrying `doc_no` in its column list, with at least as many `nextDocNo`
+calls as there are numbered insert sites, so a reversal cannot be quietly
+wearing someone else's number.
+
+**Found while building it, and fixed here because Commit 1 made it
+material:** the three void paths in `expenses-actions.ts` did not copy the
+original's `account_id`. `money_movements` negates a reversal too, so a
+void that named no account left the ORIGINAL account permanently short by
+the amount, with nothing on screen to say so. Voids now copy `account_id`
+EXACTLY — the same discipline as `unit_cost` on issue voids. Guarded twice
+in `smoke:a2`: a rolled-back probe asserting a voided expense nets its
+account back to zero across two `money_movements` rows, and the static
+sweep now requires `account_id` on every insert into the five accounted
+tables (all the numbered ones except `purchases` — a purchase is a
+liability, the PAYMENT is the money).
+
+**Known and deliberately not fixed here:** `voidContractBill` and
+`voidCasualLabour` still read the original row and run the already-voided
+guard on the pooled `sql`, OUTSIDE their transaction — a TOCTOU race that
+`voidExpense` does not have. The doc-number law is still satisfied (the
+number is allocated on the same tx as the insert it numbers). Pre-existing,
+unrelated to this commit, and moving those boundaries is exactly where a
+regression would hide.

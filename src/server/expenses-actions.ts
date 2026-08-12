@@ -11,6 +11,7 @@ import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
+import { nextDocNo } from '@/server/doc-numbers'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
 import { getCasualLabour, getContractBill, getExpense } from '@/server/expenses-queries'
@@ -87,12 +88,15 @@ export async function saveExpense(raw: SaveExpenseInput): Promise<SaveExpenseRes
     const accountId = await assertAccount(rid, input.accountId, 'the account this expense was paid from')
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      // The expense's own date, not today: a receipt entered a week late
+      // still belongs to the financial year the money left.
+      const docNo = await nextDocNo(tx, rid, 'EXP', input.date)
       const [row] = await tx<{ id: string }[]>`
-        insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via, note, entered_by, account_id)
+        insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via, note, entered_by, account_id, doc_no)
         values (${rid}, ${input.date}, ${input.category},
                 ${input.payee === '' ? null : input.payee.replace(/\s+/g, ' ')},
                 ${input.amount}, ${input.paidVia},
-                ${input.note === '' ? null : input.note}, ${by}, ${accountId})
+                ${input.note === '' ? null : input.note}, ${by}, ${accountId}, ${docNo})
         returning id`
       return { id: row.id }
     })
@@ -114,15 +118,24 @@ export async function voidExpense(id: string): Promise<VoidExpenseResult> {
 
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
-      const [orig] = await tx<{ id: string; reverses_id: string | null }[]>`
-        select id, reverses_id from expenses where id = ${id} and restaurant_id = ${rid}`
+      const [orig] = await tx<{ id: string; reverses_id: string | null; expense_date: string }[]>`
+        select id, reverses_id, expense_date::text as expense_date
+        from expenses where id = ${id} and restaurant_id = ${rid}`
       if (!orig) throw new ExpenseError('Expense not found')
       if (orig.reverses_id !== null) throw new ExpenseError('This is a reversal — reversals cannot be voided')
       const already = await tx<{ id: string }[]>`select id from expenses where reverses_id = ${id} limit 1`
       if (already[0]) throw new ExpenseError('This expense is already voided')
+      // The reversal takes its OWN number and the voided expense keeps
+      // its own — dated with the original so both land in one FY series.
+      const revDocNo = await nextDocNo(tx, rid, 'EXP', orig.expense_date)
+      // The reversal copies the original's ACCOUNT EXACTLY, never a fresh
+      // one: money_movements negates the reversal too, so the two rows must
+      // land on the same account to net it back to nothing. A void that
+      // named a different account — or none — would leave that account
+      // permanently short by the amount, and nothing on screen would say so.
       const [rev] = await tx<{ id: string }[]>`
-        insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via, note, reverses_id, entered_by)
-        select restaurant_id, expense_date, category, payee, -amount, paid_via, 'void', id, ${by}
+        insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via, note, reverses_id, entered_by, doc_no, account_id)
+        select restaurant_id, expense_date, category, payee, -amount, paid_via, 'void', id, ${by}, ${revDocNo}, account_id
         from expenses where id = ${id}
         returning id`
       const [check] = await tx<{ zeroed: boolean }[]>`
@@ -193,15 +206,22 @@ export async function saveContractBill(raw: SaveContractBillInput): Promise<Save
 
     const accountId = await assertAccount(rid, input.accountId, 'the account this bill was paid from')
 
-    const [row] = await sql<{ id: string }[]>`
-      insert into contract_bills (restaurant_id, bill_date, vendor_name, service, headcount,
-                                  period_start, period_end, amount, paid_via, note, entered_by, account_id)
-      values (${rid}, ${input.date}, ${input.vendorName}, ${trimmedOrNull(input.service)},
-              ${input.headcount === '' ? null : Number(input.headcount)},
-              ${input.periodStart === '' ? null : input.periodStart},
-              ${input.periodEnd === '' ? null : input.periodEnd},
-              ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by}, ${accountId})
-      returning id`
+    // The number is allocated on the transaction, so a failed insert takes
+    // it back with it and the CON series stays gapless.
+    const row = await sql.begin(async (tx) => {
+      // The bill's own date — a March bill entered in April is March's.
+      const docNo = await nextDocNo(tx, rid, 'CON', input.date)
+      const [r] = await tx<{ id: string }[]>`
+        insert into contract_bills (restaurant_id, bill_date, vendor_name, service, headcount,
+                                    period_start, period_end, amount, paid_via, note, entered_by, account_id, doc_no)
+        values (${rid}, ${input.date}, ${input.vendorName}, ${trimmedOrNull(input.service)},
+                ${input.headcount === '' ? null : Number(input.headcount)},
+                ${input.periodStart === '' ? null : input.periodStart},
+                ${input.periodEnd === '' ? null : input.periodEnd},
+                ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by}, ${accountId}, ${docNo})
+        returning id`
+      return r
+    })
 
     const bill = await getContractBill(rid, row.id)
     if (!bill) throw new ExpenseError('Could not verify the save — bill missing after commit')
@@ -217,18 +237,25 @@ export async function voidContractBill(id: string): Promise<{ ok: true } | { ok:
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await enteredBy()
-    const [orig] = await sql<{ reverses_id: string | null }[]>`
-      select reverses_id from contract_bills where id = ${id} and restaurant_id = ${rid}`
+    const [orig] = await sql<{ reverses_id: string | null; bill_date: string }[]>`
+      select reverses_id, bill_date::text as bill_date
+      from contract_bills where id = ${id} and restaurant_id = ${rid}`
     if (!orig) throw new ExpenseError('Bill not found')
     if (orig.reverses_id !== null) throw new ExpenseError('This is a reversal — reversals cannot be voided')
     const already = await sql<{ id: string }[]>`select id from contract_bills where reverses_id = ${id} limit 1`
     if (already[0]) throw new ExpenseError('This bill is already voided')
-    await sql`
-      insert into contract_bills (restaurant_id, bill_date, vendor_name, service, headcount,
-                                  period_start, period_end, amount, paid_via, note, reverses_id, entered_by)
-      select restaurant_id, bill_date, vendor_name, service, headcount,
-             period_start, period_end, -amount, paid_via, 'void', id, ${by}
-      from contract_bills where id = ${id}`
+    await sql.begin(async (tx) => {
+      // Its own number, dated with the bill it reverses; the voided bill
+      // keeps the number it was always known by.
+      const revDocNo = await nextDocNo(tx, rid, 'CON', orig.bill_date)
+      // account_id copied exactly, same reason as voidExpense above.
+      await tx`
+        insert into contract_bills (restaurant_id, bill_date, vendor_name, service, headcount,
+                                    period_start, period_end, amount, paid_via, note, reverses_id, entered_by, doc_no, account_id)
+        select restaurant_id, bill_date, vendor_name, service, headcount,
+               period_start, period_end, -amount, paid_via, 'void', id, ${by}, ${revDocNo}, account_id
+        from contract_bills where id = ${id}`
+    })
     return { ok: true }
   } catch (e) {
     return fail(e)
@@ -268,13 +295,20 @@ export async function saveCasualLabour(raw: SaveCasualLabourInput): Promise<Save
 
     const accountId = await assertAccount(rid, input.accountId, 'the account these wages were paid from')
 
-    const [row] = await sql<{ id: string }[]>`
-      insert into casual_labour (restaurant_id, work_date, section_id, persons, description,
-                                 amount, paid_via, note, entered_by, account_id)
-      values (${rid}, ${input.date}, ${input.sectionId === '' ? null : input.sectionId},
-              ${Number(input.persons)}, ${trimmedOrNull(input.description)},
-              ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by}, ${accountId})
-      returning id`
+    // Same reason as the contract bill: the number is allocated on the
+    // transaction so a failed insert does not burn one.
+    const row = await sql.begin(async (tx) => {
+      // The day the work was done, not the day it was typed up.
+      const docNo = await nextDocNo(tx, rid, 'CAS', input.date)
+      const [r] = await tx<{ id: string }[]>`
+        insert into casual_labour (restaurant_id, work_date, section_id, persons, description,
+                                   amount, paid_via, note, entered_by, account_id, doc_no)
+        values (${rid}, ${input.date}, ${input.sectionId === '' ? null : input.sectionId},
+                ${Number(input.persons)}, ${trimmedOrNull(input.description)},
+                ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by}, ${accountId}, ${docNo})
+        returning id`
+      return r
+    })
 
     const entry = await getCasualLabour(rid, row.id)
     if (!entry) throw new ExpenseError('Could not verify the save — entry missing after commit')
@@ -290,18 +324,25 @@ export async function voidCasualLabour(id: string): Promise<{ ok: true } | { ok:
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await enteredBy()
-    const [orig] = await sql<{ reverses_id: string | null }[]>`
-      select reverses_id from casual_labour where id = ${id} and restaurant_id = ${rid}`
+    const [orig] = await sql<{ reverses_id: string | null; work_date: string }[]>`
+      select reverses_id, work_date::text as work_date
+      from casual_labour where id = ${id} and restaurant_id = ${rid}`
     if (!orig) throw new ExpenseError('Entry not found')
     if (orig.reverses_id !== null) throw new ExpenseError('This is a reversal — reversals cannot be voided')
     const already = await sql<{ id: string }[]>`select id from casual_labour where reverses_id = ${id} limit 1`
     if (already[0]) throw new ExpenseError('This entry is already voided')
-    await sql`
-      insert into casual_labour (restaurant_id, work_date, section_id, persons, description,
-                                 amount, paid_via, note, reverses_id, entered_by)
-      select restaurant_id, work_date, section_id, persons, description,
-             -amount, paid_via, 'void', id, ${by}
-      from casual_labour where id = ${id}`
+    await sql.begin(async (tx) => {
+      // Its own number, dated with the day worked, so the correction sits
+      // in the same year's series as the entry it cancels.
+      const revDocNo = await nextDocNo(tx, rid, 'CAS', orig.work_date)
+      // account_id copied exactly, same reason as voidExpense above.
+      await tx`
+        insert into casual_labour (restaurant_id, work_date, section_id, persons, description,
+                                   amount, paid_via, note, reverses_id, entered_by, doc_no, account_id)
+        select restaurant_id, work_date, section_id, persons, description,
+               -amount, paid_via, 'void', id, ${by}, ${revDocNo}, account_id
+        from casual_labour where id = ${id}`
+    })
     return { ok: true }
   } catch (e) {
     return fail(e)

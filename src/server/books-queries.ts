@@ -25,7 +25,7 @@ const BILL_SELECT = `
          b.goods_total::text as goods_total, b.gst_total::text as gst_total,
          b.transport::text as transport, b.bill_total::text as bill_total,
          b.line_count::int as line_count, b.is_reversal, b.is_voided,
-         b.entered_by, b.created_at::text as created_at, p.reverses_id
+         b.entered_by, b.created_at::text as created_at, p.reverses_id, p.doc_no
   from bills b
   join purchases p on p.id = b.id`
 
@@ -140,7 +140,7 @@ export async function getVendorDetail(restaurantId: string, id: string): Promise
 
 export async function getVendorPayments(vendorId: string): Promise<PaymentRow[]> {
   return sql<PaymentRow[]>`
-    select id, paid_date::text as paid_date, amount::text as amount, mode, note,
+    select id, doc_no, paid_date::text as paid_date, amount::text as amount, mode, note,
            created_at::text as created_at
     from payments
     where vendor_id = ${vendorId}

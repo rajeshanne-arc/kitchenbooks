@@ -6,7 +6,7 @@ import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
 import { ReversalBadge, VoidedBadge } from '@/components/books/Badges'
 import VoidBill from '@/components/books/VoidBill'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, docNoCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,6 +62,8 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
               {fmtDate(bill.bill_date)} · <span className="font-mono">{bill.vendor_code}</span>
               {bill.bill_no !== null && <> · {bill.bill_no}</>}
             </p>
+            {/* the handle an accountant's question will name months later */}
+            {bill.doc_no !== null && <p className={`mt-1 ${docNoCls}`}>{bill.doc_no}</p>}
             <p className="mt-0.5 text-xs text-stone-400">
               entered by {bill.entered_by ?? '—'} · {fmtDateTime(bill.created_at)}
             </p>

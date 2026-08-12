@@ -66,6 +66,7 @@ export type SaveBillInput = {
 export type SavedBill = {
   purchase: {
     id: string
+    docNo: string | null
     billDate: string
     goodsTotal: string
     gstTotal: string
@@ -86,6 +87,7 @@ export type SaveBillResult = ({ ok: true } & SavedBill) | { ok: false; error: st
 /** One row of the `bills` view (+ reverses_id joined from purchases for linking) */
 export type BillRow = {
   id: string
+  doc_no: string | null
   bill_date: string
   bill_no: string | null
   vendor_id: string
@@ -159,6 +161,7 @@ export type VendorDetail = {
 
 export type PaymentRow = {
   id: string
+  doc_no: string | null
   paid_date: string
   amount: string
   mode: string | null
@@ -902,6 +905,7 @@ export type PaidBy = 'cashier' | 'owner'
 
 export type VoucherRow = {
   id: string
+  doc_no: string | null
   voucher_date: string
   amount: string
   paid_to: string
@@ -1511,6 +1515,7 @@ export type SaveCateringExpenseInput = {
 
 export type ContractBillRow = {
   id: string
+  doc_no: string | null
   bill_date: string
   vendor_name: string
   service: string | null
@@ -1544,6 +1549,7 @@ export type SaveContractBillResult =
 
 export type CasualLabourRow = {
   id: string
+  doc_no: string | null
   work_date: string
   section_id: string | null
   section_name: string | null
@@ -1713,6 +1719,7 @@ export type VoucherCategorySummaryRow = { category: string; entries: number; amo
 
 export type ExpenseRow = {
   id: string
+  doc_no: string | null
   expense_date: string
   category: string
   payee: string | null

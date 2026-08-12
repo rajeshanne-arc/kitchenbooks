@@ -2,6 +2,7 @@ import Link from 'next/link'
 import type { BillRow } from '@/lib/types'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
+import { docNoCls } from '@/components/ui'
 import { ReversalBadge, VoidedBadge } from './Badges'
 
 export default function BillList({ bills, showVendor = true }: { bills: BillRow[]; showVendor?: boolean }) {
@@ -24,6 +25,9 @@ export default function BillList({ bills, showVendor = true }: { bills: BillRow[
                   {b.is_voided && <VoidedBadge />}
                   {b.is_reversal && <ReversalBadge />}
                 </span>
+                {/* the document number leads, because it is what a question
+                    about this bill will name three months from now */}
+                {b.doc_no !== null && <span className={`mt-0.5 block ${docNoCls}`}>{b.doc_no}</span>}
                 <span className="mt-0.5 block text-xs text-stone-500">
                   {fmtDate(b.bill_date)}
                   {showVendor && (

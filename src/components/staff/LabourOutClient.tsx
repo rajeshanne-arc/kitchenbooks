@@ -36,6 +36,7 @@ import {
   sectionHeadCls,
   selectCls,
   tdCls,
+  tdCodeCls,
   tdNumCls,
   thCls,
   thNumCls,
@@ -191,6 +192,7 @@ export function ContractBillsClient({
             <table className={dataTableCls}>
               <thead>
                 <tr>
+                  <th className={thCls}>Doc</th>
                   <th className={thCls}>Date</th>
                   <th className={thCls}>Agency</th>
                   <th className={thCls}>Service</th>
@@ -204,6 +206,7 @@ export function ContractBillsClient({
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className={`${trCls} ${r.is_reversal ? 'opacity-60' : ''}`}>
+                    <td className={tdCodeCls}>{r.doc_no ?? '—'}</td>
                     <td className={tdCls}>{fmtDate(r.bill_date)}</td>
                     <td className={tdCls}>
                       {r.vendor_name}
@@ -376,6 +379,7 @@ export function CasualLabourClient({
             <table className={dataTableCls}>
               <thead>
                 <tr>
+                  <th className={thCls}>Doc</th>
                   <th className={thCls}>Date</th>
                   <th className={thCls}>Department</th>
                   <th className={thNumCls}>People</th>
@@ -389,6 +393,7 @@ export function CasualLabourClient({
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className={`${trCls} ${r.is_reversal ? 'opacity-60' : ''}`}>
+                    <td className={tdCodeCls}>{r.doc_no ?? '—'}</td>
                     <td className={tdCls}>{fmtDate(r.work_date)}</td>
                     <td className={`${tdCls} text-stone-600`}>{r.section_name ?? 'whole place'}</td>
                     <td className={tdNumCls}>{r.persons}</td>

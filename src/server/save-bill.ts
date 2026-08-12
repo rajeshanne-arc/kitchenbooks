@@ -11,6 +11,7 @@ import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
+import { nextDocNo } from '@/server/doc-numbers'
 import {
   allocateTransport,
   lineValueMicro,
@@ -191,11 +192,15 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
         }
       }
 
+      // On the bill date, not today: a March bill entered in April belongs to
+      // March's financial year. Inside the tx so a failed save burns no number.
+      const docNo = await nextDocNo(tx, rid, 'PUR', input.billDate)
+
       const [purchase] = await tx<{ id: string }[]>`
-        insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, gst_total, transport, entered_by)
+        insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, gst_total, transport, entered_by, doc_no)
         values (${rid}, ${input.billDate}, ${vendorId},
                 ${goodsTotal}::numeric, ${paiseToString(gstPaise)}::numeric, ${paiseToString(transportPaise)}::numeric,
-                ${by})
+                ${by}, ${docNo})
         returning id`
 
       const lineRows = input.lines.map((l, i) => ({
@@ -215,6 +220,7 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
     // database now holds, and the stored pieces reconcile exactly.
     const [check] = await sql<
       {
+        doc_no: string | null
         bill_date: string
         goods_total: string
         gst_total: string
@@ -225,7 +231,7 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
         goods_ok: boolean
       }[]
     >`
-      select p.bill_date::text as bill_date,
+      select p.doc_no, p.bill_date::text as bill_date,
              p.goods_total::text as goods_total,
              p.gst_total::text as gst_total,
              p.transport::text as transport,
@@ -258,6 +264,7 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
       ok: true,
       purchase: {
         id: saved.purchaseId,
+        docNo: check.doc_no,
         billDate: check.bill_date,
         goodsTotal: check.goods_total,
         gstTotal: check.gst_total,

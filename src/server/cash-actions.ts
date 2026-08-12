@@ -21,6 +21,7 @@ import {
   getVoucher,
 } from '@/server/cash-queries'
 import { todayIST } from '@/server/store-queries'
+import { nextDocNo } from '@/server/doc-numbers'
 import { parseMoney, parseQty } from '@/lib/money'
 import type {
   CloseDayInput,
@@ -155,11 +156,14 @@ export async function saveVoucher(raw: SaveVoucherInput): Promise<SaveVoucherRes
     const accountId = await assertAccount(rid, input.accountId, 'the account this voucher was paid from')
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      // The voucher's own date, not today: a voucher written up late still
+      // belongs to the financial year the money moved in.
+      const docNo = await nextDocNo(tx, rid, 'VCH', input.date)
       const [row] = await tx<{ id: string }[]>`
-        insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by, is_stock_purchase, is_casual_labour, account_id)
+        insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by, is_stock_purchase, is_casual_labour, account_id, doc_no)
         values (${rid}, ${input.date}, ${input.amount}, ${cleanName(input.paidTo)}, ${input.paidBy},
                 ${input.paidBy === 'owner' ? cleanName(input.ownerName) : null}, ${category},
-                ${input.note === '' ? null : input.note}, ${by}, ${input.isStockPurchase}, ${input.isCasualLabour}, ${accountId})
+                ${input.note === '' ? null : input.note}, ${by}, ${input.isStockPurchase}, ${input.isCasualLabour}, ${accountId}, ${docNo})
         returning id`
       return { id: row.id }
     })

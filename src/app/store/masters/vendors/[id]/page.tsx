@@ -17,6 +17,7 @@ import {
   heroNumCls,
   sectionHeadCls,
   tdCls,
+  tdCodeCls,
   tdNumCls,
   thCls,
   thNumCls,
@@ -196,6 +197,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
             <table className={dataTableCls}>
               <thead>
                 <tr>
+                  <th className={thCls}>Doc</th>
                   <th className={thCls}>Date</th>
                   <th className={thCls}>Mode</th>
                   <th className={thCls}>Note</th>
@@ -205,6 +207,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
               <tbody>
                 {payments.map((p) => (
                   <tr key={p.id} className={trCls}>
+                    <td className={tdCodeCls}>{p.doc_no ?? '—'}</td>
                     <td className={tdCls}>{fmtDate(p.paid_date)}</td>
                     <td className={`${tdCls} text-stone-600`}>{p.mode ?? '—'}</td>
                     <td className={`${tdCls} max-w-[16rem] truncate text-stone-500`}>{p.note ?? ''}</td>

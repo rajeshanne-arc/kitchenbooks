@@ -4,7 +4,8 @@
 //  - voidBill: ONE transaction inserting a reversal purchase (negative copy,
 //    reverses_id set) plus negative lines. Purchases are never updated —
 //    the role has no UPDATE grant on events, the database would refuse.
-//  - recordPayment: single INSERT into payments.
+//  - recordPayment: INSERT into payments, in a transaction so the document
+//    number and the row it numbers commit together.
 //  - updateVendor / updateItem: UPDATE restricted to exactly the columns the
 //    role holds column-level grants for. code / category / purchase_unit are
 //    locked at the database and never appear in a SET here.
@@ -16,6 +17,7 @@ import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
+import { nextDocNo } from '@/server/doc-numbers'
 import { getBill, getDues, getItemDetail, getVendorDetail } from '@/server/books-queries'
 import { parseMoney, paiseToString } from '@/lib/money'
 import type {
@@ -76,9 +78,9 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [orig] = await tx<
-        { id: string; vendor_id: string; bill_no: string | null; reverses_id: string | null }[]
+        { id: string; vendor_id: string; bill_no: string | null; bill_date: string; reverses_id: string | null }[]
       >`
-        select id, vendor_id, bill_no, reverses_id
+        select id, vendor_id, bill_no, bill_date::text as bill_date, reverses_id
         from purchases where id = ${purchaseId} and restaurant_id = ${rid}`
       if (!orig) throw new BooksError('Bill not found')
       if (orig.reverses_id !== null) throw new BooksError('This is a reversal bill — reversals cannot be voided')
@@ -88,9 +90,13 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
         select count(*)::int as n from purchase_lines where purchase_id = ${purchaseId}`
 
       const revBillNo = orig.bill_no ? `${orig.bill_no}-VOID` : `VOID-${orig.id.slice(0, 8)}`
+      // The reversal takes its OWN number — the void keeps the one it was
+      // filed under. Its FY comes from the ORIGINAL's bill_date, which the
+      // reversal carries so the months cancel.
+      const revDocNo = await nextDocNo(tx, rid, 'PUR', orig.bill_date)
       const [rev] = await tx<{ id: string }[]>`
-        insert into purchases (restaurant_id, bill_date, vendor_id, bill_no, goods_total, gst_total, transport, reverses_id, entered_by)
-        select restaurant_id, bill_date, vendor_id, ${revBillNo}, -goods_total, -gst_total, -transport, id, ${by}
+        insert into purchases (restaurant_id, bill_date, vendor_id, bill_no, doc_no, goods_total, gst_total, transport, reverses_id, entered_by)
+        select restaurant_id, bill_date, vendor_id, ${revBillNo}, ${revDocNo}, -goods_total, -gst_total, -transport, id, ${by}
         from purchases where id = ${purchaseId}
         returning id`
       await tx`
@@ -152,14 +158,23 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
 
     const accountId = await assertAccount(rid, input.accountId, 'the account this payment left')
     const duesBefore = (await getDues(input.vendorId)).balance
+    // Read outside the transaction: it goes to the database, and a second
+    // checkout while holding a connection is the shape that deadlocked the pool.
+    const by = await enteredBy()
 
-    const [payment] = await sql<
-      { id: string; paid_date: string; amount: string; mode: string | null; note: string | null; created_at: string }[]
-    >`
-      insert into payments (restaurant_id, paid_date, vendor_id, amount, mode, note, entered_by, account_id)
-      values (${rid}, ${input.paidDate}, ${input.vendorId}, ${paiseToString(amountPaise)}::numeric,
-              ${input.mode === '' ? null : input.mode}, ${input.note === '' ? null : input.note}, ${await enteredBy()}, ${accountId})
-      returning id, paid_date::text as paid_date, amount::text as amount, mode, note, created_at::text as created_at`
+    // A transaction only so the number and the row it numbers commit together —
+    // a failed insert must not burn a number out of the series.
+    const payment = await sql.begin(async (tx) => {
+      const docNo = await nextDocNo(tx, rid, 'PAY', input.paidDate)
+      const [row] = await tx<
+        { id: string; doc_no: string | null; paid_date: string; amount: string; mode: string | null; note: string | null; created_at: string }[]
+      >`
+        insert into payments (restaurant_id, paid_date, vendor_id, doc_no, amount, mode, note, entered_by, account_id)
+        values (${rid}, ${input.paidDate}, ${input.vendorId}, ${docNo}, ${paiseToString(amountPaise)}::numeric,
+                ${input.mode === '' ? null : input.mode}, ${input.note === '' ? null : input.note}, ${by}, ${accountId})
+        returning id, doc_no, paid_date::text as paid_date, amount::text as amount, mode, note, created_at::text as created_at`
+      return row
+    })
     if (!payment) throw new BooksError('Payment insert could not be verified')
 
     const dues = await getDues(input.vendorId)

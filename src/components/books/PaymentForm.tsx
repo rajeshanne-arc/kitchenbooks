@@ -7,7 +7,7 @@ import type { MoneyAccount, PaymentResult } from '@/lib/types'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
-import { cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
+import { cardCls, docNoCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
 
 export default function PaymentForm({
   vendorId,
@@ -84,6 +84,11 @@ export default function PaymentForm({
           {' → '}
           <span className="font-bold tabular-nums">{formatMoneyString(done.dues.balance)}</span>
           <span className="ml-1 text-xs text-stone-500">· read live from vendor_dues</span>
+          {/* the moment to write on the paper: the number exists now and
+              never changes, including if this payment is later reversed */}
+          {done.payment.doc_no !== null && (
+            <span className={`mt-1 block ${docNoCls}`}>{done.payment.doc_no}</span>
+          )}
         </div>
       )}
       <div className="mt-3 grid grid-cols-2 gap-3">

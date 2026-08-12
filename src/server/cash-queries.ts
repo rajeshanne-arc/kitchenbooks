@@ -161,7 +161,7 @@ export async function getVoucherCategories(restaurantId: string): Promise<string
 }
 
 const VOUCHER_SELECT = `
-  select id, voucher_date::text as voucher_date, amount::text as amount, paid_to, paid_by,
+  select id, doc_no, voucher_date::text as voucher_date, amount::text as amount, paid_to, paid_by,
          owner_name, category, note, created_at::text as created_at
   from cash_vouchers`
 

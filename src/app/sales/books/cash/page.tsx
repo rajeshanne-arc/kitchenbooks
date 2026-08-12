@@ -3,7 +3,7 @@ import { getRestaurant } from '@/server/queries'
 import { getLadder, getOwnersOwed, listOtherIncome, listVouchers } from '@/server/cash-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, docNoCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -135,6 +135,7 @@ export default async function BooksCashPage() {
                   <span className="block truncate text-sm text-stone-900">
                     {v.paid_to} <span className="text-stone-400">· {v.category}</span>
                   </span>
+                  {v.doc_no !== null && <span className={`block ${docNoCls}`}>{v.doc_no}</span>}
                   <span className="block text-xs text-stone-500">
                     {fmtDate(v.voucher_date)}
                     {v.paid_by === 'owner' && (

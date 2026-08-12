@@ -15,7 +15,7 @@ import type {
 } from '@/lib/types'
 
 const EXPENSE_SELECT = `
-  select e.id, e.expense_date::text as expense_date, e.category, e.payee,
+  select e.id, e.doc_no, e.expense_date::text as expense_date, e.category, e.payee,
          e.amount::text as amount, e.paid_via, e.note, e.reverses_id,
          (e.reverses_id is not null) as is_reversal,
          exists (select 1 from expenses x where x.reverses_id = e.id) as is_voided,
@@ -134,7 +134,7 @@ export async function getAttendanceMonthSummary(
 /* ── contract bills and casual labour ──────────────────────────────────── */
 
 const CONTRACT_SELECT = `
-  select c.id, c.bill_date::text as bill_date, c.vendor_name, c.service, c.headcount,
+  select c.id, c.doc_no, c.bill_date::text as bill_date, c.vendor_name, c.service, c.headcount,
          c.period_start::text as period_start, c.period_end::text as period_end,
          c.amount::text as amount, c.paid_via, c.note, c.entered_by,
          (c.reverses_id is not null) as is_reversal,
@@ -157,7 +157,7 @@ export async function listContractBills(restaurantId: string, limit = 40): Promi
 }
 
 const CASUAL_SELECT = `
-  select cl.id, cl.work_date::text as work_date, cl.section_id, s.name as section_name,
+  select cl.id, cl.doc_no, cl.work_date::text as work_date, cl.section_id, s.name as section_name,
          cl.persons, cl.description, cl.amount::text as amount, cl.paid_via, cl.note, cl.entered_by,
          (cl.reverses_id is not null) as is_reversal,
          exists (select 1 from casual_labour v where v.reverses_id = cl.id) as is_voided
