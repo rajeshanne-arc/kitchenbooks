@@ -1,6 +1,8 @@
 // Shared shapes between server queries and client components.
 // All money values travel as Postgres numeric::text strings — never floats.
 
+import type { Role } from '@/lib/roles'
+
 export type Category = { code: string; name: string; kind: 'ingredient' | 'operational'; sort_order: number }
 export type Unit = { code: string; name: string }
 export type Restaurant = { id: string; name: string }
@@ -1926,4 +1928,51 @@ export type LabourMonthRow = {
   labour_cost: string
   unassigned_marks: number
   unsalaried_marks: number
+}
+
+// ---------- Phase C: the query loop ----------
+
+export type QueryStatus = 'open' | 'answered' | 'resolved'
+
+/** One row of `queries`. entity_id is nullable because a question is often
+ *  about a DAY or a category rather than a single record. */
+export type QueryRow = {
+  id: string
+  entity_type: string
+  entity_id: string | null
+  entity_date: string | null
+  question: string
+  assigned_role: Role
+  status: QueryStatus
+  answer: string | null
+  raised_by: string | null
+  raised_at: string
+  answered_by: string | null
+  answered_at: string | null
+  resolved_by: string | null
+  resolved_at: string | null
+}
+
+export type RaiseQueryInput = {
+  entityType: string
+  entityId: string
+  entityDate: string
+  question: string
+  assignedRole: string
+}
+
+export type SaveQueryResult = { ok: true; query: QueryRow } | { ok: false; error: string }
+
+export type ClosePeriodInput = { periodStart: string; periodEnd: string; note: string }
+export type ClosePeriodResult = { ok: true } | { ok: false; error: string }
+
+/** books_completeness, verbatim — the view owns both the severity and the
+ *  wording, so a screen can never soften what it says. */
+export type BooksCompletenessRow = { severity: string; what: string; n: number }
+
+export type ClosedPeriodRow = {
+  period_start: string
+  period_end: string
+  closed_at: string
+  closed_by: string | null
 }

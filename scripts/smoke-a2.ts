@@ -546,6 +546,89 @@ async function main() {
     console.log(`      ${sites} numbered inserts · ${allocations} allocations`)
   })
 
+  /* ── 2g. the query loop, and the gate that makes it matter ────────── */
+  //
+  // A query is only worth building if it BLOCKS something. Without the gate
+  // it is a comment box: someone types a question, nobody answers, the
+  // month closes anyway. These assertions are about the gate, not the form.
+  console.log('\nthe query loop')
+
+  await check('an open query blocks a period close, and resolving it unblocks', async () => {
+    let blockedWhileOpen = false
+    let blockedWhileAnswered = false
+    let blockedWhenResolved = false
+    try {
+      await sql.begin(async (tx) => {
+        const countBlockers = async () => {
+          const [row] = await tx<{ n: number }[]>`
+            select count(*)::int as n from queries
+            where restaurant_id = ${rid} and status <> 'resolved'`
+          return row?.n ?? 0
+        }
+        const before = await countBlockers()
+        const [q] = await tx<{ id: string }[]>`
+          insert into queries (restaurant_id, entity_type, question, assigned_role, status, raised_by)
+          values (${rid}, 'day', 'Zz gate probe — why was Tuesday short?', 'cashier', 'open', 'gate')
+          returning id`
+        blockedWhileOpen = (await countBlockers()) === before + 1
+
+        // ANSWERED still blocks: the accountant asked, so the accountant
+        // decides it is settled. Closing around an unread answer is the
+        // same as never having asked.
+        await tx`update queries set status = 'answered', answer = 'zz', answered_by = 'gate',
+                 answered_at = now() where id = ${q.id}`
+        blockedWhileAnswered = (await countBlockers()) === before + 1
+
+        await tx`update queries set status = 'resolved', resolved_by = 'gate',
+                 resolved_at = now() where id = ${q.id}`
+        blockedWhenResolved = (await countBlockers()) !== before
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.ok(blockedWhileOpen, 'an open query did not register as a blocker')
+    assert.ok(blockedWhileAnswered, 'an ANSWERED query stopped blocking — the accountant never got to decide')
+    assert.ok(!blockedWhenResolved, 'a resolved query still blocks — the month could never close')
+  })
+
+  await check('open_queries and books_completeness agree on what is outstanding', async () => {
+    // The dashboard reads books_completeness; the close reads the table.
+    // If they ever disagree, one screen says the month is clean while the
+    // other refuses to close it, and nobody can tell which is lying.
+    const { getBooksCompleteness, listOpenQueries } = await import('../src/server/accountant-queries')
+    const [rows, open] = await Promise.all([getBooksCompleteness(rid), listOpenQueries(rid)])
+    const stated = rows.find((r) => r.what === 'Open queries awaiting an answer')
+    assert.equal(stated?.n ?? 0, open.length)
+  })
+
+  await check('a query can only be assigned to someone who can answer it', async () => {
+    // Mirrors the CHECK on queries.assigned_role. The accountant is absent
+    // from it on purpose: they ask, they do not answer.
+    const { ASSIGNABLE_ROLES } = await import('../src/lib/query-entities')
+    assert.ok(!ASSIGNABLE_ROLES.includes('accountant'), 'the accountant cannot be asked their own question')
+    await assert.rejects(
+      () =>
+        sql.begin(async (tx) => {
+          await tx`
+            insert into queries (restaurant_id, entity_type, question, assigned_role, status)
+            values (${rid}, 'day', 'zz', 'accountant', 'open')`
+        }),
+      /assigned_role/,
+      'the database should refuse a query assigned to the accountant',
+    )
+  })
+
+  await check('every assignable role is a real role, and every entity has one', async () => {
+    const { ALL_ROLES } = await import('../src/lib/roles')
+    const { ASSIGNABLE_ROLES, QUERY_ENTITIES } = await import('../src/lib/query-entities')
+    for (const r of ASSIGNABLE_ROLES) assert.ok(ALL_ROLES.includes(r), `${r} is not a role`)
+    for (const e of QUERY_ENTITIES) {
+      assert.ok(ASSIGNABLE_ROLES.includes(e.role), `${e.key} suggests ${e.role}, who cannot be assigned`)
+    }
+    console.log(`      ${QUERY_ENTITIES.length} things a query can be about`)
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

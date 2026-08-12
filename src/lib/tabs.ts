@@ -14,14 +14,14 @@
 //
 // The LABEL is editable, the KEY and the URL never are.
 
-export type TabGroup = 'kitchen' | 'store' | 'sales' | 'staff' | 'owner'
+export type TabGroup = 'kitchen' | 'store' | 'sales' | 'staff' | 'owner' | 'accounts'
 
 /** A chip is one small form inside a tab, addressed as ?f=<key>. */
 export type ChipDef = { key: string; label: string }
 
 export type TabDef = { key: string; href: string; label: string; chips?: ChipDef[] }
 
-export const TAB_GROUPS: TabGroup[] = ['kitchen', 'store', 'sales', 'staff', 'owner']
+export const TAB_GROUPS: TabGroup[] = ['kitchen', 'store', 'sales', 'staff', 'owner', 'accounts']
 
 export const TAB_GROUP_NAMES: Record<TabGroup, string> = {
   kitchen: 'Kitchen (chef)',
@@ -29,6 +29,7 @@ export const TAB_GROUP_NAMES: Record<TabGroup, string> = {
   sales: 'Sales (cashier)',
   staff: 'Staff (manager)',
   owner: 'Owner',
+  accounts: 'Accounts (accountant)',
 }
 
 export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
@@ -147,10 +148,18 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     // Accounts sits beside Lists: both are masters every form reads from,
     // and naming an account wrong mislabels the books the way a stray list
     // value never could.
-    { key: 'accounts', href: '/owner/accounts', label: 'Accounts' },
+    { key: 'accounts', href: '/owner/accounts', label: 'Money accounts' },
     { key: 'users', href: '/owner/users', label: 'Users' },
     { key: 'lists', href: '/owner/lists', label: 'Lists' },
     { key: 'settings', href: '/owner/settings', label: 'Settings' },
+  ],
+  // The accountant's group. Review comes first and always will: their
+  // screen is a QUEUE, not a form — what is incomplete, what needs asking
+  // about, what is ready to close. The remaining tabs (registers, parties,
+  // tax, money, export) land with the rest of the accountant phase.
+  accounts: [
+    { key: 'review', href: '/accounts', label: 'Review' },
+    { key: 'close', href: '/accounts/close', label: 'Close' },
   ],
 }
 

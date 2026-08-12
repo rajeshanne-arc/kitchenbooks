@@ -12,6 +12,7 @@ import {
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import { SalesLine } from '@/components/dashboard/Charts'
 import Honesty from '@/components/Honesty'
+import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,6 +52,12 @@ export default async function SalesDashboard({
         <h1 className={pageTitleCls}>Sales</h1>
         <p className={pageSubCls}>{restaurant.name} — {period.label}</p>
       </header>
+
+      {/* What the accountant is asking THIS role, on the screen they already
+          open every morning. Renders nothing when nothing is asked. */}
+      <div className="pb-4">
+        <MyQueriesPanel />
+      </div>
 
       <div className="pb-4">
         <PeriodControl active={periodKey} basePath="/sales" />

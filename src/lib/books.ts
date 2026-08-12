@@ -28,4 +28,8 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
   ],
   staff: [{ href: '/staff/books/sections', label: 'Departments' }],
   owner: [],
+  // The accountant's books ARE the registers, and those land with the rest
+  // of the accountant phase. Empty is the honest state until then, not an
+  // oversight — /accounts/books does not exist and must not be offered.
+  accounts: [],
 }

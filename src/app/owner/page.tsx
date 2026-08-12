@@ -23,6 +23,7 @@ import { fmtDate } from '@/lib/format'
 import { isPeriodKey, monthLabel, resolvePeriod, type PeriodKey } from '@/lib/period'
 import { cardCls, heroNumCls, moneyCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import Honesty, { HonestyPill } from '@/components/Honesty'
+import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import {
   BilledVsClaimed,
@@ -585,6 +586,12 @@ export default async function DashboardPage({
           {period.label} · {period.from === period.to ? fmtDate(period.from) : `${fmtDate(period.from)} — ${fmtDate(period.to)}`}
         </p>
       </header>
+
+      {/* What the accountant is asking. Managers and owners see what they are
+          covering for too — a loop that stalls on one absence is unused. */}
+      <div className="pb-4">
+        <MyQueriesPanel />
+      </div>
 
       <div className="pb-4">
         <PeriodControl active={periodKey} />

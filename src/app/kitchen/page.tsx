@@ -12,6 +12,7 @@ import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import Honesty from '@/components/Honesty'
+import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,6 +46,12 @@ export default async function KitchenDashboardPage() {
           {restaurant.name} — {fmtDate(today)}
         </p>
       </header>
+
+      {/* What the accountant is asking THIS role, on the screen they already
+          open every morning. Renders nothing when nothing is asked. */}
+      <div className="pb-4">
+        <MyQueriesPanel />
+      </div>
 
       <div className="space-y-4">
         <section className={cardCls}>

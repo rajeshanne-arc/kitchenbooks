@@ -33,11 +33,14 @@ const check = (name: string, fn: () => void) => {
 /* ── 1. the nav list per role, by value ─────────────────────────────── */
 
 const EXPECTED_NAV: Record<Role, string[]> = {
-  owner: ['Kitchen', 'Store', 'Sales', 'Staff', 'Owner'],
+  owner: ['Kitchen', 'Store', 'Sales', 'Staff', 'Owner', 'Accounts'],
   manager: ['Kitchen', 'Store', 'Sales', 'Staff', 'Owner'],
   chef: ['Kitchen'],
   store: ['Store'],
   cashier: ['Sales'],
+  // One group, so '/' redirects them straight into it and they never see a
+  // chooser. The accountant works from home; this is the whole app to them.
+  accountant: ['Accounts'],
 }
 
 console.log('\nnav, by value')

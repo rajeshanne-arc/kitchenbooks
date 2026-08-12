@@ -30,6 +30,7 @@ import {
   trCls,
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
+import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import { MagnitudeBars, SalesLine } from '@/components/dashboard/Charts'
 
@@ -89,6 +90,12 @@ export default async function StoreHome({
           {period.label} · {fmtDate(period.from)} — {fmtDate(period.to)}
         </p>
       </header>
+
+      {/* What the accountant is asking THIS role, on the screen they already
+          open every morning. Renders nothing when nothing is asked. */}
+      <div className="pb-4">
+        <MyQueriesPanel />
+      </div>
 
       <div className="pb-4">
         <PeriodControl active={periodKey} basePath="/store" />

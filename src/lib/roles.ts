@@ -12,15 +12,25 @@
 //   /sales    /sales/books      cashier
 //   /staff    /staff/books      manager
 //   /owner                      owner (dashboard is manager+owner)
+//
+// Phase C adds a sixth: /accounts, the accountant's group. They work from
+// home and their screen is a QUEUE — what is incomplete, what needs asking
+// about, what is ready to close.
 
-export type Role = 'owner' | 'manager' | 'chef' | 'store' | 'cashier'
+export type Role = 'owner' | 'manager' | 'chef' | 'store' | 'cashier' | 'accountant'
 
-export const ALL_ROLES: Role[] = ['owner', 'manager', 'chef', 'store', 'cashier']
+export const ALL_ROLES: Role[] = ['owner', 'manager', 'chef', 'store', 'cashier', 'accountant']
 
 const EVERYONE: Role[] = ALL_ROLES
 
 // First prefix match wins — keep more specific paths above their parents.
 const RULES: [prefix: string, roles: Role[]][] = [
+  // --- accountant group ------------------------------------------------
+  // The accountant works from home and their screen is a QUEUE, not a form.
+  // The owner is here too: they own the business, and someone must be able
+  // to work the loop when there is no accountant yet.
+  ['/accounts', ['accountant', 'owner']],
+
   // --- owner group ---------------------------------------------------
   ['/owner/users', ['owner']],
   ['/owner/pnl', ['owner']],
@@ -91,6 +101,7 @@ export function deniedHint(pathname: string): string {
     const match = prefix === '/' ? pathname === '/' : pathname === prefix || pathname.startsWith(`${prefix}/`)
     if (!match) continue
     if (roles.length === 1 && roles[0] === 'owner') return 'This screen needs an owner account — ask Rajesh.'
+    if (roles.includes('accountant')) return 'This screen belongs to the accountant — ask them, or an owner.'
     if (!roles.includes('chef') && !roles.includes('store') && !roles.includes('cashier')) {
       return 'This screen needs a manager or owner account — ask the manager.'
     }
@@ -110,6 +121,7 @@ export const GROUPS: Group[] = [
   { key: 'sales', href: '/sales', label: 'Sales', blurb: 'the day close and what came with it' },
   { key: 'staff', href: '/staff', label: 'Staff', blurb: 'people, attendance, money out' },
   { key: 'owner', href: '/owner', label: 'Owner', blurb: 'the whole restaurant, added up' },
+  { key: 'accounts', href: '/accounts', label: 'Accounts', blurb: 'the queue: what is asked, what is missing, what can close' },
 ]
 
 export const groupsFor = (role: Role): Group[] => GROUPS.filter((g) => canAccess(role, g.href))

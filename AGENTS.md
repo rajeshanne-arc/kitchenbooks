@@ -1355,3 +1355,61 @@ guard on the pooled `sql`, OUTSIDE their transaction — a TOCTOU race that
 number is allocated on the same tx as the insert it numbers). Pre-existing,
 unrelated to this commit, and moving those boundaries is exactly where a
 regression would hide.
+
+### Commit 3 — the query loop
+
+**The most valuable thing in this phase, and it is one rule.** Real
+accountants send a list of questions at month end, usually over WhatsApp,
+where they get lost. This puts the list in the data — and then makes it
+matter:
+
+**A PERIOD CANNOT CLOSE WHILE A QUERY IS OPEN.** Without that, a query is a
+comment box: someone types a question, nobody answers, the month closes
+anyway and the question was decoration. With it, the month is the deadline,
+and the deadline is what makes anyone reply. `closePeriod` counts the
+blockers rather than waving vaguely — a number is something you can finish
+— and re-reads them INSIDE its advisory lock, so a query raised while the
+form was open still stops the close.
+
+**Answered is not resolved.** `queries.status` is open → answered →
+resolved, and `closePeriod` blocks on anything that is not resolved. The
+accountant asked the question, so the accountant decides whether the answer
+settles it; closing around an unread answer is the same as never asking.
+Both halves stay on the record forever — in a month's time the answer is
+the only thing that explains the number.
+
+Three roles, three verbs. The ACCOUNTANT raises and resolves. The ASSIGNED
+ROLE answers, because they are the hands that touched the money — plus
+manager and owner, who may answer anything, because a loop that stalls on
+one person's day off is a loop nobody uses. `queries.assigned_role`'s CHECK
+excludes the accountant deliberately: they ask, they do not answer.
+`ASSIGNABLE_ROLES` mirrors it and `smoke:a2` asserts the database refuses
+the other case.
+
+**The sixth role.** `accountant` joins the matrix and `/accounts` joins the
+groups — Review and Close now, the rest of the registers with the rest of
+the accountant phase. They have exactly one group, so `/` sends them
+straight in and they never see a chooser: they work from home and their
+screen is a QUEUE, not a form. `ALL_ROLES` is read by the proxy, the user
+admin and `auth-core` alike, so the role needed no edits in any of them —
+that is the matrix being one source, as designed. The owner is in
+`/accounts` too, because someone must be able to work the loop before
+there is an accountant to work it.
+
+The queue's other half is `<MyQueriesPanel />` on the kitchen, store, sales
+and owner homes — what the accountant is asking THIS role, on the screen
+they already open every morning. It renders NOTHING when nothing is asked;
+a permanent "Questions: 0" is a thing to read and dismiss every day, and
+absence says the same thing more quietly.
+
+`entity_id` is nullable on purpose and the UI honours it: half of a real
+month-end list is "why was Tuesday short?", which has no single row behind
+it. `src/lib/query-entities.ts` is a KEY REGISTRY like `tabs.ts` —
+structural, not a business list, so a settings row can never invent one
+and point a question at nothing. Picking what a query is about SUGGESTS who
+answers; it never decides.
+
+**Deliberately not built here:** raising a query FROM a record. The
+accountant reaches records through the registers, and the registers are the
+next commit; a half-wired deep link now would be a worse answer than the
+entity picker.
