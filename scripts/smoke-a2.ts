@@ -1212,6 +1212,58 @@ async function main() {
     assert.equal(selfCheck, 0, '1000 opening − 300 out should close at 700')
   })
 
+  /* ── 2l. the indent gap, in words ─────────────────────────────────── */
+  console.log('\nthe indent gap')
+
+  await check('a cancelled indent has NO gap, and the app does not coalesce it away', async () => {
+    // The view returns NULL for qty_given and gap on a cancelled indent: a
+    // request nobody was ever going to fill has no shortage. The query used
+    // to coalesce both — which is the dash that reads like zero.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/kitchen-queries.ts', 'utf8')
+    const start = src.indexOf('export async function getIndentFulfilment(')
+    const body = src.slice(start, src.indexOf('export async function ', start + 1))
+    assert.ok(!/coalesce\(qty_given/.test(body), 'qty_given is coalesced — cancelled would read as zero')
+    assert.ok(!/coalesce\(gap/.test(body), 'gap is coalesced — cancelled would read as no shortage')
+
+    const def = await sql<{ d: string }[]>`
+      select pg_get_viewdef('indent_fulfilment'::regclass, true) as d`
+    assert.match(def[0].d, /'cancelled'::text THEN NULL/, 'the view stopped nulling cancelled rows')
+    // and the sign convention the words are built on
+    assert.match(def[0].d, /qty_given, 0::numeric\) - l\.qty_requested/, 'gap is no longer given − requested')
+  })
+
+  await check('the gap is words, not a signed number', async () => {
+    const { readFileSync } = await import('node:fs')
+    const cell = readFileSync('src/components/kitchen/GapCell.tsx', 'utf8')
+    assert.ok(cell.includes("'Short'") && cell.includes("'Extra'"), 'the gap lost its words')
+    // the word is a JSX text node, not a string literal
+    assert.ok(/gap === null/.test(cell) && /cancelled/.test(cell), 'a cancelled indent must say so, not show a dash')
+    // negative is short, and that must agree with the view above
+    assert.match(cell, /const short = n < 0/, 'the short/extra test flipped against the view')
+    const page = readFileSync('src/app/kitchen/indent/[id]/page.tsx', 'utf8')
+    assert.ok(page.includes('<GapCell'), 'the indent page stopped using the words')
+    assert.ok(!/`−\$\{f\.gap\}`/.test(page), 'the signed number came back')
+  })
+
+  await check('section_consumption_daily runs, filters, and nets returns', async () => {
+    const { getSectionConsumptionDaily } = await import('../src/server/store-queries')
+    const all = await getSectionConsumptionDaily(rid, period.from, period.to)
+    for (const r of all) {
+      assert.match(r.move_date, /^\d{4}-\d{2}-\d{2}$/)
+      assert.ok(!Number.isNaN(Number(r.consumed_value)))
+      assert.ok(r.session !== null && r.session !== '', 'a consumption row must name its session')
+    }
+    // the filter is what lets the kitchen dashboard show only its own
+    const codes = [...new Set(all.map((r) => r.section_code))].slice(0, 1)
+    if (codes.length === 1) {
+      const one = await getSectionConsumptionDaily(rid, period.from, period.to, codes)
+      assert.ok(one.every((r) => r.section_code === codes[0]), 'the department filter leaks other departments')
+      assert.ok(one.length <= all.length)
+    }
+    console.log(`      ${all.length} department-days in the period`)
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

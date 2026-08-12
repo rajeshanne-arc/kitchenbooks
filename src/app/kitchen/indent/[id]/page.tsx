@@ -23,6 +23,7 @@ import {
 import { sql } from '@/lib/db'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
+import GapCell from '@/components/kitchen/GapCell'
 
 export const dynamic = 'force-dynamic'
 
@@ -151,26 +152,23 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
               </thead>
               <tbody>
                 {fulfilment.map((f) => {
-                  const gap = Number(f.gap)
                   const returned = returnedByItem[f.item_code] ?? 0
                   return (
                     <tr key={f.item_code} className={trCls}>
                       <td className={tdCls}>{f.item_name}</td>
                       <td className={tdNumCls}>{f.qty_requested}</td>
-                      <td className={tdNumCls}>{f.qty_given}</td>
-                      <td
-                        className={`${tdNumCls} font-semibold ${
-                          gap > 0 ? 'text-red-700' : gap < 0 ? 'text-amber-800' : 'text-stone-400'
-                        }`}
-                      >
-                        {gap === 0 ? '—' : gap > 0 ? `−${f.gap}` : `+${Math.abs(gap)}`}
+                      <td className={`${tdNumCls} ${f.qty_given === null ? 'text-stone-400' : ''}`}>
+                        {f.qty_given ?? 'cancelled'}
+                      </td>
+                      <td className={`${tdCls} text-right`}>
+                        <GapCell gap={f.gap} unit={f.purchase_unit} />
                       </td>
                       <td className={`${tdNumCls} ${returned > 0 ? 'text-stone-900' : 'text-stone-400'}`}>
                         {returned > 0 ? returned : '—'}
                       </td>
                       <td className={`${tdCls} text-stone-500`}>{f.purchase_unit}</td>
                       <td className={`${tdCls} text-right`}>
-                        {canOpenIssues && Number(f.qty_given) > 0 && (
+                        {canOpenIssues && Number(f.qty_given ?? 0) > 0 && (
                           <Link
                             href="/store/issue"
                             className="text-xs font-medium text-emerald-700 hover:underline"
@@ -186,8 +184,10 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
             </table>
           </div>
           <p className="mt-3 text-xs text-stone-500">
-            A gap in red is short — asked for more than was given. Amber is over-issue. Returned counts stock
-            this department sent back since the indent was raised, matched by item; a return is not tied to one
+            The gap is stated in words because a signed number asks you to remember which way round it
+            goes. Nothing in the column means the two agreed. A cancelled indent shows no gap at all —
+            a request nobody was going to fill has no shortage. Returned counts stock this department
+            sent back since the indent was raised, matched by item; a return is not tied to one
             indent, so read it as context rather than as this document&apos;s own line.
           </p>
         </section>

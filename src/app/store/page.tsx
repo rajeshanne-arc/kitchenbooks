@@ -9,6 +9,7 @@ import {
   getPaymentsTotal,
   getPurchaseSeries,
   getPurchasesByVendor,
+  getSectionConsumptionDaily,
   todayIST,
 } from '@/server/store-queries'
 import { getStockAlarms } from '@/server/dashboard-queries'
@@ -31,6 +32,7 @@ import {
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
+import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import { MagnitudeBars, SalesLine } from '@/components/dashboard/Charts'
 
@@ -64,6 +66,7 @@ export default async function StoreHome({
     alarms,
     reorderCount,
     itemsWithLevel,
+    consumption,
   ] = await Promise.all([
     getChecklist(restaurant.id, today),
     countOpenIndents(restaurant.id),
@@ -75,6 +78,7 @@ export default async function StoreHome({
     getStockAlarms(restaurant.id),
     countReorderDue(restaurant.id),
     countItemsWithReorderLevel(restaurant.id),
+    getSectionConsumptionDaily(restaurant.id, period.from, period.to),
   ])
 
   const entered = checklist.filter((c) => c.issues_today > 0).length
@@ -95,6 +99,14 @@ export default async function StoreHome({
           open every morning. Renders nothing when nothing is asked. */}
       <div className="pb-4">
         <MyQueriesPanel />
+      </div>
+
+      <div className="pb-4">
+        <ConsumptionByDept
+          rows={consumption}
+          title="Issued out, by department"
+          caption={`${fmtDate(period.from)} — ${fmtDate(period.to)}, net of anything sent back`}
+        />
       </div>
 
       <div className="pb-4">

@@ -15,6 +15,7 @@ import type {
   ReturnDetail,
   ReturnLineRow,
   Section,
+  SectionConsumptionDay,
   SectionMonthRow,
   StockRow,
   StockSnap,
@@ -418,4 +419,31 @@ export async function getStockSnaps(restaurantId: string, itemIds: string[]): Pr
     from stock_on_hand s
     where s.restaurant_id = ${restaurantId} and s.item_id = any(${itemIds})
     order by s.code asc`
+}
+
+/** Per-department, per-session daily consumption VALUE, net of returns —
+ *  section_consumption_daily.
+ *
+ *  QUANTITY ON THE INDENT, VALUE ON THE DASHBOARD. The indent form stays
+ *  purely in quantities on purpose: at the moment of asking for onions, a
+ *  rupee figure invites the chef to trim the request to look good rather
+ *  than ask for what the menu needs. But the chef IS accountable for what
+ *  their department consumed at month end, so the value belongs here —
+ *  after the asking, where it informs rather than distorts.
+ *
+ *  The view nets returns already; nothing here re-subtracts them. */
+export async function getSectionConsumptionDaily(
+  restaurantId: string,
+  from: string,
+  to: string,
+  sectionCodes?: string[],
+): Promise<SectionConsumptionDay[]> {
+  return sql<SectionConsumptionDay[]>`
+    select section_code, section_name, move_date::text as move_date, session,
+           consumed_value::text as consumed_value, movements::int as movements
+    from section_consumption_daily
+    where restaurant_id = ${restaurantId}
+      and move_date between ${from}::date and ${to}::date
+      and (${sectionCodes ?? null}::text[] is null or section_code = any(${sectionCodes ?? null}::text[]))
+    order by move_date asc, section_code asc, session asc`
 }

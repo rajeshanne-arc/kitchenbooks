@@ -484,8 +484,12 @@ export type IndentFulfilmentRow = {
   item_name: string
   purchase_unit: string
   qty_requested: string
-  qty_given: string
-  gap: string
+  /** NULL on a cancelled indent — never zero. Nothing was going to be given,
+   *  so there is no quantity and no shortage to state. */
+  qty_given: string | null
+  /** given − requested: NEGATIVE is short, positive is extra, NULL cancelled.
+   *  Rendered as words, never as a signed number. */
+  gap: string | null
 }
 
 export type ReorderRow = {
@@ -2272,3 +2276,15 @@ export type ImportStatementResult = { ok: true; statementId: string } | { ok: fa
 export type MatchInput = { statementLineId: string; entityType: string; entityId: string; note: string }
 
 export type ReconcileResult = { ok: true } | { ok: false; error: string }
+
+/** One department's consumption on one day in one session, net of returns —
+ *  section_consumption_daily. Value, never quantity: the indent asks in
+ *  quantities so a rupee figure cannot shrink the request. */
+export type SectionConsumptionDay = {
+  section_code: string
+  section_name: string
+  move_date: string
+  session: string
+  consumed_value: string
+  movements: number
+}

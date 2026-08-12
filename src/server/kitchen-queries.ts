@@ -360,8 +360,11 @@ export async function getIndentFulfilment(
            section_code, section_name, status,
            item_code, item_name, purchase_unit,
            qty_requested::text as qty_requested,
-           coalesce(qty_given, 0)::text as qty_given,
-           coalesce(gap, qty_requested)::text as gap
+           -- NOT coalesced. A cancelled indent returns NULL for both: a
+           -- request nobody was ever going to fill has no shortage, and a
+           -- zero here would read as "asked and got nothing".
+           qty_given::text as qty_given,
+           gap::text as gap
     from indent_fulfilment
     where restaurant_id = ${restaurantId} and indent_id = ${indentId}
     order by item_name asc`

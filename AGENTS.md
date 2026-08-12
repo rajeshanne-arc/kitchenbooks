@@ -1695,3 +1695,38 @@ amount is typed, so a cashier would key the figure and only then find the
 close would not save. It now speaks before the box — and says the important
 part: an empty bank block names no account, so **the nightly cash close is
 never held up by this**.
+
+## The indent gap, and where value belongs
+
+**THE GAP IS WORDS, NOT A SIGN.** "Short 0.5 kg" in red, "Extra 2 kg" in
+amber, nothing at all when they match. A signed number asks the reader to
+hold a convention in their head — is −2 two short or two extra? — and
+`indent_fulfilment` computes `qty_given − qty_requested`, so negative means
+short, which is the opposite of how a person says it out loud. That
+convention had ALREADY inverted against the view: the page coloured
+`gap > 0` red and printed a minus in front of it, so after the migration it
+was calling an over-issue a shortage. Colour never carries the meaning
+alone; the word does and the colour agrees with it.
+
+**A cancelled indent has NO gap.** The view returns NULL for both
+`qty_given` and `gap` when the status is cancelled — a request nobody was
+ever going to fill has no shortage — and `getIndentFulfilment` was
+COALESCING both away, which is precisely the dash that reads as zero. The
+query now passes the NULL through and the cell says "cancelled".
+
+**QUANTITY ON THE INDENT, VALUE ON THE DASHBOARD.** The indent form stays
+purely in quantities on purpose: at the moment of asking for onions, a rupee
+figure invites the chef to trim the request to look good rather than ask for
+what the menu needs. The chef IS accountable for what their departments
+consumed at month end, so `section_consumption_daily` (per department, per
+session, per day, net of returns) is on the kitchen dashboard and the store
+dashboard — after the asking, where it informs a conversation instead of
+distorting a request.
+
+**The schema gate learned about SQL comments.** `-- a zero here would read
+as "asked and got nothing"` is valid SQL and a legitimate place to explain a
+query, but every word in it looked like a column: it reported `read` and
+`got` as missing on `indent_fulfilment`. Line and block comments are now
+stripped before the string literals, so a quote inside a comment cannot
+unbalance the next step. The `--self-test` still catches the
+`pnl_monthly.revenue` regression.

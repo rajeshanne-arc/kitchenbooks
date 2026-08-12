@@ -7,12 +7,13 @@ import { getRestaurant } from '@/server/queries'
 import { getKitchenDay, getWasteByReason } from '@/server/kitchen-queries'
 import { getQtySold } from '@/server/sales-queries'
 import { listDishCosts } from '@/server/recipes-queries'
-import { monthStartIST, todayIST } from '@/server/store-queries'
+import { getSectionConsumptionDaily, monthStartIST, todayIST } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import Honesty from '@/components/Honesty'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
+import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,11 +21,14 @@ export default async function KitchenDashboardPage() {
   const restaurant = await getRestaurant()
   const today = todayIST()
   const month = monthStartIST()
-  const [day, wasteByReason, qtySold, dishCosts] = await Promise.all([
+  const [day, wasteByReason, qtySold, dishCosts, consumption] = await Promise.all([
     getKitchenDay(restaurant.id, today),
     getWasteByReason(restaurant.id, month),
     getQtySold(restaurant.id, month),
     listDishCosts(restaurant.id),
+    // the chef is accountable for what their departments consumed, so the
+    // VALUE lives here — after the asking, never on the indent form
+    getSectionConsumptionDaily(restaurant.id, month, today),
   ])
 
   const perf = qtySold
@@ -51,6 +55,13 @@ export default async function KitchenDashboardPage() {
           open every morning. Renders nothing when nothing is asked. */}
       <div className="pb-4">
         <MyQueriesPanel />
+      </div>
+
+      <div className="pb-4">
+        <ConsumptionByDept
+          rows={consumption}
+          caption={`${fmtDate(month)} — ${fmtDate(today)}, this month so far`}
+        />
       </div>
 
       <div className="space-y-4">

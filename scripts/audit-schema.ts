@@ -151,9 +151,20 @@ async function main() {
   let checkedStmts = 0
 
   for (const st of statements) {
-    // Strip string literals first: `insert … select -qty, 'void', id` would
+    // Strip SQL COMMENTS first, then string literals.
+    //
+    // `-- a zero here would read as "asked and got nothing"` is valid SQL and
+    // a legitimate place to explain a query, but every word in it looked like
+    // a column to a word-level scanner — it reported `read` and `got` as
+    // missing columns on indent_fulfilment. Comments are stripped before the
+    // literals so a quote inside a comment cannot unbalance the next step.
+    //
+    // The literals go second: `insert … select -qty, 'void', id` would
     // otherwise offer "void" as a column name, which it very much is not.
-    const clean = st.sql.replace(/'[^']*'/g, " '' ")
+    const clean = st.sql
+      .replace(/--[^\n]*/g, ' ')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/'[^']*'/g, " '' ")
     const rels = relationsOf(clean).filter((r) => schema.has(r.name))
     if (rels.length === 0) continue
     checkedStmts++
