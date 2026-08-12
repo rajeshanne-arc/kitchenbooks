@@ -5,19 +5,22 @@
 // used-oil reconciliation to add up.
 
 import { useState } from 'react'
-import type { SaveOtherIncomeResult, Unit } from '@/lib/types'
+import type { MoneyAccount, SaveOtherIncomeResult, Unit } from '@/lib/types'
 import { saveOtherIncome } from '@/server/cash-actions'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
+import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 
 export default function OtherIncomeForm({
   units,
+  accounts,
   items = [],
   buyerNames = [],
   receiverNames = [],
 }: {
   units: Unit[]
+  accounts: MoneyAccount[]
   /** ACTIVE other_income_item list values (LAW 2) */
   items?: string[]
   buyerNames?: string[]
@@ -28,6 +31,7 @@ export default function OtherIncomeForm({
   const [qty, setQty] = useState('')
   const [unit, setUnit] = useState('')
   const [amount, setAmount] = useState('')
+  const [accountId, setAccountId] = useState('')
   const [buyer, setBuyer] = useState('')
   const [receivedBy, setReceivedBy] = useState('')
   const [saving, setSaving] = useState(false)
@@ -39,6 +43,7 @@ export default function OtherIncomeForm({
   const canSave =
     !saving &&
     item.trim() !== '' &&
+    accountId !== '' &&
     parseMoney(amount.trim()) !== null &&
     Number(amount.trim()) > 0 &&
     qtyOk &&
@@ -55,6 +60,7 @@ export default function OtherIncomeForm({
         qty: qty.trim(),
         unit,
         amount: amount.trim(),
+        accountId,
         buyer: buyer.trim(),
         receivedBy: receivedBy.trim(),
       })
@@ -73,6 +79,7 @@ export default function OtherIncomeForm({
     setQty('')
     setUnit('')
     setAmount('')
+    setAccountId('')
     setBuyer('')
     setReceivedBy('')
     setError(null)
@@ -130,6 +137,8 @@ export default function OtherIncomeForm({
             />
           </label>
         </div>
+        {/* right under the amount: the drawer and the bank are different money */}
+        <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} label="Received into" required />
         <label className="block">
           <span className={fieldLabelCls}>Item</span>
           <select value={item} onChange={(e) => setItem(e.target.value)} className={selectCls}>

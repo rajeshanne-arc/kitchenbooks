@@ -10,7 +10,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import type { VendorDueRow, VendorHit } from '@/lib/types'
+import type { MoneyAccount, VendorDueRow, VendorHit } from '@/lib/types'
 import { useSearch } from '@/components/useSearch'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -40,10 +40,12 @@ const fromDue = (d: VendorDueRow): VendorHit => ({
 
 export default function PaymentClient({
   modes,
+  accounts,
   dues,
   preselectVendorId = null,
 }: {
   modes: string[]
+  accounts: MoneyAccount[]
   dues: VendorDueRow[]
   preselectVendorId?: string | null
 }) {
@@ -85,7 +87,7 @@ export default function PaymentClient({
             change vendor
           </button>
         </div>
-        <PaymentForm vendorId={vendor.id} vendorName={vendor.name} modes={modes} />
+        <PaymentForm vendorId={vendor.id} vendorName={vendor.name} modes={modes} accounts={accounts} />
         <Link
           href={`/store/masters/vendors/${vendor.id}`}
           className="block text-center text-sm font-medium text-emerald-700 hover:underline"

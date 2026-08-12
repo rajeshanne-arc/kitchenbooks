@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
 import { getVendorBills, getVendorDetail, getVendorPayments } from '@/server/books-queries'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getList } from '@/server/settings'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -37,10 +38,11 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
   const vendor = await getVendorDetail(restaurant.id, id)
   if (!vendor) notFound()
 
-  const [bills, payments, modes] = await Promise.all([
+  const [bills, payments, modes, accounts] = await Promise.all([
     getVendorBills(restaurant.id, id),
     getVendorPayments(id),
     getList(restaurant.id, 'payment_mode'),
+    listMoneyAccounts(restaurant.id),
   ])
   const balP = decimalStringToPaise(vendor.balance)
   const hasBank =
@@ -182,7 +184,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
         </section>
       </div>
 
-      <PaymentForm vendorId={vendor.id} vendorName={vendor.name} modes={modes} />
+      <PaymentForm vendorId={vendor.id} vendorName={vendor.name} modes={modes} accounts={accounts} />
 
       {/* payment history */}
       <section className={cardCls}>

@@ -1,5 +1,6 @@
 import { getMasters, getRestaurant } from '@/server/queries'
 import { listOtherIncome } from '@/server/cash-queries'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getList, getNameHistory } from '@/server/settings'
 import OtherIncomeForm from '@/components/cash/OtherIncomeForm'
 import { formatMoneyString } from '@/lib/money'
@@ -10,8 +11,9 @@ export const dynamic = 'force-dynamic'
 
 export default async function OtherIncomePage() {
   const restaurant = await getRestaurant()
-  const [{ units }, items, buyerNames, receiverNames, rows] = await Promise.all([
+  const [{ units }, accounts, items, buyerNames, receiverNames, rows] = await Promise.all([
     getMasters(),
+    listMoneyAccounts(restaurant.id),
     getList(restaurant.id, 'other_income_item'),
     getNameHistory(restaurant.id, 'income_buyer'),
     getNameHistory(restaurant.id, 'income_received_by'),
@@ -26,7 +28,7 @@ export default async function OtherIncomePage() {
       </header>
 
       <div className="space-y-4">
-        <OtherIncomeForm units={units} items={items} buyerNames={buyerNames} receiverNames={receiverNames} />
+        <OtherIncomeForm units={units} accounts={accounts} items={items} buyerNames={buyerNames} receiverNames={receiverNames} />
 
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>Recent income</h2>

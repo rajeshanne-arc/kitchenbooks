@@ -5,6 +5,7 @@ import {
   listPartners,
   listSettlements,
 } from '@/server/cashier-queries'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getList } from '@/server/settings'
 import PartnerPanel from '@/components/cash/PartnerPanel'
 import PartnersClient from '@/components/cash/PartnersClient'
@@ -23,12 +24,13 @@ export const dynamic = 'force-dynamic'
 
 export default async function PartnersPage() {
   const restaurant = await getRestaurant()
-  const [panel, partners, rows, summaries, deductionTypes] = await Promise.all([
+  const [panel, partners, rows, summaries, deductionTypes, accounts] = await Promise.all([
     getPartnerPanel(restaurant.id),
     listPartners(restaurant.id, true),
     listSettlements(restaurant.id, 15),
     getPartnerSummaries(restaurant.id),
     getList(restaurant.id, 'settlement_deduction'),
+    listMoneyAccounts(restaurant.id),
   ])
 
   return (
@@ -50,6 +52,7 @@ export default async function PartnersPage() {
             deductionTypes={deductionTypes}
             rows={rows}
             summaries={summaries}
+            accounts={accounts}
           />
         </div>
 

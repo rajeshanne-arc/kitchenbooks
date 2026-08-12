@@ -8,8 +8,9 @@
 
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ClosePrefill, CloseDayResult, DayCloseLadderRow } from '@/lib/types'
+import type { ClosePrefill, CloseDayResult, DayCloseLadderRow, MoneyAccount } from '@/lib/types'
 import { closeDay, setFirstOpening } from '@/server/cash-actions'
+import AccountPicker from '@/components/accounts/AccountPicker'
 import { buildCloseText, whatsappUrl } from '@/lib/share'
 import { decimalStringToPaise, formatPaise, formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -80,11 +81,13 @@ export default function DayClose({
   initialPrefill,
   restaurantName,
   handedToNames = [],
+  accounts,
 }: {
   defaultDate: string
   initialPrefill: ClosePrefill
   restaurantName: string
   handedToNames?: string[]
+  accounts: MoneyAccount[]
 }) {
   const router = useRouter()
   const [date, setDate] = useState(defaultDate)
@@ -94,6 +97,7 @@ export default function DayClose({
   const [handedTo, setHandedTo] = useState('')
   const [counted, setCounted] = useState('')
   const [bank, setBank] = useState('')
+  const [bankAccountId, setBankAccountId] = useState('')
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -142,12 +146,16 @@ export default function DayClose({
     return { expected, difference: countedP === null ? null : countedP - expected }
   })()
 
+  // no money settled, no account to name — the question appears with the amount
+  const bankMoved = money(bank) > 0
+
   const canSave =
     !saving &&
     prefill !== null &&
     prefill.ok &&
     parseMoney(counted.trim()) !== null &&
     (money(handedOver) === 0 || handedTo.trim() !== '') &&
+    (!bankMoved || bankAccountId !== '') &&
     !Number.isNaN(money(extraIn)) &&
     !Number.isNaN(money(handedOver))
 
@@ -163,6 +171,9 @@ export default function DayClose({
         handedTo: handedTo.trim(),
         cashCounted: counted.trim(),
         bankSettled: bank.trim(),
+        // clearing the amount must clear the account with it — a settlement
+        // that was undone leaves no account behind
+        bankAccountId: bankMoved ? bankAccountId : '',
         note: note.trim(),
       })
       if (res.ok) {
@@ -185,6 +196,7 @@ export default function DayClose({
     setHandedTo('')
     setCounted('')
     setBank('')
+    setBankAccountId('')
     setNote('')
     setError(null)
     void loadPrefill(date)
@@ -373,16 +385,27 @@ export default function DayClose({
           )}
 
           <div className="mt-3 grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className={fieldLabelCls}>Bank settled (UPI/card, optional)</span>
-              <input
-                inputMode="decimal"
-                placeholder="0.00"
-                value={bank}
-                onChange={(e) => setBank(e.target.value.replace(/[^\d.]/g, ''))}
-                className={`${numCls} w-full text-right`}
-              />
-            </label>
+            <div className="space-y-2">
+              <label className="block">
+                <span className={fieldLabelCls}>Bank settled (UPI/card, optional)</span>
+                <input
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={bank}
+                  onChange={(e) => setBank(e.target.value.replace(/[^\d.]/g, ''))}
+                  className={`${numCls} w-full text-right`}
+                />
+              </label>
+              {bankMoved && (
+                <AccountPicker
+                  accounts={accounts}
+                  value={bankAccountId}
+                  onChange={setBankAccountId}
+                  label="Bank settled into"
+                  required
+                />
+              )}
+            </div>
             <label className="block">
               <span className={fieldLabelCls}>Note</span>
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />

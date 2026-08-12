@@ -7,26 +7,30 @@
 // net against each other.
 
 import { useState } from 'react'
-import type { PaidBy, SaveVoucherResult } from '@/lib/types'
+import type { MoneyAccount, PaidBy, SaveVoucherResult } from '@/lib/types'
 import { saveVoucher } from '@/server/cash-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
+import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 
 export default function VoucherForm({
   ownerNames,
   categories,
   paidToNames = [],
+  accounts,
 }: {
   ownerNames: string[]
   /** ACTIVE voucher_category list values (LAW 2) — display form; the save normalizes */
   categories: string[]
   paidToNames?: string[]
+  accounts: MoneyAccount[]
 }) {
   const [date, setDate] = useState(todayLocal)
   const [amount, setAmount] = useState('')
   const [paidTo, setPaidTo] = useState('')
   const [paidBy, setPaidBy] = useState<PaidBy>('cashier')
+  const [accountId, setAccountId] = useState('')
   const [ownerName, setOwnerName] = useState('')
   const [category, setCategory] = useState(categories[0] ?? 'General')
   const [note, setNote] = useState('')
@@ -42,6 +46,7 @@ export default function VoucherForm({
     parseMoney(amount.trim()) !== null &&
     Number(amount.trim()) > 0 &&
     paidTo.trim() !== '' &&
+    accountId !== '' &&
     (paidBy === 'cashier' || ownerName.trim() !== '')
 
   async function onSave() {
@@ -50,6 +55,7 @@ export default function VoucherForm({
     setError(null)
     try {
       const res = await saveVoucher({
+        accountId,
         date,
         amount: amount.trim(),
         paidTo: paidTo.trim(),
@@ -73,6 +79,7 @@ export default function VoucherForm({
     setSaved(null)
     setAmount('')
     setPaidTo('')
+    setAccountId('')
     setOwnerName('')
     setCategory(categories[0] ?? 'General')
     setNote('')
@@ -178,6 +185,16 @@ export default function VoucherForm({
             />
           </label>
         )}
+        {/* “Paid by” says whose money it was; this says which account it
+            actually left. Owner-funded is the owner's own account — the
+            drawer stays untouched and owners_owed carries the other half. */}
+        <AccountPicker
+          accounts={accounts}
+          value={accountId}
+          onChange={setAccountId}
+          label="Paid from"
+          hint={paidBy === 'owner' ? 'the owner’s own account, not the drawer' : undefined}
+        />
         <label className="block">
           <span className={fieldLabelCls}>Category</span>
           <select value={category} onChange={(e) => setCategory(e.target.value)} className={selectCls}>

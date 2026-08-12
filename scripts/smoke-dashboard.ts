@@ -11,8 +11,13 @@
 //
 // Run: npm run smoke:dashboard
 import assert from 'node:assert/strict'
+import { ensureSmokeAccount } from './smoke-account'
 
 process.loadEnvFile('.env.local')
+
+// Money forms now refuse a blank account. Smokes resolve a real one at
+// runtime; see ensureSmokeAccount below.
+let ACCOUNT = ''
 
 async function main() {
   const { getRestaurant } = await import('../src/server/queries')
@@ -35,6 +40,7 @@ async function main() {
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
+  ACCOUNT = await ensureSmokeAccount(rid)
   const monthStart = monthStartIST()
   console.log('restaurant:', restaurant.name)
 
@@ -116,8 +122,7 @@ async function main() {
   const expectedPaise = decimalStringToPaise(prefill.opening) + 90000
   const countedStr = (expectedPaise / 100).toFixed(2)
   const closed = await closeDay({
-    date: SALES_DATE, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: countedStr, bankSettled: '', note: 'zz dash smoke',
-  })
+    date: SALES_DATE, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: countedStr, bankSettled: '', note: 'zz dash smoke', bankAccountId: ACCOUNT })
   assert.ok(closed.ok, `closeDay failed: ${closed.ok === false ? closed.error : ''}`)
   assert.equal(Number(closed.ladder.difference), 0, 'opening + 900 POS cash, counted exactly')
   const missing2 = await getMissingCloses(rid)

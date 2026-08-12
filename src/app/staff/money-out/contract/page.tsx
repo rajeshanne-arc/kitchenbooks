@@ -1,6 +1,7 @@
 import { getRestaurant } from '@/server/queries'
 import { getList } from '@/server/settings'
 import { listContractBills } from '@/server/expenses-queries'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import { ContractBillsClient } from '@/components/staff/LabourOutClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
 
@@ -8,9 +9,10 @@ export const dynamic = 'force-dynamic'
 
 export default async function ContractBillsPage() {
   const restaurant = await getRestaurant()
-  const [modes, rows] = await Promise.all([
+  const [modes, rows, accounts] = await Promise.all([
     getList(restaurant.id, 'payment_mode'),
     listContractBills(restaurant.id),
+    listMoneyAccounts(restaurant.id),
   ])
   return (
     <>
@@ -18,7 +20,7 @@ export default async function ContractBillsPage() {
         <h1 className={pageTitleCls}>Contract bills</h1>
         <p className={pageSubCls}>{restaurant.name} — agencies who bill you for people</p>
       </header>
-      <ContractBillsClient modes={modes} rows={rows} />
+      <ContractBillsClient accounts={accounts} modes={modes} rows={rows} />
     </>
   )
 }

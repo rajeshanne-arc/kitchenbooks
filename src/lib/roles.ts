@@ -24,6 +24,9 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // --- owner group ---------------------------------------------------
   ['/owner/users', ['owner']],
   ['/owner/pnl', ['owner']],
+  // The account master is owner-only. Every role uses the PICKER; only the
+  // owner decides what the accounts are called and what they opened at.
+  ['/owner/accounts', ['owner']],
   ['/owner/lists', ['manager', 'owner']],
   ['/owner/settings', ['manager', 'owner']],
   ['/owner/snapshots', ['owner']],

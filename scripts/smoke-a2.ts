@@ -277,6 +277,95 @@ async function main() {
     assert.equal(await cogsProbe(false), 0, 'an ordinary voucher must not reach cost of goods')
   })
 
+  /* ── 2d. money names the account it moved through ─────────────────── */
+  //
+  // account_id is NULLABLE in the database because history predates
+  // accounts and must not be rewritten. The refusal therefore lives in the
+  // app, which means nothing but a test can hold it in place — a future
+  // form could quietly ship without it and the schema would not object.
+  // Two halves: the refusal fires, and a named account actually receives
+  // the money.
+  console.log('\nmoney names the account it moved through')
+
+  const { AccountRefusal, assertAccount } = await import('../src/server/accounts-queries')
+
+  await check('a blank account is refused BY NAME, never defaulted', async () => {
+    await assert.rejects(
+      () => assertAccount(rid, ''),
+      (e: unknown) =>
+        e instanceof AccountRefusal && /account/i.test((e as Error).message),
+      'a blank account must be refused in words the cashier can act on',
+    )
+  })
+
+  await check('an account that is not on the active list is refused', async () => {
+    await assert.rejects(
+      () => assertAccount(rid, '00000000-0000-4000-8000-000000000000'),
+      (e: unknown) => e instanceof AccountRefusal,
+    )
+  })
+
+  await check('a voucher naming an account moves that account BY ITS AMOUNT', async () => {
+    let moved = 0
+    let rows = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [acct] = await tx<{ id: string }[]>`
+          insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
+          values (${rid}, 'Zz gate probe account', 'cash', 0, 999)
+          returning id`
+        await tx`
+          insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by,
+                                     category, entered_by, account_id)
+          values (${rid}, current_date, 250, 'Zz gate probe', 'cashier', 'general', 'gate', ${acct.id})`
+        const [bal] = await tx<{ balance: string }[]>`
+          select balance::text as balance from account_balances where account_id = ${acct.id}`
+        moved = Number(bal?.balance ?? 0)
+        const [mm] = await tx<{ n: number }[]>`
+          select count(*)::int as n from money_movements where account_id = ${acct.id}`
+        rows = mm?.n ?? 0
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    // A voucher is money OUT: money_movements negates it, so the balance of
+    // an account that opened at nothing is exactly minus the amount.
+    assert.equal(moved, -250, 'the voucher did not reach account_balances')
+    assert.equal(rows, 1, 'the voucher did not appear in money_movements')
+  })
+
+  await check('every money-writing action asks assertAccount', async () => {
+    // A static read of the source, because the failure this guards against
+    // is a NEW form shipped without the refusal — which no runtime test can
+    // see, since the form does not exist yet to be run.
+    const { readFileSync } = await import('node:fs')
+    const WRITERS: [file: string, fn: string][] = [
+      ['src/server/books-actions.ts', 'recordPayment'],
+      ['src/server/cash-actions.ts', 'saveOtherIncome'],
+      ['src/server/cash-actions.ts', 'saveVoucher'],
+      ['src/server/cash-actions.ts', 'closeDay'],
+      ['src/server/cashier-actions.ts', 'saveOffBook'],
+      ['src/server/cashier-actions.ts', 'saveSettlement'],
+      ['src/server/expenses-actions.ts', 'saveExpense'],
+      ['src/server/expenses-actions.ts', 'saveContractBill'],
+      ['src/server/expenses-actions.ts', 'saveCasualLabour'],
+    ]
+    const missing: string[] = []
+    for (const [file, fn] of WRITERS) {
+      const src = readFileSync(file, 'utf8')
+      const start = src.indexOf(`export async function ${fn}(`)
+      if (start === -1) {
+        missing.push(`${fn} not found in ${file}`)
+        continue
+      }
+      const next = src.indexOf('export async function ', start + 1)
+      const body = src.slice(start, next === -1 ? undefined : next)
+      if (!body.includes('assertAccount')) missing.push(`${fn} (${file}) never calls assertAccount`)
+    }
+    assert.deepEqual(missing, [], missing.join('; '))
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

@@ -7,20 +7,23 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ExpenseRow, RecurringExpenseOffer, SaveExpenseResult } from '@/lib/types'
+import type { ExpenseRow, MoneyAccount, RecurringExpenseOffer, SaveExpenseResult } from '@/lib/types'
 import { saveExpense, voidExpense } from '@/server/expenses-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
+import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
 
 export default function ExpensesClient({
+  accounts,
   categories,
   modes,
   payeeNames,
   rows,
   recurring,
 }: {
+  accounts: MoneyAccount[]
   categories: string[]
   /** payment_mode list values — 'Cash' is filtered out here AND refused server-side */
   modes: string[]
@@ -36,6 +39,7 @@ export default function ExpensesClient({
   const [payee, setPayee] = useState('')
   const [amount, setAmount] = useState('')
   const [paidVia, setPaidVia] = useState('')
+  const [accountId, setAccountId] = useState('')
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
@@ -43,7 +47,12 @@ export default function ExpensesClient({
   const [saved, setSaved] = useState<Extract<SaveExpenseResult, { ok: true }> | null>(null)
 
   const canSave =
-    !saving && category !== '' && paidVia !== '' && parseMoney(amount.trim()) !== null && Number(amount.trim()) > 0
+    !saving &&
+    category !== '' &&
+    paidVia !== '' &&
+    accountId !== '' &&
+    parseMoney(amount.trim()) !== null &&
+    Number(amount.trim()) > 0
 
   // Tapping a recurring bill fills the form and stops. The figure is last
   // month's, sitting in an editable field — the manager confirms or corrects
@@ -69,12 +78,14 @@ export default function ExpensesClient({
         payee: payee.trim(),
         amount: amount.trim(),
         paidVia,
+        accountId,
         note: note.trim(),
       })
       if (res.ok) {
         setSaved(res)
         setAmount('')
         setPayee('')
+        setAccountId('')
         setNote('')
         router.refresh()
       } else {
@@ -208,6 +219,9 @@ export default function ExpensesClient({
               </span>
             </label>
           </div>
+          {/* “Paid via” is the instrument, this is the account the money left.
+              Never the drawer here — that is a Cash Voucher, refused server-side. */}
+          <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} label="Paid from" />
           <label className="block">
             <span className={fieldLabelCls}>Note</span>
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />

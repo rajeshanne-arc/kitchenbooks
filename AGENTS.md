@@ -1227,3 +1227,64 @@ purchases UNIONed into `purchases`. Verified in a rolled-back transaction:
 a count of 3 short froze book 19 / cost 305, generated variance −3 /
 −₹915, and moved `store_stock_by_month.closing_value` to 4880 immediately.
 **Making counting fast is the same job as making COGS trustworthy.**
+
+## Phase C — Accountant + payroll
+
+**The global rule: capture the shape, configure the rules.** Nothing in the
+schema encodes one country's tax law. Accounts are user-named. Withholding
+records what was withheld. The staff fund works whether the local word is
+service charge or tips. Anywhere the code is tempted to hardcode "GST" or
+"TDS" or "April", it reads a setting or a list instead. That is what makes
+the product sellable outside the country it was built in.
+
+Two deciding principles:
+
+1. **Whoever touches the money records it; the accountant reviews everything
+   and owns the books.** Entry follows the hands, ownership follows the
+   responsibility.
+2. **The accountant works from home. Their home screen is a QUEUE, not a
+   form.**
+
+### Commit 1 — money accounts, the hinge
+
+`money_accounts` is the master every money form points at: user-named,
+tagged by KIND — cash · bank · wallet · card_settlement · owner · other.
+Kinds are SHAPES, never brands, which is what lets the same code run in a
+country whose banks and wallets nobody here has heard of. **Seed nothing**:
+zero accounts is the normal first screen, and the empty state says so.
+
+`/owner/accounts` is the master (owner-only; every other role uses the
+picker, never the list). `kind` is the only field with no UPDATE grant and
+the screen says why in a `LockedField` — every register groups by kind, so
+re-typing a bank as cash would move that account's whole history into
+another column. Retire and open a new one. Balances come from
+`account_balances`, which covers ACTIVE accounts only — a retired row
+therefore reads "retired", never a dash that would look like "nothing ever
+moved here".
+
+**`account_id` is NULLABLE by design and the app REFUSES a blank.** History
+predates accounts and must not be rewritten, so the column has to allow
+NULL; new entries are refused by name in `assertAccount`
+(`src/server/accounts-queries.ts` — deliberately NOT in the `'use server'`
+file, where it would become a client-callable action). This is the third
+time the same lesson has been paid for: `issues.session` and
+`recipes.output_qty` both had a column default standing in for a human
+answer, and both lied quietly for months. **There is no default account and
+there never will be.** `AccountPicker` preselects nothing.
+
+Nine write paths ask for it: `recordPayment`, `saveOtherIncome`,
+`saveVoucher`, `closeDay`, `saveOffBook`, `saveSettlement`, `saveExpense`,
+`saveContractBill`, `saveCasualLabour`. Two are CONDITIONAL, because money
+may not have moved at all: a settlement filed before the money arrives
+(`amountReceived === ''`) and a day close with an empty bank block name no
+account, and demanding one would be inventing a journey. `AccountRefusal`
+is recognised by all four `fail()` handlers so the refusal reaches the user
+in its own words instead of wearing the generic "Failed — nothing was
+written" apology.
+
+Guarded in `smoke:a2`, four ways: the refusal fires by name; an id that is
+not on the active list is refused; a voucher naming an account moves
+`account_balances.balance` by exactly minus its amount and appears once in
+`money_movements` (rolled back); and — statically, because the real risk is
+a form shipped LATER without the refusal — every one of those nine
+functions is read from source and asserted to call `assertAccount`.

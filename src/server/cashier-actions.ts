@@ -13,6 +13,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
@@ -53,6 +54,9 @@ class CashierError extends Error {}
 
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof CashierError) return { ok: false, error: e.message }
+  // A refusal to guess is not a failure — it names the missing answer, so
+  // it reaches the user in its own words rather than wrapped in an apology.
+  if (e instanceof AccountRefusal) return { ok: false, error: e.message }
   if (e instanceof z.ZodError) return { ok: false, error: 'Invalid input — nothing was saved' }
   console.error('cashier action failed', e)
   const detail = e instanceof Error ? e.message.slice(0, 200) : 'unknown error'
@@ -104,6 +108,7 @@ const SettlementSchema = z.object({
   claimedByThem: optionalMoney,
   /** their statement or UTR number — what you quote when disputing */
   reference: z.string().trim().max(80),
+  accountId: z.string().trim(),
   deductions: z
     .array(
       z.object({
@@ -145,13 +150,21 @@ export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSett
     }
     const by = await enteredBy()
 
+    // Only a settlement that actually PAID needs an account. One filed
+    // before the money arrives has no movement to place, and demanding an
+    // account for it would be asking where nothing went.
+    const accountId =
+      input.amountReceived === ''
+        ? null
+        : await assertAccount(rid, input.accountId, 'the account this receipt landed in')
+
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string }[]>`
         insert into partner_settlements (restaurant_id, partner, period_start, period_end,
                                          gross_sales, commission, other_deductions,
                                          amount_received, received_date, note, entered_by,
-                                         billed_by_us, claimed_by_them)
+                                         billed_by_us, claimed_by_them, account_id)
         values (${rid}, ${match.name}, ${input.periodStart}, ${input.periodEnd},
                 ${input.grossSales},
                 ${input.commission === '' ? null : input.commission},
@@ -161,7 +174,7 @@ export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSett
                 ${input.note === '' ? null : input.note}, ${by},
                 ${input.billedByUs === '' ? null : input.billedByUs},
                 ${input.claimedByThem === '' ? null : input.claimedByThem},
-                ${input.reference === '' ? null : input.reference})
+                ${input.reference === '' ? null : input.reference}, ${accountId})
         returning id`
       if (input.deductions.length > 0) {
         const rows = input.deductions.map((d) => ({
@@ -229,6 +242,7 @@ export async function voidSettlement(id: string): Promise<VoidSettlementResult> 
 // -------------------------------------------------------- off-book orders
 
 const OffBookSchema = z.object({
+  accountId: z.string().trim(),
   date: z.string().regex(DATE_RE),
   description: z.string().trim().max(200),
   amount: moneyStr,
@@ -261,15 +275,16 @@ export async function saveOffBook(raw: SaveOffBookInput): Promise<SaveOffBookRes
     await acceptListValue(rid, 'payment_mode', input.paymentMode, 'Payment mode')
     const by = await enteredBy()
 
+    const accountId = await assertAccount(rid, input.accountId, 'the account this money landed in')
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string }[]>`
         insert into off_book_orders (restaurant_id, order_date, description, amount, payment_mode, note, entered_by,
-                                     customer, received_into)
+                                     customer, received_into, account_id)
         values (${rid}, ${input.date}, ${input.description === '' ? null : input.description},
                 ${input.amount}, ${input.paymentMode}, ${input.note === '' ? null : input.note}, ${by},
                 ${input.customer === '' ? null : input.customer},
-                ${input.receivedInto === '' ? null : input.receivedInto})
+                ${input.receivedInto === '' ? null : input.receivedInto}, ${accountId})
         returning id`
 
       // Lines, when the cashier itemised the order. cost_value is FROZEN

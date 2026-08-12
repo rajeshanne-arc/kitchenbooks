@@ -12,8 +12,13 @@
 //
 // Run: npm run smoke:groups-owner
 import assert from 'node:assert/strict'
+import { ensureSmokeAccount } from './smoke-account'
 
 process.loadEnvFile('.env.local')
+
+// Money forms now refuse a blank account. Smokes resolve a real one at
+// runtime; see ensureSmokeAccount below.
+let ACCOUNT = ''
 
 const EXP_DATE = '2001-08-05'
 const OB_DATE = '2001-08-06'
@@ -35,6 +40,7 @@ async function main() {
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
+  ACCOUNT = await ensureSmokeAccount(rid)
   console.log('restaurant:', restaurant.name)
 
   // ---- 1. LAW 1, pure: a role never sees what it cannot open
@@ -74,18 +80,18 @@ async function main() {
   assert.equal(item.item.opening_rate, '40')
 
   // ---- 3. expenses: the drawer rule by name, lists enforced
-  const cashRefused = await saveExpense({ date: EXP_DATE, category: 'Rent', payee: '', amount: '100', paidVia: 'Cash', note: '' })
+  const cashRefused = await saveExpense({ date: EXP_DATE, category: 'Rent', payee: '', amount: '100', paidVia: 'Cash', note: '', accountId: ACCOUNT })
   assert.ok(!cashRefused.ok && /cash voucher/i.test(cashRefused.error), 'till cash refused, names the Cash Voucher')
-  const badCat = await saveExpense({ date: EXP_DATE, category: 'Zz Whatever', payee: '', amount: '100', paidVia: 'UPI', note: '' })
+  const badCat = await saveExpense({ date: EXP_DATE, category: 'Zz Whatever', payee: '', amount: '100', paidVia: 'UPI', note: '', accountId: ACCOUNT })
   assert.ok(!badCat.ok && /list/i.test(badCat.error))
-  const exp = await saveExpense({ date: EXP_DATE, category: 'Rent', payee: 'Zz Landlord', amount: '5000', paidVia: 'UPI', note: 'zz owner smoke' })
+  const exp = await saveExpense({ date: EXP_DATE, category: 'Rent', payee: 'Zz Landlord', amount: '5000', paidVia: 'UPI', note: 'zz owner smoke', accountId: ACCOUNT })
   assert.ok(exp.ok, `saveExpense failed: ${exp.ok === false ? exp.error : ''}`)
   const byCat = await getExpensesByCategory(rid, MONTH)
   const rent = byCat.find((c) => c.category === 'Rent')
   assert.ok(rent && decimalStringToPaise(rent.amount) === 500000, 'expenses_by_category holds the month')
 
   // ---- 4. the P&L adds the month up
-  const ob = await saveOffBook({ date: OB_DATE, description: 'zz owner smoke', amount: '400', paymentMode: 'UPI', note: '', customer: '', receivedInto: '', lines: [] })
+  const ob = await saveOffBook({ date: OB_DATE, description: 'zz owner smoke', amount: '400', paymentMode: 'UPI', note: '', customer: '', receivedInto: '', lines: [], accountId: ACCOUNT })
   assert.ok(ob.ok)
   const pnl = await getPnlMonthly(rid, 24)
   const aug = pnl.find((m) => m.month === MONTH)

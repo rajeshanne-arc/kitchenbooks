@@ -13,11 +13,12 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { Partner, PartnerSummaryRow, SaveSettlementResult, SettlementRow } from '@/lib/types'
+import type { MoneyAccount, Partner, PartnerSummaryRow, SaveSettlementResult, SettlementRow } from '@/lib/types'
 import { saveSettlement, voidSettlement } from '@/server/cashier-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
+import AccountPicker from '@/components/accounts/AccountPicker'
 import { toast } from '@/components/Toasts'
 
 const moneyClean = (s: string) => s.replace(/[^\d.]/g, '')
@@ -29,11 +30,13 @@ export default function SettlementsClient({
   deductionTypes,
   rows,
   summaries,
+  accounts,
 }: {
   partners: Partner[]
   deductionTypes: string[]
   rows: SettlementRow[]
   summaries: PartnerSummaryRow[]
+  accounts: MoneyAccount[]
 }) {
   const router = useRouter()
   const [partner, setPartner] = useState('')
@@ -44,6 +47,7 @@ export default function SettlementsClient({
   const [deductions, setDeductions] = useState('')
   const [received, setReceived] = useState('')
   const [receivedDate, setReceivedDate] = useState('')
+  const [accountId, setAccountId] = useState('')
   const [note, setNote] = useState('')
   const [reference, setReference] = useState('')
   const [billed, setBilled] = useState('')
@@ -60,7 +64,9 @@ export default function SettlementsClient({
     partner !== '' &&
     periodStart !== '' &&
     periodEnd !== '' &&
-    parseMoney(gross.trim()) !== null
+    parseMoney(gross.trim()) !== null &&
+    // the same conditional the server applies: money that arrived has to say where
+    (received.trim() === '' || accountId !== '')
 
   async function onSave() {
     if (!canSave) return
@@ -80,6 +86,7 @@ export default function SettlementsClient({
         reference: reference.trim(),
         billedByUs: billed.trim(),
         claimedByThem: claimed.trim(),
+        accountId,
         deductions: lines
           .filter((l) => l.type !== '' && parseMoney(l.amount.trim()) !== null)
           .map((l) => ({ type: l.type, amount: l.amount.trim(), note: l.note.trim() })),
@@ -91,6 +98,7 @@ export default function SettlementsClient({
         setDeductions('')
         setReceived('')
         setReceivedDate('')
+        setAccountId('')
         setNote('')
         setReference('')
         setBilled('')
@@ -318,7 +326,17 @@ export default function SettlementsClient({
               <span className={fieldLabelCls}>Received on</span>
               <input type="date" value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} className={`${numCls} w-full`} />
             </label>
-            <label className="block">
+            {/* beside the receipt, not after the note — a settlement filed before
+                the money arrives has no movement to place, so the server demands
+                this only once an amount was received, and the prompt follows it */}
+            <AccountPicker
+              accounts={accounts}
+              value={accountId}
+              onChange={setAccountId}
+              label="Receipt landed in"
+              required={received.trim() !== ''}
+            />
+            <label className="col-span-3 block">
               <span className={fieldLabelCls}>Note</span>
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
             </label>

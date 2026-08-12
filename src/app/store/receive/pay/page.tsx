@@ -1,6 +1,7 @@
 import { getRestaurant } from '@/server/queries'
 import { getList } from '@/server/settings'
 import { listVendorsWithDues } from '@/server/books-queries'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import PaymentClient from '@/components/store/PaymentClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
 
@@ -18,9 +19,10 @@ export default async function StorePaymentPage({
 }) {
   const { vendor: preselect } = await searchParams
   const restaurant = await getRestaurant()
-  const [modes, dues] = await Promise.all([
+  const [modes, dues, accounts] = await Promise.all([
     getList(restaurant.id, 'payment_mode'),
     listVendorsWithDues(restaurant.id),
+    listMoneyAccounts(restaurant.id),
   ])
 
   return (
@@ -31,7 +33,7 @@ export default async function StorePaymentPage({
           {restaurant.name} — dues come live from vendor_dues; the payment is one INSERT
         </p>
       </header>
-      <PaymentClient modes={modes} dues={dues} preselectVendorId={preselect ?? null} />
+      <PaymentClient modes={modes} accounts={accounts} dues={dues} preselectVendorId={preselect ?? null} />
     </>
   )
 }

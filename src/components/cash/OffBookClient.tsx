@@ -6,21 +6,24 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { OffBookRow, SaveOffBookResult } from '@/lib/types'
+import type { MoneyAccount, OffBookRow, SaveOffBookResult } from '@/lib/types'
 import { saveOffBook, voidOffBook } from '@/server/cashier-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
+import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
 
 export default function OffBookClient({
   dishes,
   modes,
+  accounts,
   rows,
 }: {
   /** the menu, for pricing a line against it */
   dishes: { recipe_id: string; name: string }[]
   modes: string[]
+  accounts: MoneyAccount[]
   rows: OffBookRow[]
 }) {
   const router = useRouter()
@@ -28,6 +31,7 @@ export default function OffBookClient({
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState(modes.includes('Cash') ? 'Cash' : '')
+  const [accountId, setAccountId] = useState('')
   const [note, setNote] = useState('')
   const [customer, setCustomer] = useState('')
   const [receivedInto, setReceivedInto] = useState('')
@@ -44,7 +48,8 @@ export default function OffBookClient({
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveOffBookResult, { ok: true }> | null>(null)
 
-  const canSave = !saving && mode !== '' && parseMoney(amount.trim()) !== null && Number(amount.trim()) > 0
+  const canSave =
+    !saving && mode !== '' && accountId !== '' && parseMoney(amount.trim()) !== null && Number(amount.trim()) > 0
 
   async function onSave() {
     if (!canSave) return
@@ -56,6 +61,7 @@ export default function OffBookClient({
         description: description.trim(),
         amount: amount.trim(),
         paymentMode: mode,
+        accountId,
         note: note.trim(),
         customer: customer.trim(),
         receivedInto: receivedInto.trim(),
@@ -73,6 +79,7 @@ export default function OffBookClient({
         setSaved(res)
         setDescription('')
         setAmount('')
+        setAccountId('')
         setNote('')
         setCustomer('')
         setReceivedInto('')
@@ -144,6 +151,8 @@ export default function OffBookClient({
               </select>
             </label>
           </div>
+          {/* beside the mode: "Cash" says how it was paid, this says where it landed */}
+          <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} label="Received into" required />
           <label className="block">
             <span className={fieldLabelCls}>Description</span>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="party order, counter sale…" className={inputCls} maxLength={200} />
@@ -159,12 +168,16 @@ export default function OffBookClient({
                 maxLength={120}
               />
             </label>
+            {/* received_into predates the account master and asked "which
+                account or machine". The picker above now answers the account
+                half properly, so this keeps only the half an account name
+                cannot carry — the machine or the reference to quote later. */}
             <label className="block">
-              <span className={fieldLabelCls}>Received into</span>
+              <span className={fieldLabelCls}>Machine or reference</span>
               <input
                 value={receivedInto}
                 onChange={(e) => setReceivedInto(e.target.value)}
-                placeholder="which account or machine"
+                placeholder="card machine, UPI reference…"
                 className={inputCls}
                 maxLength={60}
               />

@@ -12,8 +12,13 @@
 //
 // Run: npm run smoke:cash
 import assert from 'node:assert/strict'
+import { ensureSmokeAccount } from './smoke-account'
 
 process.loadEnvFile('.env.local')
+
+// Money forms now refuse a blank account. Smokes resolve a real one at
+// runtime; see ensureSmokeAccount below.
+let ACCOUNT = ''
 
 const D1 = '2001-02-01'
 const D2 = '2001-02-02'
@@ -28,6 +33,7 @@ async function main() {
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
+  ACCOUNT = await ensureSmokeAccount(rid)
   console.log('restaurant:', restaurant.name)
 
   // ---- preconditions: virgin cash state
@@ -40,7 +46,7 @@ async function main() {
   // ---- 1. nothing can close before the opening exists
   const blocked = await getClosePrefill(rid, D1)
   assert.ok(!blocked.ok && blocked.blocked === 'no_opening')
-  const early = await closeDay({ date: D1, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '100', bankSettled: '', note: '' })
+  const early = await closeDay({ date: D1, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '100', bankSettled: '', note: '', bankAccountId: ACCOUNT })
   assert.ok(!early.ok && /opening/i.test(early.error))
 
   // ---- 2. set opening — repeatable while no close exists
@@ -51,28 +57,27 @@ async function main() {
 
   // ---- 3. D1: cashier voucher + owner voucher + other income
   const vCashier = await saveVoucher({
-    date: D1, amount: '300', paidTo: 'Zz Veg Vendor', paidBy: 'cashier', ownerName: '', category: 'general', note: 'zz cash smoke', isStockPurchase: false, isCasualLabour: false })
+    date: D1, amount: '300', paidTo: 'Zz Veg Vendor', paidBy: 'cashier', ownerName: '', category: 'general', note: 'zz cash smoke', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
   assert.ok(vCashier.ok, `cashier voucher failed: ${vCashier.ok === false ? vCashier.error : ''}`)
   const vOwner = await saveVoucher({
-    date: D1, amount: '1000', paidTo: 'Zz Gas Agency', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'gas', note: '', isStockPurchase: false, isCasualLabour: false })
+    date: D1, amount: '1000', paidTo: 'Zz Gas Agency', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'gas', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
   assert.ok(vOwner.ok, `owner voucher failed: ${vOwner.ok === false ? vOwner.error : ''}`)
   assert.equal(vOwner.voucher.owner_name, 'Zz Asheel')
 
-  const noName = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: '', category: 'general', note: '', isStockPurchase: false, isCasualLabour: false })
+  const noName = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: '', category: 'general', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
   assert.ok(!noName.ok && /which owner/i.test(noName.error))
-  const ownerReimb = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false })
+  const ownerReimb = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
   assert.ok(!ownerReimb.ok && /cashier/i.test(ownerReimb.error), 'owner-paid reimbursement is nonsense — must refuse')
 
   const oil = await saveOtherIncome({
-    date: D1, item: 'Used oil', qty: '5', unit: 'litre', amount: '400', buyer: 'Zz Biodiesel Co', receivedBy: 'Zz Cashier',
-  })
+    date: D1, item: 'Used oil', qty: '5', unit: 'litre', amount: '400', buyer: 'Zz Biodiesel Co', receivedBy: 'Zz Cashier', accountId: ACCOUNT })
   assert.ok(oil.ok, `other income failed: ${oil.ok === false ? oil.error : ''}`)
   assert.equal(oil.income.qty, '5')
   assert.equal(oil.income.unit, 'litre')
 
-  const noUnit = await saveOtherIncome({ date: D1, item: 'Used oil', qty: '5', unit: '', amount: '400', buyer: '', receivedBy: '' })
+  const noUnit = await saveOtherIncome({ date: D1, item: 'Used oil', qty: '5', unit: '', amount: '400', buyer: '', receivedBy: '', accountId: ACCOUNT })
   assert.ok(!noUnit.ok && /unit/i.test(noUnit.error), 'qty without unit must refuse — FSSAI reconciliation')
-  const noQty = await saveOtherIncome({ date: D1, item: 'Scrap', qty: '', unit: 'kg', amount: '100', buyer: '', receivedBy: '' })
+  const noQty = await saveOtherIncome({ date: D1, item: 'Scrap', qty: '', unit: 'kg', amount: '100', buyer: '', receivedBy: '', accountId: ACCOUNT })
   assert.ok(!noQty.ok && /quantity/i.test(noQty.error))
 
   // ---- 4. the ladder for D1: owner money is NOT in the drawer math
@@ -85,8 +90,7 @@ async function main() {
   assert.equal(Number(p1.cashierVouchers), 300, 'the ₹1000 owner voucher must be absent from the drawer math')
 
   const c1 = await closeDay({
-    date: D1, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '5100', bankSettled: '2500', note: 'zz cash smoke',
-  })
+    date: D1, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '5100', bankSettled: '2500', note: 'zz cash smoke', bankAccountId: ACCOUNT })
   assert.ok(c1.ok, `closeDay D1 failed: ${c1.ok === false ? c1.error : ''}`)
   assert.equal(Number(c1.ladder.expected_cash), 5100, '5000 + 0 + 400 − 300')
   assert.equal(Number(c1.ladder.difference), 0)
@@ -99,7 +103,7 @@ async function main() {
   assert.ok(!setLate.ok && /closes exist/i.test(setLate.error))
 
   // ---- 6. the HARD STOP names the missing day
-  const skip = await closeDay({ date: D3, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '1', bankSettled: '', note: '' })
+  const skip = await closeDay({ date: D3, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '1', bankSettled: '', note: '', bankAccountId: ACCOUNT })
   assert.ok(!skip.ok && skip.error.includes(D2), `refusal must name ${D2}: ${skip.ok === false ? skip.error : ''}`)
 
   // ---- 7. D2: opening prefills from D1's COUNTED cash
@@ -108,12 +112,12 @@ async function main() {
   assert.equal(p2.opening, '5100', 'opening = previous day COUNTED, never the expected figure')
   assert.equal(p2.openingSource, 'previous counted')
 
-  const c2 = await closeDay({ date: D2, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '5150', bankSettled: '', note: '' })
+  const c2 = await closeDay({ date: D2, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '5150', bankSettled: '', note: '', bankAccountId: ACCOUNT })
   assert.ok(c2.ok)
   assert.equal(Number(c2.ladder.difference), 50, 'fifty rupees appeared from nowhere — shown, not hidden')
 
   // ---- 8. re-filing wins and wears the corrected marker
-  const c2b = await closeDay({ date: D2, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '5100', bankSettled: '', note: 'recount' })
+  const c2b = await closeDay({ date: D2, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: '5100', bankSettled: '', note: 'recount', bankAccountId: ACCOUNT })
   assert.ok(c2b.ok)
   assert.equal(Number(c2b.ladder.difference), 0)
   assert.equal(c2b.ladder.filings, 2, 'both filings on record — latest wins, history visible')
@@ -124,11 +128,10 @@ async function main() {
   const p3 = await getClosePrefill(rid, D3)
   assert.ok(p3.ok)
   assert.equal(p3.opening, '5100', 'D3 opens on D2’s corrected count')
-  const needName = await closeDay({ date: D3, extraCashIn: '', handedOver: '2000', handedTo: '', cashCounted: '1', bankSettled: '', note: '' })
+  const needName = await closeDay({ date: D3, extraCashIn: '', handedOver: '2000', handedTo: '', cashCounted: '1', bankSettled: '', note: '', bankAccountId: ACCOUNT })
   assert.ok(!needName.ok && /whom/i.test(needName.error))
   const c3 = await closeDay({
-    date: D3, extraCashIn: '200', handedOver: '2000', handedTo: 'Zz Owner Safe', cashCounted: '3300', bankSettled: '', note: '',
-  })
+    date: D3, extraCashIn: '200', handedOver: '2000', handedTo: 'Zz Owner Safe', cashCounted: '3300', bankSettled: '', note: '', bankAccountId: ACCOUNT })
   assert.ok(c3.ok)
   assert.equal(Number(c3.ladder.expected_cash), 3300, '5100 + 200 − 2000')
   assert.equal(Number(c3.ladder.difference), 0)
@@ -139,7 +142,7 @@ async function main() {
   assert.ok(owed1, 'Zz Asheel must appear in owners_owed')
   assert.equal(Number(owed1.balance), 1000)
   const reimb = await saveVoucher({
-    date: '2001-02-05', amount: '400', paidTo: 'Zz Asheel', paidBy: 'cashier', ownerName: '', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false })
+    date: '2001-02-05', amount: '400', paidTo: 'Zz Asheel', paidBy: 'cashier', ownerName: '', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
   assert.ok(reimb.ok, `reimbursement voucher failed: ${reimb.ok === false ? reimb.error : ''}`)
   const owed2 = (await getOwnersOwed(rid)).find((o) => o.person === 'Zz Asheel')
   assert.ok(owed2)

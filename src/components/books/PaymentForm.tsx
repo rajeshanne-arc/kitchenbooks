@@ -3,15 +3,17 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { recordPayment } from '@/server/books-actions'
-import type { PaymentResult } from '@/lib/types'
+import type { MoneyAccount, PaymentResult } from '@/lib/types'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
+import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
 
 export default function PaymentForm({
   vendorId,
   vendorName,
   modes,
+  accounts,
 }: {
   vendorId: string
   vendorName: string
@@ -23,10 +25,12 @@ export default function PaymentForm({
    *  contain. Two call sites, two different sets of modes, neither of them
    *  the list. LAW 2 means the list or nothing. */
   modes: string[]
+  accounts: MoneyAccount[]
 }) {
   const [paidDate, setPaidDate] = useState(todayLocal)
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState(modes[0] ?? '')
+  const [accountId, setAccountId] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -35,18 +39,28 @@ export default function PaymentForm({
 
   const amountPaise = parseMoney(amount.trim())
   // An empty list means the payment cannot be classified, so it cannot be
-  // recorded — said out loud rather than saved under a blank mode.
-  const canSave = !busy && paidDate !== '' && amountPaise !== null && amountPaise > 0 && mode !== ''
+  // recorded — said out loud rather than saved under a blank mode. The account
+  // is held to the same bar: the server refuses a blank one by name.
+  const canSave =
+    !busy && paidDate !== '' && amountPaise !== null && amountPaise > 0 && mode !== '' && accountId !== ''
 
   async function submit() {
     if (!canSave) return
     setBusy(true)
     setError(null)
     try {
-      const res = await recordPayment({ vendorId, paidDate, amount: amount.trim(), mode, note: note.trim() })
+      const res = await recordPayment({
+        vendorId,
+        paidDate,
+        amount: amount.trim(),
+        mode,
+        accountId,
+        note: note.trim(),
+      })
       if (res.ok) {
         setDone(res)
         setAmount('')
+        setAccountId('')
         setNote('')
         router.refresh()
       } else {
@@ -108,6 +122,7 @@ export default function PaymentForm({
             </select>
           )}
         </label>
+        <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} label="Paid from" />
         <label className="block">
           <span className={fieldLabelCls}>Note</span>
           <input

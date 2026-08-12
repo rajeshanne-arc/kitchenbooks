@@ -14,6 +14,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
 import { getBill, getDues, getItemDetail, getVendorDetail } from '@/server/books-queries'
 import { parseMoney, paiseToString } from '@/lib/money'
@@ -38,6 +39,9 @@ class BooksError extends Error {}
 
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof BooksError) return { ok: false, error: e.message }
+  // A refusal to guess is not a failure — it names the missing answer, so
+  // it reaches the user in its own words rather than wrapped in an apology.
+  if (e instanceof AccountRefusal) return { ok: false, error: e.message }
   if (e instanceof z.ZodError) return { ok: false, error: 'Invalid input — nothing was saved' }
   console.error('books action failed', e)
   const detail = e instanceof Error ? e.message.slice(0, 200) : 'unknown error'
@@ -126,6 +130,7 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
 
 const PaymentSchema = z.object({
   vendorId: z.string().regex(UUID),
+  accountId: z.string().trim(),
   paidDate: z.string().regex(DATE_RE),
   amount: z.string().regex(/^\d{1,5}(\.\d{1,2})?$/, 'plain amount, up to 2 decimals'),
   mode: z.string().trim().max(30),
@@ -145,14 +150,15 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
       select id from vendors where id = ${input.vendorId} and restaurant_id = ${rid}`
     if (!vendor[0]) throw new BooksError('Vendor not found')
 
+    const accountId = await assertAccount(rid, input.accountId, 'the account this payment left')
     const duesBefore = (await getDues(input.vendorId)).balance
 
     const [payment] = await sql<
       { id: string; paid_date: string; amount: string; mode: string | null; note: string | null; created_at: string }[]
     >`
-      insert into payments (restaurant_id, paid_date, vendor_id, amount, mode, note, entered_by)
+      insert into payments (restaurant_id, paid_date, vendor_id, amount, mode, note, entered_by, account_id)
       values (${rid}, ${input.paidDate}, ${input.vendorId}, ${paiseToString(amountPaise)}::numeric,
-              ${input.mode === '' ? null : input.mode}, ${input.note === '' ? null : input.note}, ${await enteredBy()})
+              ${input.mode === '' ? null : input.mode}, ${input.note === '' ? null : input.note}, ${await enteredBy()}, ${accountId})
       returning id, paid_date::text as paid_date, amount::text as amount, mode, note, created_at::text as created_at`
     if (!payment) throw new BooksError('Payment insert could not be verified')
 

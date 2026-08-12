@@ -6,8 +6,13 @@
 //
 // Run: npm run smoke:books
 import assert from 'node:assert/strict'
+import { ensureSmokeAccount } from './smoke-account'
 
 process.loadEnvFile('.env.local')
+
+// Money forms now refuse a blank account. Smokes resolve a real one at
+// runtime; see ensureSmokeAccount below.
+let ACCOUNT = ''
 
 async function main() {
   const { saveBill } = await import('../src/server/save-bill')
@@ -18,6 +23,7 @@ async function main() {
 
   const restaurant = await getRestaurant()
   console.log('restaurant:', restaurant.name)
+  ACCOUNT = await ensureSmokeAccount(restaurant.id)
 
   const before = (await sql`
     select (select count(*)::int from vendors) as vendors,
@@ -52,7 +58,7 @@ async function main() {
   assert.equal(inBooks.line_count, 1)
 
   // -- 3. record a part payment of 150 -> dues fall exactly to 300
-  const pay = await recordPayment({ vendorId, paidDate: '2026-08-09', amount: '150', mode: 'UPI', note: 'zz books smoke' })
+  const pay = await recordPayment({ vendorId, paidDate: '2026-08-09', amount: '150', mode: 'UPI', note: 'zz books smoke', accountId: ACCOUNT })
   assert.ok(pay.ok, `recordPayment failed: ${pay.ok === false ? pay.error : ''}`)
   assert.equal(pay.duesBefore, '450')
   assert.equal(pay.dues.balance, '300')

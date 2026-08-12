@@ -12,8 +12,13 @@
 //
 // Run: npm run smoke:groups-cashier
 import assert from 'node:assert/strict'
+import { ensureSmokeAccount } from './smoke-account'
 
 process.loadEnvFile('.env.local')
+
+// Money forms now refuse a blank account. Smokes resolve a real one at
+// runtime; see ensureSmokeAccount below.
+let ACCOUNT = ''
 
 const SETTLE_START = '2001-07-01'
 const SETTLE_END = '2001-07-07'
@@ -41,6 +46,7 @@ async function main() {
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
+  ACCOUNT = await ensureSmokeAccount(rid)
   console.log('restaurant:', restaurant.name)
 
   // ---- 0. the lists are seeded and ordered.
@@ -62,8 +68,7 @@ async function main() {
   const badPartner = await saveSettlement({
     partner: 'Zz Nowhere', periodStart: SETTLE_START, periodEnd: SETTLE_END,
     grossSales: '1000', commission: '', otherDeductions: '', amountReceived: '', receivedDate: '', note: '',
-    billedByUs: '', claimedByThem: '', reference: '', deductions: [],
-  })
+    billedByUs: '', claimedByThem: '', reference: '', deductions: [], accountId: ACCOUNT })
   // the partner now comes from the partners MASTER, not list_options — the
   // refusal points at Sales → Partners, where the agreed commission lives
   assert.ok(!badPartner.ok && /partner/i.test(badPartner.error), 'unknown partner refused by name')
@@ -72,14 +77,12 @@ async function main() {
     partner: 'Swiggy', periodStart: SETTLE_START, periodEnd: SETTLE_END,
     grossSales: '10000', commission: '2200', otherDeductions: '300',
     amountReceived: '7500', receivedDate: '2001-07-09', note: 'zz cashier smoke',
-    billedByUs: '10000', claimedByThem: '9600', reference: '', deductions: [],
-  })
+    billedByUs: '10000', claimedByThem: '9600', reference: '', deductions: [], accountId: ACCOUNT })
   assert.ok(s1.ok, `settlement failed: ${s1.ok === false ? s1.error : ''}`)
   const s2 = await saveSettlement({
     partner: 'Zomato', periodStart: SETTLE_START, periodEnd: SETTLE_END,
     grossSales: '8000', commission: '1800', otherDeductions: '', amountReceived: '', receivedDate: '', note: 'zz cashier smoke',
-    billedByUs: '', claimedByThem: '', reference: '', deductions: [],
-  })
+    billedByUs: '', claimedByThem: '', reference: '', deductions: [], accountId: ACCOUNT })
   assert.ok(s2.ok)
 
   let summaries = await getPartnerSummaries(rid)
@@ -97,11 +100,11 @@ async function main() {
   assert.equal(decimalStringToPaise(zomato2.outstanding), 0, 'void nets the partner summary')
 
   // ---- 2. off-book: mode from the list; CASH joins the drawer ladder
-  const badMode = await saveOffBook({ date: CLOSE_DATE, description: 'zz', amount: '100', paymentMode: 'Barter', note: '', customer: '', receivedInto: '', lines: [] })
+  const badMode = await saveOffBook({ date: CLOSE_DATE, description: 'zz', amount: '100', paymentMode: 'Barter', note: '', customer: '', receivedInto: '', lines: [], accountId: ACCOUNT })
   assert.ok(!badMode.ok && /list/i.test(badMode.error))
-  const ob1 = await saveOffBook({ date: CLOSE_DATE, description: 'zz party order', amount: '1500', paymentMode: 'Cash', note: 'zz cashier smoke', customer: '', receivedInto: '', lines: [] })
+  const ob1 = await saveOffBook({ date: CLOSE_DATE, description: 'zz party order', amount: '1500', paymentMode: 'Cash', note: 'zz cashier smoke', customer: '', receivedInto: '', lines: [], accountId: ACCOUNT })
   assert.ok(ob1.ok, `off-book failed: ${ob1.ok === false ? ob1.error : ''}`)
-  const ob2 = await saveOffBook({ date: CLOSE_DATE, description: 'zz upi order', amount: '900', paymentMode: 'UPI', note: 'zz cashier smoke', customer: '', receivedInto: '', lines: [] })
+  const ob2 = await saveOffBook({ date: CLOSE_DATE, description: 'zz upi order', amount: '900', paymentMode: 'UPI', note: 'zz cashier smoke', customer: '', receivedInto: '', lines: [], accountId: ACCOUNT })
   assert.ok(ob2.ok)
 
   // a 2001 close row straight through the INSERT grant — the ladder view
@@ -117,7 +120,7 @@ async function main() {
 
   // the chain continues from that close: next day's prefill sees its
   // counted cash as opening, and the day's own off-book cash as a rung
-  const ob3 = await saveOffBook({ date: NEXT_DATE, description: 'zz next-day cash', amount: '250', paymentMode: 'Cash', note: 'zz cashier smoke', customer: '', receivedInto: '', lines: [] })
+  const ob3 = await saveOffBook({ date: NEXT_DATE, description: 'zz next-day cash', amount: '250', paymentMode: 'Cash', note: 'zz cashier smoke', customer: '', receivedInto: '', lines: [], accountId: ACCOUNT })
   assert.ok(ob3.ok)
   const prefill = await getClosePrefill(rid, NEXT_DATE)
   assert.ok(prefill.ok, `prefill blocked: ${prefill.ok === false ? prefill.error : ''}`)

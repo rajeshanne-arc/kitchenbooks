@@ -17,7 +17,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { CasualLabourRow, ContractBillRow, Section } from '@/lib/types'
+import type { CasualLabourRow, ContractBillRow, MoneyAccount, Section } from '@/lib/types'
 import {
   saveCasualLabour,
   saveContractBill,
@@ -26,6 +26,7 @@ import {
 } from '@/server/expenses-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate, todayLocal } from '@/lib/format'
+import AccountPicker from '@/components/accounts/AccountPicker'
 import {
   cardCls,
   dataTableCls,
@@ -55,9 +56,11 @@ function DrawerNote() {
 }
 
 export function ContractBillsClient({
+  accounts,
   modes,
   rows,
 }: {
+  accounts: MoneyAccount[]
   modes: string[]
   rows: ContractBillRow[]
 }) {
@@ -74,22 +77,28 @@ export function ContractBillsClient({
     paidVia: '',
     note: '',
   })
+  const [accountId, setAccountId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((s) => ({ ...s, [k]: v }))
 
   const canSave =
-    !busy && f.vendorName.trim() !== '' && f.paidVia !== '' && parseMoney(f.amount.trim()) !== null
+    !busy &&
+    f.vendorName.trim() !== '' &&
+    f.paidVia !== '' &&
+    accountId !== '' &&
+    parseMoney(f.amount.trim()) !== null
 
   async function save() {
     if (!canSave) return
     setBusy(true)
     setError(null)
     try {
-      const res = await saveContractBill(f)
+      const res = await saveContractBill({ ...f, accountId })
       if (res.ok) {
         toast(`${res.bill.vendor_name} — ${formatMoneyString(res.bill.amount)} recorded`)
         setF((s) => ({ ...s, vendorName: '', service: '', headcount: '', amount: '', note: '' }))
+        setAccountId('')
         router.refresh()
       } else setError(res.error)
     } catch {
@@ -147,6 +156,9 @@ export function ContractBillsClient({
               ))}
             </select>
           </label>
+          {/* “paid via” is the method; this is the account it left from. Till
+              cash is already withheld above — drawer-paid labour is a voucher. */}
+          <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} label="Paid from" />
           <label className="block sm:col-span-3">
             <span className={fieldLabelCls}>Note</span>
             <input value={f.note} onChange={(e) => set('note', e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
@@ -233,10 +245,12 @@ export function ContractBillsClient({
 }
 
 export function CasualLabourClient({
+  accounts,
   modes,
   sections,
   rows,
 }: {
+  accounts: MoneyAccount[]
   modes: string[]
   sections: Section[]
   rows: CasualLabourRow[]
@@ -252,21 +266,28 @@ export function CasualLabourClient({
     paidVia: '',
     note: '',
   })
+  const [accountId, setAccountId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((s) => ({ ...s, [k]: v }))
 
-  const canSave = !busy && f.paidVia !== '' && parseMoney(f.amount.trim()) !== null && Number(f.persons) > 0
+  const canSave =
+    !busy &&
+    f.paidVia !== '' &&
+    accountId !== '' &&
+    parseMoney(f.amount.trim()) !== null &&
+    Number(f.persons) > 0
 
   async function save() {
     if (!canSave) return
     setBusy(true)
     setError(null)
     try {
-      const res = await saveCasualLabour(f)
+      const res = await saveCasualLabour({ ...f, accountId })
       if (res.ok) {
         toast(`${formatMoneyString(res.entry.amount)} recorded`)
         setF((s) => ({ ...s, description: '', amount: '', note: '' }))
+        setAccountId('')
         router.refresh()
       } else setError(res.error)
     } catch {
@@ -319,6 +340,8 @@ export function CasualLabourClient({
               ))}
             </select>
           </label>
+          {/* same split as the contract form: the mode is how, this is from where. */}
+          <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} label="Paid from" />
           <label className="block">
             <span className={fieldLabelCls}>What they did</span>
             <input value={f.description} onChange={(e) => set('description', e.target.value)} placeholder="unloading, dishwashing…" className={inputCls} maxLength={200} />

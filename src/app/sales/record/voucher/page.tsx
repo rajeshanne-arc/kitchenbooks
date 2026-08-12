@@ -1,4 +1,5 @@
 import { getRestaurant } from '@/server/queries'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getOwnerNames, getOwnersOwed, listVouchers } from '@/server/cash-queries'
 import { getVoucherCategorySummary } from '@/server/cashier-queries'
 import { getList, getNameHistory } from '@/server/settings'
@@ -12,13 +13,14 @@ export const dynamic = 'force-dynamic'
 
 export default async function VouchersPage() {
   const restaurant = await getRestaurant()
-  const [ownerNames, categories, paidToNames, vouchers, byCategory, owed] = await Promise.all([
+  const [ownerNames, categories, paidToNames, vouchers, byCategory, owed, accounts] = await Promise.all([
     getOwnerNames(restaurant.id),
     getList(restaurant.id, 'voucher_category'),
     getNameHistory(restaurant.id, 'voucher_paid_to'),
     listVouchers(restaurant.id, 15),
     getVoucherCategorySummary(restaurant.id, monthStartIST()),
     getOwnersOwed(restaurant.id),
+    listMoneyAccounts(restaurant.id),
   ])
 
   return (
@@ -29,7 +31,12 @@ export default async function VouchersPage() {
       </header>
 
       <div className="space-y-4">
-        <VoucherForm ownerNames={ownerNames} categories={categories} paidToNames={paidToNames} />
+        <VoucherForm
+          ownerNames={ownerNames}
+          categories={categories}
+          paidToNames={paidToNames}
+          accounts={accounts}
+        />
 
         {byCategory.length > 0 && (
           <section className={cardCls}>

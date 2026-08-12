@@ -12,6 +12,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
 import {
   getClosePrefill,
@@ -38,6 +39,9 @@ class CashError extends Error {}
 
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof CashError) return { ok: false, error: e.message }
+  // A refusal to guess is not a failure — it names the missing answer, so
+  // it reaches the user in its own words rather than wrapped in an apology.
+  if (e instanceof AccountRefusal) return { ok: false, error: e.message }
   if (e instanceof z.ZodError) return { ok: false, error: 'Invalid input — nothing was saved' }
   console.error('cash action failed', e)
   const detail = e instanceof Error ? e.message.slice(0, 200) : 'unknown error'
@@ -59,6 +63,7 @@ const cleanName = (s: string) => s.trim().replace(/\s+/g, ' ')
 // ------------------------------------------------------------ other income
 
 const IncomeSchema = z.object({
+  accountId: z.string().trim(),
   date: z.string().regex(DATE_RE),
   item: z.string().trim().min(1, 'What was sold?').max(120),
   qty: z.string().trim().max(12),
@@ -87,6 +92,8 @@ export async function saveOtherIncome(raw: SaveOtherIncomeInput): Promise<SaveOt
     const rid = restaurant.id
     const by = await enteredBy()
 
+    const accountId = await assertAccount(rid, input.accountId, 'the account this income landed in')
+
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       if (input.unit !== '') {
@@ -94,11 +101,11 @@ export async function saveOtherIncome(raw: SaveOtherIncomeInput): Promise<SaveOt
         if (!unit[0]) throw new CashError('Unknown unit')
       }
       const [row] = await tx<{ id: string }[]>`
-        insert into other_income (restaurant_id, income_date, item, qty, unit, amount, buyer, received_by, entered_by)
+        insert into other_income (restaurant_id, income_date, item, qty, unit, amount, buyer, received_by, entered_by, account_id)
         values (${rid}, ${input.date}, ${input.item}, ${input.qty === '' ? null : input.qty},
                 ${input.unit === '' ? null : input.unit}, ${input.amount},
                 ${input.buyer === '' ? null : cleanName(input.buyer)},
-                ${input.receivedBy === '' ? null : cleanName(input.receivedBy)}, ${by})
+                ${input.receivedBy === '' ? null : cleanName(input.receivedBy)}, ${by}, ${accountId})
         returning id`
       return { id: row.id }
     })
@@ -114,6 +121,7 @@ export async function saveOtherIncome(raw: SaveOtherIncomeInput): Promise<SaveOt
 // ---------------------------------------------------------------- voucher
 
 const VoucherSchema = z.object({
+  accountId: z.string().trim(),
   date: z.string().regex(DATE_RE),
   amount: moneyStr,
   paidTo: z.string().trim().min(1, 'Who was paid?').max(120),
@@ -144,13 +152,14 @@ export async function saveVoucher(raw: SaveVoucherInput): Promise<SaveVoucherRes
     const rid = restaurant.id
     const by = await enteredBy()
 
+    const accountId = await assertAccount(rid, input.accountId, 'the account this voucher was paid from')
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string }[]>`
-        insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by, is_stock_purchase, is_casual_labour)
+        insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by, is_stock_purchase, is_casual_labour, account_id)
         values (${rid}, ${input.date}, ${input.amount}, ${cleanName(input.paidTo)}, ${input.paidBy},
                 ${input.paidBy === 'owner' ? cleanName(input.ownerName) : null}, ${category},
-                ${input.note === '' ? null : input.note}, ${by}, ${input.isStockPurchase}, ${input.isCasualLabour})
+                ${input.note === '' ? null : input.note}, ${by}, ${input.isStockPurchase}, ${input.isCasualLabour}, ${accountId})
         returning id`
       return { id: row.id }
     })
@@ -199,6 +208,7 @@ export async function setFirstOpening(raw: { amount: string }): Promise<SetOpeni
 // --------------------------------------------------------------- close day
 
 const CloseSchema = z.object({
+  bankAccountId: z.string().trim(),
   date: z.string().regex(DATE_RE),
   extraCashIn: z.union([z.literal(''), moneyStr]),
   handedOver: z.union([z.literal(''), moneyStr]),
@@ -220,6 +230,13 @@ export async function closeDay(raw: CloseDayInput): Promise<CloseDayResult> {
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await enteredBy()
+    // Conditional: only a day that actually settled money into a bank names
+    // the account it went to. A blank bank block moved nothing, so demanding
+    // an account there would be inventing a journey.
+    const bankAccountId =
+      input.bankSettled === '' || parseMoney(input.bankSettled) === 0
+        ? null
+        : await assertAccount(rid, input.bankAccountId, 'the account the bank settlement went into')
 
     await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
@@ -228,14 +245,14 @@ export async function closeDay(raw: CloseDayInput): Promise<CloseDayResult> {
       if (!prefill.ok) throw new CashError(prefill.error)
       await tx`
         insert into day_closes (restaurant_id, close_date, opening_cash, extra_cash_in,
-                                handed_over, handed_to, cash_counted, bank_settled, note, entered_by)
+                                handed_over, handed_to, cash_counted, bank_settled, note, entered_by, bank_account_id)
         values (${rid}, ${input.date}, ${prefill.opening},
                 ${input.extraCashIn === '' ? '0' : input.extraCashIn},
                 ${input.handedOver === '' ? '0' : input.handedOver},
                 ${handed > 0 ? cleanName(input.handedTo) : null},
                 ${input.cashCounted},
                 ${input.bankSettled === '' ? null : input.bankSettled},
-                ${input.note === '' ? null : input.note}, ${by})`
+                ${input.note === '' ? null : input.note}, ${by}, ${bankAccountId})`
     })
 
     const ladder = await getLadderDay(rid, input.date)

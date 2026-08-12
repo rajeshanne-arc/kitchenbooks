@@ -2,6 +2,7 @@ import { getRestaurant } from '@/server/queries'
 import { getClosePrefill, getLadder } from '@/server/cash-queries'
 import { getDifferenceTrend } from '@/server/cashier-queries'
 import { getNameHistory } from '@/server/settings'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import { todayIST } from '@/server/store-queries'
 import DayClose from '@/components/cash/DayClose'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
@@ -13,11 +14,12 @@ export const dynamic = 'force-dynamic'
 export default async function CashPage() {
   const restaurant = await getRestaurant()
   const today = todayIST()
-  const [prefill, handedToNames, trend, ladder] = await Promise.all([
+  const [prefill, handedToNames, trend, ladder, accounts] = await Promise.all([
     getClosePrefill(restaurant.id, today),
     getNameHistory(restaurant.id, 'handed_to'),
     getDifferenceTrend(restaurant.id, 14),
     getLadder(restaurant.id, 7),
+    listMoneyAccounts(restaurant.id),
   ])
 
   return (
@@ -28,7 +30,7 @@ export default async function CashPage() {
       </header>
 
       <div className="space-y-4">
-        <DayClose defaultDate={today} initialPrefill={prefill} restaurantName={restaurant.name} handedToNames={handedToNames} />
+        <DayClose defaultDate={today} initialPrefill={prefill} restaurantName={restaurant.name} handedToNames={handedToNames} accounts={accounts} />
 
         {trend.length > 0 && (
           <section className={cardCls}>

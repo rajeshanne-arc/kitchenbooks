@@ -9,6 +9,7 @@
 import { z } from 'zod'
 import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
@@ -34,6 +35,9 @@ const trimmedOrNull = (v: string): string | null => (v.trim() === '' ? null : v.
 
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof ExpenseError) return { ok: false, error: e.message }
+  // A refusal to guess is not a failure — it names the missing answer, so
+  // it reaches the user in its own words rather than wrapped in an apology.
+  if (e instanceof AccountRefusal) return { ok: false, error: e.message }
   if (e instanceof z.ZodError) return { ok: false, error: 'Invalid input — nothing was saved' }
   console.error('expense action failed', e)
   const detail = e instanceof Error ? e.message.slice(0, 200) : 'unknown error'
@@ -41,6 +45,7 @@ function fail(e: unknown): { ok: false; error: string } {
 }
 
 const ExpenseSchema = z.object({
+  accountId: z.string().trim(),
   date: z.string().regex(DATE_RE),
   category: z.string().trim().min(1, 'Pick the category').max(60),
   payee: z.string().trim().max(120),
@@ -79,14 +84,15 @@ export async function saveExpense(raw: SaveExpenseInput): Promise<SaveExpenseRes
       await noteListSuggestion(rid, 'payment_mode', input.paidVia, by)
     }
 
+    const accountId = await assertAccount(rid, input.accountId, 'the account this expense was paid from')
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const [row] = await tx<{ id: string }[]>`
-        insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via, note, entered_by)
+        insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via, note, entered_by, account_id)
         values (${rid}, ${input.date}, ${input.category},
                 ${input.payee === '' ? null : input.payee.replace(/\s+/g, ' ')},
                 ${input.amount}, ${input.paidVia},
-                ${input.note === '' ? null : input.note}, ${by})
+                ${input.note === '' ? null : input.note}, ${by}, ${accountId})
         returning id`
       return { id: row.id }
     })
@@ -151,6 +157,7 @@ export async function voidExpense(id: string): Promise<VoidExpenseResult> {
  */
 
 const ContractSchema = z.object({
+  accountId: z.string().trim(),
   date: z.string().regex(DATE_RE),
   vendorName: z.string().trim().min(1, 'Who sent the bill?').max(120),
   service: z.string().trim().max(80),
@@ -184,14 +191,16 @@ export async function saveContractBill(raw: SaveContractBillInput): Promise<Save
       await noteListSuggestion(rid, 'payment_mode', input.paidVia, by)
     }
 
+    const accountId = await assertAccount(rid, input.accountId, 'the account this bill was paid from')
+
     const [row] = await sql<{ id: string }[]>`
       insert into contract_bills (restaurant_id, bill_date, vendor_name, service, headcount,
-                                  period_start, period_end, amount, paid_via, note, entered_by)
+                                  period_start, period_end, amount, paid_via, note, entered_by, account_id)
       values (${rid}, ${input.date}, ${input.vendorName}, ${trimmedOrNull(input.service)},
               ${input.headcount === '' ? null : Number(input.headcount)},
               ${input.periodStart === '' ? null : input.periodStart},
               ${input.periodEnd === '' ? null : input.periodEnd},
-              ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by})
+              ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by}, ${accountId})
       returning id`
 
     const bill = await getContractBill(rid, row.id)
@@ -227,6 +236,7 @@ export async function voidContractBill(id: string): Promise<{ ok: true } | { ok:
 }
 
 const CasualSchema = z.object({
+  accountId: z.string().trim(),
   date: z.string().regex(DATE_RE),
   sectionId: z.union([z.literal(''), z.string().regex(UUID)]),
   persons: z.string().regex(/^\d{1,4}$/, 'How many people?'),
@@ -256,12 +266,14 @@ export async function saveCasualLabour(raw: SaveCasualLabourInput): Promise<Save
       await noteListSuggestion(rid, 'payment_mode', input.paidVia, by)
     }
 
+    const accountId = await assertAccount(rid, input.accountId, 'the account these wages were paid from')
+
     const [row] = await sql<{ id: string }[]>`
       insert into casual_labour (restaurant_id, work_date, section_id, persons, description,
-                                 amount, paid_via, note, entered_by)
+                                 amount, paid_via, note, entered_by, account_id)
       values (${rid}, ${input.date}, ${input.sectionId === '' ? null : input.sectionId},
               ${Number(input.persons)}, ${trimmedOrNull(input.description)},
-              ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by})
+              ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by}, ${accountId})
       returning id`
 
     const entry = await getCasualLabour(rid, row.id)

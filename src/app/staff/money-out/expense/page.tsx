@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import {
   getAttendanceMonthSummary,
   getExpensesByCategory,
@@ -18,7 +19,8 @@ export const dynamic = 'force-dynamic'
 export default async function ExpensesPage() {
   const restaurant = await getRestaurant()
   const month = monthStartIST()
-  const [categories, modes, payeeNames, rows, byCategory, labour, attendance, recurring] = await Promise.all([
+  const [accounts, categories, modes, payeeNames, rows, byCategory, labour, attendance, recurring] = await Promise.all([
+    listMoneyAccounts(restaurant.id),
     getList(restaurant.id, 'expense_category'),
     getList(restaurant.id, 'payment_mode'),
     getNameHistory(restaurant.id, 'expense_payee'),
@@ -40,6 +42,7 @@ export default async function ExpensesPage() {
 
       <div className="space-y-4">
         <ExpensesClient
+          accounts={accounts}
           categories={categories}
           modes={modes}
           payeeNames={payeeNames}

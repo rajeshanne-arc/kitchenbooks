@@ -302,6 +302,8 @@ export type UpdateItemInput = {
 
 export type PaymentInput = {
   vendorId: string
+  /** REQUIRED by the app though nullable in the database — see assertAccount */
+  accountId: string
   paidDate: string
   amount: string
   mode: string
@@ -911,6 +913,7 @@ export type VoucherRow = {
 }
 
 export type SaveVoucherInput = {
+  accountId: string
   date: string
   amount: string
   paidTo: string
@@ -947,6 +950,7 @@ export type OtherIncomeRow = {
 }
 
 export type SaveOtherIncomeInput = {
+  accountId: string
   date: string
   item: string
   qty: string
@@ -1003,6 +1007,9 @@ export type DayCloseLadderRow = {
 }
 
 export type CloseDayInput = {
+  /** the account the bank block settled into. Required only when
+   *  bankSettled is non-zero — money that did not move needs no account. */
+  bankAccountId: string
   date: string
   extraCashIn: string
   handedOver: string
@@ -1393,6 +1400,9 @@ export type SaveSettlementInput = {
   claimedByThem: string
   /** their statement or UTR number — what you quote when disputing */
   reference: string
+  /** where the receipt landed. Required only when an amount was received —
+   *  a settlement filed before payment has no movement to place. */
+  accountId: string
   /** itemised deductions; deduction_type comes from the settlement_deduction list */
   deductions: { type: string; amount: string; note: string }[]
 }
@@ -1406,6 +1416,48 @@ export type VoidSettlementResult =
  *  BOTH ways — the rupee gap and the effective-vs-agreed rate. They are
  *  different findings: a small gap on a huge period can hide a rate that
  *  drifted, and a big gap can be one disputed invoice at the agreed rate. */
+/* ── money accounts ────────────────────────────────────────────────────── */
+
+/** Where money actually sits. USER-NAMED and TYPE-TAGGED: nothing here
+ *  hardcodes one country's banks or wallets, so the same product works
+ *  wherever it is sold. */
+export type MoneyAccountKind = 'cash' | 'bank' | 'wallet' | 'card_settlement' | 'owner' | 'other'
+
+export type MoneyAccount = {
+  id: string
+  name: string
+  kind: MoneyAccountKind
+  identifier: string | null
+  opening_balance: string
+  opening_date: string | null
+  sort_order: number
+  status: 'active' | 'inactive'
+}
+
+export type SaveMoneyAccountInput = {
+  name: string
+  kind: MoneyAccountKind
+  identifier: string
+  openingBalance: string
+  openingDate: string
+  sortOrder: string
+  status: 'active' | 'inactive'
+}
+
+export type SaveMoneyAccountResult = { ok: true; account: MoneyAccount } | { ok: false; error: string }
+
+/** account_balances — opening plus every movement through it. */
+export type AccountBalanceRow = {
+  account_id: string
+  name: string
+  kind: MoneyAccountKind
+  identifier: string | null
+  opening_balance: string
+  movements: string
+  balance: string
+  last_move: string | null
+}
+
 /* ── catering ──────────────────────────────────────────────────────────── */
 
 /** One event as catering_summary states it. food_cost sums ONLY issue lines
@@ -1474,6 +1526,7 @@ export type ContractBillRow = {
 }
 
 export type SaveContractBillInput = {
+  accountId: string
   date: string
   vendorName: string
   service: string
@@ -1505,6 +1558,7 @@ export type CasualLabourRow = {
 }
 
 export type SaveCasualLabourInput = {
+  accountId: string
   date: string
   sectionId: string
   persons: string
@@ -1564,6 +1618,7 @@ export type OffBookRow = {
 }
 
 export type SaveOffBookInput = {
+  accountId: string
   date: string
   description: string
   amount: string
@@ -1672,6 +1727,7 @@ export type ExpenseRow = {
 }
 
 export type SaveExpenseInput = {
+  accountId: string
   date: string
   category: string
   payee: string

@@ -144,6 +144,10 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     { key: 'dashboard', href: '/owner', label: 'Dashboard' },
     { key: 'pnl', href: '/owner/pnl', label: 'P&L' },
     { key: 'activity', href: '/owner/activity', label: 'Activity' },
+    // Accounts sits beside Lists: both are masters every form reads from,
+    // and naming an account wrong mislabels the books the way a stray list
+    // value never could.
+    { key: 'accounts', href: '/owner/accounts', label: 'Accounts' },
     { key: 'users', href: '/owner/users', label: 'Users' },
     { key: 'lists', href: '/owner/lists', label: 'Lists' },
     { key: 'settings', href: '/owner/settings', label: 'Settings' },
