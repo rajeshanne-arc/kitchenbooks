@@ -43,6 +43,12 @@ const FIXED: [from: string, to: string][] = [
   ['/wastage', '/store/loss'],
   // /cash WAS the day close, and the day close now lives inside Record.
   ['/cash', '/sales/record/close'],
+  // Simplification pass: two tabs folded and two duplicate mounts dropped.
+  // Phones have these bookmarked, so they still land somewhere true.
+  ['/accounts/tax', '/accounts/registers/tax'],
+  ['/accounts/export', '/accounts/registers/purchase'],
+  ['/staff/books/sections', '/kitchen/books/sections'],
+  ['/staff/books', '/kitchen/books/sections'],
 ]
 
 /** The Phase-A home of a retired URL, for this role. Null when nothing maps. */

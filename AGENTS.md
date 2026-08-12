@@ -1939,3 +1939,114 @@ compensating `stock_adjustments` row would have hidden it and broken the
 one-path rule — goods move through exactly one table. The gate that held
 the refusal in place was written to FAIL once the view was fixed, which is
 how the refusal came back out on the same day the migration landed.
+
+## SETTINGS CONFIGURE VOCABULARY AND LOCAL RULES; THEY NEVER CONFIGURE INTEGRITY
+
+The owner already controls Lists, Departments, Tabs, Users, Partners, Money
+accounts, Course targets, the financial year and the input-tax treatment.
+**That is enough. Do not add more.**
+
+A restaurant's WORDS are theirs: category names, department names, list
+values, tab order and labels, account names, partner rates, which month the
+year starts, whether input tax is a credit or a cost. Those differ
+legitimately between two honest restaurants, and between two countries.
+
+What a NUMBER MEANS is not theirs, and must never become a setting:
+
+- whether a comp counts as revenue
+- whether a day can close out of order
+- whether a count corrects the book, or whether accepting is a judgement
+- whether an event can be edited
+- what goes inside cost of goods
+- whether an unassessable card may report itself as fine
+
+**The test: if a setting could make two restaurants' food cost percentages
+mean different things, it must not exist.** At that point the product has no
+opinion, and its opinion is the whole value — a configurable ledger is a
+spreadsheet with extra steps, which is the thing this replaced.
+
+**Prefer configuring IN THE FLOW to a control panel.** An expense category
+takes its controllable/occupancy kind at the moment somebody approves it,
+not on a settings screen nobody opens; a department's `receives_stock` sits
+on the department, beside its name. A wall of toggles is the console this
+product exists to avoid, and every toggle on it is a decision the product
+declined to make.
+
+## A card declares its precondition before it reports its finding
+
+A card is not pass/fail. It is pass, fail, or **CANNOT BE ASSESSED**, and
+the third state is as visible as the other two, because "we do not know" is
+a finding rather than the absence of one.
+
+The owner dashboard said, correctly and well, that no sales day had been
+fetched — and four cards below it then reported clean bills of health that
+all rested on exactly that missing data: every day that sold food has its
+cash counted (over no days), every order carries a known status (over no
+orders), everything sold is mapped to a dish (over nothing sold), and South
+Indian costs more than it earns (a missing denominator reported as a
+business problem). Each was individually defensible. Together they were a
+lie, and the ordering compounded it: unassessable cards ranked as clean and
+pushed real findings down the page.
+
+`src/lib/precondition.ts` holds the vocabulary. An unassessable card takes
+`UNASSESSABLE_URGENCY` — above everything genuinely fine, because not
+knowing is worse than knowing it is well; below every real finding, because
+a thing that is actually wrong beats a thing that is merely unmeasured.
+
+**Diagnostics live where they are READ, not where they are fixed.**
+`books_completeness` told the accountant there were days with sales and no
+cash close; the cashier — the only person who can close them — saw nothing.
+The same fact now reaches both, phrased for each: the accountant's Review is
+the reviewer's copy, and the person who can act sees it on the screen they
+already open.
+
+## One question, three answers — the voucher's kind
+
+"Was this stock for the kitchen?" and "Was this a day hand's wages?" were
+two independent toggles, and **both could be Yes** — putting one amount
+inside cost of goods AND on the labour line, the same rupee in two totals
+with nothing on screen looking wrong. They were never independent: a payment
+is one kind of thing. It is one three-way question now — an expense, goods
+for the kitchen, or a day hand — so the exclusivity is structural rather
+than a rule somebody has to remember, and `saveVoucher` refuses both flags
+by name, because a form is never the check.
+
+## Before dropping a tab, check whether its view is mounted twice
+
+The test, and it is a test rather than an opinion:
+
+> **If the same component is mounted twice, one mount is duplication by
+> definition.** Removing it is provable, not judged.
+
+`SectionsView` is one file. It was mounted at `/kitchen/books/sections`,
+`/staff/books/sections` AND behind the Kitchen group's own **Departments**
+tab — three doors to one screen. Two of them could be deleted without
+argument, because nothing was lost that the third did not already show.
+That is different from "this tab feels redundant", which is a judgement and
+needs a conversation.
+
+So the order is: find the component a tab renders; grep for every place it
+is mounted; if there is more than one, the surplus mounts are the answer.
+Only when a tab renders something mounted exactly once does the question
+become a design decision — and then it stays until somebody says otherwise,
+because losing a route somebody uses costs more than carrying a tab
+somebody does not.
+
+**Applied here — and the test caught me getting it wrong first.** I read
+`SectionsView` mounted at `/kitchen/books/sections` and `/staff/books/
+sections` and ALSO assumed the Kitchen **Departments** tab was a third
+mount, so I dropped both Books entries. It is not: Departments is the
+section MASTER (rename, retire, receives-stock), while `SectionsView` is a
+per-department COSTS report — sales, cost, margin. Dropping both deleted a
+report nothing else shows.
+
+The assertion is what found it: it counts live mounts and requires exactly
+one, and it failed at **zero**. The duplication was real but it was between
+the two Books entries, not with the tab. One survives, in the kitchen books,
+where a chef and a manager can both reach it.
+
+The lesson is narrower than the rule and worth keeping beside it: **grep for
+the component, do not infer from the tab's label.** Two screens about
+departments are not the same screen. `/store` and `/sales` Books kept every
+entry — none is reachable from a tab in their own group, so they are reports
+rather than second doors.

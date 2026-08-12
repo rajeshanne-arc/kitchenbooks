@@ -10,7 +10,7 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
   kitchen: [
     { href: '/kitchen/books/stock', label: 'Stock' },
     { href: '/kitchen/books/food-cost', label: 'Food cost' },
-    { href: '/kitchen/books/sections', label: 'Departments' },
+    { href: '/kitchen/books/sections', label: 'By department' },
     { href: '/kitchen/books/suppliers', label: 'Supplier exposure' },
   ],
   store: [
@@ -30,7 +30,10 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
     { href: '/sales/books/gst', label: 'GST & service' },
     { href: '/sales/books/handovers', label: 'Handovers' },
   ],
-  staff: [{ href: '/staff/books/sections', label: 'Departments' }],
+  // The staff Books tab is GONE: its only entry rendered SectionsView, which
+  // the Kitchen group's own Departments tab already shows. One component
+  // mounted twice means one mount is duplication by definition.
+  staff: [],
   owner: [],
   // The accountant's books ARE the registers, and those land with the rest
   // of the accountant phase. Empty is the honest state until then, not an

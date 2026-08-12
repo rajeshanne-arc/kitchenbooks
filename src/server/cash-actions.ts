@@ -141,6 +141,17 @@ export async function saveVoucher(raw: SaveVoucherInput): Promise<SaveVoucherRes
     const amount = parseMoney(input.amount)
     if (amount === null || amount <= 0) throw new CashError('Amount must be more than zero')
 
+    // A payment is ONE kind of thing. Both flags true would put the same
+    // amount inside cost of goods AND on the labour line — one rupee in two
+    // totals, and nothing on any screen looking wrong. The form asks it as a
+    // single three-way question; this is the check, because a form is never
+    // the check.
+    if (input.isStockPurchase && input.isCasualLabour) {
+      throw new CashError(
+        'A payment is either goods for the kitchen or a day hand\'s wages, not both — counting it twice would inflate food cost and labour together',
+      )
+    }
+
     const category = (input.category === '' ? 'general' : input.category).toLowerCase().replace(/\s+/g, '_')
     if (input.paidBy === 'owner' && input.ownerName === '') {
       throw new CashError('Owner-funded — pick which owner paid, so the debt lands in their ledger')

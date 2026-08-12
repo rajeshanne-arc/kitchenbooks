@@ -50,6 +50,9 @@ async function main() {
   const [latest] = (await sql`
     select max(close_date)::text as d from day_closes where restaurant_id = ${rid}`) as unknown as { d: string | null }[]
   let SALES_DATE = '2001-05-05'
+  // the three cards are period-scoped now; the probe's window is the test era
+  const FROM = '2001-01-01'
+  const TO = '2001-12-31'
   const needOpening = latest.d === null
   if (latest.d !== null) {
     const next = new Date(`${latest.d}T00:00:00Z`)
@@ -83,13 +86,13 @@ async function main() {
   assert.ok(Number(owed.vendorTotal) >= 0)
   const staff = await getStaffCard(rid, todayIST())
   assert.ok(staff.activeStaff >= 0 && staff.markedToday >= 0)
-  const unmapped0 = await getUnmappedSummary(rid)
-  const unknown0 = await getUnknownStatusCount(rid)
+  const unmapped0 = await getUnmappedSummary(rid, FROM, TO)
+  const unknown0 = await getUnknownStatusCount(rid, FROM, TO)
   const alarms0 = await getStockAlarms(rid)
   assert.equal(alarms0.length, 0, 'no negative stock at rest')
   // earlier suites in this run leave their own unclosed sales days until the
   // end-of-run cleanup — measure relative to that baseline
-  const missing0 = await getMissingCloses(rid)
+  const missing0 = await getMissingCloses(rid, FROM, TO)
   assert.ok(!missing0.includes(SALES_DATE), `sales residue for ${SALES_DATE} — clean 2001-era test rows first`)
 
   // ---- 4. a sales day with no close is NAMED until its close lands
@@ -104,12 +107,12 @@ async function main() {
   const fetch1 = await persistFetch(rid, SALES_DATE, normalizePayload(payload, SALES_DATE))
   assert.equal(fetch1.insertedOrders, 2)
 
-  const missing1 = await getMissingCloses(rid)
+  const missing1 = await getMissingCloses(rid, FROM, TO)
   assert.ok(missing1.includes(SALES_DATE), 'the unclosed sales day is named')
   assert.equal(missing1.length, missing0.length + 1)
-  const unknown1 = await getUnknownStatusCount(rid)
+  const unknown1 = await getUnknownStatusCount(rid, FROM, TO)
   assert.equal(unknown1, unknown0 + 1, 'the Held order screams from the card')
-  const unmapped1 = await getUnmappedSummary(rid)
+  const unmapped1 = await getUnmappedSummary(rid, FROM, TO)
   assert.equal(unmapped1.items, unmapped0.items + 1)
   assert.equal(Number(unmapped1.revenue) - Number(unmapped0.revenue), 900)
 
@@ -125,7 +128,7 @@ async function main() {
     date: SALES_DATE, extraCashIn: '', handedOver: '', handedTo: '', cashCounted: countedStr, bankSettled: '', note: 'zz dash smoke', bankAccountId: ACCOUNT })
   assert.ok(closed.ok, `closeDay failed: ${closed.ok === false ? closed.error : ''}`)
   assert.equal(Number(closed.ladder.difference), 0, 'opening + 900 POS cash, counted exactly')
-  const missing2 = await getMissingCloses(rid)
+  const missing2 = await getMissingCloses(rid, FROM, TO)
   assert.ok(!missing2.includes(SALES_DATE), 'closed — off the list')
   assert.equal(missing2.length, missing0.length)
 

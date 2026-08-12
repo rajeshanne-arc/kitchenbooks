@@ -34,8 +34,9 @@ export default function VoucherForm({
   const [ownerName, setOwnerName] = useState('')
   const [category, setCategory] = useState(categories[0] ?? 'General')
   const [note, setNote] = useState('')
-  const [isStockPurchase, setIsStockPurchase] = useState(false)
-  const [isCasualLabour, setIsCasualLabour] = useState(false)
+  // one question, three answers — the two booleans it derives were once two
+  // toggles that could both be Yes, which double-counted the same rupee
+  const [kind, setKind] = useState<'expense' | 'stock' | 'labour'>('expense')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveVoucherResult, { ok: true }> | null>(null)
@@ -63,8 +64,8 @@ export default function VoucherForm({
         ownerName: ownerName.trim(),
         category: category.trim(),
         note: note.trim(),
-        isStockPurchase,
-        isCasualLabour,
+        isStockPurchase: kind === 'stock',
+        isCasualLabour: kind === 'labour',
       })
       if (res.ok) setSaved(res)
       else setError(res.error)
@@ -216,38 +217,48 @@ export default function VoucherForm({
         </label>
       </div>
 
-      {/* The one question on this form that changes a number elsewhere.
-          Cost of goods is opening + purchases − closing; a market purchase
-          paid from the drawer never enters `purchases`, so without this it
-          drops out of food cost entirely — cost understated, margin
-          overstated, and nothing on screen looking wrong. */}
+      {/* ONE QUESTION, THREE ANSWERS — it used to be two independent
+          toggles, and both could be Yes. That put a single amount into cost
+          of goods AND onto the labour line: the same rupee counted twice,
+          in two different totals, with nothing on screen looking wrong.
+          They were never independent — a payment is one kind of thing —
+          and asking it as one question makes that structural instead of a
+          rule somebody has to remember.
+
+          Why the flags exist at all: a market run paid from the drawer
+          never enters `purchases`, so recorded only as a voucher it drops
+          out of food cost entirely. A day hand paid from the till is a
+          voucher (the drawer must see it) AND labour (the P&L must see
+          it). One payment, one record, read twice. */}
       <div className="mt-3 rounded-xl border border-amber-300 bg-field p-3">
-        <span className="text-[15px] font-medium text-stone-900">Was this stock for the kitchen?</span>
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          {[
-            { v: false, label: 'No — an expense' },
-            { v: true, label: 'Yes — goods bought' },
-          ].map((o) => (
+        <span className="text-[15px] font-medium text-stone-900">What kind of payment was this?</span>
+        <div className="mt-2 grid gap-2">
+          {(
+            [
+              { v: 'expense', label: 'An expense', hint: 'gas, repairs, a courier — anything the business spends on' },
+              { v: 'stock', label: 'Goods for the kitchen', hint: 'vegetables, ice, a forgotten ingredient — it will be cooked' },
+              { v: 'labour', label: "A day hand's wages", hint: 'unloading, dishwashing, an extra pair of hands tonight' },
+            ] as const
+          ).map((o) => (
             <button
-              key={String(o.v)}
+              key={o.v}
               type="button"
-              aria-pressed={isStockPurchase === o.v}
-              onClick={() => setIsStockPurchase(o.v)}
-              className={`min-h-[44px] rounded-xl border px-3 text-sm font-medium ${
-                isStockPurchase === o.v
+              aria-pressed={kind === o.v}
+              onClick={() => setKind(o.v)}
+              className={`min-h-[44px] rounded-xl border px-3 py-2 text-left ${
+                kind === o.v
                   ? 'border-emerald-700 bg-emerald-700 text-white'
                   : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
               }`}
             >
-              {o.label}
+              <span className="block text-sm font-medium">{o.label}</span>
+              <span className={`block text-xs ${kind === o.v ? 'text-emerald-50' : 'text-stone-500'}`}>
+                {o.hint}
+              </span>
             </button>
           ))}
         </div>
-        <p className="mt-2 text-xs text-stone-600">
-          Vegetables from the market, ice, a forgotten ingredient — anything the kitchen will cook. Saying yes
-          puts it inside cost of goods; saying no leaves it as an operating expense.
-        </p>
-        {isStockPurchase && (
+        {kind === 'stock' && (
           <p className="mt-2 rounded-lg border border-rule bg-cell px-2.5 py-2 text-xs text-stone-600">
             <span className="font-medium">The money counts, the stock does not.</span> This reaches cost of
             goods, but with no vendor and no item lines it never becomes inventory — it will not show in stock
@@ -255,39 +266,12 @@ export default function VoucherForm({
             tracked as stock, enter it as a purchase bill instead.
           </p>
         )}
-      </div>
-
-      {/* Same shape as the question above, and the same reason: one payment,
-          one record, read twice. A day hand paid Rs 800 from the till is a
-          voucher — the drawer must see it — AND labour, which the P&L must
-          see. Ticking this is what makes the second true, instead of asking
-          for a casual_labour row nothing reconciles against. */}
-      <div className="mt-3 rounded-xl border border-amber-300 bg-field p-3">
-        <span className="text-[15px] font-medium text-stone-900">Was this a day hand&apos;s wages?</span>
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          {[
-            { v: false, label: 'No' },
-            { v: true, label: 'Yes — casual labour' },
-          ].map((o) => (
-            <button
-              key={String(o.v)}
-              type="button"
-              aria-pressed={isCasualLabour === o.v}
-              onClick={() => setIsCasualLabour(o.v)}
-              className={`min-h-[44px] rounded-xl border px-3 text-sm font-medium ${
-                isCasualLabour === o.v
-                  ? 'border-emerald-700 bg-emerald-700 text-white'
-                  : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
-              }`}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-        <p className="mt-2 text-xs text-stone-600">
-          Unloading, dishwashing, an extra pair of hands for the evening. Saying yes puts it on the P&amp;L&apos;s
-          labour line without a second entry anywhere.
-        </p>
+        {kind === 'labour' && (
+          <p className="mt-2 rounded-lg border border-rule bg-cell px-2.5 py-2 text-xs text-stone-600">
+            This lands on the P&amp;L&apos;s labour line without a second entry anywhere. The drawer sees the
+            voucher, the labour total sees the wage, and there is only one record to reconcile.
+          </p>
+        )}
       </div>
       <datalist id="kb-owner-names">
         {ownerNames.map((n) => (

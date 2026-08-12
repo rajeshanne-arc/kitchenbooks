@@ -1616,6 +1616,77 @@ async function main() {
     assert.equal(final, book - 3, 'the book was corrected twice')
   })
 
+  await check('a voucher cannot be both goods and wages', async () => {
+    // Both flags true would put one amount into cost of goods AND on the
+    // labour line — the same rupee in two totals. The form asks it as one
+    // three-way question; this is the check, because a form is never one.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/cash-actions.ts', 'utf8')
+    const start = src.indexOf('export async function saveVoucher(')
+    const body = src.slice(start, src.indexOf('export async function ', start + 1))
+    assert.match(
+      body,
+      /input\.isStockPurchase && input\.isCasualLabour/,
+      'saveVoucher no longer refuses a payment that is both',
+    )
+    const form = readFileSync('src/components/cash/VoucherForm.tsx', 'utf8')
+    assert.ok(!/setIsStockPurchase/.test(form), 'the independent toggles came back')
+    assert.match(form, /'expense' \| 'stock' \| 'labour'/, 'the three-way question is gone')
+  })
+
+  await check('the precondition vocabulary exists and ranks correctly', async () => {
+    const { UNASSESSABLE_URGENCY, requires } = await import('../src/lib/precondition')
+    // above everything genuinely fine, below every real finding
+    assert.ok(UNASSESSABLE_URGENCY > 0, 'unassessable must outrank all-clear')
+    assert.ok(UNASSESSABLE_URGENCY < 100, 'unassessable must never outrank a real finding')
+    const met = requires(true, [1], 'x', 'y')
+    assert.equal(met.assessable, true)
+    const unmet = requires(false, [1], 'no sales fetched', 'nothing to check')
+    assert.equal(unmet.assessable, false)
+  })
+
+  await check('a component mounted twice is duplication — one mount each now', async () => {
+    // The test that made two tab deletions provable rather than judged:
+    // SectionsView was mounted at /kitchen/books/sections, /staff/books/
+    // sections AND behind the Kitchen Departments tab. Three doors, one
+    // screen. If it ever gains a second live mount again, that is the same
+    // duplication returning.
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir)) {
+        const p = `${dir}/${e}`
+        if (statSync(p).isDirectory()) walk(p, out)
+        else if (e === 'page.tsx') out.push(p)
+      }
+      return out
+    }
+    const mounts = walk('src/app').filter((f) => {
+      const src = readFileSync(f, 'utf8')
+      // a shim redirects and renders nothing — it is not a mount
+      return src.includes('SectionsView') && !src.includes('permanentRedirect')
+    })
+    assert.equal(mounts.length, 1, `SectionsView is mounted ${mounts.length} times:\n      ${mounts.join('\n      ')}`)
+  })
+
+  await check('the tab strips shrank as agreed, and nothing lost its route', async () => {
+    const { TAB_DEFAULTS } = await import('../src/lib/tabs')
+    assert.equal(TAB_DEFAULTS.accounts.length, 6, 'accounts should be six tabs')
+    const acc = TAB_DEFAULTS.accounts.map((t) => t.key)
+    assert.ok(!acc.includes('tax') && !acc.includes('export'), 'tax and export folded into registers')
+    const regs = TAB_DEFAULTS.accounts.find((t) => t.key === 'registers')
+    assert.ok(regs?.chips?.some((c) => c.key === 'tax'), 'tax must survive as a register')
+    const sales = TAB_DEFAULTS.sales.map((t) => t.key)
+    assert.ok(!sales.includes('daily'), 'daily sale folded into the day')
+    assert.ok(sales.includes('record'), 'Record must stay its own door — it is the nightly WRITING task')
+    assert.ok(!TAB_DEFAULTS.staff.some((t) => t.key === 'books'), 'the staff Books tab was duplication')
+    // and the CSV route is untouched
+    const { readFileSync } = await import('node:fs')
+    assert.ok(
+      readFileSync('src/app/api/accounts/export/route.ts', 'utf8').includes('isRegisterKey'),
+      'the export route must survive the screen folding away',
+    )
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

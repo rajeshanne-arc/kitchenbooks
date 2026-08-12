@@ -56,11 +56,21 @@ export async function getOwed(restaurantId: string): Promise<OwedCard> {
 
 export type UnmappedCard = { items: number; revenue: string }
 
-export async function getUnmappedSummary(restaurantId: string): Promise<UnmappedCard> {
+// THE PERIOD IS ONE PERIOD. These three were unscoped while the cards that
+// read them gained period-scoped preconditions — so a card would refuse to
+// reassure about a month it had no fetch for and still ALARM about rows from
+// outside it. Viewing "last month" listed July's unclosed days. Shrugging
+// about the wrong period is defensible; alarming about it is not.
+export async function getUnmappedSummary(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<UnmappedCard> {
   const [row] = await sql<{ items: number; revenue: string }[]>`
     select count(*)::int as items, coalesce(sum(revenue), 0)::text as revenue
     from unmapped_pos_items
-    where restaurant_id = ${restaurantId}`
+    where restaurant_id = ${restaurantId}
+      and business_date between ${from}::date and ${to}::date`
   return row ?? { items: 0, revenue: '0' }
 }
 
@@ -105,17 +115,28 @@ export async function getStockAlarms(restaurantId: string): Promise<StockAlarmRo
     order by on_hand_qty asc`
 }
 
-export async function getUnknownStatusCount(restaurantId: string): Promise<number> {
+export async function getUnknownStatusCount(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<number> {
   const [row] = await sql<{ n: number }[]>`
     select count(*)::int as n from sales_current
-    where restaurant_id = ${restaurantId} and status_class = 'unknown'`
+    where restaurant_id = ${restaurantId} and status_class = 'unknown'
+      and business_date between ${from}::date and ${to}::date`
   return row?.n ?? 0
 }
 
-export async function getMissingCloses(restaurantId: string, limit = 14): Promise<string[]> {
+export async function getMissingCloses(
+  restaurantId: string,
+  from: string,
+  to: string,
+  limit = 14,
+): Promise<string[]> {
   const rows = await sql<{ business_date: string }[]>`
     select business_date::text as business_date from missing_closes
     where restaurant_id = ${restaurantId}
+      and business_date between ${from}::date and ${to}::date
     order by business_date desc
     limit ${limit}`
   return rows.map((r) => r.business_date)

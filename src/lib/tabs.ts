@@ -100,8 +100,11 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     { key: 'books', href: '/store/books', label: 'Books' },
   ],
   sales: [
-    { key: 'dashboard', href: '/sales', label: 'Dashboard' },
-    { key: 'daily', href: '/sales/books/sales', label: 'Daily sale' },
+    // Dashboard ABSORBED Daily sale — both were READING the same day, and
+    // the daily table is still in Books. Record stays its own door because
+    // it is WRITING, and the cashier's nightly task must not sit behind a
+    // dashboard.
+    { key: 'dashboard', href: '/sales', label: 'Day' },
     {
       // DAY CLOSE LIVES HERE NOW. It is a daily money event like the rest of
       // them, and giving it its own tab implied it was a different KIND of
@@ -145,7 +148,6 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         { key: 'casual', label: 'Casual labour' },
       ],
     },
-    { key: 'books', href: '/staff/books', label: 'Books' },
   ],
   owner: [
     { key: 'dashboard', href: '/owner', label: 'Dashboard' },
@@ -179,10 +181,13 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         { key: 'cash', label: 'Cash' },
         { key: 'bank', label: 'Bank' },
         { key: 'wages', label: 'Wages' },
+        // Tax IS a register — output from the POS, input from the bills.
+        // Export folded in too: every register downloads itself, which is
+        // closer to the rows than a screen listing seven links to them.
+        { key: 'tax', label: 'Tax' },
       ],
     },
     { key: 'parties', href: '/accounts/parties', label: 'Parties' },
-    { key: 'tax', href: '/accounts/tax', label: 'Tax' },
     { key: 'money', href: '/accounts/money', label: 'Money' },
     // PAYROLL sits between Money and Close because that is its moment: the
     // month's wages are worked out after the money is reconciled and before
@@ -198,7 +203,6 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       ],
     },
     { key: 'close', href: '/accounts/close', label: 'Close' },
-    { key: 'export', href: '/accounts/export', label: 'Export' },
   ],
 }
 

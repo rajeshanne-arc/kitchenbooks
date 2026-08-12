@@ -2,7 +2,6 @@
 // nothing else — an accountant reads the same six columns whichever word is
 // above them, so building seven pages would have been seven chances to
 // drift apart.
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
 import {
@@ -61,13 +60,24 @@ export default async function RegisterPage({
         )}
       </section>
 
-      <p className="mt-3 text-center text-xs text-stone-400">
-        Every row here is an event that was entered once and never edited.{' '}
-        <Link href="/accounts/export" className="underline underline-offset-2 hover:text-stone-600">
-          Export
-        </Link>{' '}
-        takes the same rows out as CSV.
-      </p>
+      {/* THE REGISTER DOWNLOADS ITSELF. There was a separate Export screen
+          listing seven links to seven CSVs; a button on the rows it exports
+          is closer to the thing than a page about it. The route behind it is
+          unchanged — /api/accounts/export, gated like the screen. */}
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <p className="text-xs text-stone-400">
+          Every row here is an event that was entered once and never edited.
+        </p>
+        {rows.length > 0 && (
+          <a
+            href={`/api/accounts/export?register=${key}&period=${periodKey}`}
+            download
+            className="shrink-0 rounded-lg border border-rule bg-cell px-3 py-2 text-sm font-medium text-stone-700 hover:border-emerald-400 hover:text-emerald-800"
+          >
+            Download CSV
+          </a>
+        )}
+      </div>
     </>
   )
 }
