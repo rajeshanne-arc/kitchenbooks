@@ -3,13 +3,13 @@
 // the role matrix — LAW 1 applies to tab strips too, so a tab a role cannot
 // open is never rendered for it.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import { resolveTabs, type TabDef, type TabGroup } from '@/lib/tabs'
 import { canAccess, type Role } from '@/lib/roles'
 import type { ListKey, ListOptionRow, ListSuggestionRow } from '@/lib/lists'
 
 export async function getSettingValue(restaurantId: string, key: string): Promise<string | null> {
-  const rows = await sql<{ value: string | null }[]>`
+  const rows = await tsql<{ value: string | null }[]>`
     select value from settings where restaurant_id = ${restaurantId} and key = ${key}`
   return rows[0]?.value ?? null
 }
@@ -23,7 +23,7 @@ export async function tabsFor(restaurantId: string, group: TabGroup, role: Role)
 
 /** Active values of one managed list, in sort order — what pickers render. */
 export async function getList(restaurantId: string, key: ListKey): Promise<string[]> {
-  const rows = await sql<{ value: string }[]>`
+  const rows = await tsql<{ value: string }[]>`
     select value from list_options
     where restaurant_id = ${restaurantId} and list_key = ${key} and status = 'active'
     order by sort_order asc, value asc`
@@ -32,7 +32,7 @@ export async function getList(restaurantId: string, key: ListKey): Promise<strin
 
 /** Every row of every managed list (retired included) for the Lists screen. */
 export async function getAllListOptions(restaurantId: string): Promise<ListOptionRow[]> {
-  return sql<ListOptionRow[]>`
+  return tsql<ListOptionRow[]>`
     select id, list_key, value, sort_order, status
     from list_options
     where restaurant_id = ${restaurantId}
@@ -57,7 +57,7 @@ export type HistoryField = keyof typeof HISTORY_SOURCES
 
 export async function getNameHistory(restaurantId: string, field: HistoryField): Promise<string[]> {
   const src = HISTORY_SOURCES[field]
-  const rows = await sql<{ name: string }[]>`
+  const rows = await tsql<{ name: string }[]>`
     select ${sql.unsafe(src.column)} as name, max(${sql.unsafe(src.date)}) as last_used
     from ${sql.unsafe(src.table)}
     where restaurant_id = ${restaurantId} and ${sql.unsafe(src.column)} is not null
@@ -84,7 +84,7 @@ export async function isAcceptedListValue(
   if (clean === '') return false
   const approved = await getList(restaurantId, key)
   if (approved.some((v) => v.toLowerCase() === clean.toLowerCase())) return true
-  const pending = await sql<{ id: string }[]>`
+  const pending = await tsql<{ id: string }[]>`
     select id from list_suggestions
     where restaurant_id = ${restaurantId} and list_key = ${key}
       and lower(value) = ${clean.toLowerCase()} and status = 'pending'`
@@ -93,7 +93,7 @@ export async function isAcceptedListValue(
 
 /** Pending suggestions for the Settings screen, newest first. */
 export async function getListSuggestions(restaurantId: string): Promise<ListSuggestionRow[]> {
-  return sql<ListSuggestionRow[]>`
+  return tsql<ListSuggestionRow[]>`
     select s.id, s.list_key, s.value, s.suggested_by, s.seen_count, s.status,
            s.created_at::text as created_at,
            k.kind as expense_kind
@@ -106,7 +106,7 @@ export async function getListSuggestions(restaurantId: string): Promise<ListSugg
 
 /** How each approved expense category is classified for the P&L. */
 export async function getExpenseKinds(restaurantId: string): Promise<Record<string, string>> {
-  const rows = await sql<{ category: string; kind: string }[]>`
+  const rows = await tsql<{ category: string; kind: string }[]>`
     select category, kind from expense_category_kinds where restaurant_id = ${restaurantId}`
   return Object.fromEntries(rows.map((r) => [r.category, r.kind]))
 }

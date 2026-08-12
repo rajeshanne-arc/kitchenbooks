@@ -2,7 +2,7 @@
 // from item_costs at read time and are never stored. Per-line costs join the
 // same named views server-side; nothing money-shaped is computed client-side.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import type {
   ComponentHit,
   DishCard,
@@ -14,7 +14,7 @@ import type {
 } from '@/lib/types'
 
 export async function listDishCosts(restaurantId: string): Promise<DishCostRow[]> {
-  return sql<DishCostRow[]>`
+  return tsql<DishCostRow[]>`
     select dc.recipe_id, dc.code, dc.name, dc.section_code, dc.section_name,
            s.sort_order as section_sort,
            dc.dish_cost::text as dish_cost,
@@ -29,7 +29,7 @@ export async function listDishCosts(restaurantId: string): Promise<DishCostRow[]
 }
 
 export async function listSubCosts(restaurantId: string): Promise<SubCostRow[]> {
-  return sql<SubCostRow[]>`
+  return tsql<SubCostRow[]>`
     select rc.recipe_id, rc.code, rc.name,
            rc.output_qty::text as output_qty, rc.output_unit,
            rc.total_cost::text as total_cost,
@@ -43,7 +43,7 @@ export async function listSubCosts(restaurantId: string): Promise<SubCostRow[]> 
 }
 
 export async function getRecipeDetail(restaurantId: string, id: string): Promise<RecipeDetail | null> {
-  const rows = await sql<RecipeDetail[]>`
+  const rows = await tsql<RecipeDetail[]>`
     select r.id, r.code, r.name, r.kind, r.section_id,
            s.code as section_code, s.name as section_name,
            r.output_qty::text as output_qty, r.output_unit, u.name as output_unit_name,
@@ -62,7 +62,7 @@ export async function getRecipeDetail(restaurantId: string, id: string): Promise
 }
 
 export async function getRecipeLines(recipeId: string): Promise<RecipeLineRow[]> {
-  return sql<RecipeLineRow[]>`
+  return tsql<RecipeLineRow[]>`
     select rl.id, rl.component_item_id, rl.component_recipe_id,
            coalesce(i.code, sr.code) as component_code,
            coalesce(i.name, sr.name) as component_name,
@@ -101,7 +101,7 @@ export async function searchComponents(
 ): Promise<ComponentHit[]> {
   const like = `%${q}%`
   const prefix = `${q}%`
-  const items = await sql<Omit<Extract<ComponentHit, { kind: 'item' }>, 'kind'>[]>`
+  const items = await tsql<Omit<Extract<ComponentHit, { kind: 'item' }>, 'kind'>[]>`
     select i.id, i.code, i.name, c.name as category_name, i.purchase_unit, u.name as unit_name,
            (ic.issue_cost is not null) as has_cost
     from items i
@@ -112,7 +112,7 @@ export async function searchComponents(
       and (i.name ilike ${like} or i.code ilike ${like})
     order by (i.name ilike ${prefix}) desc, i.name asc
     limit 8`
-  const subs = await sql<Omit<Extract<ComponentHit, { kind: 'sub' }>, 'kind'>[]>`
+  const subs = await tsql<Omit<Extract<ComponentHit, { kind: 'sub' }>, 'kind'>[]>`
     select r.id, r.code, r.name, r.output_unit, u.name as unit_name
     from recipes r
     join units u on u.code = r.output_unit
@@ -131,7 +131,7 @@ export async function searchComponents(
  *  cost per portion, loaded cost, food cost %, margin, the course target
  *  and the flag are all the view's own arithmetic. */
 export async function getDishCard(restaurantId: string, recipeId: string): Promise<DishCard | null> {
-  const rows = await sql<DishCard[]>`
+  const rows = await tsql<DishCard[]>`
     select recipe_id, code, name, section_code, section_name,
            pos_code, course, diet,
            dish_cost::text as dish_cost,
@@ -155,7 +155,7 @@ export async function getDishCard(restaurantId: string, recipeId: string): Promi
 
 /** The courses an owner has set targets for — the card's course picker. */
 export async function listCourses(restaurantId: string): Promise<{ course: string; target_pct: string }[]> {
-  return sql<{ course: string; target_pct: string }[]>`
+  return tsql<{ course: string; target_pct: string }[]>`
     select course, target_pct::text as target_pct
     from course_targets
     where restaurant_id = ${restaurantId} and course <> 'DEFAULT'
@@ -167,7 +167,7 @@ export async function getRecipeMedia(
   restaurantId: string,
   recipeId: string,
 ): Promise<{ photo_url: string | null; video_url: string | null }> {
-  const rows = await sql<{ photo_url: string | null; video_url: string | null }[]>`
+  const rows = await tsql<{ photo_url: string | null; video_url: string | null }[]>`
     select photo_url, video_url from recipes
     where restaurant_id = ${restaurantId} and id = ${recipeId}`
   return rows[0] ?? { photo_url: null, video_url: null }
@@ -184,7 +184,7 @@ export async function getRecipeMedia(
  * the view — a gravy made of four suppliers' ingredients exposes all four.
  */
 export async function getSupplierExposure(restaurantId: string): Promise<SupplierExposureRow[]> {
-  return sql<SupplierExposureRow[]>`
+  return tsql<SupplierExposureRow[]>`
     select supplier, items::int as items, dishes::int as dishes, batch_cost::text as batch_cost
     from supplier_costs
     where restaurant_id = ${restaurantId}

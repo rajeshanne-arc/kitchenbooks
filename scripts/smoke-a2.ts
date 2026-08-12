@@ -1832,6 +1832,65 @@ async function main() {
     assert.deepEqual(missing, [], `line inserts with no tenant:\n      ${missing.join('\n      ')}`)
   })
 
+  await check('no read runs outside a tenant-announcing transaction', async () => {
+    // The last thing between here and RLS. A read outside a transaction has
+    // no app.restaurant_id to read, so under RLS current_setting returns
+    // NULL, every policy comparison yields NULL, and it returns ZERO ROWS —
+    // an app that looks like an empty database, which is a worse outage
+    // than a loud failure because nobody suspects security.
+    const { readdirSync, readFileSync } = await import('node:fs')
+    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    const bare: string[] = []
+    for (const f of files) {
+      // Strip ${…} holes first. A fragment — `${cond ? sql`and x = ${y}` :
+      // sql``}` — is a VALUE interpolated into another statement, not a
+      // query, and it always lives inside a hole. Removing them leaves only
+      // statements that actually run.
+      const src = readFileSync(f, 'utf8').replace(
+        /\$\{(?:[^{}]|\{[^{}]*\})*\}/g,
+        ' ? ',
+      )
+      for (const m of src.matchAll(/\bsql\s*(?:<[^>]*>)?\s*`/g)) {
+        // sql.unsafe / sql(rows, …) are not reads and do not match this.
+        // `${sql`sort_order`}` DOES match and is not a read either — it is a
+        // fragment interpolated into another statement, so a value rather
+        // than a query. Skip anything opened by ${.
+        const line = src.slice(0, m.index).split('\n').length
+        bare.push(`${f}:${line}`)
+      }
+    }
+    assert.deepEqual(bare, [], `reads with no tenant:\n      ${bare.join('\n      ')}`)
+  })
+
+  await check('no tsql is nested inside a transaction', async () => {
+    // The one conversion mistake that could take production down: tsql
+    // inside a txn() callback opens a transaction while holding a
+    // connection, and waits for a second one that the first is blocking.
+    // That is the max:4 deadlock again, in a new costume.
+    const { readdirSync, readFileSync } = await import('node:fs')
+    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    const nested: string[] = []
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8')
+      let i = src.indexOf('txn(')
+      while (i !== -1) {
+        // walk to the matching close paren of the txn( call
+        let depth = 0
+        let j = i + 3
+        for (; j < src.length; j++) {
+          if (src[j] === '(') depth++
+          else if (src[j] === ')') { depth--; if (depth === 0) break }
+        }
+        const body = src.slice(i, j)
+        if (/\btsql\s*(?:<[^>]*>)?\s*`/.test(body)) {
+          nested.push(`${f}:${src.slice(0, i).split('\n').length}`)
+        }
+        i = src.indexOf('txn(', j)
+      }
+    }
+    assert.deepEqual(nested, [], `a transaction inside a transaction:\n      ${nested.join('\n      ')}`)
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

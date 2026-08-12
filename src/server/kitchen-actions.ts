@@ -10,7 +10,7 @@
 
 import { z } from 'zod'
 import type postgres from 'postgres'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
@@ -67,7 +67,7 @@ function assertRealDate(s: string, label: string) {
 }
 
 async function assertKitchenSection(restaurantId: string, sectionId: string): Promise<void> {
-  const rows = await sql<{ id: string }[]>`
+  const rows = await tsql<{ id: string }[]>`
     select id from sections
     where id = ${sectionId} and restaurant_id = ${restaurantId} and status = 'active'
       and dept_group in ('Kitchen', 'Bar')`
@@ -80,7 +80,7 @@ async function assertKitchenSection(restaurantId: string, sectionId: string): Pr
  *  updateIndent checks this and saveIndent did not. Create and edit now
  *  agree. */
 async function assertReceivesStock(restaurantId: string, sectionId: string): Promise<void> {
-  const rows = await sql<{ name: string; receives_stock: boolean }[]>`
+  const rows = await tsql<{ name: string; receives_stock: boolean }[]>`
     select name, receives_stock from sections
     where id = ${sectionId} and restaurant_id = ${restaurantId} and status = 'active'`
   if (!rows[0]) throw new KitchenError('That department no longer exists')
@@ -264,7 +264,7 @@ export async function voidKitchenWastage(id: string): Promise<VoidKitchenWastage
       return { revId: rev.id }
     })
 
-    const [check] = await sql<{ zeroed: boolean }[]>`
+    const [check] = await tsql<{ zeroed: boolean }[]>`
       select ((select value from kitchen_wastage where id = ${id})
             + (select value from kitchen_wastage where id = ${saved.revId}) = 0) as zeroed`
     if (!check?.zeroed) throw new KitchenError('Verification failed: values do not cancel to zero')
@@ -431,7 +431,7 @@ export async function updateIndent(raw: UpdateIndentInput): Promise<UpdateIndent
     await assertKitchenSection(rid, input.sectionId)
     // The picker is not the check. An indent asks the STORE for stock, so the
     // department has to be one stock can reach, whatever was posted.
-    const [dept] = await sql<{ name: string; receives_stock: boolean }[]>`
+    const [dept] = await tsql<{ name: string; receives_stock: boolean }[]>`
       select name, receives_stock from sections
       where id = ${input.sectionId} and restaurant_id = ${rid} and status = 'active'`
     if (!dept) throw new KitchenError('Department not found')

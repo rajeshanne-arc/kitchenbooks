@@ -5,7 +5,8 @@
 // answer is null; entered_by then stays null, which is honest.
 import 'server-only'
 import { cookies } from 'next/headers'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
+import { withTenant } from '@/lib/tenant'
 import { SESSION_COOKIE, verifySession } from '@/lib/session'
 import type { Role } from '@/lib/roles'
 
@@ -30,9 +31,21 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!secret) return null
   const payload = await verifySession(token, secret)
   if (!payload) return null
-  const rows = await sql<{ username: string; display_name: string; role: Role; restaurant_id: string }[]>`
-    select username, display_name, role, restaurant_id from app_users
-    where lower(username) = lower(${payload.u}) and status = 'active'`
+  // THE ONE READ THAT CANNOT ASK THE SESSION WHICH TENANT IT IS IN, because
+  // it IS the session. Left on the bare pool it would return zero rows under
+  // RLS and every user would appear signed out — the empty-database outage
+  // landing on the one read the sweep could not touch. Routed through txn()
+  // it would recurse: txn resolves a null tenant by calling this function.
+  //
+  // So it announces the COOKIE'S claim and then checks the row agrees. That
+  // is not trusting the claim: the token is HMAC-signed, so a forged `t`
+  // never gets this far, and the row's own restaurant_id is compared below.
+  // The claim narrows the read; the row decides.
+  const rows = await withTenant(payload.t, () =>
+    tsql<{ username: string; display_name: string; role: Role; restaurant_id: string }[]>`
+      select username, display_name, role, restaurant_id from app_users
+      where lower(username) = lower(${payload.u}) and status = 'active'`,
+  )
   if (rows.length !== 1) return null // ambiguous or absent is not a session
   const user = rows[0]
   if (user.role !== payload.r) return null

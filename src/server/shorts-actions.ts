@@ -10,7 +10,7 @@
 // a status the app infers from a credit note turning up.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { parseQty } from '@/lib/money'
 import { getRestaurant } from '@/server/queries'
 import {
@@ -146,7 +146,7 @@ export async function settleShort(raw: SettleShortInput): Promise<ShortResult> {
     const before = await getShort(rid, input.id)
     if (!before) throw new ShortsError('That short was not found')
 
-    await sql`
+    await tsql`
       update purchase_line_shorts
       set settlement = ${input.settlement},
           credit_note_ref = ${input.creditNoteRef === '' ? null : input.creditNoteRef},

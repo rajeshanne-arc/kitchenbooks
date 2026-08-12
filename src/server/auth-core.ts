@@ -6,7 +6,7 @@
 // nothing arrives through chat), and /setup refuses forever after.
 import 'server-only'
 import bcrypt from 'bcryptjs'
-import { sql, txn } from '@/lib/db'
+import { sql, tsql, txn } from '@/lib/db'
 import { ALL_ROLES, type Role } from '@/lib/roles'
 import type { AppUserRow } from '@/lib/types'
 
@@ -34,14 +34,14 @@ const USER_SELECT = `
   left join staff st on st.id = u.staff_id`
 
 export async function listUsers(restaurantId: string): Promise<AppUserRow[]> {
-  return sql<AppUserRow[]>`
+  return tsql<AppUserRow[]>`
     ${sql.unsafe(USER_SELECT)}
     where u.restaurant_id = ${restaurantId}
     order by (u.status = 'active') desc, u.role asc, u.username asc`
 }
 
 export async function anyUsers(restaurantId: string): Promise<boolean> {
-  const rows = await sql<{ n: number }[]>`
+  const rows = await tsql<{ n: number }[]>`
     select count(*)::int as n from app_users where restaurant_id = ${restaurantId}`
   return (rows[0]?.n ?? 0) > 0
 }
@@ -65,7 +65,7 @@ export async function verifyCredentials(
   username: string,
   password: string,
 ): Promise<(AppUserRow & { restaurant_id: string }) | null> {
-  const rows = await sql<(AppUserRow & { password_hash: string; restaurant_id: string })[]>`
+  const rows = await tsql<(AppUserRow & { password_hash: string; restaurant_id: string })[]>`
     select u.id, u.username, u.display_name, u.role, u.staff_id,
            null as staff_name, null as staff_code,
            u.status, u.created_at::text as created_at, u.password_hash,
@@ -119,7 +119,7 @@ export async function createFirstOwner(
     return row.id
   })
 
-  const rows = await sql<AppUserRow[]>`${sql.unsafe(USER_SELECT)} where u.id = ${created}`
+  const rows = await tsql<AppUserRow[]>`${sql.unsafe(USER_SELECT)} where u.id = ${created}`
   if (!rows[0]) throw new AuthError('Could not read the owner back after setup')
   return rows[0]
 }
@@ -164,7 +164,7 @@ export async function createUser(
       returning id`
     return row.id
   })
-  const rows = await sql<AppUserRow[]>`${sql.unsafe(USER_SELECT)} where u.id = ${created}`
+  const rows = await tsql<AppUserRow[]>`${sql.unsafe(USER_SELECT)} where u.id = ${created}`
   if (!rows[0]) throw new AuthError('Could not read the user back after save')
   return rows[0]
 }
@@ -211,7 +211,7 @@ export async function updateUser(
       returning id`
     if (!changed) throw new AuthError('User not found')
   })
-  const rows = await sql<AppUserRow[]>`
+  const rows = await tsql<AppUserRow[]>`
     ${sql.unsafe(USER_SELECT)} where u.id = ${userId} and u.restaurant_id = ${restaurantId}`
   if (!rows[0]) throw new AuthError('Could not read the user back after save')
   return rows[0]
@@ -226,7 +226,7 @@ export async function resetPassword(
   assertOwner(actorRole)
   if (newPassword.length < 8) throw new AuthError('Password must be at least 8 characters')
   const hash = await hashPassword(newPassword)
-  const rows = await sql<{ id: string }[]>`
+  const rows = await tsql<{ id: string }[]>`
     update app_users set password_hash = ${hash}
     where id = ${userId} and restaurant_id = ${restaurantId}
     returning id`

@@ -14,7 +14,7 @@
 // cap is blast-radius control, not the guard.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getRecipeDetail, getRecipeLines } from '@/server/recipes-queries'
 import type {
@@ -76,7 +76,7 @@ export async function createRecipe(raw: CreateRecipeInput): Promise<CreateRecipe
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const unit = await sql<{ code: string }[]>`select code from units where code = ${input.outputUnit}`
+    const unit = await tsql<{ code: string }[]>`select code from units where code = ${input.outputUnit}`
     if (!unit[0]) throw new RecipeError(`Unknown unit “${input.outputUnit}”`)
 
     const created = await txn(async (tx) => {
@@ -137,17 +137,17 @@ export async function updateRecipe(id: string, raw: UpdateRecipeInput): Promise<
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const existing = await sql<{ kind: 'dish' | 'sub' }[]>`
+    const existing = await tsql<{ kind: 'dish' | 'sub' }[]>`
       select kind from recipes where id = ${id} and restaurant_id = ${rid}`
     if (!existing[0]) throw new RecipeError('Recipe not found')
     if (existing[0].kind === 'sub' && input.sellingPrice !== '') {
       throw new RecipeError('Sub-recipes have no selling price')
     }
-    const unit = await sql<{ code: string }[]>`select code from units where code = ${input.outputUnit}`
+    const unit = await tsql<{ code: string }[]>`select code from units where code = ${input.outputUnit}`
     if (!unit[0]) throw new RecipeError(`Unknown unit “${input.outputUnit}”`)
 
     // Only the column-granted fields ever appear in this SET.
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update recipes set
         name = ${input.name},
         output_qty = ${input.outputQty}::numeric,
@@ -245,7 +245,7 @@ export async function updateLineYield(lineId: string, yieldPct: string): Promise
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    const [line] = await sql<{ recipe_id: string; is_sub: boolean }[]>`
+    const [line] = await tsql<{ recipe_id: string; is_sub: boolean }[]>`
       select rl.recipe_id, (rl.component_recipe_id is not null) as is_sub
       from recipe_lines rl
       join recipes r on r.id = rl.recipe_id
@@ -254,7 +254,7 @@ export async function updateLineYield(lineId: string, yieldPct: string): Promise
     if (line.is_sub) {
       throw new RecipeError('A sub-recipe line has no yield of its own — the trim inside it is already costed')
     }
-    await sql`update recipe_lines set yield_pct = ${yieldPct}::numeric
+    await tsql`update recipe_lines set yield_pct = ${yieldPct}::numeric
               where id = ${lineId} and restaurant_id = ${rid}`
     return await freshState(rid, line.recipe_id)
   } catch (e) {
@@ -271,7 +271,7 @@ export async function updateLineQty(lineId: string, qty: string): Promise<Recipe
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const updated = await sql<{ recipe_id: string }[]>`
+    const updated = await tsql<{ recipe_id: string }[]>`
       update recipe_lines rl set qty = ${parsed}::numeric
       from recipes r
       where rl.id = ${lineId} and r.id = rl.recipe_id and r.restaurant_id = ${rid}
@@ -291,7 +291,7 @@ export async function deleteLine(lineId: string): Promise<RecipeMutationResult> 
     const rid = restaurant.id
 
     // The system's only DELETE: a recipe line is master detail, not an event.
-    const deleted = await sql<{ recipe_id: string }[]>`
+    const deleted = await tsql<{ recipe_id: string }[]>`
       delete from recipe_lines rl
       using recipes r
       where rl.id = ${lineId} and r.id = rl.recipe_id and r.restaurant_id = ${rid}
@@ -347,7 +347,7 @@ export async function updateDishCard(
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update recipes set
         pos_code = ${trimOrNull(input.posCode)},
         course = ${trimOrNull(input.course)},

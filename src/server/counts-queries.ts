@@ -3,7 +3,7 @@
 // nothing here recomputes them against today's stock. The first-count
 // warning is COMPUTED from real issue history, never asserted.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import { todayIST } from '@/server/store-queries'
 import type { CountableItem, CountHeader, CountVarianceRow, SnapshotGroup, SnapshotRow } from '@/lib/types'
 
@@ -11,7 +11,7 @@ import type { CountableItem, CountHeader, CountVarianceRow, SnapshotGroup, Snaps
  * live (non-voided) issue, inclusive. 0 when nothing has ever been issued.
  * Under 14, a count mostly measures missing bills — warn, never block. */
 export async function getIssueHistoryDays(restaurantId: string): Promise<number> {
-  const rows = await sql<{ days: number | null }[]>`
+  const rows = await tsql<{ days: number | null }[]>`
     select (${todayIST()}::date - min(i.issue_date) + 1)::int as days
     from issues i
     where i.restaurant_id = ${restaurantId}
@@ -24,7 +24,7 @@ export async function getIssueHistoryDays(restaurantId: string): Promise<number>
  * counter walks the store richest shelf first. Book quantities are not
  * shown; the count is blind and the variance appears after the save. */
 export async function listCountableItems(restaurantId: string): Promise<CountableItem[]> {
-  return sql<CountableItem[]>`
+  return tsql<CountableItem[]>`
     select i.id, i.code, i.name, i.purchase_unit, u.name as unit_name, c.name as category_name
     from items i
     join units u on u.code = i.purchase_unit
@@ -42,7 +42,7 @@ const HEADER_SELECT = `
   from stock_counts c`
 
 export async function listCounts(restaurantId: string, limit = 30): Promise<CountHeader[]> {
-  return sql<CountHeader[]>`
+  return tsql<CountHeader[]>`
     ${sql.unsafe(HEADER_SELECT)}
     where c.restaurant_id = ${restaurantId}
     order by c.count_date desc, c.created_at desc
@@ -50,7 +50,7 @@ export async function listCounts(restaurantId: string, limit = 30): Promise<Coun
 }
 
 export async function getCount(restaurantId: string, id: string): Promise<CountHeader | null> {
-  const rows = await sql<CountHeader[]>`
+  const rows = await tsql<CountHeader[]>`
     ${sql.unsafe(HEADER_SELECT)}
     where c.restaurant_id = ${restaurantId} and c.id = ${id}`
   return rows[0] ?? null
@@ -60,7 +60,7 @@ export async function getCount(restaurantId: string, id: string): Promise<CountH
  * the STORED generated columns (the same values count_variances wraps, plus
  * item_id which the view omits) — never a recomputation. */
 export async function getCountVariances(restaurantId: string, countId: string): Promise<CountVarianceRow[]> {
-  return sql<CountVarianceRow[]>`
+  return tsql<CountVarianceRow[]>`
     select l.item_id, i.code, i.name, i.purchase_unit,
            l.counted_qty::text as counted_qty,
            l.book_qty::text as book_qty,
@@ -77,7 +77,7 @@ export async function getCountVariances(restaurantId: string, countId: string): 
 // ---------------------------------------------------------------- snapshots
 
 export async function listSnapshots(restaurantId: string): Promise<SnapshotGroup[]> {
-  return sql<SnapshotGroup[]>`
+  return tsql<SnapshotGroup[]>`
     select snap_date::text as snap_date, count(*)::int as dishes, max(created_at)::text as created_at
     from dish_cost_snapshots
     where restaurant_id = ${restaurantId}
@@ -87,7 +87,7 @@ export async function listSnapshots(restaurantId: string): Promise<SnapshotGroup
 }
 
 export async function getSnapshot(restaurantId: string, snapDate: string): Promise<SnapshotRow[]> {
-  return sql<SnapshotRow[]>`
+  return tsql<SnapshotRow[]>`
     select code, name, section_code, dish_cost::text as dish_cost,
            selling_price::text as selling_price, food_cost_pct::text as food_cost_pct
     from dish_cost_snapshots

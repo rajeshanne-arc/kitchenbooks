@@ -7,7 +7,7 @@
 // money_movements — so nothing here recomputes a figure the database has
 // already stated.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type {
   AggregatorReceivableRow,
   GstDayRow,
@@ -88,7 +88,7 @@ export async function getRegister(
   to: string,
 ): Promise<RegisterRow[]> {
   if (key === 'purchase') {
-    return sql<RegisterRow[]>`
+    return tsql<RegisterRow[]>`
       select bill_date::text as entry_date, doc_no, 'Purchase' as kind,
              vendor as party,
              trim(both ' · ' from coalesce(bill_no, '') || ' · ' || coalesce(gstin, '')) as narration,
@@ -104,7 +104,7 @@ export async function getRegister(
     // Sales are money IN, so they sit in the credit column. taxable_value
     // and tax_collected stay separate on the screen; the register total is
     // the gross, which is what actually arrived.
-    return sql<RegisterRow[]>`
+    return tsql<RegisterRow[]>`
       select business_date::text as entry_date, null as doc_no, 'Sales' as kind,
              channel as party,
              ('taxable ' || taxable_value::text || ' · tax ' || tax_collected::text) as narration,
@@ -117,7 +117,7 @@ export async function getRegister(
   }
 
   if (key === 'cash' || key === 'bank') {
-    return sql<RegisterRow[]>`
+    return tsql<RegisterRow[]>`
       ${sql.unsafe(MOVEMENT_SELECT)}
       where mm.restaurant_id = ${restaurantId}
         and mm.move_date between ${from}::date and ${to}::date
@@ -126,7 +126,7 @@ export async function getRegister(
   }
 
   const kinds = MOVEMENT_KINDS[key]
-  return sql<RegisterRow[]>`
+  return tsql<RegisterRow[]>`
     ${sql.unsafe(MOVEMENT_SELECT)}
     where mm.restaurant_id = ${restaurantId}
       and mm.move_date between ${from}::date and ${to}::date
@@ -144,7 +144,7 @@ export async function getVendorStatement(
   from: string,
   to: string,
 ): Promise<VendorStatementRow[]> {
-  return sql<VendorStatementRow[]>`
+  return tsql<VendorStatementRow[]>`
     select code, name, gstin, opening_balance::text as opening_balance,
            move_date::text as move_date, kind, doc_no,
            coalesce(narration, '') as narration,
@@ -156,7 +156,7 @@ export async function getVendorStatement(
 }
 
 export async function getAggregatorReceivable(restaurantId: string): Promise<AggregatorReceivableRow[]> {
-  return sql<AggregatorReceivableRow[]>`
+  return tsql<AggregatorReceivableRow[]>`
     select partner, agreed_commission_pct::text as agreed_commission_pct,
            gross_billed::text as gross_billed, received::text as received,
            outstanding::text as outstanding, last_settled::text as last_settled
@@ -174,7 +174,7 @@ export async function getGstDays(
   from: string,
   to: string,
 ): Promise<GstDayRow[]> {
-  return sql<GstDayRow[]>`
+  return tsql<GstDayRow[]>`
     select business_date::text as business_date, food_bev::text as food_bev,
            gst_collected::text as gst_collected, service_charge::text as service_charge,
            container::text as container, effective_gst_pct::text as effective_gst_pct
@@ -192,7 +192,7 @@ export async function getInputTax(
   from: string,
   to: string,
 ): Promise<{ taxable: string; tax: string; bills: number }> {
-  const [row] = await sql<{ taxable: string; tax: string; bills: number }[]>`
+  const [row] = await tsql<{ taxable: string; tax: string; bills: number }[]>`
     select coalesce(sum(taxable_value), 0)::text as taxable,
            coalesce(sum(gst_total), 0)::text as tax,
            count(*)::int as bills
@@ -207,7 +207,7 @@ export async function listWithholdings(
   restaurantId: string,
   limit = 100,
 ): Promise<WithholdingRow[]> {
-  return sql<WithholdingRow[]>`
+  return tsql<WithholdingRow[]>`
     select id, wh_date::text as wh_date, entity_type, party, regime_code,
            base_amount::text as base_amount,
            rate_pct::text as rate_pct,
@@ -224,7 +224,7 @@ export async function listWithholdings(
 /** A LIABILITY, not income: money collected on behalf of the staff, less
  *  what has been handed to them. The view states all three figures. */
 export async function getStaffFundBalance(restaurantId: string): Promise<StaffFundBalance> {
-  const [row] = await sql<StaffFundBalance[]>`
+  const [row] = await tsql<StaffFundBalance[]>`
     select collected::text as collected, distributed::text as distributed,
            owed_to_staff::text as owed_to_staff
     from staff_fund_balance

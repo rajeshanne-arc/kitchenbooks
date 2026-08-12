@@ -8,7 +8,7 @@
 // from what actually left the store.
 
 import { z } from 'zod'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { getList } from '@/server/settings'
@@ -60,7 +60,7 @@ export async function saveCateringEvent(raw: SaveCateringEventInput): Promise<Sa
       }
     }
 
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       insert into catering_events (restaurant_id, event_date, name, customer, contact, covers,
                                    revenue_collected, payment_mode, note, entered_by)
       values (${rid}, ${input.date}, ${input.name},
@@ -94,7 +94,7 @@ export async function updateCateringRevenue(
       throw new CateringError('Revenue must be a plain amount')
     }
     const restaurant = await getRestaurant()
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update catering_events set
         revenue_collected = ${revenueCollected === '' ? '0' : revenueCollected}::numeric,
         payment_mode = ${paymentMode === '' ? null : paymentMode}
@@ -127,7 +127,7 @@ export async function addCateringExpense(
     const event = await getCateringEvent(rid, input.cateringId)
     if (!event) throw new CateringError('That event does not exist')
 
-    await sql`
+    await tsql`
       insert into catering_expenses (catering_id, description, amount, paid_via)
       values (${input.cateringId}, ${input.description === '' ? null : input.description},
               ${input.amount}, ${input.paidVia === '' ? null : input.paidVia})`

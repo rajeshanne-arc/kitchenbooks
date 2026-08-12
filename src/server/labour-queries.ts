@@ -4,7 +4,7 @@
 // from the attendance_current view (latest row per staff per day wins);
 // money figures come from labour_cost_by_section / section_costs.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type { DaySheetRow, SectionCostRow, StaffRow } from '@/lib/types'
 
 export const DEPT_ORDER = ['Management', 'Support', 'Kitchen', 'Service', 'Bar'] as const
@@ -30,14 +30,14 @@ const ROSTER_ORDER = `
            st.name asc`
 
 export async function listRoster(restaurantId: string): Promise<StaffRow[]> {
-  return sql<StaffRow[]>`
+  return tsql<StaffRow[]>`
     ${sql.unsafe(STAFF_SELECT)}
     where st.restaurant_id = ${restaurantId}
     ${sql.unsafe(ROSTER_ORDER)}`
 }
 
 export async function getStaffDetail(restaurantId: string, id: string): Promise<StaffRow | null> {
-  const rows = await sql<StaffRow[]>`
+  const rows = await tsql<StaffRow[]>`
     ${sql.unsafe(STAFF_SELECT)}
     where st.restaurant_id = ${restaurantId} and st.id = ${id}`
   return rows[0] ?? null
@@ -45,7 +45,7 @@ export async function getStaffDetail(restaurantId: string, id: string): Promise<
 
 /** Active staff for the reports-to picker (roster order, small list) */
 export async function listActiveStaff(restaurantId: string): Promise<Pick<StaffRow, 'id' | 'code' | 'name'>[]> {
-  return sql<Pick<StaffRow, 'id' | 'code' | 'name'>[]>`
+  return tsql<Pick<StaffRow, 'id' | 'code' | 'name'>[]>`
     select st.id, st.code, st.name
     from staff st
     left join sections s on s.id = st.section_id
@@ -59,7 +59,7 @@ export async function listActiveStaff(restaurantId: string): Promise<Pick<StaffR
  * rows for that date — corrections are visible, never hidden.
  */
 export async function getDaySheet(restaurantId: string, date: string): Promise<DaySheetRow[]> {
-  return sql<DaySheetRow[]>`
+  return tsql<DaySheetRow[]>`
     select st.id as staff_id, st.code, st.name, st.designation,
            s.name as section_name, s.dept_group, st.employment_type,
            ac.status as effective,
@@ -80,7 +80,7 @@ export async function getDaySheet(restaurantId: string, date: string): Promise<D
  * and margin come straight from section_costs (fed by mapped POS lines);
  * the '—' row carries both unassigned labour and unmapped sales — loud. */
 export async function getSectionCosts(restaurantId: string, monthStart: string): Promise<SectionCostRow[]> {
-  const rows = await sql<SectionCostRow[]>`
+  const rows = await tsql<SectionCostRow[]>`
     select s.code as section_code, s.name as section_name, s.dept_group,
            coalesce(sc.consumption, 0)::text as consumption,
            coalesce(sc.labour, 0)::text as labour,
@@ -97,7 +97,7 @@ export async function getSectionCosts(restaurantId: string, monthStart: string):
     where s.restaurant_id = ${restaurantId} and s.status = 'active'
     order by array_position(array['Management','Support','Kitchen','Service','Bar'], s.dept_group) asc,
              s.sort_order asc`
-  const unassigned = await sql<SectionCostRow[]>`
+  const unassigned = await tsql<SectionCostRow[]>`
     select sc.section_code, sc.section_name, null as dept_group,
            sc.consumption::text as consumption, sc.labour::text as labour, sc.total_cost::text as total_cost,
            sc.sales::text as sales, sc.margin::text as margin,

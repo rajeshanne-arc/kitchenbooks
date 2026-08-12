@@ -2,7 +2,7 @@
 // activity log. Every one reads a view the migration already publishes —
 // nothing here computes a figure the database has not already stated.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import type {
   ActivityRow,
   CashHandoverRow,
@@ -19,7 +19,7 @@ export async function getGstServiceByDay(
   from: string,
   to: string,
 ): Promise<GstServiceRow[]> {
-  return sql<GstServiceRow[]>`
+  return tsql<GstServiceRow[]>`
     select business_date::text as business_date,
            coalesce(food_bev, 0)::text as food_bev,
            coalesce(gst_collected, 0)::text as gst_collected,
@@ -38,7 +38,7 @@ export async function getCashHandovers(
   from: string,
   to: string,
 ): Promise<CashHandoverRow[]> {
-  return sql<CashHandoverRow[]>`
+  return tsql<CashHandoverRow[]>`
     select close_date::text as close_date, person, amount::text as amount
     from cash_handovers
     where restaurant_id = ${restaurantId}
@@ -49,7 +49,7 @@ export async function getCashHandovers(
 /** Cash tied up on the shelf: on hand, what it is worth, how long since
  *  anybody bought it. */
 export async function getSlowMovingStock(restaurantId: string): Promise<SlowMovingRow[]> {
-  return sql<SlowMovingRow[]>`
+  return tsql<SlowMovingRow[]>`
     select item_id, code, name, category,
            on_hand_qty::text as on_hand_qty, purchase_unit,
            on_hand_value::text as on_hand_value,
@@ -66,7 +66,7 @@ export async function getDailyPurchases(
   from: string,
   to: string,
 ): Promise<DailyPurchaseRow[]> {
-  return sql<DailyPurchaseRow[]>`
+  return tsql<DailyPurchaseRow[]>`
     select bill_date::text as bill_date, vendor_name, vendor_code,
            bills::int as bills, spend::text as spend
     from daily_purchases
@@ -82,7 +82,7 @@ export async function getActivityLog(
   opts: { from: string; to: string; person?: string; what?: string; limit?: number },
 ): Promise<ActivityRow[]> {
   const { from, to, person, what, limit = 300 } = opts
-  return sql<ActivityRow[]>`
+  return tsql<ActivityRow[]>`
     select what, id, created_at::text as created_at, entered_by,
            on_date, amount::text as amount, is_reversal
     from activity_log
@@ -100,10 +100,10 @@ export async function getActivityFacets(
   restaurantId: string,
 ): Promise<{ people: string[]; kinds: string[] }> {
   const [people, kinds] = await Promise.all([
-    sql<{ v: string }[]>`
+    tsql<{ v: string }[]>`
       select distinct entered_by as v from activity_log
       where restaurant_id = ${restaurantId} and entered_by is not null order by 1`,
-    sql<{ v: string }[]>`
+    tsql<{ v: string }[]>`
       select distinct what as v from activity_log
       where restaurant_id = ${restaurantId} order by 1`,
   ])

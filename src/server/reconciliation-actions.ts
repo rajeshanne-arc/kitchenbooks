@@ -20,7 +20,7 @@
 // decided which of our rows it was.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
@@ -248,7 +248,7 @@ export async function matchStatementLine(raw: MatchInput): Promise<ReconcileResu
       )
     }
 
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       insert into reconciliation_matches (restaurant_id, statement_line_id, entity_type, entity_id,
                                           matched_by, note)
       values (${restaurant.id}, ${input.statementLineId}, ${input.entityType}, ${input.entityId},
@@ -256,7 +256,7 @@ export async function matchStatementLine(raw: MatchInput): Promise<ReconcileResu
       returning id`
     if (!row) throw new ReconcileError('The match could not be saved')
 
-    const [saved] = await sql<{ id: string }[]>`
+    const [saved] = await tsql<{ id: string }[]>`
       select m.id from reconciliation_matches m where m.id = ${row.id}`
     if (!saved) throw new ReconcileError('Could not read the match back after saving')
     return { ok: true }
@@ -290,7 +290,7 @@ export async function unmatchStatementLine(statementLineId: string): Promise<Rec
     await actor(['accountant', 'owner'], 'Unmatching a statement line')
     const restaurant = await getRestaurant()
 
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       delete from reconciliation_matches
       where restaurant_id = ${restaurant.id} and statement_line_id = ${statementLineId}
       returning id`

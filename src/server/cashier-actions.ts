@@ -11,7 +11,7 @@
 // here re-adds it.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
@@ -611,7 +611,7 @@ export async function updatePartner(id: string, raw: SavePartnerInput): Promise<
     const rid = restaurant.id
 
     // Only the column-granted fields ever appear in this SET.
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update partners set
         name = ${input.name},
         kind = ${input.kind},

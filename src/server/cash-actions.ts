@@ -10,7 +10,7 @@
 // the ladder view already filters those out; code must never re-add them.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
@@ -211,7 +211,7 @@ export async function setFirstOpening(raw: { amount: string }): Promise<SetOpeni
         on conflict (restaurant_id, key) do update set value = excluded.value`
     })
 
-    const [row] = await sql<{ value: string | null }[]>`
+    const [row] = await tsql<{ value: string | null }[]>`
       select value from settings where restaurant_id = ${rid} and key = 'first_opening_cash'`
     if (!row?.value) throw new CashError('Could not verify the setting after save')
     return { ok: true, value: row.value }
@@ -256,7 +256,10 @@ export async function closeDay(raw: CloseDayInput): Promise<CloseDayResult> {
     await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       // The chain law re-checked inside the lock: HARD STOP if D-1 is open.
-      const prefill = await getClosePrefill(rid, input.date)
+      // `tx` is lent so the re-read happens IN this transaction rather than
+      // opening a second one on a second connection while this one holds the
+      // advisory lock.
+      const prefill = await getClosePrefill(rid, input.date, tx as unknown as typeof tsql)
       if (!prefill.ok) throw new CashError(prefill.error)
       await tx`
         insert into day_closes (restaurant_id, close_date, opening_cash, extra_cash_in,

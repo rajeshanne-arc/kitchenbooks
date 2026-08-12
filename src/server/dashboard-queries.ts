@@ -2,7 +2,7 @@
 // able to point at its source. Nothing here recomputes what a view already
 // states; nulls stay null so honesty pills render instead of zeros.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import { getSalesDay, yesterdayIST } from '@/server/sales-queries'
 import type {
   EntryPulse,
@@ -21,7 +21,7 @@ export type YesterdayCard = {
 export async function getYesterday(restaurantId: string): Promise<YesterdayCard> {
   const date = yesterdayIST()
   const sales = await getSalesDay(restaurantId, date)
-  const diff = await sql<{ difference: string }[]>`
+  const diff = await tsql<{ difference: string }[]>`
     select difference::text as difference from day_close_ladder
     where restaurant_id = ${restaurantId} and close_date = ${date}::date`
   return { date, sales, difference: diff[0]?.difference ?? null }
@@ -34,19 +34,19 @@ export type OwedCard = {
 }
 
 export async function getOwed(restaurantId: string): Promise<OwedCard> {
-  const vendors = await sql<{ name: string; balance: string }[]>`
+  const vendors = await tsql<{ name: string; balance: string }[]>`
     select v.name, d.balance::text as balance
     from vendor_dues d
     join vendors v on v.id = d.vendor_id
     where v.restaurant_id = ${restaurantId} and d.balance <> 0
     order by d.balance desc
     limit 5`
-  const [tot] = await sql<{ total: string }[]>`
+  const [tot] = await tsql<{ total: string }[]>`
     select coalesce(sum(d.balance), 0)::text as total
     from vendor_dues d
     join vendors v on v.id = d.vendor_id
     where v.restaurant_id = ${restaurantId}`
-  const owners = await sql<{ person: string; balance: string }[]>`
+  const owners = await tsql<{ person: string; balance: string }[]>`
     select person, balance::text as balance
     from owners_owed
     where restaurant_id = ${restaurantId} and balance <> 0
@@ -66,7 +66,7 @@ export async function getUnmappedSummary(
   from: string,
   to: string,
 ): Promise<UnmappedCard> {
-  const [row] = await sql<{ items: number; revenue: string }[]>`
+  const [row] = await tsql<{ items: number; revenue: string }[]>`
     select count(*)::int as items, coalesce(sum(revenue), 0)::text as revenue
     from unmapped_pos_items
     where restaurant_id = ${restaurantId}
@@ -83,13 +83,13 @@ export type WasteCard = {
 /** Store + kitchen waste for one month; reversal pairs net themselves out
  * of the sums. Top reasons across both logs. */
 export async function getWasteMonth(restaurantId: string, monthStart: string): Promise<WasteCard> {
-  const [store] = await sql<{ v: string }[]>`
+  const [store] = await tsql<{ v: string }[]>`
     select coalesce(sum(value), 0)::text as v from wastage
     where restaurant_id = ${restaurantId} and date_trunc('month', waste_date)::date = ${monthStart}::date`
-  const [kitchen] = await sql<{ v: string }[]>`
+  const [kitchen] = await tsql<{ v: string }[]>`
     select coalesce(sum(value), 0)::text as v from kitchen_wastage
     where restaurant_id = ${restaurantId} and date_trunc('month', waste_date)::date = ${monthStart}::date`
-  const reasons = await sql<{ reason: string; value: string }[]>`
+  const reasons = await tsql<{ reason: string; value: string }[]>`
     select reason, sum(value)::text as value from (
       select reason, value from wastage
       where restaurant_id = ${restaurantId} and date_trunc('month', waste_date)::date = ${monthStart}::date
@@ -108,7 +108,7 @@ export async function getWasteMonth(restaurantId: string, monthStart: string): P
 export type StockAlarmRow = { code: string; name: string; on_hand_qty: string; purchase_unit: string }
 
 export async function getStockAlarms(restaurantId: string): Promise<StockAlarmRow[]> {
-  return sql<StockAlarmRow[]>`
+  return tsql<StockAlarmRow[]>`
     select code, name, on_hand_qty::text as on_hand_qty, purchase_unit
     from stock_on_hand
     where restaurant_id = ${restaurantId} and on_hand_qty < 0
@@ -120,7 +120,7 @@ export async function getUnknownStatusCount(
   from: string,
   to: string,
 ): Promise<number> {
-  const [row] = await sql<{ n: number }[]>`
+  const [row] = await tsql<{ n: number }[]>`
     select count(*)::int as n from sales_current
     where restaurant_id = ${restaurantId} and status_class = 'unknown'
       and business_date between ${from}::date and ${to}::date`
@@ -133,7 +133,7 @@ export async function getMissingCloses(
   to: string,
   limit = 14,
 ): Promise<string[]> {
-  const rows = await sql<{ business_date: string }[]>`
+  const rows = await tsql<{ business_date: string }[]>`
     select business_date::text as business_date from missing_closes
     where restaurant_id = ${restaurantId}
       and business_date between ${from}::date and ${to}::date
@@ -155,7 +155,7 @@ export async function getSalesSeries(
   from: string,
   to: string,
 ): Promise<SalesSeriesPoint[]> {
-  return sql<SalesSeriesPoint[]>`
+  return tsql<SalesSeriesPoint[]>`
     select business_date::text as date, revenue::text as revenue, orders, covers
     from sales_by_day
     where restaurant_id = ${restaurantId}
@@ -177,7 +177,7 @@ export async function getSettlementGap(
   from: string,
   to: string,
 ): Promise<SettlementGapRow[]> {
-  return sql<SettlementGapRow[]>`
+  return tsql<SettlementGapRow[]>`
     select ps.partner,
            coalesce(sum(ps.billed_by_us), 0)::text as billed,
            coalesce(sum(ps.claimed_by_them), 0)::text as claimed,
@@ -203,13 +203,13 @@ export async function getSettlementGap(
 /** Store + kitchen waste across the period, by reason. Reversal pairs net
  * themselves out of the sums. */
 export async function getWasteRange(restaurantId: string, from: string, to: string): Promise<WasteCard> {
-  const [store] = await sql<{ v: string }[]>`
+  const [store] = await tsql<{ v: string }[]>`
     select coalesce(sum(value), 0)::text as v from wastage
     where restaurant_id = ${restaurantId} and waste_date between ${from}::date and ${to}::date`
-  const [kitchen] = await sql<{ v: string }[]>`
+  const [kitchen] = await tsql<{ v: string }[]>`
     select coalesce(sum(value), 0)::text as v from kitchen_wastage
     where restaurant_id = ${restaurantId} and waste_date between ${from}::date and ${to}::date`
-  const reasons = await sql<{ reason: string; value: string }[]>`
+  const reasons = await tsql<{ reason: string; value: string }[]>`
     select reason, sum(value)::text as value from (
       select reason, value from wastage
       where restaurant_id = ${restaurantId} and waste_date between ${from}::date and ${to}::date
@@ -232,7 +232,7 @@ export async function getSectionCostsRange(
   restaurantId: string,
   months: string[],
 ): Promise<SectionCostRangeRow[]> {
-  return sql<SectionCostRangeRow[]>`
+  return tsql<SectionCostRangeRow[]>`
     select s.code as section_code, s.name as section_name, s.dept_group,
            coalesce(sum(sc.total_cost), 0)::text as total_cost,
            coalesce(sum(sc.sales), 0)::text as sales,
@@ -253,7 +253,7 @@ export async function getSectionCostsRange(
  * dashboard honest: with two bills and no sales the page must say so plainly
  * rather than draw nine zeroes and imply a catastrophic month. */
 export async function getEntryPulse(restaurantId: string, from: string, to: string): Promise<EntryPulse> {
-  const [row] = await sql<EntryPulse[]>`
+  const [row] = await tsql<EntryPulse[]>`
     select
       (select count(*)::int from purchases
         where restaurant_id = ${restaurantId} and bill_date between ${from}::date and ${to}::date
@@ -281,7 +281,7 @@ export type StaffCard = {
 }
 
 export async function getStaffCard(restaurantId: string, today: string): Promise<StaffCard> {
-  const [row] = await sql<StaffCard[]>`
+  const [row] = await tsql<StaffCard[]>`
     select
       (select count(*)::int from staff where restaurant_id = ${restaurantId} and status = 'active') as "activeStaff",
       (select count(*)::int from staff

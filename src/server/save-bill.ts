@@ -8,7 +8,7 @@
 // database (purchases row + vendor_dues view), never echoed from the client.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
@@ -104,12 +104,12 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
       if (l.item.kind === 'starter') unitCodes.add(l.item.unit)
     }
     if (catCodes.size > 0) {
-      const found = await sql<{ code: string }[]>`
+      const found = await tsql<{ code: string }[]>`
         select code from categories where code = any(${[...catCodes]}) and status = 'active'`
       for (const c of catCodes) if (!found.some((f) => f.code === c)) throw new BillError(`Unknown category “${c}”`)
     }
     if (unitCodes.size > 0) {
-      const found = await sql<{ code: string }[]>`select code from units where code = any(${[...unitCodes]})`
+      const found = await tsql<{ code: string }[]>`select code from units where code = any(${[...unitCodes]})`
       for (const u of unitCodes) if (!found.some((f) => f.code === u)) throw new BillError(`Unknown unit “${u}”`)
     }
 
@@ -219,7 +219,7 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
 
     // Post-commit verification: the numbers shown on screen are the ones the
     // database now holds, and the stored pieces reconcile exactly.
-    const [check] = await sql<
+    const [check] = await tsql<
       {
         doc_no: string | null
         bill_date: string
@@ -251,7 +251,7 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
     if (!check.transport_ok) throw new BillError('Verification failed: transport split does not sum to the transport charge')
     if (!check.goods_ok) throw new BillError('Verification failed: stored line amounts do not sum to the goods total')
 
-    const [vendor] = await sql<{ code: string; name: string; balance: string; purchased: string; paid: string }[]>`
+    const [vendor] = await tsql<{ code: string; name: string; balance: string; purchased: string; paid: string }[]>`
       select v.code, v.name,
              coalesce(d.balance, 0)::text as balance,
              coalesce(d.purchased, 0)::text as purchased,

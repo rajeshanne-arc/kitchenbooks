@@ -5,7 +5,7 @@
 // NO MENU PRICE ANYWHERE. A catering job is costed from what actually left
 // the store, not from what the dishes would have sold for.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type { CateringEventDetail, CateringSummaryRow } from '@/lib/types'
 
 const SUMMARY = `
@@ -18,7 +18,7 @@ const SUMMARY = `
   from catering_summary`
 
 export async function listCateringEvents(restaurantId: string, limit = 40): Promise<CateringSummaryRow[]> {
-  return sql<CateringSummaryRow[]>`
+  return tsql<CateringSummaryRow[]>`
     ${sql.unsafe(SUMMARY)}
     where restaurant_id = ${restaurantId}
     order by event_date desc
@@ -29,17 +29,17 @@ export async function getCateringEvent(
   restaurantId: string,
   id: string,
 ): Promise<CateringEventDetail | null> {
-  const rows = await sql<CateringSummaryRow[]>`
+  const rows = await tsql<CateringSummaryRow[]>`
     ${sql.unsafe(SUMMARY)}
     where restaurant_id = ${restaurantId} and catering_id = ${id}`
   const head = rows[0]
   if (!head) return null
 
-  const [extra] = await sql<{ contact: string | null; payment_mode: string | null; note: string | null }[]>`
+  const [extra] = await tsql<{ contact: string | null; payment_mode: string | null; note: string | null }[]>`
     select contact, payment_mode, note from catering_events
     where id = ${id} and restaurant_id = ${restaurantId}`
 
-  const issues = await sql<
+  const issues = await tsql<
     { id: string; issue_date: string; section_name: string; line_count: number; value: string }[]
   >`
     select i.id, i.issue_date::text as issue_date, s.name as section_name,
@@ -52,7 +52,7 @@ export async function getCateringEvent(
     group by i.id, i.issue_date, s.name
     order by i.issue_date asc`
 
-  const expenses = await sql<
+  const expenses = await tsql<
     { id: string; description: string | null; amount: string; paid_via: string | null }[]
   >`
     select id, description, amount::text as amount, paid_via
@@ -66,7 +66,7 @@ export async function getCateringEvent(
 export async function listCateringForPicker(
   restaurantId: string,
 ): Promise<{ id: string; name: string; event_date: string }[]> {
-  return sql<{ id: string; name: string; event_date: string }[]>`
+  return tsql<{ id: string; name: string; event_date: string }[]>`
     select id, name, event_date::text as event_date
     from catering_events
     where restaurant_id = ${restaurantId} and reverses_id is null

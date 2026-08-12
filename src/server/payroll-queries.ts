@@ -13,7 +13,7 @@
 // applied exactly that since phase 5; the draft below reproduces it
 // verbatim rather than inventing a second arithmetic that could drift.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type {
   AdvanceOutstanding,
   PayrollDraftLine,
@@ -33,7 +33,7 @@ const PAY_FACTOR = `
   end`
 
 export async function listPayrollRuns(restaurantId: string, limit = 24): Promise<PayrollRunRow[]> {
-  return sql<PayrollRunRow[]>`
+  return tsql<PayrollRunRow[]>`
     select r.id, r.doc_no, r.period_start::text as period_start, r.period_end::text as period_end,
            r.status, r.prepared_by, r.prepared_at::text as prepared_at,
            r.approved_by, r.approved_at::text as approved_at, r.note,
@@ -50,7 +50,7 @@ export async function listPayrollRuns(restaurantId: string, limit = 24): Promise
 }
 
 export async function getPayrollRun(restaurantId: string, id: string): Promise<PayrollRunRow | null> {
-  const rows = await sql<PayrollRunRow[]>`
+  const rows = await tsql<PayrollRunRow[]>`
     select r.id, r.doc_no, r.period_start::text as period_start, r.period_end::text as period_end,
            r.status, r.prepared_by, r.prepared_at::text as prepared_at,
            r.approved_by, r.approved_at::text as approved_at, r.note,
@@ -69,7 +69,7 @@ export async function getPayrollRun(restaurantId: string, id: string): Promise<P
  *  stored; nothing on the run screen recomputes them, because a run someone
  *  approved must still say next year what it said the day it was approved. */
 export async function getPayrollLines(runId: string): Promise<PayrollLineRow[]> {
-  return sql<PayrollLineRow[]>`
+  return tsql<PayrollLineRow[]>`
     select pl.id, pl.staff_id, s.code as staff_code, s.name as staff_name,
            sec.name as section_name, s.grade,
            pl.days_in_period::text as days_in_period, pl.days_paid::text as days_paid,
@@ -104,7 +104,7 @@ export async function getPayrollDraft(
   from: string,
   to: string,
 ): Promise<PayrollDraftLine[]> {
-  return sql<PayrollDraftLine[]>`
+  return tsql<PayrollDraftLine[]>`
     with days as (
       select (${to}::date - ${from}::date + 1)::numeric as n
     ),
@@ -158,7 +158,7 @@ export async function getPayrollDraft(
 /** Advances still owed, per person — the figure the draft offers as
  *  recovery and the Advances panel shows on its own. */
 export async function getOutstandingAdvances(restaurantId: string): Promise<AdvanceOutstanding[]> {
-  return sql<AdvanceOutstanding[]>`
+  return tsql<AdvanceOutstanding[]>`
     with advanced as (
       select staff_id, sum(amount) as total, max(adv_date) as last_advance
       from staff_advances where restaurant_id = ${restaurantId} group by staff_id
@@ -191,7 +191,7 @@ export async function getOutstandingAdvances(restaurantId: string): Promise<Adva
  * is why this lives here rather than beside the roster.
  */
 export async function listStaffIdentities(restaurantId: string): Promise<StaffIdentity[]> {
-  return sql<StaffIdentity[]>`
+  return tsql<StaffIdentity[]>`
     select s.id, s.code, s.name, s.designation, sec.name as section_name,
            s.employment_type, s.pay_mode,
            s.base_salary::text as base_salary,

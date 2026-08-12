@@ -2180,3 +2180,44 @@ data; it would take the product down while looking like an empty database.
 Those reads must move inside a tenant-announcing transaction before Phase
 2(b). That is the remaining work, and it is mechanical rather than
 delicate.
+
+### Every read now announces its tenant — RLS is safe to enable
+
+`tsql` is `txn` for a single statement: one read, inside one transaction,
+with `set local app.restaurant_id` first. Every read and every write in
+`src/server` goes through it or through `txn`. **Zero bare statements
+remain**, and two gates hold that: one fails if a bare `sql\`` reappears, one
+fails if a `tsql` is ever nested inside a `txn()` callback — which would open
+a transaction while holding a connection and wait for a second the first is
+blocking, the `max: 4` deadlock in a new costume.
+
+Both gates strip `${…}` holes first. A fragment — ``${cond ? sql`and x = ${y}`
+: sql``}`` — is a VALUE interpolated into another statement, not a query, and
+it always lives inside a hole.
+
+Measured, not assumed: three concurrent page renders (24 reads) settle at
+~305ms sustained, and 20 concurrent reads hold ~245ms over six rounds.
+
+**Three things the sweep found that a grep would not have:**
+
+1. **`getSessionUser` is the one read that cannot ask the session which
+   tenant it is in, because it IS the session.** Left bare it returns zero
+   rows under RLS and every user appears signed out; routed through `txn` it
+   recurses, because `txn` resolves a null tenant by calling it. It now
+   announces the COOKIE'S `t` claim and then checks the row agrees. That is
+   not trusting the claim — the token is HMAC-signed so a forged `t` never
+   gets that far, and the row's own `restaurant_id` is compared immediately
+   after. **The claim narrows the read; the row decides.**
+
+2. **Writes fail the same way as reads under RLS** and a read sweep
+   correctly leaves them alone. Forty-two `update … returning id` and single
+   inserts sat outside any transaction; with a NULL GUC they match zero rows
+   and every call site reads that as absence — "Vendor not found", "User not
+   found" — on every edit. Converted.
+
+3. **`closeDay` re-read the close prefill from INSIDE its advisory lock**,
+   which after the sweep meant a second transaction on a second connection
+   while the first held one plus the lock. `getClosePrefill` now takes an
+   optional handle so the caller lends its own `tx`. That removes the
+   starvation path AND makes the comment literally true: the chain law is
+   now re-checked in the same transaction as the write, not beside it.

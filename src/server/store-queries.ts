@@ -3,7 +3,7 @@
 // section_consumption (monthly section totals). Event aggregates (an issue's
 // own total) sum the stored generated `value` column — never recomputed.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type {
   ChecklistRow,
   IndentPrefill,
@@ -44,7 +44,7 @@ export function monthStartIST(): string {
  *  `receives_stock` is the filter, exactly as `codes_dishes` gates the dish
  *  coder: a fact about the department, set once, visible on its own screen. */
 export async function getSections(restaurantId: string): Promise<Section[]> {
-  return sql<Section[]>`
+  return tsql<Section[]>`
     select id, code, name, sort_order, status, dept_group, receives_stock
     from sections
     where restaurant_id = ${restaurantId} and status = 'active' and receives_stock
@@ -54,7 +54,7 @@ export async function getSections(restaurantId: string): Promise<Section[]> {
 /** Every active department, receiving or not — for screens that ADMINISTER
  *  departments rather than issue to them. */
 export async function getAllSections(restaurantId: string): Promise<Section[]> {
-  return sql<Section[]>`
+  return tsql<Section[]>`
     select id, code, name, sort_order, status, dept_group, receives_stock
     from sections
     where restaurant_id = ${restaurantId} and status = 'active'
@@ -64,7 +64,7 @@ export async function getAllSections(restaurantId: string): Promise<Section[]> {
 export async function searchIssuableItems(restaurantId: string, q: string): Promise<IssuableItemHit[]> {
   const like = `%${q}%`
   const prefix = `${q}%`
-  return sql<IssuableItemHit[]>`
+  return tsql<IssuableItemHit[]>`
     select i.id, i.code, i.name, c.name as category_name, i.purchase_unit, u.name as unit_name,
            coalesce(s.on_hand_qty, 0)::text as on_hand_qty,
            (ic.issue_cost is not null) as has_cost
@@ -81,7 +81,7 @@ export async function searchIssuableItems(restaurantId: string, q: string): Prom
 
 export async function listStock(restaurantId: string, q: string): Promise<StockRow[]> {
   const like = `%${q}%`
-  return sql<StockRow[]>`
+  return tsql<StockRow[]>`
     select s.item_id, s.code, s.name, c.name as category_name, s.purchase_unit, i.status,
            s.purchased_qty::text as purchased_qty,
            s.issued_qty::text as issued_qty,
@@ -98,14 +98,14 @@ export async function listStock(restaurantId: string, q: string): Promise<StockR
 }
 
 export async function stockTotalValue(restaurantId: string): Promise<string> {
-  const rows = await sql<{ total: string }[]>`
+  const rows = await tsql<{ total: string }[]>`
     select coalesce(sum(on_hand_value), 0)::text as total
     from stock_on_hand where restaurant_id = ${restaurantId}`
   return rows[0]?.total ?? '0'
 }
 
 export async function getSectionsWithMonth(restaurantId: string, monthStart: string): Promise<SectionMonthRow[]> {
-  return sql<SectionMonthRow[]>`
+  return tsql<SectionMonthRow[]>`
     select s.id, s.code, s.name, s.sort_order, s.status,
            coalesce(sc.consumed_value, 0)::text as consumed_value
     from sections s
@@ -116,7 +116,7 @@ export async function getSectionsWithMonth(restaurantId: string, monthStart: str
 }
 
 export async function getChecklist(restaurantId: string, dateStr: string): Promise<ChecklistRow[]> {
-  return sql<ChecklistRow[]>`
+  return tsql<ChecklistRow[]>`
     select s.id, s.code, s.name, s.sort_order,
            (select count(*)::int from issues i
             where i.section_id = s.id and i.issue_date = ${dateStr} and i.reverses_id is null
@@ -137,14 +137,14 @@ const ISSUE_SELECT = `
   join sections s on s.id = i.section_id`
 
 export async function getIssue(restaurantId: string, id: string): Promise<IssueDetail | null> {
-  const rows = await sql<IssueDetail[]>`
+  const rows = await tsql<IssueDetail[]>`
     ${sql.unsafe(ISSUE_SELECT)}
     where i.restaurant_id = ${restaurantId} and i.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function getIssueLines(issueId: string): Promise<IssueLineRow[]> {
-  return sql<IssueLineRow[]>`
+  return tsql<IssueLineRow[]>`
     select il.id, il.item_id, it.code as item_code, it.name as item_name, it.purchase_unit,
            il.qty::text as qty, il.unit_cost::text as unit_cost, il.value::text as value
     from issue_lines il
@@ -167,14 +167,14 @@ const RETURN_SELECT = `
   join sections s on s.id = r.section_id`
 
 export async function getReturn(restaurantId: string, id: string): Promise<ReturnDetail | null> {
-  const rows = await sql<ReturnDetail[]>`
+  const rows = await tsql<ReturnDetail[]>`
     ${sql.unsafe(RETURN_SELECT)}
     where r.restaurant_id = ${restaurantId} and r.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function getReturnLines(returnId: string): Promise<ReturnLineRow[]> {
-  return sql<ReturnLineRow[]>`
+  return tsql<ReturnLineRow[]>`
     select rl.id, rl.item_id, it.code as item_code, it.name as item_name, it.purchase_unit,
            rl.qty::text as qty, rl.unit_cost::text as unit_cost, rl.value::text as value
     from return_lines rl
@@ -184,7 +184,7 @@ export async function getReturnLines(returnId: string): Promise<ReturnLineRow[]>
 }
 
 export async function getIssueVoidedBy(issueId: string): Promise<{ id: string } | null> {
-  const rows = await sql<{ id: string }[]>`select id from issues where reverses_id = ${issueId} limit 1`
+  const rows = await tsql<{ id: string }[]>`select id from issues where reverses_id = ${issueId} limit 1`
   return rows[0] ?? null
 }
 
@@ -198,19 +198,19 @@ const WASTAGE_SELECT = `
   join items it on it.id = w.item_id`
 
 export async function getWastage(restaurantId: string, id: string): Promise<WastageDetail | null> {
-  const rows = await sql<WastageDetail[]>`
+  const rows = await tsql<WastageDetail[]>`
     ${sql.unsafe(WASTAGE_SELECT)}
     where w.restaurant_id = ${restaurantId} and w.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function getWastageVoidedBy(wastageId: string): Promise<{ id: string } | null> {
-  const rows = await sql<{ id: string }[]>`select id from wastage where reverses_id = ${wastageId} limit 1`
+  const rows = await tsql<{ id: string }[]>`select id from wastage where reverses_id = ${wastageId} limit 1`
   return rows[0] ?? null
 }
 
 export async function listStoreLog(restaurantId: string, limit = 150): Promise<StoreLogRow[]> {
-  const issues = await sql<
+  const issues = await tsql<
     {
       id: string
       date: string
@@ -233,7 +233,7 @@ export async function listStoreLog(restaurantId: string, limit = 150): Promise<S
     where i.restaurant_id = ${restaurantId}
     order by i.issue_date desc, i.created_at desc
     limit ${limit}`
-  const waste = await sql<
+  const waste = await tsql<
     {
       id: string
       date: string
@@ -278,7 +278,7 @@ export async function getPurchaseSeries(
   from: string,
   to: string,
 ): Promise<{ date: string; total: string }[]> {
-  return sql<{ date: string; total: string }[]>`
+  return tsql<{ date: string; total: string }[]>`
     select bill_date::text as date, sum(bill_total)::text as total
     from purchases
     where restaurant_id = ${restaurantId} and bill_date between ${from}::date and ${to}::date
@@ -293,7 +293,7 @@ export async function getIssuesBySection(
   from: string,
   to: string,
 ): Promise<{ section: string; value: string }[]> {
-  return sql<{ section: string; value: string }[]>`
+  return tsql<{ section: string; value: string }[]>`
     select s.name as section, sum(l.value)::text as value
     from issue_lines l
     join issues i on i.id = l.issue_id
@@ -310,7 +310,7 @@ export async function getPaymentsTotal(
   from: string,
   to: string,
 ): Promise<{ total: string; count: number }> {
-  const [row] = await sql<{ total: string; count: number }[]>`
+  const [row] = await tsql<{ total: string; count: number }[]>`
     select coalesce(sum(p.amount), 0)::text as total, count(*)::int as count
     from payments p
     join vendors v on v.id = p.vendor_id
@@ -324,7 +324,7 @@ export async function getPurchasesByVendor(
   from: string,
   to: string,
 ): Promise<{ vendor: string; total: string }[]> {
-  return sql<{ vendor: string; total: string }[]>`
+  return tsql<{ vendor: string; total: string }[]>`
     select v.name as vendor, sum(p.bill_total)::text as total
     from purchases p
     join vendors v on v.id = p.vendor_id
@@ -341,7 +341,7 @@ export async function getPurchasesByVendor(
  * that is an empty answer, not a broken one, and the tab says so rather
  * than implying everything is well stocked. */
 export async function listReorderDue(restaurantId: string): Promise<ReorderRow[]> {
-  return sql<ReorderRow[]>`
+  return tsql<ReorderRow[]>`
     select item_id, code, name, category, purchase_unit,
            on_hand_qty::text as on_hand_qty,
            reorder_level::text as reorder_level,
@@ -355,7 +355,7 @@ export async function listReorderDue(restaurantId: string): Promise<ReorderRow[]
 }
 
 export async function countReorderDue(restaurantId: string): Promise<number> {
-  const [row] = await sql<{ n: number }[]>`
+  const [row] = await tsql<{ n: number }[]>`
     select count(*)::int as n from reorder_due where restaurant_id = ${restaurantId}`
   return row?.n ?? 0
 }
@@ -363,14 +363,14 @@ export async function countReorderDue(restaurantId: string): Promise<number> {
 /** How many items carry a reorder_level at all — the honesty denominator
  *  behind an empty Reorder tab. */
 export async function countItemsWithReorderLevel(restaurantId: string): Promise<number> {
-  const [row] = await sql<{ n: number }[]>`
+  const [row] = await tsql<{ n: number }[]>`
     select count(*)::int as n from items
     where restaurant_id = ${restaurantId} and status = 'active' and reorder_level is not null`
   return row?.n ?? 0
 }
 
 export async function countOpenIndents(restaurantId: string): Promise<number> {
-  const rows = await sql<{ n: number }[]>`
+  const rows = await tsql<{ n: number }[]>`
     select count(*)::int as n from open_indents where restaurant_id = ${restaurantId}`
   return rows[0]?.n ?? 0
 }
@@ -380,7 +380,7 @@ export async function listOpenIndents(
   sectionId?: string,
   session?: string,
 ): Promise<IndentRow[]> {
-  return sql<IndentRow[]>`
+  return tsql<IndentRow[]>`
     select i.id, i.indent_date::text as indent_date, i.section_id, i.session,
            s.code as section_code, s.name as section_name, i.status, i.note,
            i.entered_by, i.created_at::text as created_at,
@@ -397,7 +397,7 @@ export async function listOpenIndents(
  * drop into the issue form. Items retired or costless since the indent
  * still appear (has_cost false) so the store sees the full ask. */
 export async function getIndentPrefill(restaurantId: string, indentId: string): Promise<IndentPrefill | null> {
-  const rows = await sql<
+  const rows = await tsql<
     (Omit<IndentPrefill, 'lines'> & { status: string })[]
   >`
     select i.id, i.indent_date::text as indent_date, i.section_id, i.session,
@@ -406,7 +406,7 @@ export async function getIndentPrefill(restaurantId: string, indentId: string): 
     where i.restaurant_id = ${restaurantId} and i.id = ${indentId}`
   const head = rows[0]
   if (!head) return null
-  const lines = await sql<(IssuableItemHit & { qty: string })[]>`
+  const lines = await tsql<(IssuableItemHit & { qty: string })[]>`
     select it.id, it.code, it.name, c.name as category_name, it.purchase_unit, u.name as unit_name,
            coalesce(st.on_hand_qty, 0)::text as on_hand_qty,
            (ic.issue_cost is not null) as has_cost,
@@ -433,7 +433,7 @@ export async function getIndentPrefill(restaurantId: string, indentId: string): 
 
 export async function getStockSnaps(restaurantId: string, itemIds: string[]): Promise<StockSnap[]> {
   if (itemIds.length === 0) return []
-  return sql<StockSnap[]>`
+  return tsql<StockSnap[]>`
     select s.item_id, s.code, s.name, s.purchase_unit,
            s.on_hand_qty::text as on_hand_qty, s.on_hand_value::text as on_hand_value
     from stock_on_hand s
@@ -458,7 +458,7 @@ export async function getSectionConsumptionDaily(
   to: string,
   sectionCodes?: string[],
 ): Promise<SectionConsumptionDay[]> {
-  return sql<SectionConsumptionDay[]>`
+  return tsql<SectionConsumptionDay[]>`
     select section_code, section_name, move_date::text as move_date, session,
            consumed_value::text as consumed_value, movements::int as movements
     from section_consumption_daily

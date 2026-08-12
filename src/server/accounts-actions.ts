@@ -8,7 +8,7 @@
 // restaurant and wrong in a different way in every country.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { sql, tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getMoneyAccount } from '@/server/accounts-queries'
 import type { SaveMoneyAccountInput, SaveMoneyAccountResult } from '@/lib/types'
@@ -103,7 +103,7 @@ export async function updateMoneyAccount(
     const rid = restaurant.id
 
     if (input.isTill) {
-      const [taken] = await sql<{ name: string }[]>`
+      const [taken] = await tsql<{ name: string }[]>`
         select name from money_accounts
         where restaurant_id = ${rid} and is_till and status = 'active' and id <> ${id}`
       if (taken) throw tillTaken(taken.name)
@@ -112,7 +112,7 @@ export async function updateMoneyAccount(
     // kind is absent: an account's TYPE is what every register groups by,
     // and re-typing a bank as cash retroactively rewrites which column its
     // history sits in. Retire it and open a new one instead.
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update money_accounts set
         name = ${input.name},
         identifier = ${input.identifier === '' ? null : input.identifier},

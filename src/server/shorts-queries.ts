@@ -13,7 +13,7 @@
 // (which sums the same product) to the paisa.
 
 import 'server-only'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import { getSessionUser } from '@/server/current-user'
 import type { ShortKind, ShortSettlement, VendorPerformanceRow } from '@/lib/types'
 import { SHORT_KINDS, SHORT_SETTLEMENTS, type ValuedShort } from '@/components/store/shorts'
@@ -48,7 +48,7 @@ export function isShortSettlement(v: string): v is ShortSettlement {
 /** OPEN FIRST, always. A short nobody chased is a different fact from one
  *  that was credited, and it is the only one still worth money. */
 export async function listShorts(restaurantId: string, limit = 300): Promise<ValuedShort[]> {
-  return sql<ValuedShort[]>`
+  return tsql<ValuedShort[]>`
     select s.id, s.purchase_line_id, pl.purchase_id, p.bill_date::text as bill_date, p.doc_no,
            p.vendor_id, v.name as vendor_name,
            i.code as item_code, i.name as item_name, i.purchase_unit,
@@ -67,7 +67,7 @@ export async function listShorts(restaurantId: string, limit = 300): Promise<Val
 }
 
 export async function listShortsForPurchase(restaurantId: string, purchaseId: string): Promise<ValuedShort[]> {
-  return sql<ValuedShort[]>`
+  return tsql<ValuedShort[]>`
     select s.id, s.purchase_line_id, pl.purchase_id, p.bill_date::text as bill_date, p.doc_no,
            p.vendor_id, v.name as vendor_name,
            i.code as item_code, i.name as item_name, i.purchase_unit,
@@ -86,7 +86,7 @@ export async function listShortsForPurchase(restaurantId: string, purchaseId: st
 
 /** the read-back: nothing is reported saved that cannot be read again */
 export async function getShort(restaurantId: string, id: string): Promise<ValuedShort | null> {
-  const rows = await sql<ValuedShort[]>`
+  const rows = await tsql<ValuedShort[]>`
     select s.id, s.purchase_line_id, pl.purchase_id, p.bill_date::text as bill_date, p.doc_no,
            p.vendor_id, v.name as vendor_name,
            i.code as item_code, i.name as item_name, i.purchase_unit,
@@ -113,7 +113,7 @@ export type ShortTotals = {
 /** Summed in Postgres numeric rather than by adding rounded paise on the
  *  page — the same product vendor_performance sums, added the same way. */
 export async function getShortTotals(restaurantId: string): Promise<ShortTotals> {
-  const rows = await sql<ShortTotals[]>`
+  const rows = await tsql<ShortTotals[]>`
     select count(*) filter (where s.settlement = 'open')::int as open_count,
            coalesce(sum(s.qty_short * pl.rate) filter (where s.settlement = 'open'), 0)::text as open_value,
            count(*) filter (where s.settlement <> 'open')::int as settled_count,
@@ -129,7 +129,7 @@ export async function getShortTotals(restaurantId: string): Promise<ShortTotals>
 /** vendor_performance, verbatim. THE VIEW OWNS EVERY FIGURE — the order is
  *  the only thing decided here, and it puts the money still owed on top. */
 export async function listVendorPerformance(restaurantId: string): Promise<VendorPerformanceRow[]> {
-  return sql<VendorPerformanceRow[]>`
+  return tsql<VendorPerformanceRow[]>`
     select vp.vendor_id, vp.code, vp.name,
            vp.bills::int as bills, vp.short_events::int as short_events,
            vp.short_value::text as short_value, vp.unsettled::int as unsettled,

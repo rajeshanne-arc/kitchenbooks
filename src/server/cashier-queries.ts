@@ -3,7 +3,7 @@
 // cash tabs surface. Every number reads a table or named view
 // (dues_outstanding, day_close_ladder); nothing is recomputed client-side.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type {
   DifferenceTrendRow,
   DueOutstandingRow,
@@ -31,14 +31,14 @@ const SETTLEMENT_SELECT = `
   from partner_settlements s`
 
 export async function getSettlement(restaurantId: string, id: string): Promise<SettlementRow | null> {
-  const rows = await sql<SettlementRow[]>`
+  const rows = await tsql<SettlementRow[]>`
     ${sql.unsafe(SETTLEMENT_SELECT)}
     where s.restaurant_id = ${restaurantId} and s.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listSettlements(restaurantId: string, limit = 40): Promise<SettlementRow[]> {
-  return sql<SettlementRow[]>`
+  return tsql<SettlementRow[]>`
     ${sql.unsafe(SETTLEMENT_SELECT)}
     where s.restaurant_id = ${restaurantId}
     order by s.period_end desc, s.created_at desc
@@ -49,7 +49,7 @@ export async function listSettlements(restaurantId: string, limit = 40): Promise
  * sums). outstanding = gross − commission − deductions − received: what
  * the partner still owes for the periods filed. */
 export async function getPartnerSummaries(restaurantId: string): Promise<PartnerSummaryRow[]> {
-  return sql<PartnerSummaryRow[]>`
+  return tsql<PartnerSummaryRow[]>`
     select partner,
            count(*) filter (where reverses_id is null)::int as settlements,
            coalesce(sum(gross_sales), 0)::text as gross_sales,
@@ -75,14 +75,14 @@ const OFFBOOK_SELECT = `
   from off_book_orders o`
 
 export async function getOffBook(restaurantId: string, id: string): Promise<OffBookRow | null> {
-  const rows = await sql<OffBookRow[]>`
+  const rows = await tsql<OffBookRow[]>`
     ${sql.unsafe(OFFBOOK_SELECT)}
     where o.restaurant_id = ${restaurantId} and o.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listOffBook(restaurantId: string, limit = 40): Promise<OffBookRow[]> {
-  return sql<OffBookRow[]>`
+  return tsql<OffBookRow[]>`
     ${sql.unsafe(OFFBOOK_SELECT)}
     where o.restaurant_id = ${restaurantId}
     order by o.order_date desc, o.created_at desc
@@ -103,14 +103,14 @@ const NR_SELECT = `
   left join recipes r on r.id = n.recipe_id`
 
 export async function getNonRevenue(restaurantId: string, id: string): Promise<NonRevenueRow | null> {
-  const rows = await sql<NonRevenueRow[]>`
+  const rows = await tsql<NonRevenueRow[]>`
     ${sql.unsafe(NR_SELECT)}
     where n.restaurant_id = ${restaurantId} and n.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listNonRevenue(restaurantId: string, limit = 40): Promise<NonRevenueRow[]> {
-  return sql<NonRevenueRow[]>`
+  return tsql<NonRevenueRow[]>`
     ${sql.unsafe(NR_SELECT)}
     where n.restaurant_id = ${restaurantId}
     order by n.nr_date desc, n.created_at desc
@@ -123,7 +123,7 @@ export async function getGiveawayMonth(
   restaurantId: string,
   monthStart: string,
 ): Promise<{ entries: number; cost_value: string; menu_value: string }> {
-  const rows = await sql<{ entries: number; cost_value: string; menu_value: string }[]>`
+  const rows = await tsql<{ entries: number; cost_value: string; menu_value: string }[]>`
     select count(*) filter (where reverses_id is null)::int as entries,
            coalesce(sum(cost_value), 0)::text as cost_value,
            coalesce(sum(menu_value), 0)::text as menu_value
@@ -144,14 +144,14 @@ const DUE_SELECT = `
   from due_payments d`
 
 export async function getDue(restaurantId: string, id: string): Promise<DueRow | null> {
-  const rows = await sql<DueRow[]>`
+  const rows = await tsql<DueRow[]>`
     ${sql.unsafe(DUE_SELECT)}
     where d.restaurant_id = ${restaurantId} and d.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listDues(restaurantId: string, limit = 40): Promise<DueRow[]> {
-  return sql<DueRow[]>`
+  return tsql<DueRow[]>`
     ${sql.unsafe(DUE_SELECT)}
     where d.restaurant_id = ${restaurantId}
     order by d.due_date desc, d.created_at desc
@@ -161,7 +161,7 @@ export async function listDues(restaurantId: string, limit = 40): Promise<DueRow
 /** Who still owes / is owed — straight from the dues_outstanding view,
  * which nets on lower(trim(party)) so “Ramu” and “ramu ” are one ledger. */
 export async function getDuesOutstanding(restaurantId: string): Promise<DueOutstandingRow[]> {
-  return sql<DueOutstandingRow[]>`
+  return tsql<DueOutstandingRow[]>`
     select party, balance::text as balance
     from dues_outstanding
     where restaurant_id = ${restaurantId}
@@ -174,7 +174,7 @@ export async function getDuesOutstanding(restaurantId: string): Promise<DueOutst
 export async function listGiveawayDishes(
   restaurantId: string,
 ): Promise<{ id: string; code: string; name: string; selling_price: string | null; has_cost: boolean }[]> {
-  return sql<{ id: string; code: string; name: string; selling_price: string | null; has_cost: boolean }[]>`
+  return tsql<{ id: string; code: string; name: string; selling_price: string | null; has_cost: boolean }[]>`
     select r.id, r.code, r.name, r.selling_price::text as selling_price,
            (dc.dish_cost is not null) as has_cost
     from recipes r
@@ -188,7 +188,7 @@ export async function listGiveawayDishes(
 /** Difference across recent closes, oldest first — the trend the cashier
  * answers for. Straight from day_close_ladder (latest filing per date). */
 export async function getDifferenceTrend(restaurantId: string, limit = 30): Promise<DifferenceTrendRow[]> {
-  const rows = await sql<DifferenceTrendRow[]>`
+  const rows = await tsql<DifferenceTrendRow[]>`
     select l.close_date::text as close_date, l.difference::text as difference,
            (select count(*)::int from day_closes dc
             where dc.restaurant_id = l.restaurant_id and dc.close_date = l.close_date) as filings
@@ -205,7 +205,7 @@ export async function getVoucherCategorySummary(
   restaurantId: string,
   monthStart: string,
 ): Promise<VoucherCategorySummaryRow[]> {
-  return sql<VoucherCategorySummaryRow[]>`
+  return tsql<VoucherCategorySummaryRow[]>`
     select category, count(*)::int as entries, coalesce(sum(amount), 0)::text as amount
     from cash_vouchers
     where restaurant_id = ${restaurantId} and paid_by = 'cashier'
@@ -221,7 +221,7 @@ export async function getVoucherCategorySummary(
 // settlement form reads from it.
 
 export async function listPartners(restaurantId: string, includeRetired = false): Promise<Partner[]> {
-  return sql<Partner[]>`
+  return tsql<Partner[]>`
     select id, name, kind, agreed_commission_pct::text as agreed_commission_pct, status
     from partners
     where restaurant_id = ${restaurantId}
@@ -230,7 +230,7 @@ export async function listPartners(restaurantId: string, includeRetired = false)
 }
 
 export async function getPartner(restaurantId: string, id: string): Promise<Partner | null> {
-  const rows = await sql<Partner[]>`
+  const rows = await tsql<Partner[]>`
     select id, name, kind, agreed_commission_pct::text as agreed_commission_pct, status
     from partners
     where restaurant_id = ${restaurantId} and id = ${id}`
@@ -239,7 +239,7 @@ export async function getPartner(restaurantId: string, id: string): Promise<Part
 
 /** The itemised deductions under one settlement. */
 export async function getSettlementDeductions(settlementId: string): Promise<SettlementDeductionRow[]> {
-  return sql<SettlementDeductionRow[]>`
+  return tsql<SettlementDeductionRow[]>`
     select id, deduction_type, amount::text as amount, note
     from settlement_deductions
     where settlement_id = ${settlementId}
@@ -259,7 +259,7 @@ export async function getSettlementDeductions(settlementId: string): Promise<Set
  * invoice charged at exactly the agreed rate.
  */
 export async function getPartnerPanel(restaurantId: string): Promise<PartnerPanelRow[]> {
-  return sql<PartnerPanelRow[]>`
+  return tsql<PartnerPanelRow[]>`
     select p.name as partner,
            p.kind,
            p.agreed_commission_pct::text as agreed_pct,

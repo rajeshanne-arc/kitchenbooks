@@ -7,7 +7,7 @@
 // math, so the server refuses it by name.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
@@ -237,12 +237,12 @@ export async function voidContractBill(id: string): Promise<{ ok: true } | { ok:
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await enteredBy()
-    const [orig] = await sql<{ reverses_id: string | null; bill_date: string }[]>`
+    const [orig] = await tsql<{ reverses_id: string | null; bill_date: string }[]>`
       select reverses_id, bill_date::text as bill_date
       from contract_bills where id = ${id} and restaurant_id = ${rid}`
     if (!orig) throw new ExpenseError('Bill not found')
     if (orig.reverses_id !== null) throw new ExpenseError('This is a reversal — reversals cannot be voided')
-    const already = await sql<{ id: string }[]>`select id from contract_bills where reverses_id = ${id} limit 1`
+    const already = await tsql<{ id: string }[]>`select id from contract_bills where reverses_id = ${id} limit 1`
     if (already[0]) throw new ExpenseError('This bill is already voided')
     await txn(async (tx) => {
       // Its own number, dated with the bill it reverses; the voided bill
@@ -324,12 +324,12 @@ export async function voidCasualLabour(id: string): Promise<{ ok: true } | { ok:
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await enteredBy()
-    const [orig] = await sql<{ reverses_id: string | null; work_date: string }[]>`
+    const [orig] = await tsql<{ reverses_id: string | null; work_date: string }[]>`
       select reverses_id, work_date::text as work_date
       from casual_labour where id = ${id} and restaurant_id = ${rid}`
     if (!orig) throw new ExpenseError('Entry not found')
     if (orig.reverses_id !== null) throw new ExpenseError('This is a reversal — reversals cannot be voided')
-    const already = await sql<{ id: string }[]>`select id from casual_labour where reverses_id = ${id} limit 1`
+    const already = await tsql<{ id: string }[]>`select id from casual_labour where reverses_id = ${id} limit 1`
     if (already[0]) throw new ExpenseError('This entry is already voided')
     await txn(async (tx) => {
       // Its own number, dated with the day worked, so the correction sits

@@ -18,7 +18,7 @@
 // accountant's, and so is the filing.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
@@ -183,7 +183,7 @@ export async function approvePayrollRun(id: string): Promise<PayrollResult> {
     const by = await actor(['owner'], 'Approving a payroll run')
     const restaurant = await getRestaurant()
 
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       update payroll_runs
       set status = 'approved', approved_by = ${by}, approved_at = now()
       where id = ${id} and restaurant_id = ${restaurant.id} and status = 'draft'
@@ -206,7 +206,7 @@ export async function cancelPayrollRun(id: string): Promise<PayrollResult> {
     await actor(['accountant', 'owner'], 'Cancelling a payroll run')
     const restaurant = await getRestaurant()
 
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       update payroll_runs set status = 'cancelled'
       where id = ${id} and restaurant_id = ${restaurant.id} and status in ('draft', 'approved')
       returning id`
@@ -345,7 +345,7 @@ export async function updateStaffIdentity(
     const restaurant = await getRestaurant()
 
     const orNull = (s: string) => (s === '' ? null : s)
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       update staff set
         bank_name = ${orNull(input.bankName)},
         account_no = ${orNull(input.accountNo)},

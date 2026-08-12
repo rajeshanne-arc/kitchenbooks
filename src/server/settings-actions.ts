@@ -8,7 +8,7 @@
 //   order and labels only; routes always come from the hardcoded defaults.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { sql, tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getAllListOptions, getSettingValue } from '@/server/settings'
 import { ALL_LIST_KEYS, type ListOptionRow } from '@/lib/lists'
@@ -108,7 +108,7 @@ export async function setListOptionStatus(id: string, status: 'active' | 'inacti
     z.enum(['active', 'inactive']).parse(status)
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update list_options set status = ${status}
       where id = ${id} and restaurant_id = ${rid}
       returning id`
@@ -237,7 +237,7 @@ export async function updateDepartment(
     // dish code and cannot be moved. receives_stock CAN change: a department
     // starts consuming, or stops, and that is a fact about today rather than
     // an identity.
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update sections set
         name = ${input.name},
         sort_order = ${input.sortOrder === '' ? sql`sort_order` : Number(input.sortOrder)},
@@ -272,15 +272,15 @@ export async function noteListSuggestion(
   const clean = value.trim()
   if (clean === '') return
   try {
-    const [existing] = await sql<{ id: string; seen_count: number }[]>`
+    const [existing] = await tsql<{ id: string; seen_count: number }[]>`
       select id, seen_count from list_suggestions
       where restaurant_id = ${restaurantId} and list_key = ${listKey}
         and lower(value) = ${clean.toLowerCase()}`
     if (existing) {
-      await sql`update list_suggestions set seen_count = ${existing.seen_count + 1}
+      await tsql`update list_suggestions set seen_count = ${existing.seen_count + 1}
                 where id = ${existing.id} and restaurant_id = ${restaurantId}`
     } else {
-      await sql`
+      await tsql`
         insert into list_suggestions (restaurant_id, list_key, value, suggested_by, seen_count, status)
         values (${restaurantId}, ${listKey}, ${clean}, ${suggestedBy}, 1, 'pending')`
     }
@@ -360,7 +360,7 @@ export async function rejectSuggestion(id: string): Promise<ListMutationResult> 
   try {
     if (!/^[0-9a-f-]{36}$/i.test(id)) throw new SettingsError('Malformed suggestion id')
     const restaurant = await getRestaurant()
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update list_suggestions set status = 'rejected'
       where id = ${id} and restaurant_id = ${restaurant.id} and status = 'pending'
       returning id`
@@ -379,13 +379,13 @@ export async function setExpenseKind(
   try {
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    const [already] = await sql<{ category: string }[]>`
+    const [already] = await tsql<{ category: string }[]>`
       select category from expense_category_kinds where restaurant_id = ${rid} and category = ${category}`
     if (already) {
-      await sql`update expense_category_kinds set kind = ${kind}
+      await tsql`update expense_category_kinds set kind = ${kind}
                 where restaurant_id = ${rid} and category = ${category}`
     } else {
-      await sql`insert into expense_category_kinds (restaurant_id, category, kind)
+      await tsql`insert into expense_category_kinds (restaurant_id, category, kind)
                 values (${rid}, ${category}, ${kind})`
     }
     return { ok: true }

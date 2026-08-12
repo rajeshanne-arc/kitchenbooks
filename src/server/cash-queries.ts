@@ -5,7 +5,7 @@
 // the previous day's COUNTED cash, or from settings.first_opening_cash on
 // the very first day. A shortage must belong to the day it happened.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type { ClosePrefill, DayCloseLadderRow, OtherIncomeRow, OwnerOwedRow, VoucherRow } from '@/lib/types'
 
 const LADDER_SELECT = `
@@ -28,7 +28,7 @@ const LADDER_SELECT = `
   from day_close_ladder l`
 
 export async function getLadder(restaurantId: string, limit = 45): Promise<DayCloseLadderRow[]> {
-  return sql<DayCloseLadderRow[]>`
+  return tsql<DayCloseLadderRow[]>`
     ${sql.unsafe(LADDER_SELECT)}
     where l.restaurant_id = ${restaurantId}
     order by l.close_date desc
@@ -36,7 +36,7 @@ export async function getLadder(restaurantId: string, limit = 45): Promise<DayCl
 }
 
 export async function getLadderDay(restaurantId: string, date: string): Promise<DayCloseLadderRow | null> {
-  const rows = await sql<DayCloseLadderRow[]>`
+  const rows = await tsql<DayCloseLadderRow[]>`
     ${sql.unsafe(LADDER_SELECT)}
     where l.restaurant_id = ${restaurantId} and l.close_date = ${date}`
   return rows[0] ?? null
@@ -45,12 +45,27 @@ export async function getLadderDay(restaurantId: string, date: string): Promise<
 /** The pre-save ladder: opening resolved by the chain law, live components
  * for the date. Also the gatekeeper — the HARD STOP on a missing D-1 close
  * is decided here (and re-checked inside the save transaction). */
-export async function getClosePrefill(restaurantId: string, date: string): Promise<ClosePrefill> {
+/**
+ * `db` lets a CALLER ALREADY INSIDE A TRANSACTION lend its own handle.
+ *
+ * closeDay re-reads this inside its advisory lock — that is the chain law,
+ * HARD STOP if D-1 is open. Left on tsql, that read opened a SECOND
+ * transaction on a SECOND connection while the first held one plus the lock:
+ * enough concurrent closes and the pool starves with the lock holder waiting
+ * for a connection nobody can free. Passing `tx` keeps it to one connection
+ * AND makes the comment literally true — the check now really does happen
+ * inside the lock, in the same transaction, rather than beside it.
+ */
+export async function getClosePrefill(
+  restaurantId: string,
+  date: string,
+  db: typeof tsql = tsql,
+): Promise<ClosePrefill> {
   const prevDate = new Date(`${date}T00:00:00Z`)
   prevDate.setUTCDate(prevDate.getUTCDate() - 1)
   const prev = prevDate.toISOString().slice(0, 10)
 
-  const [state] = await sql<
+  const [state] = await db<
     {
       prev_counted: string | null
       any_closes: boolean
@@ -126,7 +141,7 @@ export async function getClosePrefill(restaurantId: string, date: string): Promi
 }
 
 export async function getOwnersOwed(restaurantId: string): Promise<OwnerOwedRow[]> {
-  return sql<OwnerOwedRow[]>`
+  return tsql<OwnerOwedRow[]>`
     select person,
            coalesce(paid_from_pocket, 0)::text as paid_from_pocket,
            coalesce(reimbursed, 0)::text as reimbursed,
@@ -140,12 +155,12 @@ export async function getOwnersOwed(restaurantId: string): Promise<OwnerOwedRow[
  * optional settings list ('owner_names', comma-separated). Free text breaks
  * the netting on “Asheel” vs “Asheel Sir” — pick, don't retype. */
 export async function getOwnerNames(restaurantId: string): Promise<string[]> {
-  const rows = await sql<{ name: string }[]>`
+  const rows = await tsql<{ name: string }[]>`
     select distinct coalesce(owner_name, paid_to) as name
     from cash_vouchers
     where restaurant_id = ${restaurantId}
       and (paid_by = 'owner' or category = 'owner_reimbursement')`
-  const [setting] = await sql<{ value: string | null }[]>`
+  const [setting] = await tsql<{ value: string | null }[]>`
     select value from settings where restaurant_id = ${restaurantId} and key = 'owner_names'`
   const fromSettings = (setting?.value ?? '')
     .split(',')
@@ -155,7 +170,7 @@ export async function getOwnerNames(restaurantId: string): Promise<string[]> {
 }
 
 export async function getVoucherCategories(restaurantId: string): Promise<string[]> {
-  const rows = await sql<{ category: string }[]>`
+  const rows = await tsql<{ category: string }[]>`
     select distinct category from cash_vouchers where restaurant_id = ${restaurantId}`
   return [...new Set(['general', 'owner_reimbursement', ...rows.map((r) => r.category)])].sort()
 }
@@ -166,14 +181,14 @@ const VOUCHER_SELECT = `
   from cash_vouchers`
 
 export async function getVoucher(restaurantId: string, id: string): Promise<VoucherRow | null> {
-  const rows = await sql<VoucherRow[]>`
+  const rows = await tsql<VoucherRow[]>`
     ${sql.unsafe(VOUCHER_SELECT)}
     where restaurant_id = ${restaurantId} and id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listVouchers(restaurantId: string, limit = 60): Promise<VoucherRow[]> {
-  return sql<VoucherRow[]>`
+  return tsql<VoucherRow[]>`
     ${sql.unsafe(VOUCHER_SELECT)}
     where restaurant_id = ${restaurantId}
     order by voucher_date desc, created_at desc
@@ -186,14 +201,14 @@ const INCOME_SELECT = `
   from other_income`
 
 export async function getOtherIncome(restaurantId: string, id: string): Promise<OtherIncomeRow | null> {
-  const rows = await sql<OtherIncomeRow[]>`
+  const rows = await tsql<OtherIncomeRow[]>`
     ${sql.unsafe(INCOME_SELECT)}
     where restaurant_id = ${restaurantId} and id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listOtherIncome(restaurantId: string, limit = 60): Promise<OtherIncomeRow[]> {
-  return sql<OtherIncomeRow[]>`
+  return tsql<OtherIncomeRow[]>`
     ${sql.unsafe(INCOME_SELECT)}
     where restaurant_id = ${restaurantId}
     order by income_date desc, created_at desc

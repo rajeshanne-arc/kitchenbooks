@@ -17,7 +17,7 @@
 // back. That is what listAwaitingCreditNote answers.
 
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type { VendorReturnRow } from '@/lib/types'
 
 /** A refusal that names the missing answer, so it reaches the user in its own
@@ -59,14 +59,14 @@ const RETURN_SELECT = `
   join vendors v on v.id = r.vendor_id`
 
 export async function getVendorReturn(restaurantId: string, id: string): Promise<VendorReturnRow | null> {
-  const rows = await sql<VendorReturnRow[]>`
+  const rows = await tsql<VendorReturnRow[]>`
     ${sql.unsafe(RETURN_SELECT)}
     where r.restaurant_id = ${restaurantId} and r.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listVendorReturns(restaurantId: string, limit = 40): Promise<VendorReturnRow[]> {
-  return sql<VendorReturnRow[]>`
+  return tsql<VendorReturnRow[]>`
     ${sql.unsafe(RETURN_SELECT)}
     where r.restaurant_id = ${restaurantId}
     order by r.return_date desc, r.created_at desc
@@ -76,7 +76,7 @@ export async function listVendorReturns(restaurantId: string, limit = 40): Promi
 /** Goods gone, money not yet back. Reversals are excluded (they claim nothing)
  *  and so are voided returns (the claim was withdrawn). */
 export async function listAwaitingCreditNote(restaurantId: string): Promise<VendorReturnRow[]> {
-  return sql<VendorReturnRow[]>`
+  return tsql<VendorReturnRow[]>`
     ${sql.unsafe(RETURN_SELECT)}
     where r.restaurant_id = ${restaurantId}
       and r.credit_note_ref is null
@@ -90,7 +90,7 @@ export async function listAwaitingCreditNote(restaurantId: string): Promise<Vend
 export async function creditNoteProgress(
   restaurantId: string,
 ): Promise<{ settled: number; total: number; owed: string }> {
-  const [row] = await sql<{ settled: number; total: number; owed: string }[]>`
+  const [row] = await tsql<{ settled: number; total: number; owed: string }[]>`
     select count(*) filter (where r.credit_note_ref is not null)::int as settled,
            count(*)::int as total,
            coalesce(sum(
@@ -107,7 +107,7 @@ export async function creditNoteProgress(
 }
 
 export async function getVendorReturnLines(vendorReturnId: string): Promise<VendorReturnLineRow[]> {
-  return sql<VendorReturnLineRow[]>`
+  return tsql<VendorReturnLineRow[]>`
     select l.id, l.item_id, i.code as item_code, i.name as item_name, i.purchase_unit,
            l.qty::text as qty, l.rate::text as rate, l.amount::text as amount
     from vendor_return_lines l
@@ -131,7 +131,7 @@ export async function listCreditBillOptions(
   perVendor = 8,
 ): Promise<CreditBillOption[]> {
   if (vendorIds.length === 0) return []
-  const rows = await sql<CreditBillOption[]>`
+  const rows = await tsql<CreditBillOption[]>`
     select p.vendor_id, p.id, p.doc_no, p.bill_no,
            p.bill_date::text as bill_date, p.bill_total::text as bill_total
     from purchases p
@@ -164,7 +164,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
  *  back as a syntax error in the user's face instead of this sentence. */
 export async function assertVendor(restaurantId: string, vendorId: string): Promise<{ id: string; name: string }> {
   const rows: { id: string; name: string }[] = UUID.test(vendorId)
-    ? await sql<{ id: string; name: string }[]>`
+    ? await tsql<{ id: string; name: string }[]>`
         select id, name from vendors where id = ${vendorId} and restaurant_id = ${restaurantId}`
     : []
   const vendor = rows[0]
@@ -179,7 +179,7 @@ export async function assertVendor(restaurantId: string, vendorId: string): Prom
 /** Every item on the return must belong to this restaurant. Returns the ids
  *  that did not, so the refusal can count them instead of waving vaguely. */
 export async function assertItems(restaurantId: string, itemIds: string[]): Promise<void> {
-  const found = await sql<{ id: string }[]>`
+  const found = await tsql<{ id: string }[]>`
     select id from items where restaurant_id = ${restaurantId} and id = any(${itemIds})`
   const known = new Set(found.map((r) => r.id))
   const missing = itemIds.filter((id) => !known.has(id))
@@ -198,7 +198,7 @@ export async function assertPurchaseForVendor(
   vendorId: string,
   purchaseId: string,
 ): Promise<string> {
-  const rows = await sql<{ id: string; vendor_id: string }[]>`
+  const rows = await tsql<{ id: string; vendor_id: string }[]>`
     select id, vendor_id from purchases where id = ${purchaseId} and restaurant_id = ${restaurantId}`
   const purchase = rows[0]
   if (!purchase) throw new VendorReturnRefusal('That bill is not on file — reload and pick it again')

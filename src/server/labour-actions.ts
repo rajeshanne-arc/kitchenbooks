@@ -7,7 +7,7 @@
 // refuses updates on both fronts regardless.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { getDaySheet, getStaffDetail } from '@/server/labour-queries'
@@ -59,13 +59,13 @@ async function validateStaffRefs(rid: string, input: z.infer<typeof StaffSchema>
   if (input.joined !== '') assertRealDate(input.joined, 'Joined date')
   if (input.leftDate !== '') assertRealDate(input.leftDate, 'Left date')
   if (input.sectionId !== '') {
-    const sec = await sql<{ id: string }[]>`
+    const sec = await tsql<{ id: string }[]>`
       select id from sections where id = ${input.sectionId} and restaurant_id = ${rid} and status = 'active'`
     if (!sec[0]) throw new LabourError('Section not found')
   }
   if (input.reportsTo !== '') {
     if (selfId !== null && input.reportsTo === selfId) throw new LabourError('Someone cannot report to themselves')
-    const mgr = await sql<{ id: string }[]>`
+    const mgr = await tsql<{ id: string }[]>`
       select id from staff where id = ${input.reportsTo} and restaurant_id = ${rid}`
     if (!mgr[0]) throw new LabourError('Reports-to person not found')
   }
@@ -120,7 +120,7 @@ export async function updateStaff(id: string, raw: StaffInput): Promise<StaffMut
     await validateStaffRefs(rid, input, id)
 
     // Only the column-granted fields ever appear in this SET — code never does.
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update staff set
         name = ${input.name},
         designation = ${input.designation === '' ? null : input.designation},

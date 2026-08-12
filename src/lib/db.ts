@@ -66,3 +66,27 @@ export async function txn<T>(fn: (tx: postgres.TransactionSql) => Promise<T>): P
     return fn(tx)
   }) as Promise<T>
 }
+
+/**
+ * A READ that announces its tenant — the single-statement form of txn().
+ *
+ * Under RLS a plain `sql\`select …\`` has no GUC to read, so
+ * current_setting returns NULL, every policy comparison yields NULL, and the
+ * query returns zero rows. Not a leak — an app that looks like an empty
+ * database, which is a worse outage because nobody suspects security.
+ *
+ * So every read goes through here. Call sites change by one character:
+ *   await sql<Row[]>`select …`   ->   await tsql<Row[]>`select …`
+ *
+ * COST, measured rather than assumed: postgres.js pipelines the statements
+ * of a transaction, so BEGIN/SET/SELECT/COMMIT is one round trip, not four.
+ * What it does change is connection HOLD — each read now occupies a
+ * connection for its transaction instead of sharing one by pipelining. That
+ * is why `max` is what it is; see the note above it.
+ */
+export function tsql<T extends readonly unknown[] = readonly unknown[]>(
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+): Promise<T> {
+  return txn(async (tx) => (tx as unknown as (s: TemplateStringsArray, ...v: unknown[]) => Promise<T>)(strings, ...values))
+}

@@ -10,7 +10,7 @@
 // can never leave a residue in section_consumption or stock_on_hand.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import {
@@ -166,7 +166,7 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
     }
     if (input.indentId !== undefined) {
       if (issue.indent_id !== input.indentId) throw new StoreError('Verification failed: indent stamp missing on the issue')
-      const [ind] = await sql<{ status: string }[]>`select status from indents where id = ${input.indentId}`
+      const [ind] = await tsql<{ status: string }[]>`select status from indents where id = ${input.indentId}`
       if (ind?.status !== 'issued') throw new StoreError('Verification failed: indent not marked issued')
     }
     const lines = await getIssueLines(saved.issueId)
@@ -361,7 +361,7 @@ export async function voidIssue(issueId: string): Promise<VoidIssueResult> {
       return { revId: rev.id, issueDate: orig.issue_date, sectionId: orig.section_id, expectedLines: lineCount }
     })
 
-    const [check] = await sql<{ zeroed: boolean; rev_lines: number }[]>`
+    const [check] = await tsql<{ zeroed: boolean; rev_lines: number }[]>`
       select ((select coalesce(sum(value), 0) from issue_lines where issue_id = ${issueId})
             + (select coalesce(sum(value), 0) from issue_lines where issue_id = ${saved.revId}) = 0) as zeroed,
              (select count(*)::int from issue_lines where issue_id = ${saved.revId}) as rev_lines`
@@ -377,7 +377,7 @@ export async function voidIssue(issueId: string): Promise<VoidIssueResult> {
     const lineItems = await getIssueLines(issueId)
     const stock = await getStockSnaps(rid, [...new Set(lineItems.map((l) => l.item_id))])
     const monthStart = `${saved.issueDate.slice(0, 7)}-01`
-    const mv = await sql<{ v: string }[]>`
+    const mv = await tsql<{ v: string }[]>`
       select coalesce(sc.consumed_value, 0)::text as v
       from sections s
       left join section_consumption sc
@@ -416,7 +416,7 @@ export async function voidWastage(wastageId: string): Promise<VoidWastageResult>
       return { revId: rev.id, itemId: orig.item_id }
     })
 
-    const [check] = await sql<{ zeroed: boolean }[]>`
+    const [check] = await tsql<{ zeroed: boolean }[]>`
       select ((select value from wastage where id = ${wastageId})
             + (select value from wastage where id = ${saved.revId}) = 0) as zeroed`
     if (!check?.zeroed) throw new StoreError('Verification failed: wastage values do not cancel to zero')

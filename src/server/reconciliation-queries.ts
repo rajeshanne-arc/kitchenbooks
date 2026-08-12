@@ -12,7 +12,7 @@
 // to fetch: a matched line vanishes from unmatched_statement_lines and the
 // count moves with it, in one place.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import type { StatementLineRow, StatementRow, UnmatchedMovementRow } from '@/lib/types'
 
 /** A line someone has already decided about, with what they decided it was.
@@ -40,7 +40,7 @@ export type MatchedLineRow = {
  *  carries who imported it, when, and the note. Newest period first — the
  *  one just pasted is the one being worked. */
 export async function listStatements(restaurantId: string, limit = 60): Promise<StatementRow[]> {
-  return sql<StatementRow[]>`
+  return tsql<StatementRow[]>`
     select rs.statement_id as id,
            rs.account_id, rs.account_name,
            rs.period_start::text as period_start,
@@ -61,7 +61,7 @@ export async function listStatements(restaurantId: string, limit = 60): Promise<
 }
 
 export async function getStatement(restaurantId: string, id: string): Promise<StatementRow | null> {
-  const rows = await sql<StatementRow[]>`
+  const rows = await tsql<StatementRow[]>`
     select rs.statement_id as id,
            rs.account_id, rs.account_name,
            rs.period_start::text as period_start,
@@ -85,7 +85,7 @@ export async function listUnmatchedStatementLines(
   restaurantId: string,
   statementId: string,
 ): Promise<StatementLineRow[]> {
-  return sql<StatementLineRow[]>`
+  return tsql<StatementLineRow[]>`
     select u.statement_line_id,
            u.stmt_date::text as stmt_date,
            u.description, u.reference,
@@ -111,7 +111,7 @@ export async function listUnmatchedMovements(
   accountId: string,
   limit = 400,
 ): Promise<UnmatchedMovementRow[]> {
-  return sql<UnmatchedMovementRow[]>`
+  return tsql<UnmatchedMovementRow[]>`
     select m.entity_type, m.entity_id, m.kind, m.doc_no,
            m.move_date::text as move_date,
            m.amount::text as amount,
@@ -141,7 +141,7 @@ export async function countMovements(
   restaurantId: string,
   accountId: string,
 ): Promise<{ total: number; unmatched: number }> {
-  const [row] = await sql<{ total: number; unmatched: number }[]>`
+  const [row] = await tsql<{ total: number; unmatched: number }[]>`
     select (select count(*)::int from money_movements mm
              where mm.restaurant_id = ${restaurantId} and mm.account_id = ${accountId}) as total,
            (select count(*)::int from unmatched_movements u
@@ -156,7 +156,7 @@ export async function listMatchedStatementLines(
   restaurantId: string,
   statementId: string,
 ): Promise<MatchedLineRow[]> {
-  return sql<MatchedLineRow[]>`
+  return tsql<MatchedLineRow[]>`
     select l.id as statement_line_id,
            l.stmt_date::text as stmt_date,
            l.description, l.reference,
@@ -180,7 +180,7 @@ export async function getStatementLineForMatch(
   restaurantId: string,
   statementLineId: string,
 ): Promise<{ id: string; statement_id: string; account_id: string; amount: string; matched: boolean } | null> {
-  const rows = await sql<
+  const rows = await tsql<
     { id: string; statement_id: string; account_id: string; amount: string; matched: boolean }[]
   >`
     select l.id, l.statement_id, s.account_id, l.amount::text as amount,
@@ -200,7 +200,7 @@ export async function findUnmatchedMovement(
   entityType: string,
   entityId: string,
 ): Promise<UnmatchedMovementRow | null> {
-  const rows = await sql<UnmatchedMovementRow[]>`
+  const rows = await tsql<UnmatchedMovementRow[]>`
     select m.entity_type, m.entity_id, m.kind, m.doc_no,
            m.move_date::text as move_date,
            m.amount::text as amount,

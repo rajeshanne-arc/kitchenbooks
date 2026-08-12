@@ -13,7 +13,7 @@
 // wrong. This is the tempting place to add one; do not.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { parseMoney, parseQty } from '@/lib/money'
@@ -292,7 +292,7 @@ export async function recordCreditNote(
         ? null
         : await assertPurchaseForVendor(rid, ret.vendor_id, settledAgainstPurchaseId)
 
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       update vendor_returns
       set credit_note_ref = ${cleanRef.slice(0, 120)},
           settled_against_purchase_id = ${purchaseId}

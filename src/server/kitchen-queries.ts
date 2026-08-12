@@ -5,7 +5,7 @@
 // month HAS an ending closing; before that it is NULL and the page says
 // "pending closing" — never fill it in code.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type {
   ClosingChecklistRow,
   ClosingLineRow,
@@ -26,7 +26,7 @@ import type {
 
 /** The stock-holding sections a chef closes: Kitchen and Bar org units. */
 export async function getKitchenSections(restaurantId: string): Promise<Section[]> {
-  return sql<Section[]>`
+  return tsql<Section[]>`
     select id, code, name, sort_order, status, dept_group, receives_stock
     from sections
     where restaurant_id = ${restaurantId} and status = 'active'
@@ -40,7 +40,7 @@ export async function getKitchenSections(restaurantId: string): Promise<Section[
  *  issues and post staff, but no dish is ever "a Security dish". The dish
  *  code carries the department forever, so a wrong one here is permanent. */
 export async function getDishCodingSections(restaurantId: string): Promise<Section[]> {
-  return sql<Section[]>`
+  return tsql<Section[]>`
     select id, code, name, sort_order, status, dept_group, receives_stock
     from sections
     where restaurant_id = ${restaurantId} and status = 'active' and codes_dishes
@@ -50,7 +50,7 @@ export async function getDishCodingSections(restaurantId: string): Promise<Secti
 /** One row per kitchen section for a date: today's effective closing (or
  * null), with the filing count so corrections wear their marker. */
 export async function getClosingChecklist(restaurantId: string, date: string): Promise<ClosingChecklistRow[]> {
-  return sql<ClosingChecklistRow[]>`
+  return tsql<ClosingChecklistRow[]>`
     select s.id as section_id, s.code, s.name,
            c.closing_value::text as closing_value,
            coalesce(f.n, 0)::int as filings,
@@ -72,7 +72,7 @@ export async function getClosingCurrent(
   sectionId: string,
   date: string,
 ): Promise<ClosingRow | null> {
-  const rows = await sql<ClosingRow[]>`
+  const rows = await tsql<ClosingRow[]>`
     select c.id, c.section_id, s.code as section_code, s.name as section_name,
            c.close_date::text as close_date, c.closing_value::text as closing_value,
            c.note, c.entered_by, c.created_at::text as created_at,
@@ -100,14 +100,14 @@ const KW_SELECT = `
   left join recipes r on r.id = w.recipe_id`
 
 export async function getKitchenWastageById(restaurantId: string, id: string): Promise<KitchenWastageRow | null> {
-  const rows = await sql<KitchenWastageRow[]>`
+  const rows = await tsql<KitchenWastageRow[]>`
     ${sql.unsafe(KW_SELECT)}
     where w.restaurant_id = ${restaurantId} and w.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listKitchenWastage(restaurantId: string, limit = 40): Promise<KitchenWastageRow[]> {
-  return sql<KitchenWastageRow[]>`
+  return tsql<KitchenWastageRow[]>`
     ${sql.unsafe(KW_SELECT)}
     where w.restaurant_id = ${restaurantId}
     order by w.waste_date desc, w.created_at desc
@@ -124,7 +124,7 @@ const INDENT_SELECT = `
   from indents i join sections s on s.id = i.section_id`
 
 export async function listIndents(restaurantId: string, limit = 30): Promise<IndentRow[]> {
-  return sql<IndentRow[]>`
+  return tsql<IndentRow[]>`
     ${sql.unsafe(INDENT_SELECT)}
     where i.restaurant_id = ${restaurantId}
     order by (i.status = 'open') desc, i.indent_date desc, i.created_at desc
@@ -132,14 +132,14 @@ export async function listIndents(restaurantId: string, limit = 30): Promise<Ind
 }
 
 export async function getIndent(restaurantId: string, id: string): Promise<IndentRow | null> {
-  const rows = await sql<IndentRow[]>`
+  const rows = await tsql<IndentRow[]>`
     ${sql.unsafe(INDENT_SELECT)}
     where i.restaurant_id = ${restaurantId} and i.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function getIndentLines(indentId: string): Promise<IndentLineRow[]> {
-  return sql<IndentLineRow[]>`
+  return tsql<IndentLineRow[]>`
     select l.id, l.item_id, it.code as item_code, it.name as item_name,
            it.purchase_unit, l.qty_requested::text as qty_requested
     from indent_lines l join items it on it.id = l.item_id
@@ -154,7 +154,7 @@ export async function getIndentDetail(restaurantId: string, id: string): Promise
   const indent = await getIndent(restaurantId, id)
   if (!indent) return null
   const lines = await getIndentLines(id)
-  const issues = await sql<IssueDetail[]>`
+  const issues = await tsql<IssueDetail[]>`
     select i.id, i.issue_date::text as issue_date, i.section_id, s.code as section_code, s.name as section_name,
            i.note, i.indent_id, i.reverses_id, i.entered_by, i.created_at::text as created_at,
            (i.reverses_id is not null) as is_reversal,
@@ -164,7 +164,7 @@ export async function getIndentDetail(restaurantId: string, id: string): Promise
     from issues i join sections s on s.id = i.section_id
     where i.restaurant_id = ${restaurantId} and i.indent_id = ${id}
     order by i.created_at asc`
-  const gap = await sql<IndentDetail['gap']>`
+  const gap = await tsql<IndentDetail['gap']>`
     with asked as (
       select l.item_id, sum(l.qty_requested) as qty_requested
       from indent_lines l where l.indent_id = ${id} group by 1
@@ -205,14 +205,14 @@ const PRODUCTION_SELECT = `
   join recipes r on r.id = p.recipe_id`
 
 export async function getProduction(restaurantId: string, id: string): Promise<ProductionRow | null> {
-  const rows = await sql<ProductionRow[]>`
+  const rows = await tsql<ProductionRow[]>`
     ${sql.unsafe(PRODUCTION_SELECT)}
     where p.restaurant_id = ${restaurantId} and p.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listProductions(restaurantId: string, limit = 30): Promise<ProductionRow[]> {
-  return sql<ProductionRow[]>`
+  return tsql<ProductionRow[]>`
     ${sql.unsafe(PRODUCTION_SELECT)}
     where p.restaurant_id = ${restaurantId}
     order by p.prod_date desc, p.created_at desc
@@ -222,7 +222,7 @@ export async function listProductions(restaurantId: string, limit = 30): Promise
 /** Today's productions in a section — the closing picker's suggestions:
  * what was made today is what is most likely still on the shelf tonight. */
 export async function getTodaysProductions(restaurantId: string, sectionId: string, date: string): Promise<ProductionRow[]> {
-  return sql<ProductionRow[]>`
+  return tsql<ProductionRow[]>`
     ${sql.unsafe(PRODUCTION_SELECT)}
     where p.restaurant_id = ${restaurantId} and p.section_id = ${sectionId}
       and p.prod_date = ${date}::date and p.reverses_id is null
@@ -238,7 +238,7 @@ export async function getTodaysProductions(restaurantId: string, sectionId: stri
 export async function searchKitchenComponents(restaurantId: string, q: string): Promise<KitchenComponentHit[]> {
   const like = `%${q}%`
   const prefix = `${q}%`
-  const items = await sql<Omit<KitchenComponentHit, 'kind'>[]>`
+  const items = await tsql<Omit<KitchenComponentHit, 'kind'>[]>`
     select i.id, i.code, i.name, u.name as unit_name, (ic.issue_cost is not null) as has_cost
     from items i
     join units u on u.code = i.purchase_unit
@@ -247,7 +247,7 @@ export async function searchKitchenComponents(restaurantId: string, q: string): 
       and (i.name ilike ${like} or i.code ilike ${like})
     order by (i.name ilike ${prefix}) desc, i.name asc
     limit 6`
-  const recipes = await sql<KitchenComponentHit[]>`
+  const recipes = await tsql<KitchenComponentHit[]>`
     select case when r.kind = 'sub' then 'sub' else 'dish' end as kind,
            r.id, r.code, r.name, u.name as unit_name,
            (case when r.kind = 'sub' then rc.cost_per_output_unit else dc.dish_cost end is not null) as has_cost
@@ -263,7 +263,7 @@ export async function searchKitchenComponents(restaurantId: string, q: string): 
 }
 
 export async function getClosingLines(closingId: string): Promise<ClosingLineRow[]> {
-  return sql<ClosingLineRow[]>`
+  return tsql<ClosingLineRow[]>`
     select cl.id,
            case when cl.component_item_id is not null then 'item'
                 when r.kind = 'sub' then 'sub' else 'dish' end as kind,
@@ -284,7 +284,7 @@ export async function getClosingLines(closingId: string): Promise<ClosingLineRow
  * closed. Sums run over ALL rows (reversals included) so voids net out;
  * closed comes from kitchen_closing_current — null means not closed. */
 export async function getKitchenDay(restaurantId: string, date: string): Promise<KitchenDayRow[]> {
-  return sql<KitchenDayRow[]>`
+  return tsql<KitchenDayRow[]>`
     select s.id as section_id, s.code as section_code, s.name as section_name,
            coalesce(iss.v, 0)::text as issued,
            coalesce(pr.v, 0)::text as produced,
@@ -311,7 +311,7 @@ export async function getKitchenDay(restaurantId: string, date: string): Promise
 
 /** Kitchen wastage by reason for one month — reversals net out in the sum. */
 export async function getWasteByReason(restaurantId: string, monthStart: string): Promise<WasteByReasonRow[]> {
-  return sql<WasteByReasonRow[]>`
+  return tsql<WasteByReasonRow[]>`
     select reason,
            count(*) filter (where reverses_id is null)::int as entries,
            coalesce(sum(value), 0)::text as value
@@ -327,7 +327,7 @@ export async function getWasteByReason(restaurantId: string, monthStart: string)
  * section_consumption row and therefore no view row — they are listed with
  * nulls so the page can say "no issues this month" instead of hiding them. */
 export async function getFoodCost(restaurantId: string, monthStart: string): Promise<FoodCostRow[]> {
-  return sql<FoodCostRow[]>`
+  return tsql<FoodCostRow[]>`
     select s.code as section_code, s.name as section_name,
            (f.section_code is not null) as has_activity,
            coalesce(f.opening_value, 0)::text as opening_value,
@@ -355,7 +355,7 @@ export async function getIndentFulfilment(
   restaurantId: string,
   indentId: string,
 ): Promise<IndentFulfilmentRow[]> {
-  return sql<IndentFulfilmentRow[]>`
+  return tsql<IndentFulfilmentRow[]>`
     select indent_id, indent_date::text as indent_date, session,
            section_code, section_name, status,
            item_code, item_name, purchase_unit,
@@ -378,7 +378,7 @@ export async function getLastIndentFor(
   sectionId: string,
   session: string,
 ): Promise<string | null> {
-  const rows = await sql<{ id: string }[]>`
+  const rows = await tsql<{ id: string }[]>`
     select id from indents
     where restaurant_id = ${restaurantId} and section_id = ${sectionId} and session = ${session}
     order by indent_date desc, created_at desc

@@ -4,7 +4,7 @@
 // per date wins), unmapped_pos_items, sales_by_section. Unknown statuses
 // are surfaced, never banked.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import { todayIST } from '@/server/store-queries'
 import type {
   DishOption,
@@ -43,7 +43,7 @@ const DAY_SELECT = `
   ) f on true`
 
 export async function getSalesDays(restaurantId: string, limit = 45): Promise<SalesDayRow[]> {
-  return sql<SalesDayRow[]>`
+  return tsql<SalesDayRow[]>`
     ${sql.unsafe(DAY_SELECT)}
     where d.restaurant_id = ${restaurantId}
     order by d.business_date desc
@@ -51,7 +51,7 @@ export async function getSalesDays(restaurantId: string, limit = 45): Promise<Sa
 }
 
 export async function getSalesDay(restaurantId: string, businessDate: string): Promise<SalesDayRow | null> {
-  const rows = await sql<SalesDayRow[]>`
+  const rows = await tsql<SalesDayRow[]>`
     ${sql.unsafe(DAY_SELECT)}
     where d.restaurant_id = ${restaurantId} and d.business_date = ${businessDate}`
   return rows[0] ?? null
@@ -59,7 +59,7 @@ export async function getSalesDay(restaurantId: string, businessDate: string): P
 
 /** Unknown-status orders, loud and listed — never silently banked. */
 export async function listUnknownOrders(restaurantId: string, limit = 50): Promise<UnknownOrderRow[]> {
-  return sql<UnknownOrderRow[]>`
+  return tsql<UnknownOrderRow[]>`
     select business_date::text as business_date, pos_order_id, status_raw, channel,
            order_total::text as order_total
     from sales_current
@@ -71,7 +71,7 @@ export async function listUnknownOrders(restaurantId: string, limit = 50): Promi
 /** The mapping queue, biggest money first — the top rows are half the
  * revenue; map those and the sections view is already mostly true. */
 export async function listUnmapped(restaurantId: string): Promise<UnmappedPosItem[]> {
-  return sql<UnmappedPosItem[]>`
+  return tsql<UnmappedPosItem[]>`
     select pos_item_id, item_name,
            coalesce(qty, 0)::text as qty,
            coalesce(revenue, 0)::text as revenue
@@ -81,7 +81,7 @@ export async function listUnmapped(restaurantId: string): Promise<UnmappedPosIte
 }
 
 export async function listMappings(restaurantId: string): Promise<PosMapRow[]> {
-  return sql<PosMapRow[]>`
+  return tsql<PosMapRow[]>`
     select m.id, m.pos_item_id, m.item_name, m.recipe_id,
            r.code as recipe_code, r.name as recipe_name, s.code as section_code
     from pos_item_map m
@@ -92,7 +92,7 @@ export async function listMappings(restaurantId: string): Promise<PosMapRow[]> {
 }
 
 export async function countUnmapped(restaurantId: string): Promise<number> {
-  const rows = await sql<{ n: number }[]>`
+  const rows = await tsql<{ n: number }[]>`
     select count(*)::int as n from unmapped_pos_items where restaurant_id = ${restaurantId}`
   return rows[0]?.n ?? 0
 }
@@ -100,7 +100,7 @@ export async function countUnmapped(restaurantId: string): Promise<number> {
 /** Active dishes for the mapping picker — a POS item maps to a DISH; the
  * dish's section is how the money lands on the sections page. */
 export async function listDishOptions(restaurantId: string): Promise<DishOption[]> {
-  return sql<DishOption[]>`
+  return tsql<DishOption[]>`
     select r.id, r.code, r.name, s.code as section_code
     from recipes r
     join sections s on s.id = r.section_id
@@ -111,7 +111,7 @@ export async function listDishOptions(restaurantId: string): Promise<DishOption[
 /** Qty sold per recipe for one month, from mapped revenue lines of the
  * latest fetches. */
 export async function getQtySold(restaurantId: string, monthStart: string): Promise<QtySoldRow[]> {
-  return sql<QtySoldRow[]>`
+  return tsql<QtySoldRow[]>`
     select m.recipe_id,
            coalesce(sum(pl.qty), 0)::text as qty_sold,
            coalesce(sum(pl.amount), 0)::text as sales_value

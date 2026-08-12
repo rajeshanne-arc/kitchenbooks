@@ -6,7 +6,7 @@
 // upsert (recipe_id, item_name only).
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { fetchPetpoojaOrders, PetpoojaError } from '@/server/petpooja'
 import { normalizePayload, persistFetch, SalesIngestError } from '@/server/sales-ingest'
@@ -111,7 +111,7 @@ export async function mapPosItem(raw: {
       return { mapId: row.id }
     })
 
-    const [map] = await sql<PosMapRow[]>`
+    const [map] = await tsql<PosMapRow[]>`
       select m.id, m.pos_item_id, m.item_name, m.recipe_id,
              r.code as recipe_code, r.name as recipe_name, s.code as section_code
       from pos_item_map m

@@ -15,7 +15,7 @@
 // `question` is never rewritten at all.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { getQuery, listOpenQueries } from '@/server/accountant-queries'
@@ -81,7 +81,7 @@ export async function raiseQuery(raw: RaiseQueryInput): Promise<SaveQueryResult>
     }
 
     const restaurant = await getRestaurant()
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       insert into queries (restaurant_id, entity_type, entity_id, entity_date,
                            question, assigned_role, status, raised_by)
       values (${restaurant.id}, ${input.entityType},
@@ -133,7 +133,7 @@ export async function answerQuery(raw: { id: string; answer: string }): Promise<
 
     // An answer replaces an earlier answer only while the query is still
     // unresolved; once the accountant resolves it, the words are sealed.
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       update queries
       set answer = ${input.answer}, answered_by = ${user.username},
           answered_at = now(), status = 'answered'
@@ -163,7 +163,7 @@ export async function resolveQuery(id: string): Promise<SaveQueryResult> {
     const who = await actor(['accountant', 'owner'], 'Resolving a query')
     const restaurant = await getRestaurant()
 
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       update queries
       set status = 'resolved', resolved_by = ${who.username}, resolved_at = now()
       where id = ${id} and restaurant_id = ${restaurant.id} and status <> 'resolved'
@@ -252,7 +252,7 @@ export async function reopenPeriod(periodStart: string, reason: string): Promise
     const who = await actor(['accountant', 'owner'], 'Reopening a period')
     const restaurant = await getRestaurant()
 
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       update period_closes
       set reopened_at = now(), reopened_by = ${who.username}, reopen_reason = ${clean.slice(0, 500)}
       where restaurant_id = ${restaurant.id} and period_start = ${periodStart}::date and reopened_at is null
@@ -312,7 +312,7 @@ export async function saveWithholding(raw: SaveWithholdingInput): Promise<SaveWi
     const ratePct = ((amount / base) * 100).toFixed(2)
 
     const restaurant = await getRestaurant()
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       insert into withholdings (restaurant_id, wh_date, entity_type, party, regime_code,
                                 base_amount, rate_pct, amount, note, entered_by)
       values (${restaurant.id}, ${input.date},
@@ -324,7 +324,7 @@ export async function saveWithholding(raw: SaveWithholdingInput): Promise<SaveWi
       returning id`
     if (!row) throw new QueryError('The withholding could not be saved')
 
-    const [saved] = await sql<import('@/lib/types').WithholdingRow[]>`
+    const [saved] = await tsql<import('@/lib/types').WithholdingRow[]>`
       select id, wh_date::text as wh_date, entity_type, party, regime_code,
              base_amount::text as base_amount, rate_pct::text as rate_pct,
              amount::text as amount, deposited_on::text as deposited_on,
@@ -359,7 +359,7 @@ export async function markWithholdingDeposited(
       accountId,
       'the account the challan was paid from',
     )
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       update withholdings
       set deposited_on = ${depositedOn}::date,
           account_id = ${account},
@@ -409,7 +409,7 @@ export async function saveStaffFundMovement(raw: StaffFundInput): Promise<StaffF
         : 'the account it was paid out of',
     )
 
-    const [row] = await sql<{ id: string }[]>`
+    const [row] = await tsql<{ id: string }[]>`
       insert into staff_fund_movements (restaurant_id, move_date, direction, amount,
                                         source, account_id, note, entered_by)
       values (${restaurant.id}, ${input.date}, ${input.direction}, ${input.amount}::numeric,
@@ -441,7 +441,7 @@ export async function setInputTaxCreditable(creditable: boolean): Promise<{ ok: 
   try {
     await actor(['accountant', 'owner'], 'Changing the tax treatment')
     const restaurant = await getRestaurant()
-    await sql`
+    await tsql`
       insert into settings (restaurant_id, key, value)
       values (${restaurant.id}, 'input_tax_creditable', ${creditable ? 'true' : 'false'})
       on conflict (restaurant_id, key) do update set value = excluded.value`

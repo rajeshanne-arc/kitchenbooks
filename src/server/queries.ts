@@ -2,7 +2,7 @@
 // named view here (vendor_dues.balance, item_rates.prefill_rate) — never a
 // re-computation of the same figure in JS.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import type { Category, ItemHit, ItemHitExisting, ItemHitStarter, Restaurant, Unit, VendorHit } from '@/lib/types'
 
 
@@ -32,13 +32,13 @@ export async function getRestaurant(): Promise<Restaurant> {
   const { getSessionUser } = await import('@/server/current-user')
   const user = await getSessionUser()
   if (user) {
-    const rows = await sql<Restaurant[]>`
+    const rows = await tsql<Restaurant[]>`
       select id, name from restaurants where id = ${user.restaurantId}`
     if (!rows[0]) throw new Error('The signed-in account points at a restaurant that no longer exists')
     return rows[0]
   }
 
-  const rows = await sql<Restaurant[]>`select id, name from restaurants order by created_at asc limit 2`
+  const rows = await tsql<Restaurant[]>`select id, name from restaurants order by created_at asc limit 2`
   if (!rows[0]) throw new Error('No restaurant row found — seed the restaurants table first')
   if (rows.length > 1) {
     throw new Error(
@@ -50,8 +50,8 @@ export async function getRestaurant(): Promise<Restaurant> {
 
 export async function getMasters(): Promise<{ categories: Category[]; units: Unit[] }> {
   const [categories, units] = await Promise.all([
-    sql<Category[]>`select code, name, kind, sort_order from categories where status = 'active' order by sort_order asc`,
-    sql<Unit[]>`select code, name from units order by name asc`,
+    tsql<Category[]>`select code, name, kind, sort_order from categories where status = 'active' order by sort_order asc`,
+    tsql<Unit[]>`select code, name from units order by name asc`,
   ])
   return { categories, units }
 }
@@ -59,7 +59,7 @@ export async function getMasters(): Promise<{ categories: Category[]; units: Uni
 export async function searchVendors(restaurantId: string, q: string): Promise<VendorHit[]> {
   const like = `%${q}%`
   const prefix = `${q}%`
-  const rows = await sql<VendorHit[]>`
+  const rows = await tsql<VendorHit[]>`
     select v.id, v.code, v.name, v.primary_category, c.name as category_name,
            coalesce(d.balance, 0)::text as balance
     from vendors v
@@ -79,7 +79,7 @@ export async function searchVendors(restaurantId: string, q: string): Promise<Ve
 export async function searchItems(restaurantId: string, q: string): Promise<ItemHit[]> {
   const like = `%${q}%`
   const prefix = `${q}%`
-  const items = await sql<Omit<ItemHitExisting, 'kind'>[]>`
+  const items = await tsql<Omit<ItemHitExisting, 'kind'>[]>`
     select i.id, i.code, i.name, i.category, c.name as category_name,
            i.purchase_unit, u.name as unit_name, r.prefill_rate::text as prefill_rate
     from items i
@@ -89,7 +89,7 @@ export async function searchItems(restaurantId: string, q: string): Promise<Item
     where i.restaurant_id = ${restaurantId} and i.status = 'active' and i.name ilike ${like}
     order by (i.name ilike ${prefix}) desc, i.name asc
     limit 8`
-  const starters = await sql<Omit<ItemHitStarter, 'kind'>[]>`
+  const starters = await tsql<Omit<ItemHitStarter, 'kind'>[]>`
     select s.id as starter_id, s.name, s.category, c.name as category_name,
            s.purchase_unit, u.name as unit_name
     from starter_library s

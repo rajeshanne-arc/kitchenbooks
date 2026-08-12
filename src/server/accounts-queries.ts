@@ -5,7 +5,7 @@
 // what a bank is called in any particular country, which is what lets the
 // same product be sold outside the one it was built in.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import type { AccountBalanceRow, MoneyAccount } from '@/lib/types'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -14,7 +14,7 @@ export async function listMoneyAccounts(
   restaurantId: string,
   includeRetired = false,
 ): Promise<MoneyAccount[]> {
-  return sql<MoneyAccount[]>`
+  return tsql<MoneyAccount[]>`
     select id, name, kind, identifier, is_till,
            opening_balance::text as opening_balance,
            opening_date::text as opening_date,
@@ -26,7 +26,7 @@ export async function listMoneyAccounts(
 }
 
 export async function getMoneyAccount(restaurantId: string, id: string): Promise<MoneyAccount | null> {
-  const rows = await sql<MoneyAccount[]>`
+  const rows = await tsql<MoneyAccount[]>`
     select id, name, kind, identifier, is_till,
            opening_balance::text as opening_balance,
            opening_date::text as opening_date,
@@ -38,7 +38,7 @@ export async function getMoneyAccount(restaurantId: string, id: string): Promise
 
 /** Balance per account, straight from account_balances. */
 export async function getAccountBalances(restaurantId: string): Promise<AccountBalanceRow[]> {
-  return sql<AccountBalanceRow[]>`
+  return tsql<AccountBalanceRow[]>`
     select account_id, name, kind, identifier, is_till, basis,
            counted_on::text as counted_on,
            opening_balance::text as opening_balance,
@@ -53,7 +53,7 @@ export async function getAccountBalances(restaurantId: string): Promise<AccountB
 /** How many money movements name no account. books_completeness counts this
  *  too; the picker's own screens surface it where it can be fixed. */
 export async function countUnaccountedMovements(restaurantId: string): Promise<number> {
-  const [row] = await sql<{ n: number }[]>`
+  const [row] = await tsql<{ n: number }[]>`
     select count(*)::int as n from money_movements
     where restaurant_id = ${restaurantId} and account_id is null`
   return row?.n ?? 0

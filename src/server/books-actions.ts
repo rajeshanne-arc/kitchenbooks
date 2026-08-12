@@ -13,7 +13,7 @@
 // write — nothing shown to the user is an echo of what they typed.
 
 import { z } from 'zod'
-import { sql, txn } from '@/lib/db'
+import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
@@ -67,7 +67,7 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const before = await sql<{ balance: string }[]>`
+    const before = await tsql<{ balance: string }[]>`
       select coalesce(d.balance, 0)::text as balance
       from purchases p
       left join vendor_dues d on d.vendor_id = p.vendor_id
@@ -107,7 +107,7 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
     })
 
     // Post-commit verification straight from the views/events.
-    const [check] = await sql<{ zeroed: boolean; orig_voided: boolean; rev_lines: number }[]>`
+    const [check] = await tsql<{ zeroed: boolean; orig_voided: boolean; rev_lines: number }[]>`
       select (ob.bill_total + rb.bill_total = 0) as zeroed,
              ob.is_voided as orig_voided,
              (select count(*)::int from purchase_lines where purchase_id = ${saved.revId}) as rev_lines
@@ -152,7 +152,7 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    const vendor = await sql<{ id: string }[]>`
+    const vendor = await tsql<{ id: string }[]>`
       select id from vendors where id = ${input.vendorId} and restaurant_id = ${rid}`
     if (!vendor[0]) throw new BooksError('Vendor not found')
 
@@ -228,7 +228,7 @@ export async function updateVendor(id: string, raw: UpdateVendorInput): Promise<
     }
 
     // Only the column-granted fields ever appear in this SET.
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update vendors set
         name = ${input.name},
         gstin = ${trimmedOrNull(input.gstin)},
@@ -293,18 +293,18 @@ export async function updateItem(id: string, raw: UpdateItemInput): Promise<Upda
     const rid = restaurant.id
 
     if (input.stockUnit !== '') {
-      const unit = await sql<{ code: string }[]>`select code from units where code = ${input.stockUnit}`
+      const unit = await tsql<{ code: string }[]>`select code from units where code = ${input.stockUnit}`
       if (!unit[0]) throw new BooksError(`Unknown unit “${input.stockUnit}”`)
     }
 
     if (input.defaultVendorId !== '') {
-      const v = await sql<{ id: string }[]>`
+      const v = await tsql<{ id: string }[]>`
         select id from vendors where id = ${input.defaultVendorId} and restaurant_id = ${rid}`
       if (!v[0]) throw new BooksError('That vendor does not belong to this restaurant')
     }
 
     // Only the column-granted fields ever appear in this SET.
-    const updated = await sql<{ id: string }[]>`
+    const updated = await tsql<{ id: string }[]>`
       update items set
         name = ${input.name},
         brand = ${trimmedOrNull(input.brand)},
@@ -361,7 +361,7 @@ export async function createVendor(raw: CreateVendorInput): Promise<CreateVendor
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const cat = await sql<{ code: string }[]>`
+    const cat = await tsql<{ code: string }[]>`
       select code from categories where code = ${input.category} and status = 'active'`
     if (!cat[0]) throw new BooksError(`Unknown category “${input.category}”`)
 
@@ -425,10 +425,10 @@ export async function createItem(raw: CreateItemInput): Promise<CreateItemResult
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const cat = await sql<{ code: string }[]>`
+    const cat = await tsql<{ code: string }[]>`
       select code from categories where code = ${input.category} and status = 'active'`
     if (!cat[0]) throw new BooksError(`Unknown category “${input.category}”`)
-    const unit = await sql<{ code: string }[]>`select code from units where code = ${input.purchaseUnit}`
+    const unit = await tsql<{ code: string }[]>`select code from units where code = ${input.purchaseUnit}`
     if (!unit[0]) throw new BooksError(`Unknown unit “${input.purchaseUnit}”`)
 
     const saved = await txn(async (tx) => {

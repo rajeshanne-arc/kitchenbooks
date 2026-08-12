@@ -11,7 +11,7 @@
 // arithmetic.
 import 'server-only'
 import type postgres from 'postgres'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type { CountAcceptance, StockAdjustmentRow } from '@/lib/types'
 
 /** A refusal the person at the keyboard is meant to read, as opposed to a
@@ -22,7 +22,7 @@ export class AdjustmentRefusal extends Error {}
 /** The log, newest first. `value` is the GENERATED qty × unit_cost — read,
  *  never worked out here. */
 export async function listAdjustments(restaurantId: string, limit = 100): Promise<StockAdjustmentRow[]> {
-  return sql<StockAdjustmentRow[]>`
+  return tsql<StockAdjustmentRow[]>`
     select a.id, a.adj_date::text as adj_date, a.item_id,
            i.code as item_code, i.name as item_name, i.purchase_unit,
            a.qty::text as qty, a.unit_cost::text as unit_cost, a.value::text as value,
@@ -36,7 +36,7 @@ export async function listAdjustments(restaurantId: string, limit = 100): Promis
 
 /** One row, for the read-back that verifies a save actually landed. */
 export async function getAdjustment(restaurantId: string, id: string): Promise<StockAdjustmentRow | null> {
-  const rows = await sql<StockAdjustmentRow[]>`
+  const rows = await tsql<StockAdjustmentRow[]>`
     select a.id, a.adj_date::text as adj_date, a.item_id,
            i.code as item_code, i.name as item_name, i.purchase_unit,
            a.qty::text as qty, a.unit_cost::text as unit_cost, a.value::text as value,
@@ -53,7 +53,7 @@ export async function listAdjustmentsForCount(
   restaurantId: string,
   countId: string,
 ): Promise<StockAdjustmentRow[]> {
-  return sql<StockAdjustmentRow[]>`
+  return tsql<StockAdjustmentRow[]>`
     select a.id, a.adj_date::text as adj_date, a.item_id,
            i.code as item_code, i.name as item_name, i.purchase_unit,
            a.qty::text as qty, a.unit_cost::text as unit_cost, a.value::text as value,
@@ -78,7 +78,7 @@ const ACCEPTANCE_SELECT = `
  *  how many adjustments an acceptance would write — zero is a real answer
  *  and still needs accepting: it says the book was right. */
 export async function listCountAcceptances(restaurantId: string, limit = 30): Promise<CountAcceptance[]> {
-  return sql<CountAcceptance[]>`
+  return tsql<CountAcceptance[]>`
     ${sql.unsafe(ACCEPTANCE_SELECT)}
     where c.restaurant_id = ${restaurantId}
     order by c.count_date desc, c.created_at desc
@@ -86,7 +86,7 @@ export async function listCountAcceptances(restaurantId: string, limit = 30): Pr
 }
 
 export async function getCountAcceptance(restaurantId: string, countId: string): Promise<CountAcceptance | null> {
-  const rows = await sql<CountAcceptance[]>`
+  const rows = await tsql<CountAcceptance[]>`
     ${sql.unsafe(ACCEPTANCE_SELECT)}
     where c.restaurant_id = ${restaurantId} and c.id = ${countId}`
   return rows[0] ?? null
@@ -95,7 +95,7 @@ export async function getCountAcceptance(restaurantId: string, countId: string):
 /** The counts nobody has stood behind. Oldest first — the oldest unaccepted
  *  count is the one whose variance is about to reappear at the next count. */
 export async function listUnacceptedCounts(restaurantId: string): Promise<CountAcceptance[]> {
-  return sql<CountAcceptance[]>`
+  return tsql<CountAcceptance[]>`
     ${sql.unsafe(ACCEPTANCE_SELECT)}
     where c.restaurant_id = ${restaurantId} and c.accepted_at is null
     order by c.count_date asc, c.created_at asc`
@@ -127,7 +127,7 @@ export async function getAcceptanceContext(
   countId: string,
 ): Promise<{ prior: number; waiting: number; oldestWaiting: string | null; correctedSince: number }> {
   type Row = { prior: number; waiting: number; oldest_waiting: string | null; corrected_since: number }
-  const rows = await sql<Row[]>`
+  const rows = await tsql<Row[]>`
     select
       (select count(*)::int from stock_counts o
         where o.restaurant_id = c.restaurant_id

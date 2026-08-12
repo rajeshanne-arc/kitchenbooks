@@ -7,11 +7,11 @@
 // expenses -> total_expenses) and this file kept selecting the old ones, so
 // /owner/pnl answered 500 on every load. Read the view before editing.
 import 'server-only'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import type { PnlDiagnostic, PnlRow } from '@/lib/types'
 
 export async function getPnlMonthly(restaurantId: string, limit = 13): Promise<PnlRow[]> {
-  return sql<PnlRow[]>`
+  return tsql<PnlRow[]>`
     select month::text as month,
            coalesce(food_beverage, 0)::text as food_beverage,
            coalesce(off_book, 0)::text as off_book,
@@ -41,7 +41,7 @@ export async function getPnlMonthly(restaurantId: string, limit = 13): Promise<P
 
 /** What the view itself says is missing, per month. */
 export async function getPnlDiagnostics(restaurantId: string): Promise<PnlDiagnostic[]> {
-  return sql<PnlDiagnostic[]>`
+  return tsql<PnlDiagnostic[]>`
     select month::text as month, severity, what
     from pnl_diagnostics
     where restaurant_id = ${restaurantId}

@@ -3,7 +3,7 @@
 // marks, and the honesty pills (unassigned_marks / unsalaried_marks, same
 // law as uncosted_lines: surface whenever non-zero).
 import 'server-only'
-import { sql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type {
   AttendanceStatus,
   CasualLabourRow,
@@ -23,14 +23,14 @@ const EXPENSE_SELECT = `
   from expenses e`
 
 export async function getExpense(restaurantId: string, id: string): Promise<ExpenseRow | null> {
-  const rows = await sql<ExpenseRow[]>`
+  const rows = await tsql<ExpenseRow[]>`
     ${sql.unsafe(EXPENSE_SELECT)}
     where e.restaurant_id = ${restaurantId} and e.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listExpenses(restaurantId: string, limit = 40): Promise<ExpenseRow[]> {
-  return sql<ExpenseRow[]>`
+  return tsql<ExpenseRow[]>`
     ${sql.unsafe(EXPENSE_SELECT)}
     where e.restaurant_id = ${restaurantId}
     order by e.expense_date desc, e.created_at desc
@@ -39,7 +39,7 @@ export async function listExpenses(restaurantId: string, limit = 40): Promise<Ex
 
 /** One month's expenses by category, straight from expenses_by_category. */
 export async function getExpensesByCategory(restaurantId: string, monthStart: string): Promise<ExpenseCategoryMonthRow[]> {
-  return sql<ExpenseCategoryMonthRow[]>`
+  return tsql<ExpenseCategoryMonthRow[]>`
     select category, month::text as month, amount::text as amount
     from expenses_by_category
     where restaurant_id = ${restaurantId} and month = ${monthStart}::date
@@ -63,7 +63,7 @@ export async function getRecurringExpenseOffers(
   restaurantId: string,
   monthStart: string,
 ): Promise<RecurringExpenseOffer[]> {
-  return sql<RecurringExpenseOffer[]>`
+  return tsql<RecurringExpenseOffer[]>`
     with prev as (
       select category, sum(amount) as amount
       from expenses
@@ -102,7 +102,7 @@ export async function getRecurringExpenseOffers(
  * NULL-section row is real money on nobody's section; render it LAST and
  * loud, never dropped. */
 export async function getLabourMonth(restaurantId: string, monthStart: string): Promise<LabourMonthRow[]> {
-  return sql<LabourMonthRow[]>`
+  return tsql<LabourMonthRow[]>`
     select l.section_code, l.section_name, s.dept_group,
            coalesce(l.labour_cost, 0)::text as labour_cost,
            coalesce(l.unassigned_marks, 0)::int as unassigned_marks,
@@ -121,7 +121,7 @@ export async function getAttendanceMonthSummary(
   restaurantId: string,
   monthStart: string,
 ): Promise<{ status: AttendanceStatus; marks: number }[]> {
-  return sql<{ status: AttendanceStatus; marks: number }[]>`
+  return tsql<{ status: AttendanceStatus; marks: number }[]>`
     select a.status, count(*)::int as marks
     from attendance_current a
     join staff st on st.id = a.staff_id
@@ -142,14 +142,14 @@ const CONTRACT_SELECT = `
   from contract_bills c`
 
 export async function getContractBill(restaurantId: string, id: string): Promise<ContractBillRow | null> {
-  const rows = await sql<ContractBillRow[]>`
+  const rows = await tsql<ContractBillRow[]>`
     ${sql.unsafe(CONTRACT_SELECT)}
     where c.restaurant_id = ${restaurantId} and c.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listContractBills(restaurantId: string, limit = 40): Promise<ContractBillRow[]> {
-  return sql<ContractBillRow[]>`
+  return tsql<ContractBillRow[]>`
     ${sql.unsafe(CONTRACT_SELECT)}
     where c.restaurant_id = ${restaurantId}
     order by c.bill_date desc, c.created_at desc
@@ -165,14 +165,14 @@ const CASUAL_SELECT = `
   left join sections s on s.id = cl.section_id`
 
 export async function getCasualLabour(restaurantId: string, id: string): Promise<CasualLabourRow | null> {
-  const rows = await sql<CasualLabourRow[]>`
+  const rows = await tsql<CasualLabourRow[]>`
     ${sql.unsafe(CASUAL_SELECT)}
     where cl.restaurant_id = ${restaurantId} and cl.id = ${id}`
   return rows[0] ?? null
 }
 
 export async function listCasualLabour(restaurantId: string, limit = 40): Promise<CasualLabourRow[]> {
-  return sql<CasualLabourRow[]>`
+  return tsql<CasualLabourRow[]>`
     ${sql.unsafe(CASUAL_SELECT)}
     where cl.restaurant_id = ${restaurantId}
     order by cl.work_date desc, cl.created_at desc
