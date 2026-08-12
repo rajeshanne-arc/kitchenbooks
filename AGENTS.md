@@ -1599,3 +1599,99 @@ advance rendering as "already owes −₹500". All four are words now.
 collision, `a` bound to both the attendance table inside a CTE and the
 advances CTE outside it. Confusing to a reader and unresolvable to the gate,
 so the alias was renamed rather than the gate taught to ignore it.
+
+## Migration 0016 — reconciliation, the till, and payroll in the register
+
+`reconciliation_and_payroll_reaches_the_register` landed AFTER the Phase C
+code was written, so this pass teaches the app about it. Three of the four
+changes are deletions of things the app was honestly saying and no longer
+needs to.
+
+**`money_accounts.is_till`, and the till's balance is COUNTED.**
+`account_balances` gained `basis` / `counted_on` / `is_till`: for a till
+with a day close behind it the balance is the cashier's **counted cash**,
+not opening + movements. That is the right answer — the drawer is the one
+account somebody physically counts every night — and the screens now say
+which kind of figure they are showing: "counted 11 Aug" against
+"computed". A balance you can check against a hand of notes and a balance
+derived from arithmetic are different claims, and reading them as the same
+number is how a shortage hides.
+
+**ONE till, refused by name.** `account_balances` joins `day_close_current`
+per RESTAURANT rather than per account, so a second till would silently
+wear the same counted cash as the first and two accounts would each claim
+to hold the whole drawer. The refusal is at both write paths and the gate
+asserts at most one exists. The tick only appears on a cash account.
+
+**Payroll reaches `money_movements`** when a line has `paid_on`, as kind
+`'Payroll'`. So the wages register carries it, the run's balance moves, and
+the honesty strip that said otherwise is DELETED rather than reworded — the
+gap it described is gone. `smoke:a2` asserts both directions: an UNPAID run
+must not reach the register, a paid one must.
+
+**`'Tax deposited'` also joined**, from `withholdings` with a
+`deposited_on`. It has a **NULL `account_id` by the view's design**, so it
+can reach no cash or bank register and can never be reconciled against a
+statement; the expense register is its only home, and it is claimed there
+so the "every kind lands in exactly one register" gate still holds. Worth
+knowing rather than discovering: a tax deposit shows in the books as an
+outflow that belongs to no account.
+
+**Reconciliation is built** — `statements`, `statement_lines`,
+`reconciliation_matches` and the three views. **`reconciliation_matches`
+has no DELETE grant, so a match cannot be undone**, and the screen says so
+before the button rather than in a toast after it. `statement_self_check`
+(opening + lines − closing) is stated when non-zero as a fact about the
+STATEMENT, not about the books.
+
+**A MATCH IS AN ASSERTION, NOT AN EVENT — the second DELETE exception.**
+`reconciliation_matches` is deleted to unmatch, and that does not break the
+append-only rule, it clarifies it. Every other table holds an EVENT: money
+moved, goods arrived, somebody worked a day. An event cannot be made not to
+have happened, so it is corrected with a reversal. A match holds a
+JUDGEMENT — that this statement line and that movement are the same
+transaction. A judgement that turns out to be wrong was never true, so
+there is nothing to preserve and nothing to reverse; leaving it beside a
+correction would assert two contradictory things at once and leave
+`unmatched_lines` wrong forever. Same shape as the `recipe_lines`
+exception: removing an ingredient from a card is editing a description, not
+erasing history. **These two are the only DELETEs in the system.**
+
+*How this was got wrong:* the grant was checked in
+`information_schema.column_privileges`, where DELETE — a TABLE privilege —
+never appears. The screens were built saying a match was permanent. Check
+`table_privileges` for DELETE and `column_privileges` for column-level
+INSERT/UPDATE; they are different catalogues and only one of them can
+answer this question.
+
+**Two schema-level risks the verify pass found and did not paper over:**
+`reconciliation_matches` has `UNIQUE(statement_line_id)` but NO unique index
+on `(entity_type, entity_id)`, so two statement lines could be matched to
+the same movement under READ COMMITTED — the server checks
+`unmatched_movements` first, which narrows the window and cannot close it. A
+unique index is the only real fix and it is a migration. Also
+`withholdings.account_id` is nullable, so a challan deposited before that
+column existed still carries none.
+
+**`markWithholdingDeposited` now names an account** and refuses a blank like
+every other money form — a deposit is money leaving a real account today.
+Before the column existed, `money_movements` read a hardcoded null for
+these: a deposited challan could never be reconciled and sat in the
+unaccounted count forever.
+
+**The empty state on the nine account-refusing forms is a ROUTE OUT.**
+`money_accounts` starts empty in every restaurant, so on the day this
+shipped nobody could record a payment, voucher, other income, contract
+bill, casual labour, settlement or bank-settled close. That is correct
+behaviour and it reads as the app being broken — a refusal with no next
+step IS broken. One picker serves all nine, so the sentence lives in one
+place: what is missing, who creates it, and both routes to it. **The link
+is a PROP, never a literal**, because `/owner/accounts` is owner-and-
+accountant only and a cashier shown a link they cannot open is LAW 1 broken
+in the smallest possible way.
+
+**The day close needed its own answer.** Its picker appears only once a bank
+amount is typed, so a cashier would key the figure and only then find the
+close would not save. It now speaks before the box — and says the important
+part: an empty bank block names no account, so **the nightly cash close is
+never held up by this**.

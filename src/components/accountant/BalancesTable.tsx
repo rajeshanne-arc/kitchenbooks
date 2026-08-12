@@ -67,7 +67,7 @@ export default function BalancesTable({ rows }: { rows: AccountBalanceRow[] }) {
             <th className={thNumCls}>Opening</th>
             <th className={thNumCls}>Moved</th>
             <th className={thNumCls}>Balance</th>
-            <th className={thCls}>Last move</th>
+            <th className={thCls}>Basis</th>
           </tr>
         </thead>
 
@@ -91,7 +91,14 @@ export default function BalancesTable({ rows }: { rows: AccountBalanceRow[] }) {
               return (
                 <tr key={r.account_id} className={trCls}>
                   <td className={tdCls}>
-                    <span className="block truncate">{r.name}</span>
+                    <span className="block truncate">
+                      {r.name}
+                      {r.is_till && (
+                        <span className="ml-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+                          till
+                        </span>
+                      )}
+                    </span>
                     {r.identifier !== null && (
                       <span className="block truncate font-mono text-[11px] text-stone-400">
                         {r.identifier}
@@ -104,7 +111,11 @@ export default function BalancesTable({ rows }: { rows: AccountBalanceRow[] }) {
                   </td>
                   <td className={`${tdNumCls} ${balanceCls(bal)}`}>{formatPaise(bal)}</td>
                   <td className={`${tdCls} text-stone-500`}>
-                    {lastMove === null ? (
+                    {r.basis === 'counted' ? (
+                      <span className="text-stone-700">
+                        counted{r.counted_on === null ? '' : ` ${fmtDate(r.counted_on)}`}
+                      </span>
+                    ) : lastMove === null ? (
                       <span className="text-stone-400">no movement</span>
                     ) : (
                       fmtDate(lastMove)

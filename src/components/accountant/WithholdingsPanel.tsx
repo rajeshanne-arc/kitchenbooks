@@ -16,8 +16,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { WithholdingRow } from '@/lib/types'
+import type { MoneyAccount, WithholdingRow } from '@/lib/types'
 import { markWithholdingDeposited, saveWithholding } from '@/server/accountant-actions'
+import AccountPicker from '@/components/accounts/AccountPicker'
 import { parseDecimal, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import Honesty, { HonestyPill } from '@/components/Honesty'
@@ -53,12 +54,14 @@ const kindLabel = (v: string): string => PAYMENT_KINDS.find((k) => k.v === v)?.l
 const okAmount = (s: string): boolean => parseDecimal(s, 2, 11) !== null && Number(s) > 0
 
 export default function WithholdingsPanel({
+  accounts,
   rows,
   today,
 }: {
   rows: WithholdingRow[]
   /** IST, from the server — the date pickers open on the right day */
   today: string
+  accounts: MoneyAccount[]
 }) {
   const router = useRouter()
   const [adding, setAdding] = useState(false)
@@ -70,6 +73,9 @@ export default function WithholdingsPanel({
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
   const [depositing, setDepositing] = useState<string | null>(null)
+  // nothing preselected: a challan is paid from a real account and the
+  // server refuses a blank, same as every other money form
+  const [depAccountId, setDepAccountId] = useState('')
   const [depDate, setDepDate] = useState(today)
   const [depRef, setDepRef] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
@@ -119,10 +125,10 @@ export default function WithholdingsPanel({
   }
 
   async function deposit(id: string) {
-    if (busy !== null || depDate === '') return
+    if (busy !== null || depDate === '' || depAccountId === '') return
     setBusy(id)
     try {
-      const res = await markWithholdingDeposited(id, depDate, depRef)
+      const res = await markWithholdingDeposited(id, depDate, depRef, depAccountId)
       if (!res.ok) {
         toast(res.error, 'error')
         return
@@ -130,6 +136,7 @@ export default function WithholdingsPanel({
       toast('Marked deposited', 'ok')
       setDepositing(null)
       setDepRef('')
+      setDepAccountId('')
       router.refresh()
     } catch {
       toast('Could not reach the server — nothing was changed.', 'error')
@@ -206,27 +213,35 @@ export default function WithholdingsPanel({
               )}
 
               {depositing === r.id && (
-                <div className="mt-1.5 grid gap-2 sm:grid-cols-[9rem_1fr_auto]">
-                  <input
-                    type="date"
-                    value={depDate}
-                    onChange={(e) => setDepDate(e.target.value)}
-                    aria-label="Deposited on"
-                    className={inputCls}
-                  />
-                  <input
-                    value={depRef}
-                    onChange={(e) => setDepRef(e.target.value)}
-                    maxLength={120}
-                    aria-label="Reference"
-                    placeholder="reference on the receipt (optional)"
-                    className={inputCls}
+                <div className="mt-1.5 space-y-2">
+                  <div className="grid gap-2 sm:grid-cols-[9rem_1fr]">
+                    <input
+                      type="date"
+                      value={depDate}
+                      onChange={(e) => setDepDate(e.target.value)}
+                      aria-label="Deposited on"
+                      className={inputCls}
+                    />
+                    <input
+                      value={depRef}
+                      onChange={(e) => setDepRef(e.target.value)}
+                      maxLength={120}
+                      aria-label="Reference"
+                      placeholder="reference on the receipt (optional)"
+                      className={inputCls}
+                    />
+                  </div>
+                  <AccountPicker
+                    accounts={accounts}
+                    value={depAccountId}
+                    onChange={setDepAccountId}
+                    label="Paid from"
                   />
                   <button
                     type="button"
-                    disabled={busy !== null || depDate === ''}
+                    disabled={busy !== null || depDate === '' || depAccountId === ''}
                     onClick={() => void deposit(r.id)}
-                    className={`${btnCls} shrink-0 px-3 py-2 text-sm`}
+                    className={`${btnCls} px-3 py-2 text-sm`}
                   >
                     {busy === r.id ? '…' : 'Deposited'}
                   </button>

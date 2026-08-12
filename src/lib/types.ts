@@ -1430,6 +1430,9 @@ export type VoidSettlementResult =
 export type MoneyAccountKind = 'cash' | 'bank' | 'wallet' | 'card_settlement' | 'owner' | 'other'
 
 export type MoneyAccount = {
+  /** the drawer. Its balance is the COUNTED cash from the last day close,
+   *  not a computed figure — see account_balances.basis */
+  is_till: boolean
   id: string
   name: string
   kind: MoneyAccountKind
@@ -1441,6 +1444,7 @@ export type MoneyAccount = {
 }
 
 export type SaveMoneyAccountInput = {
+  isTill: boolean
   name: string
   kind: MoneyAccountKind
   identifier: string
@@ -1454,6 +1458,12 @@ export type SaveMoneyAccountResult = { ok: true; account: MoneyAccount } | { ok:
 
 /** account_balances — opening plus every movement through it. */
 export type AccountBalanceRow = {
+  /** 'counted' only for a till with a day close behind it — that balance is
+   *  physically counted cash, not opening + movements. Everything else is
+   *  'computed', and the difference is worth showing. */
+  basis: 'counted' | 'computed'
+  counted_on: string | null
+  is_till: boolean
   account_id: string
   name: string
   kind: MoneyAccountKind
@@ -2038,6 +2048,7 @@ export type WithholdingRow = {
   rate_pct: string | null
   amount: string
   deposited_on: string | null
+  account_id: string | null
   challan_ref: string | null
   note: string | null
   entered_by: string | null
@@ -2202,3 +2213,62 @@ export type UpdateStaffIdentityInput = {
   gender: string
   payMode: string
 }
+
+// ---------- Migration 0016: reconciliation ----------
+
+/** One imported statement. opening/closing are what the PROVIDER says; the
+ *  self-check compares them against the lines and is allowed to disagree. */
+export type StatementRow = {
+  id: string
+  account_id: string
+  account_name: string
+  period_start: string
+  period_end: string
+  opening_balance: string | null
+  closing_balance: string | null
+  note: string | null
+  imported_by: string | null
+  imported_at: string
+  statement_lines: number
+  statement_total: string
+  matched_lines: number
+  unmatched_lines: number
+  /** opening + lines − closing. Non-zero means the statement does not add up
+   *  on its own terms, which is a fact about the statement, not the books. */
+  statement_self_check: string | null
+}
+
+export type StatementLineRow = {
+  statement_line_id: string
+  stmt_date: string
+  description: string | null
+  reference: string | null
+  amount: string
+}
+
+export type UnmatchedMovementRow = {
+  entity_type: string
+  entity_id: string
+  kind: string
+  doc_no: string | null
+  move_date: string
+  amount: string
+  party: string | null
+  narration: string | null
+}
+
+export type ImportStatementInput = {
+  accountId: string
+  periodStart: string
+  periodEnd: string
+  openingBalance: string
+  closingBalance: string
+  note: string
+  lines: { date: string; description: string; reference: string; amount: string }[]
+}
+
+export type ImportStatementResult = { ok: true; statementId: string } | { ok: false; error: string }
+
+export type MatchInput = { statementLineId: string; entityType: string; entityId: string; note: string }
+
+export type ReconcileResult = { ok: true } | { ok: false; error: string }

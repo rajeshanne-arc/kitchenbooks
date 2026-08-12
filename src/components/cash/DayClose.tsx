@@ -396,14 +396,29 @@ export default function DayClose({
                   className={`${numCls} w-full text-right`}
                 />
               </label>
-              {bankMoved && (
-                <AccountPicker
-                  accounts={accounts}
-                  value={bankAccountId}
-                  onChange={setBankAccountId}
-                  label="Bank settled into"
-                  required
-                />
+              {/* SAID BEFORE THE AMOUNT IS TYPED, not after. The picker only
+                  appears once money is in the bank box, so with no accounts
+                  a cashier would key the figure, then find the close would
+                  not save and be told why by a field that was not there a
+                  moment ago. The rest of the close still works: an empty
+                  bank block names no account, so the night's cash close is
+                  never held up by this. */}
+              {accounts.length === 0 ? (
+                <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  Leave the bank box empty tonight — no money accounts exist yet, so a settlement has
+                  nowhere to land. The cash close itself saves normally. Ask an owner to add the
+                  accounts, then file the settlement.
+                </p>
+              ) : (
+                bankMoved && (
+                  <AccountPicker
+                    accounts={accounts}
+                    value={bankAccountId}
+                    onChange={setBankAccountId}
+                    label="Bank settled into"
+                    required
+                  />
+                )
               )}
             </div>
             <label className="block">

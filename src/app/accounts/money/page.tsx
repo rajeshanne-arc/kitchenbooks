@@ -100,17 +100,23 @@ export default async function MoneyPage() {
           </Honesty>
         )}
 
-        {/* NOT BUILT, and this strip is the whole of what the app can
-            honestly say about it. There is no reconciliation table in the
-            schema — nothing anywhere can remember that a statement line was
-            matched — so a screen offering ticks would be a screen that
-            forgets them the moment it is closed. */}
-        <Honesty verdict="not yet">
-          Nothing here has been compared against a bank, wallet or card statement. Recording that a
-          statement line was matched needs somewhere to remember it, and the books have no such
-          table yet — so these balances are what the app was told, not what the account provider
-          confirms. Comparing the two is still done off this screen.
-        </Honesty>
+        {/* Built in migration 0016. The strip that used to sit here said
+            reconciliation needed a table to remember what was matched; the
+            table exists now, so the strip is gone rather than reworded. */}
+        <section className={cardCls}>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>Against a statement</h2>
+            <span className="font-mono text-[10px] text-stone-400">reconciliation_status</span>
+          </div>
+          <p className="mt-1.5 text-sm text-stone-700">
+            Import what the bank, wallet or card provider says, and match its lines against the
+            movements above. What is left unmatched on either side is the answer — money the
+            provider knows about and the books do not, or the reverse.
+          </p>
+          <Link href="/accounts/money/reconcile" className={`${masterLinkCls} mt-2 inline-block`}>
+            Statements and matching
+          </Link>
+        </section>
       </div>
     </>
   )

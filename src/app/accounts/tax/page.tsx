@@ -10,6 +10,7 @@
 // The one assumption this page cannot avoid (is supplier tax a credit or a
 // cost?) is therefore a SETTING, read here and stated on screen either way.
 import { getRestaurant } from '@/server/queries'
+import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getGstDays, getInputTax, listWithholdings } from '@/server/register-queries'
 import { getSettingValue } from '@/server/settings'
 import { todayIST } from '@/server/store-queries'
@@ -36,11 +37,12 @@ export default async function TaxPage({
 
   const restaurant = await getRestaurant()
   // one fan-out, not four awaits — the pool is shared with the group layout
-  const [days, input, creditableSetting, withholdings] = await Promise.all([
+  const [days, input, creditableSetting, withholdings, accounts] = await Promise.all([
     getGstDays(restaurant.id, period.from, period.to),
     getInputTax(restaurant.id, period.from, period.to),
     getSettingValue(restaurant.id, 'input_tax_creditable'),
     listWithholdings(restaurant.id),
+    listMoneyAccounts(restaurant.id),
   ])
 
   // The only arithmetic on this page: adding up columns it was handed. The
@@ -80,7 +82,7 @@ export default async function TaxPage({
           periodKey={periodKey}
         />
 
-        <WithholdingsPanel rows={withholdings} today={today} />
+        <WithholdingsPanel rows={withholdings} today={today} accounts={accounts} />
       </div>
 
       <p className="mt-3 text-center text-xs text-stone-400">

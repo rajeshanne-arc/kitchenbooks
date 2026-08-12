@@ -15,7 +15,7 @@ export async function listMoneyAccounts(
   includeRetired = false,
 ): Promise<MoneyAccount[]> {
   return sql<MoneyAccount[]>`
-    select id, name, kind, identifier,
+    select id, name, kind, identifier, is_till,
            opening_balance::text as opening_balance,
            opening_date::text as opening_date,
            sort_order, status
@@ -27,7 +27,7 @@ export async function listMoneyAccounts(
 
 export async function getMoneyAccount(restaurantId: string, id: string): Promise<MoneyAccount | null> {
   const rows = await sql<MoneyAccount[]>`
-    select id, name, kind, identifier,
+    select id, name, kind, identifier, is_till,
            opening_balance::text as opening_balance,
            opening_date::text as opening_date,
            sort_order, status
@@ -39,7 +39,8 @@ export async function getMoneyAccount(restaurantId: string, id: string): Promise
 /** Balance per account, straight from account_balances. */
 export async function getAccountBalances(restaurantId: string): Promise<AccountBalanceRow[]> {
   return sql<AccountBalanceRow[]>`
-    select account_id, name, kind, identifier,
+    select account_id, name, kind, identifier, is_till, basis,
+           counted_on::text as counted_on,
            opening_balance::text as opening_balance,
            coalesce(movements, 0)::text as movements,
            coalesce(balance, 0)::text as balance,

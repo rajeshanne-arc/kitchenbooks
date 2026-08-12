@@ -12,6 +12,7 @@
 // settlement, owner, other — which are shapes rather than brands, so this
 // works wherever the product is sold.
 
+import Link from 'next/link'
 import type { MoneyAccount, MoneyAccountKind } from '@/lib/types'
 import { fieldLabelCls, selectCls } from '@/components/ui'
 
@@ -33,6 +34,7 @@ export default function AccountPicker({
   label = 'Money account',
   hint,
   required = true,
+  manageHref = null,
 }: {
   accounts: MoneyAccount[]
   value: string
@@ -41,15 +43,42 @@ export default function AccountPicker({
   hint?: string
   /** false only where no money actually moved — an unsettled bank block */
   required?: boolean
+  /** where THIS viewer may go to create accounts, or null if they may not.
+   *  Passed in rather than decided here: the matrix is server-side, and a
+   *  link nobody can open is worse than no link. */
+  manageHref?: string | null
 }) {
+  // THE EMPTY STATE IS A ROUTE OUT, not a refusal.
+  //
+  // Nine forms refuse a blank account, and on the day this shipped the list
+  // was empty in every restaurant using it. A person who cannot save and is
+  // not told why concludes the app is broken — and they are not wrong to,
+  // because a refusal with no next step IS broken. So this names the thing
+  // that is missing, who creates it, and exactly where.
+  //
+  // The link is a PROP and never a literal here: /owner/accounts is open to
+  // the owner and the accountant only, and a cashier shown a link they
+  // cannot open is the invisibility law broken in the smallest possible way.
   if (accounts.length === 0) {
     return (
       <label className="block">
         <span className={fieldLabelCls}>{label}</span>
-        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          No money accounts yet. An owner adds them under Owner → Accounts — the drawer, each bank, each
-          wallet. Until then the books cannot say where money went.
-        </p>
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+          <p className="font-medium">No money accounts yet — this cannot be saved.</p>
+          <p className="mt-1">
+            Somebody names them once: the till, each bank account, each wallet. An owner does it under
+            Owner → Money accounts, and the accountant can from Accounts → Money. Until one exists the
+            books have nowhere to put this.
+          </p>
+          {manageHref !== null && (
+            <Link
+              href={manageHref}
+              className="mt-1.5 inline-block font-semibold underline underline-offset-2 hover:text-amber-950"
+            >
+              Set them up now
+            </Link>
+          )}
+        </div>
       </label>
     )
   }

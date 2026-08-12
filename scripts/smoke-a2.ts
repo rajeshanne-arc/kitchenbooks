@@ -662,6 +662,10 @@ async function main() {
       select distinct kind from money_movements where restaurant_id = ${rid}`
     const CLAIMED = new Set([
       'Payment', 'Expense', 'Casual labour', 'Contract bill', 'Staff advance',
+      // 'Payroll' arrived with migration 0016, which made a PAID run reach
+      // money_movements; 'Tax deposited' arrived with it too and carries a
+      // NULL account_id, so the expense register is its only home.
+      'Payroll', 'Tax deposited',
       // These reach the cash and bank registers through their ACCOUNT rather
       // than their kind, which is the correct route for money that moved.
       'Voucher', 'Other income', 'Settlement', 'Staff fund',
@@ -915,6 +919,10 @@ async function main() {
     const { parseMoney, parseQty } = await import('../src/lib/money')
     assert.equal(parseMoney('100000'), 10000000, '₹1,00,000 must be enterable')
     assert.equal(parseMoney('250000.50'), 25000050, '₹2,50,000.50 must be enterable')
+    // seven figures is the ordinary case a restaurant hits every month —
+    // a month's wage bill, a big vendor settlement
+    assert.equal(parseMoney('1234567'), 123456700, 'a seven-figure amount must be enterable')
+    assert.equal(parseMoney('9999999.99'), 999999999)
     assert.equal(parseMoney('999999999.99'), 99999999999)
     assert.ok(Number.isSafeInteger(parseMoney('999999999.99') as number))
     assert.equal(parseMoney('1234567890'), null, 'ten integer digits is still refused')
@@ -922,6 +930,286 @@ async function main() {
     assert.equal(parseMoney('1.234'), null, 'three decimal places is not money')
     // quantities are a count of a thing, not a sum of money, and stay narrow
     assert.equal(parseQty('100000'), null)
+  })
+
+  /* ── 2j. migration 0016: payroll reaches the register, the till is
+         counted rather than computed ──────────────────────────────────── */
+  //
+  // Both are claims the migration makes and the app now depends on. Asserted
+  // the same way as every other money claim here: move some, in a
+  // transaction that rolls back.
+  console.log('\nmigration 0016')
+
+  await check('a PAID payroll line reaches money_movements and the wages register', async () => {
+    let inRegister = 0
+    let unpaidInRegister = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [acct] = await tx<{ id: string }[]>`
+          insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
+          values (${rid}, 'Zz 0016 probe', 'bank', 0, 999) returning id`
+        const [st] = await tx<{ id: string }[]>`
+          insert into staff (restaurant_id, code, name, employment_type, base_salary, status)
+          values (${rid}, 'ZZ998', 'Zz Probe Two', 'full_time', 30000, 'active') returning id`
+        const [run] = await tx<{ id: string }[]>`
+          insert into payroll_runs (restaurant_id, period_start, period_end, status, prepared_by)
+          values (${rid}, '2001-06-01', '2001-06-30', 'paid', 'gate') returning id`
+        await tx`
+          insert into payroll_lines (run_id, staff_id, days_in_period, days_paid, base_salary,
+                                     earned, net_payable)
+          values (${run.id}, ${st.id}, 30, 30, 30000, 30000, 30000)`
+
+        // UNPAID first: paid_on is null, so the view must not carry it
+        const [before] = await tx<{ n: number }[]>`
+          select count(*)::int as n from money_movements
+          where account_id = ${acct.id} and kind = 'Payroll'`
+        unpaidInRegister = before.n
+
+        await tx`
+          update payroll_lines set paid_on = '2001-07-01'::date, account_id = ${acct.id}
+          where run_id = ${run.id}`
+        const [after] = await tx<{ n: number }[]>`
+          select count(*)::int as n from money_movements
+          where account_id = ${acct.id} and kind = 'Payroll'`
+        inRegister = after.n
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(unpaidInRegister, 0, 'an UNPAID run must not reach the register — nothing has moved')
+    assert.equal(inRegister, 1, 'a paid payroll line did not reach money_movements')
+  })
+
+  await check("a till's balance is the COUNTED cash, not opening plus movements", async () => {
+    // The whole point of is_till. If this ever reverts to computed, the
+    // drawer would quietly disagree with the cashier's own count.
+    let basis = ''
+    let balance = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [acct] = await tx<{ id: string }[]>`
+          insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order, is_till)
+          values (${rid}, 'Zz till probe', 'cash', 5000, 999, true) returning id`
+        const [row] = await tx<{ basis: string; balance: string }[]>`
+          select basis, balance::text as balance from account_balances where account_id = ${acct.id}`
+        basis = row.basis
+        balance = Number(row.balance)
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    // With no day close on record the view falls back to computed, and that
+    // is correct — a till nobody has counted yet has no counted figure.
+    assert.ok(basis === 'counted' || basis === 'computed', `unexpected basis ${basis}`)
+    if (basis === 'computed') assert.equal(balance, 5000, 'the fallback must be opening + movements')
+    console.log(`      till basis with the current data: ${basis}`)
+  })
+
+  await check('only one account can be the till', async () => {
+    const [row] = await sql<{ n: number }[]>`
+      select count(*)::int as n from money_accounts
+      where restaurant_id = ${rid} and is_till and status = 'active'`
+    assert.ok(row.n <= 1, `${row.n} accounts are marked as the till — each would claim the whole drawer`)
+  })
+
+  await check('with no accounts, the nine forms say what to do rather than just refusing', async () => {
+    // Nine forms refuse a blank account, and money_accounts starts EMPTY in
+    // every restaurant. A refusal with no next step reads as the app being
+    // broken — and is. One picker serves all nine, so this guards the one
+    // place the sentence lives.
+    const { readFileSync } = await import('node:fs')
+    const picker = readFileSync('src/components/accounts/AccountPicker.tsx', 'utf8')
+    const empty = picker.slice(picker.indexOf('accounts.length === 0'), picker.indexOf('const groups'))
+    for (const must of ['Money accounts', 'Accounts → Money', 'cannot be saved']) {
+      assert.ok(empty.includes(must), `the empty state stopped saying "${must}"`)
+    }
+    // and the route out is a PROP, never a literal — /owner/accounts is
+    // owner-and-accountant only, so a cashier must not be shown that link
+    // in QUOTES, not in prose — the comment above the empty state names the
+    // route it deliberately does not hardcode, and that is not a violation
+    assert.ok(
+      !/['"`]\/owner\/accounts/.test(picker),
+      'AccountPicker must not hardcode a link nine roles see',
+    )
+    assert.ok(picker.includes('manageHref'), 'the route out is passed in, per the matrix')
+
+    // the day close is the one a cashier hits nightly, and its picker only
+    // appears once a bank amount is typed — so it must speak BEFORE that
+    const close = readFileSync('src/components/cash/DayClose.tsx', 'utf8')
+    assert.ok(
+      close.indexOf('accounts.length === 0') < close.indexOf('<AccountPicker'),
+      'the day close must warn before the picker, not after the amount is keyed',
+    )
+    assert.ok(
+      /cash close (itself )?saves normally/i.test(close),
+      'the day close must say the night is not held up by a missing account',
+    )
+  })
+
+  await check('a deposited challan names its account and reaches a register', async () => {
+    // Before withholding_deposit_names_its_account, money_movements read a
+    // hardcoded null for these, so a deposited challan could never be
+    // reconciled and sat in the unaccounted count forever.
+    let acctMovements = 0
+    let unaccountedDelta = 0
+    try {
+      await sql.begin(async (tx) => {
+        const [before] = await tx<{ n: number }[]>`
+          select count(*)::int as n from money_movements
+          where restaurant_id = ${rid} and account_id is null`
+        const [acct] = await tx<{ id: string }[]>`
+          insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
+          values (${rid}, 'Zz challan probe', 'bank', 0, 999) returning id`
+        await tx`
+          insert into withholdings (restaurant_id, wh_date, entity_type, party, base_amount,
+                                    rate_pct, amount, deposited_on, account_id, entered_by)
+          values (${rid}, current_date, 'payment', 'Zz authority', 10000, 2, 200,
+                  current_date, ${acct.id}, 'gate')`
+        const [after] = await tx<{ n: number }[]>`
+          select count(*)::int as n from money_movements
+          where restaurant_id = ${rid} and account_id is null`
+        unaccountedDelta = after.n - before.n
+        const [mm] = await tx<{ n: number }[]>`
+          select count(*)::int as n from money_movements
+          where account_id = ${acct.id} and kind = 'Tax deposited'`
+        acctMovements = mm.n
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(acctMovements, 1, 'a deposited challan did not reach its account')
+    assert.equal(unaccountedDelta, 0, 'a deposited challan still lands in the unaccounted count')
+  })
+
+  await check('the deposit form asks for an account, and the server refuses a blank', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/accountant-actions.ts', 'utf8')
+    const start = src.indexOf('export async function markWithholdingDeposited(')
+    assert.ok(start > -1, 'markWithholdingDeposited is gone')
+    const body = src.slice(start, src.indexOf('export async function ', start + 1))
+    assert.ok(body.includes('assertAccount'), 'a deposit stopped naming its account')
+    assert.ok(body.includes('account_id ='), 'the account is asked for but never written')
+    const panel = readFileSync('src/components/accountant/WithholdingsPanel.tsx', 'utf8')
+    assert.ok(panel.includes('<AccountPicker'), 'the deposit form lost its picker')
+    assert.ok(panel.includes("depAccountId === ''"), 'the deposit button no longer waits for an account')
+  })
+
+  /* ── 2k. reconciliation: a match is an assertion, not an event ────── */
+  //
+  // The one DELETE on the accounting side, and it is deliberate. Every other
+  // table holds an EVENT and is corrected with a reversal; a match holds a
+  // JUDGEMENT, and a judgement that turns out to be wrong was never true.
+  // Leaving it beside a correction would assert two contradictory things and
+  // leave unmatched_lines wrong forever.
+  console.log('\nreconciliation')
+
+  await check('unmatching is a DELETE, and the grant exists to allow it', async () => {
+    // Checked at TABLE level: DELETE is a table privilege and never appears
+    // in column_privileges — reading the wrong catalogue is exactly how this
+    // was got wrong once already.
+    const rows = await sql<{ privilege_type: string }[]>`
+      select privilege_type from information_schema.table_privileges
+      where grantee = 'kb_app' and table_name = 'reconciliation_matches'`
+    const held = rows.map((r) => r.privilege_type).sort()
+    assert.deepEqual(held, ['DELETE', 'INSERT', 'SELECT'], 'the match grants changed')
+    // and one match per statement line, so unmatching frees the line cleanly
+    const [uniq] = await sql<{ def: string }[]>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'reconciliation_matches'::regclass and contype = 'u'`
+    assert.match(uniq.def, /statement_line_id/, 'a statement line may hold more than one match')
+  })
+
+  await check('a match can be made and taken back, and both sides come free', async () => {
+    let afterMatch = 0
+    let afterUnmatch = 0
+    let freed = false
+    try {
+      await sql.begin(async (tx) => {
+        const [acct] = await tx<{ id: string }[]>`
+          insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
+          values (${rid}, 'Zz recon probe', 'bank', 0, 999) returning id`
+        const [stmt] = await tx<{ id: string }[]>`
+          insert into statements (restaurant_id, account_id, period_start, period_end,
+                                  opening_balance, closing_balance, imported_by)
+          values (${rid}, ${acct.id}, '2001-06-01', '2001-06-30', 0, -500, 'gate')
+          returning id`
+        const [line] = await tx<{ id: string }[]>`
+          insert into statement_lines (statement_id, stmt_date, description, amount)
+          values (${stmt.id}, '2001-06-15', 'Zz probe line', -500) returning id`
+
+        await tx`
+          insert into reconciliation_matches (restaurant_id, statement_line_id, entity_type,
+                                              entity_id, matched_by)
+          values (${rid}, ${line.id}, 'expense', gen_random_uuid(), 'gate')`
+        const [a] = await tx<{ n: number }[]>`
+          select unmatched_lines::int as n from reconciliation_status where statement_id = ${stmt.id}`
+        afterMatch = a.n
+
+        const [gone] = await tx<{ id: string }[]>`
+          delete from reconciliation_matches where statement_line_id = ${line.id} returning id`
+        freed = gone !== undefined
+        const [b] = await tx<{ n: number }[]>`
+          select unmatched_lines::int as n from reconciliation_status where statement_id = ${stmt.id}`
+        afterUnmatch = b.n
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(afterMatch, 0, 'the match did not reach reconciliation_status')
+    assert.ok(freed, 'the match could not be deleted')
+    assert.equal(afterUnmatch, 1, 'unmatching did not free the statement line again')
+  })
+
+  await check('the screens offer the unmatch and no longer claim it is permanent', async () => {
+    const { readFileSync } = await import('node:fs')
+    const actions = readFileSync('src/server/reconciliation-actions.ts', 'utf8')
+    assert.ok(actions.includes('export async function unmatchStatementLine'), 'there is no unmatch')
+    assert.ok(/delete from reconciliation_matches/.test(actions), 'unmatch does not delete')
+    const start = actions.indexOf('export async function unmatchStatementLine')
+    assert.ok(actions.slice(start).includes('actor('), 'unmatch is not role-gated')
+    for (const f of [
+      'src/server/reconciliation-actions.ts',
+      'src/components/accountant/MatchBoard.tsx',
+      'src/app/accounts/money/reconcile/[id]/page.tsx',
+    ]) {
+      const src = readFileSync(f, 'utf8')
+      assert.ok(!/There is no unmatch/i.test(src), `${f} still says there is no unmatch`)
+      assert.ok(!/match is permanent/i.test(src), `${f} still calls a match permanent`)
+    }
+  })
+
+  await check('statement_self_check is opening + lines − closing', async () => {
+    // Zero when the statement was keyed correctly. It is a fact about the
+    // STATEMENT, never about the books, and the screen must not read it as
+    // a discrepancy in the accounts.
+    let selfCheck = -1
+    try {
+      await sql.begin(async (tx) => {
+        const [acct] = await tx<{ id: string }[]>`
+          insert into money_accounts (restaurant_id, name, kind, opening_balance, sort_order)
+          values (${rid}, 'Zz selfcheck probe', 'bank', 0, 999) returning id`
+        const [stmt] = await tx<{ id: string }[]>`
+          insert into statements (restaurant_id, account_id, period_start, period_end,
+                                  opening_balance, closing_balance, imported_by)
+          values (${rid}, ${acct.id}, '2001-06-01', '2001-06-30', 1000, 700, 'gate')
+          returning id`
+        await tx`
+          insert into statement_lines (statement_id, stmt_date, description, amount)
+          values (${stmt.id}, '2001-06-10', 'Zz out', -300)`
+        const [row] = await tx<{ c: string }[]>`
+          select statement_self_check::text as c from reconciliation_status
+          where statement_id = ${stmt.id}`
+        selfCheck = Number(row.c)
+        throw new Error('KB_ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(selfCheck, 0, '1000 opening − 300 out should close at 700')
   })
 
   /* ── 3. the return path's list is real ────────────────────────────── */

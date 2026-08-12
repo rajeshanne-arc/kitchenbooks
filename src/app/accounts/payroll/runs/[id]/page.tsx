@@ -139,23 +139,18 @@ export default async function PayrollRunPage({ params }: { params: Promise<{ id:
           </div>
         </section>
 
-        {/* The thing an accountant should learn here rather than at 11pm while
-            reconciling. money_movements does not read payroll_lines — that is
-            the schema's decision, not this screen's. */}
-        <Honesty
-          verdict="not in the registers"
-          action={
-            canOpenRegisters
-              ? { href: '/accounts/registers/wages', label: 'The wages register' }
-              : undefined
-          }
-        >
-          Marking this run paid records the payment on every line. It does not appear in the cash or
-          bank register: money_movements does not read payroll_lines, so the wages register shows
-          casual labour, contract bills and staff advances — advances DO reach it — and not this.
-          The balances on Money are short by whatever a paid run carries, and only you can hold that
-          in mind.
-        </Honesty>
+        {/* Migration 0016 made a PAID run reach money_movements, so the
+            honesty strip that used to sit here is gone rather than reworded:
+            the gap it described no longer exists. */}
+        {run.status === 'paid' && canOpenRegisters && (
+          <p className="text-center text-xs text-stone-500">
+            Paid, so every line is on the{' '}
+            <Link href="/accounts/registers/wages" className="underline underline-offset-2">
+              wages register
+            </Link>{' '}
+            and in the balance of the account it was paid from.
+          </p>
+        )}
 
         <p className="text-center text-xs text-stone-400">
           This app records what was withheld and what was paid. It computes no statutory rate, files

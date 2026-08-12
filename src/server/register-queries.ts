@@ -23,11 +23,12 @@ import type {
  *  place instead of leaking an empty register. */
 const MOVEMENT_KINDS = {
   payment: ['Payment'],
-  expense: ['Expense'],
-  // A wage is a wage whichever table it came from — the five money-out
-  // tables are an artefact of porting the sheets one tab at a time, and the
-  // register is where that artefact must not show.
-  wages: ['Casual labour', 'Contract bill', 'Staff advance'],
+  expense: ['Expense', 'Tax deposited'],
+  // A wage is a wage whichever table it came from — the money-out tables are
+  // an artefact of porting the sheets one tab at a time, and the register is
+  // where that artefact must not show. 'Payroll' joined them in migration
+  // 0016, which made paid payroll lines reach money_movements.
+  wages: ['Casual labour', 'Contract bill', 'Staff advance', 'Payroll'],
 } as const
 
 export const REGISTER_KEYS: RegisterKey[] = [
@@ -56,7 +57,7 @@ export const REGISTER_SOURCES: Record<RegisterKey, string> = {
   purchase: 'purchase_register',
   sales: 'sales_register',
   payment: 'money_movements',
-  expense: 'money_movements',
+  expense: 'money_movements · expenses and tax deposited',
   cash: 'money_movements · cash accounts',
   bank: 'money_movements · bank accounts',
   wages: 'money_movements',
@@ -211,7 +212,7 @@ export async function listWithholdings(
            base_amount::text as base_amount,
            rate_pct::text as rate_pct,
            amount::text as amount,
-           deposited_on::text as deposited_on, challan_ref, note, entered_by
+           deposited_on::text as deposited_on, account_id, challan_ref, note, entered_by
     from withholdings
     where restaurant_id = ${restaurantId}
     order by wh_date desc, created_at desc

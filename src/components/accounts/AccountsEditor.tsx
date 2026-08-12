@@ -18,6 +18,7 @@ import { useRouter } from 'next/navigation'
 import type { AccountBalanceRow, MoneyAccount, MoneyAccountKind, SaveMoneyAccountInput } from '@/lib/types'
 import { createMoneyAccount, updateMoneyAccount } from '@/server/accounts-actions'
 import { formatMoneyString } from '@/lib/money'
+import { fmtDate } from '@/lib/format'
 import {
   btnCls,
   btnGhostCls,
@@ -53,6 +54,7 @@ const KIND_BLURB: Record<MoneyAccountKind, string> = {
 const ORDER: MoneyAccountKind[] = ['cash', 'bank', 'wallet', 'card_settlement', 'owner', 'other']
 
 const blank = (): SaveMoneyAccountInput => ({
+  isTill: false,
   name: '',
   kind: 'cash',
   identifier: '',
@@ -63,6 +65,7 @@ const blank = (): SaveMoneyAccountInput => ({
 })
 
 const toDraft = (a: MoneyAccount): SaveMoneyAccountInput => ({
+  isTill: a.is_till,
   name: a.name,
   kind: a.kind,
   identifier: a.identifier ?? '',
@@ -178,6 +181,11 @@ export default function AccountsEditor({
                           className={`block truncate text-sm ${retired ? 'text-stone-400 line-through' : 'text-stone-900'}`}
                         >
                           {a.name}
+                          {a.is_till && (
+                            <span className="ml-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+                              till
+                            </span>
+                          )}
                         </span>
                         {a.identifier !== null && (
                           <span className="block truncate font-mono text-[11px] text-stone-500">
@@ -197,7 +205,11 @@ export default function AccountsEditor({
                               {bal === null ? '—' : formatMoneyString(bal.balance)}
                             </span>
                             <span className="block text-[11px] text-stone-400">
-                              {bal === null || bal.last_move === null ? 'no movement' : `to ${bal.last_move}`}
+                              {bal !== null && bal.basis === 'counted'
+                                ? `counted ${bal.counted_on === null ? '' : fmtDate(bal.counted_on)}`
+                                : bal === null || bal.last_move === null
+                                  ? 'no movement'
+                                  : `to ${bal.last_move}`}
                             </span>
                           </>
                         )}
@@ -336,6 +348,28 @@ function Fields({
         The opening balance is what sat here before this app started counting. Leave it blank if the
         account starts at nothing.
       </p>
+
+      {/* THE TILL. Its balance is not opening + movements — account_balances
+          reads the COUNTED cash from the last day close instead, because the
+          drawer is the one account somebody physically counts every night.
+          Only one account may carry it; the server refuses a second. */}
+      {(draft.kind === 'cash' || draft.isTill) && (
+        <label className="flex items-start gap-2.5 rounded-lg border border-rule bg-field px-3 py-2.5">
+          <input
+            type="checkbox"
+            checked={draft.isTill}
+            onChange={(e) => set('isTill', e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-700"
+          />
+          <span>
+            <span className="block text-sm font-medium text-stone-900">This is the till</span>
+            <span className="block text-xs text-stone-500">
+              The drawer the cashier counts at close. Its balance becomes that counted figure rather
+              than a computed one. Only one account can be the till.
+            </span>
+          </span>
+        </label>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <label className="block">

@@ -343,15 +343,26 @@ export async function markWithholdingDeposited(
   id: string,
   depositedOn: string,
   reference: string,
+  accountId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     if (!UUID.test(id)) throw new QueryError('Malformed id')
     if (!DATE_RE.test(depositedOn)) throw new QueryError('When was it deposited?')
     await actor(['accountant', 'owner'], 'Recording a deposit')
     const restaurant = await getRestaurant()
+    // A deposit is money leaving a real account today, so it names one like
+    // every other money form. Until the migration that added this column, a
+    // deposited challan reached money_movements with a NULL account: it could
+    // never be reconciled and it sat in the unaccounted count forever.
+    const account = await assertAccount(
+      restaurant.id,
+      accountId,
+      'the account the challan was paid from',
+    )
     const [row] = await sql<{ id: string }[]>`
       update withholdings
       set deposited_on = ${depositedOn}::date,
+          account_id = ${account},
           challan_ref = ${reference.trim() === '' ? null : reference.trim().slice(0, 120)}
       where id = ${id} and restaurant_id = ${restaurant.id}
       returning id`
