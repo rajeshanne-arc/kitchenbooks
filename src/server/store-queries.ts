@@ -33,9 +33,29 @@ export function monthStartIST(): string {
   return `${todayIST().slice(0, 7)}-01`
 }
 
+/** Departments that can RECEIVE stock — what the issue picker offers.
+ *
+ *  Not all sixteen. `sections` is one table: the same row codes a dish,
+ *  posts a staff member and receives an issue, and the picker was offering
+ *  every org unit — so stock could be issued from the Store to the Store,
+ *  and to Accounts, Valet and Security, none of which consume anything the
+ *  store holds. Same class as the dish picker offering Security.
+ *
+ *  `receives_stock` is the filter, exactly as `codes_dishes` gates the dish
+ *  coder: a fact about the department, set once, visible on its own screen. */
 export async function getSections(restaurantId: string): Promise<Section[]> {
   return sql<Section[]>`
-    select id, code, name, sort_order, status, dept_group
+    select id, code, name, sort_order, status, dept_group, receives_stock
+    from sections
+    where restaurant_id = ${restaurantId} and status = 'active' and receives_stock
+    order by sort_order asc`
+}
+
+/** Every active department, receiving or not — for screens that ADMINISTER
+ *  departments rather than issue to them. */
+export async function getAllSections(restaurantId: string): Promise<Section[]> {
+  return sql<Section[]>`
+    select id, code, name, sort_order, status, dept_group, receives_stock
     from sections
     where restaurant_id = ${restaurantId} and status = 'active'
     order by sort_order asc`

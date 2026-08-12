@@ -1,9 +1,10 @@
 import { getRestaurant } from '@/server/queries'
 import { getFoodCost } from '@/server/kitchen-queries'
-import { monthStartIST } from '@/server/store-queries'
+import { getSectionConsumptionDaily, monthStartIST, todayIST } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import Honesty, { HonestyPill } from '@/components/Honesty'
+import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import type { FoodCostRow } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -61,12 +62,18 @@ function Row({ r }: { r: FoodCostRow }) {
 export default async function FoodCostPage() {
   const restaurant = await getRestaurant()
   const monthStart = monthStartIST()
-  const rows = await getFoodCost(restaurant.id, monthStart)
+  const [rows, consumption] = await Promise.all([
+    getFoodCost(restaurant.id, monthStart),
+    // the same movement counted in money, day by day — this is the page
+    // where a chef is answerable for it
+    getSectionConsumptionDaily(restaurant.id, monthStart, todayIST()),
+  ])
   const live = rows.filter((r) => r.has_activity)
   const closed = live.filter((r) => r.consumed_total !== null).length
 
   return (
-    <section className={`${cardCls} mt-4`}>
+    <div className="mt-4 space-y-4">
+    <section className={cardCls}>
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>{monthLabel(monthStart)}</h2>
         <span className="text-xs text-stone-400">opening + issued − closing · section_food_cost</span>
@@ -95,5 +102,12 @@ export default async function FoodCostPage() {
         the math; it is already inside consumed (it left the section), stated separately so it can be seen.
       </p>
     </section>
+
+    <ConsumptionByDept
+      rows={consumption}
+      title="Issued out, day by day"
+      caption={`${monthLabel(monthStart)} so far — the same movements, valued, net of returns`}
+    />
+    </div>
   )
 }

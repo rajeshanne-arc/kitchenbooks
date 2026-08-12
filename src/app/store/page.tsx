@@ -2,14 +2,13 @@ import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import {
   countItemsWithReorderLevel,
-  countOpenIndents,
   countReorderDue,
-  getChecklist,
   getIssuesBySection,
   getPaymentsTotal,
   getPurchaseSeries,
   getPurchasesByVendor,
   getSectionConsumptionDaily,
+  listOpenIndents,
   todayIST,
 } from '@/server/store-queries'
 import { getStockAlarms } from '@/server/dashboard-queries'
@@ -56,7 +55,6 @@ export default async function StoreHome({
 
   const restaurant = await getRestaurant()
   const [
-    checklist,
     openIndents,
     purchases,
     issuesBySection,
@@ -68,8 +66,7 @@ export default async function StoreHome({
     itemsWithLevel,
     consumption,
   ] = await Promise.all([
-    getChecklist(restaurant.id, today),
-    countOpenIndents(restaurant.id),
+    listOpenIndents(restaurant.id),
     getPurchaseSeries(restaurant.id, period.from, period.to),
     getIssuesBySection(restaurant.id, period.from, period.to),
     getPaymentsTotal(restaurant.id, period.from, period.to),
@@ -81,7 +78,6 @@ export default async function StoreHome({
     getSectionConsumptionDaily(restaurant.id, period.from, period.to),
   ])
 
-  const entered = checklist.filter((c) => c.issues_today > 0).length
   const purchaseTotal = purchases.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
   const issueTotal = issuesBySection.reduce((n, s) => n + decimalStringToPaise(s.value), 0)
   const duesTotal = dues.reduce((n, d) => n + decimalStringToPaise(d.balance), 0)
@@ -114,7 +110,7 @@ export default async function StoreHome({
       </div>
 
       {/* what needs doing right now, above everything measured */}
-      {(openIndents > 0 || alarms.length > 0 || reorderCount > 0) && (
+      {(openIndents.length > 0 || alarms.length > 0 || reorderCount > 0) && (
         <div className="mb-4 grid gap-3 sm:grid-cols-3">
           {alarms.length > 0 && (
             <Link
@@ -135,10 +131,10 @@ export default async function StoreHome({
               <p className="text-xs text-amber-900">at or below their reorder level</p>
             </Link>
           )}
-          {openIndents > 0 && (
+          {openIndents.length > 0 && (
             <Link href="/store/issue" className={`${cardCls} block border-amber-300 bg-amber-50/40`}>
               <h2 className={sectionHeadCls}>Open indents</h2>
-              <p className={`mt-1 text-[26px] ${heroNumCls} text-amber-900`}>{openIndents}</p>
+              <p className={`mt-1 text-[26px] ${heroNumCls} text-amber-900`}>{openIndents.length}</p>
               <p className="text-xs text-amber-900">kitchens waiting to be issued</p>
             </Link>
           )}
@@ -279,49 +275,67 @@ export default async function StoreHome({
         </section>
       )}
 
-      {/* today's issues checklist — the store's morning */}
+      {/* WHAT IS ACTUALLY OUTSTANDING — open indents nobody has filled.
+          This replaced a per-department checklist that could never be
+          honestly completed: a zero beside Bakery could not tell "took
+          nothing today" from "nobody wrote it down", so the only way to
+          finish it was to issue stock to a department that did not want
+          any. A list that cannot be completed is a list people stop
+          reading. An open indent is a real request, from a real person,
+          that is finite and can actually be cleared. */}
       <section className={`${cardCls} mt-3`}>
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className={sectionHeadCls}>Today&apos;s issues by section</h2>
-          <span className="text-xs text-stone-400">
-            {entered} of {checklist.length} entered
-          </span>
+          <h2 className={sectionHeadCls}>Requests waiting to be filled</h2>
+          <span className="text-xs text-stone-400">open_indents</span>
         </div>
-        <div className="mt-2 overflow-x-auto">
-          <table className={dataTableCls}>
-            <thead>
-              <tr>
-                <th className={thCls}>Section</th>
-                <th className={thCls}>Code</th>
-                <th className={thNumCls}>Issues today</th>
-                <th className={thCls}>
-                  <span className="sr-only">Action</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {checklist.map((c) => (
-                <tr key={c.id} className={trCls}>
-                  <td className={tdCls}>{c.name}</td>
-                  <td className={`${tdCls} font-mono text-[12px] text-stone-500`}>{c.code}</td>
-                  <td className={`${tdNumCls} ${c.issues_today > 0 ? 'font-semibold text-emerald-700' : 'text-stone-400'}`}>
-                    {c.issues_today}
-                  </td>
-                  <td className={`${tdCls} text-right`}>
-                    {c.issues_today === 0 && (
-                      <Link href="/store/issue" className="text-xs font-medium text-emerald-700 hover:underline">
-                        enter →
-                      </Link>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="mt-3 text-xs text-stone-400">
-          Every section that took stock today should have its issue entered before close.
-        </p>
+        {openIndents.length === 0 ? (
+          <p className="mt-1.5 text-sm text-stone-700">
+            Nothing is waiting. The kitchens have asked for nothing the store has not already given.
+          </p>
+        ) : (
+          <>
+            <div className="mt-2 overflow-x-auto">
+              <table className={dataTableCls}>
+                <thead>
+                  <tr>
+                    <th className={thCls}>Department</th>
+                    <th className={thCls}>Session</th>
+                    <th className={thCls}>Asked</th>
+                    <th className={thNumCls}>Items</th>
+                    <th className={thCls}>
+                      <span className="sr-only">Fill</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openIndents.map((i) => (
+                    <tr key={i.id} className={trCls}>
+                      <td className={tdCls}>{i.section_name}</td>
+                      <td className={`${tdCls} text-stone-600`}>{i.session}</td>
+                      <td className={`${tdCls} text-stone-500`}>
+                        {fmtDate(i.indent_date)}
+                        {i.entered_by !== null && ` · ${i.entered_by}`}
+                      </td>
+                      <td className={tdNumCls}>{i.line_count}</td>
+                      <td className={`${tdCls} text-right`}>
+                        <Link
+                          href={`/store/issue?indent=${i.id}`}
+                          className="text-xs font-medium text-emerald-700 hover:underline"
+                        >
+                          fill it →
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-xs text-stone-400">
+              Each one is a request a kitchen made and is waiting on. Filling it stamps the issue
+              against the indent, which is what makes the asked-versus-given gap mean anything.
+            </p>
+          </>
+        )}
       </section>
     </>
   )

@@ -1264,6 +1264,145 @@ async function main() {
     console.log(`      ${all.length} department-days in the period`)
   })
 
+  /* ── 2m. only departments that consume can receive stock ──────────── */
+  console.log('\nwho can receive stock')
+
+  await check('the issue picker offers 12 of 16, and never the store itself', async () => {
+    const { getSections, getAllSections } = await import('../src/server/store-queries')
+    const [issuable, all] = await Promise.all([getSections(rid), getAllSections(rid)])
+    assert.ok(issuable.length < all.length, 'the picker is offering every org unit again')
+    const codes = new Set(issuable.map((s) => s.code))
+    // the store issuing to itself is not a movement; the other three consume
+    // nothing the store holds
+    for (const c of ['ST', 'AC', 'VL', 'SC']) {
+      assert.ok(!codes.has(c), `${c} is back in the issue picker`)
+    }
+    // and the ones that legitimately consume are still there
+    for (const c of ['SI', 'NI', 'CH', 'CT', 'TD', 'BK', 'BR', 'SF', 'KS', 'SV', 'HK', 'MG']) {
+      assert.ok(codes.has(c), `${c} consumes and must be issuable`)
+    }
+    assert.ok(issuable.every((s) => s.receives_stock), 'getSections returned a non-receiving department')
+  })
+
+  await check('a staff posting still sees EVERY department', async () => {
+    // A guard is posted to Security and a day hand can unload for Valet.
+    // Filtering the roster on receives_stock would have been the same bug
+    // in the opposite direction.
+    const { getAllSections } = await import('../src/server/store-queries')
+    const all = await getAllSections(rid)
+    const codes = new Set(all.map((s) => s.code))
+    for (const c of ['ST', 'AC', 'VL', 'SC']) {
+      assert.ok(codes.has(c), `${c} vanished from the roster — a guard cannot be posted`)
+    }
+    const { readFileSync } = await import('node:fs')
+    for (const f of [
+      'src/app/staff/people/employees/new/page.tsx',
+      'src/app/staff/people/employees/[id]/page.tsx',
+      'src/app/staff/money-out/casual/page.tsx',
+    ]) {
+      assert.ok(readFileSync(f, 'utf8').includes('getAllSections'), `${f} filtered the roster`)
+    }
+  })
+
+  await check('THE PICKER IS NOT THE CHECK — the server refuses it too', async () => {
+    // Both the issue and the return path. A form can be posted to directly.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/store-actions.ts', 'utf8')
+    const guards = src.match(/receives_stock/g) ?? []
+    assert.ok(guards.length >= 4, `expected the guard on both paths, found ${guards.length} mentions`)
+    assert.ok(
+      (src.match(/does not receive stock/g) ?? []).length === 2,
+      'the refusal must fire on the issue AND the return',
+    )
+  })
+
+  await check('the database agrees: 12 receive, 4 do not', async () => {
+    const rows = await sql<{ receives_stock: boolean; n: number }[]>`
+      select receives_stock, count(*)::int as n from sections
+      where restaurant_id = ${rid} and status = 'active'
+      group by receives_stock order by receives_stock desc`
+    assert.deepEqual(
+      rows.map((r) => [r.receives_stock, r.n]),
+      [[true, 12], [false, 4]],
+      'the receives_stock split changed — if that was deliberate, update this',
+    )
+  })
+
+  await check('every client fetch can be aborted and cannot hang forever', async () => {
+    // A pending fetch is enough to stop a document reaching idle. One on
+    // /store/issue had neither an abort path nor a timeout because it is
+    // called from a click rather than an effect, so nothing cleaned it up.
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir)) {
+        const p = `${dir}/${e}`
+        if (statSync(p).isDirectory()) walk(p, out)
+        else if (/\.tsx?$/.test(p)) out.push(p)
+      }
+      return out
+    }
+    const offenders: string[] = []
+    for (const f of walk('src/components').concat(walk('src/app'))) {
+      const src = readFileSync(f, 'utf8')
+      if (!src.includes('fetch(')) continue
+      const calls = (src.match(/\bfetch\(/g) ?? []).length
+      const signals = (src.match(/signal:/g) ?? []).length
+      if (signals < calls) offenders.push(`${f} (${calls} fetch, ${signals} signal)`)
+    }
+    assert.deepEqual(offenders, [], `a fetch with no abort path:\n      ${offenders.join('\n      ')}`)
+  })
+
+  await check('no tab costs a redirect to reach its default chip', async () => {
+    // Every chip parent used to redirect to its first child, so every tab
+    // click was two server round trips: one to be told where to go, one to
+    // go there. They render the child directly now.
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir)) {
+        const p = `${dir}/${e}`
+        if (statSync(p).isDirectory()) walk(p, out)
+        else if (e === 'page.tsx') out.push(p)
+      }
+      return out
+    }
+    const offenders: string[] = []
+    for (const f of walk('src/app')) {
+      const src = readFileSync(f, 'utf8')
+      const m = src.match(/redirect\('(\/[^']*)'\)/)
+      if (m === null) continue
+      // '/' -> /login is the front door, and a legacy shim is a redirect by
+      // definition. A CHIP PARENT redirecting to its own child is the bug.
+      const here = f.replace(/^src\/app/, '').replace(/\/page\.tsx$/, '') || '/'
+      if (m[1].startsWith(`${here}/`)) offenders.push(`${f} -> ${m[1]}`)
+    }
+    assert.deepEqual(offenders, [], `a tab still redirects to its own child:\n      ${offenders.join('\n      ')}`)
+  })
+
+  await check('the first chip lights up at the parent URL', async () => {
+    // Rendering the child directly means the URL stays on the parent, so
+    // the row must mark the first chip active there or nothing is selected
+    // and the tab reads as broken.
+    const { readFileSync } = await import('node:fs')
+    const row = readFileSync('src/components/ChipRow.tsx', 'utf8')
+    assert.match(row, /i === 0 && pathname === base/, 'the parent URL selects no chip')
+  })
+
+  await check('create and edit agree about who may receive an indent', async () => {
+    // updateIndent checked receives_stock and saveIndent did not, so a
+    // request could be created for a department and then be uneditable.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/kitchen-actions.ts', 'utf8')
+    for (const fn of ['saveIndent', 'updateIndent']) {
+      const start = src.indexOf(`export async function ${fn}(`)
+      assert.ok(start > -1, `${fn} is gone`)
+      const body = src.slice(start, src.indexOf('export async function ', start + 1))
+      assert.ok(
+        /receives_stock|assertReceivesStock/.test(body),
+        `${fn} does not check that the department can receive stock`,
+      )
+    }
+  })
+
   /* ── 3. the return path's list is real ────────────────────────────── */
   console.log('\nthe return reason list is live')
 

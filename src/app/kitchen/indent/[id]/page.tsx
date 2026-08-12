@@ -4,8 +4,11 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
-import { getIndentDetail, getIndentFulfilment } from '@/server/kitchen-queries'
+import { getIndentDetail, getIndentFulfilment, getKitchenSections } from '@/server/kitchen-queries'
+import { getList } from '@/server/settings'
 import CancelIndent from '@/components/kitchen/CancelIndent'
+import IndentEdit from '@/components/kitchen/IndentEdit'
+import Honesty from '@/components/Honesty'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
 import {
@@ -21,6 +24,7 @@ import {
   trCls,
 } from '@/components/ui'
 import { sql } from '@/lib/db'
+import type { Section } from '@/lib/types'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
 import GapCell from '@/components/kitchen/GapCell'
@@ -72,6 +76,22 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
   const { indent, issues } = detail
   const liveIssues = issues.filter((i) => !i.is_reversal && !i.is_voided)
 
+  // THE FREEZE, decided here and never on the client. A request is editable
+  // only while it is still only a request: open, and with no issue carrying
+  // its id. `issues` is exactly "the rows whose indent_id is this one", so a
+  // voided issue freezes it too — the trip out really happened. The save
+  // re-checks this inside its own transaction; this decides what is drawn.
+  const answered = issues.length > 0
+  const editable = indent.status === 'open' && !answered
+  // read only for an editable request — a frozen one has no form to fill
+  const [kitchenSections, sessions]: [Section[], string[]] = editable
+    ? await Promise.all([getKitchenSections(restaurant.id), getList(restaurant.id, 'session')])
+    : [[], []]
+  // an indent asks the STORE for stock, so only departments stock can reach
+  // are offered. The save refuses the rest whatever is posted — this is so the
+  // form cannot offer a department its own save would turn away.
+  const sections = kitchenSections.filter((s) => s.receives_stock)
+
   return (
     <>
       <header className="pb-4">
@@ -84,20 +104,45 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
           </span>
         </div>
         <p className={pageSubCls}>
-          {fmtDate(indent.indent_date)} · asked {fmtDateTime(indent.created_at)}
+          {fmtDate(indent.indent_date)} · {indent.session} · asked {fmtDateTime(indent.created_at)}
           {indent.entered_by !== null && <> · by {indent.entered_by}</>}
         </p>
         {indent.note !== null && <p className="mt-1 text-sm text-stone-600">“{indent.note}”</p>}
       </header>
 
       <div className="space-y-4">
-        {indent.status === 'open' && (
-          <div className="flex items-center justify-between rounded-2xl border border-amber-300 bg-amber-50 p-4">
-            <span className="text-sm font-medium text-amber-900">Waiting for the store to issue.</span>
-            <CancelIndent indentId={indent.id} />
+        {/* A request is a description of what the kitchen wants, and while
+            nobody has acted on it, changing that description is honest
+            editing. The moment it is answered it stops being editable — and
+            the screen says which of those two it is, in words. */}
+        {editable ? (
+          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm font-medium text-amber-900">
+                Waiting for the store to issue — still yours to change.
+              </span>
+              <CancelIndent indentId={indent.id} />
+            </div>
+            <div className="mt-3">
+              <IndentEdit indent={indent} lines={detail.lines} sections={sections} sessions={sessions} />
+            </div>
           </div>
+        ) : answered ? (
+          <Honesty verdict="answered" action={{ href: '/kitchen/indent', label: 'Raise a new request' }}>
+            An issue has been made against this request, so what was asked can no longer be changed: it is
+            half of a comparison now, and editing it would leave the gap below measuring nothing. Anything
+            still needed is a new indent.
+          </Honesty>
+        ) : indent.status === 'cancelled' ? (
+          <Honesty verdict="cancelled" action={{ href: '/kitchen/indent', label: 'Raise a new request' }}>
+            This request was cancelled. It stays on record rather than being edited back to life — raise a
+            new indent for whatever the department still wants.
+          </Honesty>
+        ) : (
+          <Honesty verdict={indent.status}>
+            This request is {indent.status}, and only an open request nobody has answered can be edited.
+          </Honesty>
         )}
-
 
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>Issues answering this indent</h2>

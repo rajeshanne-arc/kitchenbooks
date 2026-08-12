@@ -95,10 +95,19 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
-      const section = await tx<{ id: string; name: string }[]>`
-        select id, name from sections
+      // THE PICKER IS NOT THE CHECK. The form offers only departments that
+      // receive stock; this refuses the rest whatever was posted. Store,
+      // Accounts, Valet and Security consume nothing the store holds — and
+      // the store issuing to itself is not a movement at all. A return is
+      // guarded the same way: stock cannot come back from a department it
+      // could never have gone to.
+      const section = await tx<{ id: string; name: string; receives_stock: boolean }[]>`
+        select id, name, receives_stock from sections
         where id = ${input.sectionId} and restaurant_id = ${rid} and status = 'active'`
       if (!section[0]) throw new StoreError('Section not found')
+      if (!section[0].receives_stock) {
+        throw new StoreError(`${section[0].name} does not receive stock — pick a department that does`)
+      }
 
       // Answering an indent: the stamp ties ASKED to GIVEN, and the indent
       // moves to 'issued'. Section mismatch is refused, not silently fixed.
@@ -208,10 +217,19 @@ export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult
     const saved = await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
-      const section = await tx<{ id: string; name: string }[]>`
-        select id, name from sections
+      // THE PICKER IS NOT THE CHECK. The form offers only departments that
+      // receive stock; this refuses the rest whatever was posted. Store,
+      // Accounts, Valet and Security consume nothing the store holds — and
+      // the store issuing to itself is not a movement at all. A return is
+      // guarded the same way: stock cannot come back from a department it
+      // could never have gone to.
+      const section = await tx<{ id: string; name: string; receives_stock: boolean }[]>`
+        select id, name, receives_stock from sections
         where id = ${input.sectionId} and restaurant_id = ${rid} and status = 'active'`
       if (!section[0]) throw new StoreError('Section not found')
+      if (!section[0].receives_stock) {
+        throw new StoreError(`${section[0].name} does not receive stock — pick a department that does`)
+      }
 
       const costs = new Map<string, string>()
       for (const [i, l] of input.lines.entries()) {

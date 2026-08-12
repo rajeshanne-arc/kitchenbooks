@@ -13,6 +13,11 @@ import "./globals.css";
 // instead of tofu.
 const archivo = Archivo({
   subsets: ["latin"],
+  // 600 and 700 are the only weights the display face is ever asked for
+  // (page titles, hero figures, micro-caps heads). Without this it ships as
+  // a variable font carrying every weight from 100 to 900, on a phone, in a
+  // kitchen, for two of them.
+  weight: ["600", "700"],
   variable: "--font-archivo",
   display: "swap",
 });
@@ -33,6 +38,12 @@ const plexMono = IBM_Plex_Mono({
 
 const telugu = Noto_Sans_Telugu({
   subsets: ["telugu"],
+  // NOT PRELOADED. It is the largest file in the app and it exists for the
+  // Telugu labels on five staff-facing forms — so it is fetched when a page
+  // actually renders Telugu, not on the login screen of every device. It
+  // stays in the stack, so those labels are still words and never tofu.
+  preload: false,
+  weight: ["400", "500"],
   variable: "--font-telugu",
   display: "swap",
 });

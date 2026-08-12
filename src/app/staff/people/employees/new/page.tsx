@@ -1,14 +1,14 @@
 import Link from 'next/link'
 import StaffForm from '@/components/labour/StaffForm'
 import { getRestaurant } from '@/server/queries'
-import { getSections } from '@/server/store-queries'
+import { getAllSections } from '@/server/store-queries'
 import { listActiveStaff } from '@/server/labour-queries'
 
 export const dynamic = 'force-dynamic'
 
 export default async function NewStaffPage() {
   const restaurant = await getRestaurant()
-  const [sections, people] = await Promise.all([getSections(restaurant.id), listActiveStaff(restaurant.id)])
+  const [sections, people] = await Promise.all([getAllSections(restaurant.id), listActiveStaff(restaurant.id)])
   return (
     <div className="mt-4">
       <Link href="/staff/people/employees" className="inline-block text-sm font-medium text-stone-500 hover:text-stone-800">

@@ -40,13 +40,19 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
   // not scroll past Security to reach it.
   const [kind, setKind] = useState<'kitchen' | 'operational'>('kitchen')
   const [editing, setEditing] = useState<string | null>(null)
-  const [draft, setDraft] = useState({ name: '', sortOrder: '', status: 'active' as 'active' | 'inactive' })
+  const [draft, setDraft] = useState({
+    name: '',
+    sortOrder: '',
+    status: 'active' as 'active' | 'inactive',
+    receivesStock: true,
+  })
   const [adding, setAdding] = useState(false)
   const [neu, setNeu] = useState({
     name: '',
     code: '',
     deptGroup: 'Kitchen' as (typeof GROUPS)[number],
     codesDishes: false,
+    receivesStock: true,
     sortOrder: '',
     status: 'active' as 'active' | 'inactive',
   })
@@ -77,7 +83,7 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
       const res = await createDepartment({ ...neu, deptKind: kind })
       if (res.ok) {
         toast(`${neu.name} added`)
-        setNeu({ name: '', code: '', deptGroup: 'Kitchen', codesDishes: false, sortOrder: '', status: 'active' })
+        setNeu({ name: '', code: '', deptGroup: 'Kitchen', codesDishes: false, receivesStock: true, sortOrder: '', status: 'active' })
         setAdding(false)
         router.refresh()
       } else setError(res.error)
@@ -189,6 +195,22 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
                 />
               </label>
             </div>
+            <label className="mt-3 flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={neu.receivesStock}
+                onChange={(e) => setNeu((n) => ({ ...n, receivesStock: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 accent-emerald-700"
+              />
+              <span className="text-xs text-stone-700">
+                Stock can be issued to this department.{' '}
+                <span className="text-stone-500">
+                  Untick it for a department that consumes nothing the store holds — the store itself,
+                  Accounts, Valet, Security. Unlike the code, this can change later.
+                </span>
+              </span>
+            </label>
+
             {kind === 'kitchen' && (
               <label className="mt-3 flex items-start gap-2">
                 <input
@@ -231,6 +253,7 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
                 <th className={thCls}>Department</th>
                 <th className={thCls}>Code</th>
                 <th className={thCls}>Group</th>
+                <th className={thCls}>Stock</th>
                 <th className={thNumCls}>Dishes</th>
                 <th className={thNumCls}>Issues</th>
                 <th className={thNumCls}>Staff</th>
@@ -255,6 +278,15 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
                     </td>
                     <td className={tdCodeCls}>{r.code}</td>
                     <td className={`${tdCls} text-stone-500`}>{r.dept_group}</td>
+                    <td className={`${tdCls} text-center`}>
+                      <input
+                        type="checkbox"
+                        checked={draft.receivesStock}
+                        onChange={(e) => setDraft((d) => ({ ...d, receivesStock: e.target.checked }))}
+                        className="h-4 w-4 accent-emerald-700"
+                        aria-label="Receives stock"
+                      />
+                    </td>
                     <td className={tdNumCls}>{r.dishes}</td>
                     <td className={tdNumCls}>{r.issues}</td>
                     <td className={tdNumCls}>{r.staff}</td>
@@ -287,6 +319,13 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
                     <td className={`${tdCls} font-medium`}>{r.name}</td>
                     <td className={tdCodeCls}>{r.code}</td>
                     <td className={`${tdCls} text-stone-500`}>{r.dept_group}</td>
+                    <td className={`${tdCls} text-center text-xs`}>
+                      {r.receives_stock ? (
+                        <span className="text-emerald-700">✓</span>
+                      ) : (
+                        <span className="text-stone-400">no stock</span>
+                      )}
+                    </td>
                     <td className={tdNumCls}>{r.dishes}</td>
                     <td className={tdNumCls}>{r.issues}</td>
                     <td className={tdNumCls}>{r.staff}</td>
@@ -298,7 +337,7 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
                         type="button"
                         onClick={() => {
                           setEditing(r.id)
-                          setDraft({ name: r.name, sortOrder: String(r.sort_order), status: r.status })
+                          setDraft({ name: r.name, sortOrder: String(r.sort_order), status: r.status, receivesStock: r.receives_stock })
                           setError(null)
                         }}
                         className="min-h-[40px] rounded-lg border border-rule px-2.5 text-xs font-medium text-stone-600 hover:border-emerald-400 hover:text-emerald-700"

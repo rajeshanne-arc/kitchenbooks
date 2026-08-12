@@ -27,7 +27,7 @@ import type {
 /** The stock-holding sections a chef closes: Kitchen and Bar org units. */
 export async function getKitchenSections(restaurantId: string): Promise<Section[]> {
   return sql<Section[]>`
-    select id, code, name, sort_order, status, dept_group
+    select id, code, name, sort_order, status, dept_group, receives_stock
     from sections
     where restaurant_id = ${restaurantId} and status = 'active'
       and dept_group in ('Kitchen', 'Bar')
@@ -41,7 +41,7 @@ export async function getKitchenSections(restaurantId: string): Promise<Section[
  *  code carries the department forever, so a wrong one here is permanent. */
 export async function getDishCodingSections(restaurantId: string): Promise<Section[]> {
   return sql<Section[]>`
-    select id, code, name, sort_order, status, dept_group
+    select id, code, name, sort_order, status, dept_group, receives_stock
     from sections
     where restaurant_id = ${restaurantId} and status = 'active' and codes_dishes
     order by sort_order asc`
@@ -117,7 +117,7 @@ export async function listKitchenWastage(restaurantId: string, limit = 40): Prom
 // ---------------------------------------------------------------- indents
 
 const INDENT_SELECT = `
-  select i.id, i.indent_date::text as indent_date, i.section_id,
+  select i.id, i.indent_date::text as indent_date, i.section_id, i.session,
          s.code as section_code, s.name as section_name, i.status, i.note,
          i.entered_by, i.created_at::text as created_at,
          (select count(*)::int from indent_lines l where l.indent_id = i.id) as line_count

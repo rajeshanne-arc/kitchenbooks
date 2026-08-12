@@ -181,6 +181,7 @@ const NewDeptSchema = DeptSchema.extend({
   // and posts staff but no dish was ever a Security dish, and the code is
   // permanent once a dish carries it.
   codesDishes: z.boolean(),
+  receivesStock: z.boolean(),
 })
 
 export async function createDepartment(raw: {
@@ -189,6 +190,7 @@ export async function createDepartment(raw: {
   deptGroup: string
   deptKind: string
   codesDishes: boolean
+  receivesStock: boolean
   sortOrder: string
   status: 'active' | 'inactive'
 }): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -209,8 +211,9 @@ export async function createDepartment(raw: {
       const [{ next }] = await tx<{ next: number }[]>`
         select coalesce(max(sort_order), 0) + 1 as next from sections where restaurant_id = ${rid}`
       await tx`
-        insert into sections (restaurant_id, code, name, dept_group, dept_kind, codes_dishes, sort_order, status)
+        insert into sections (restaurant_id, code, name, dept_group, dept_kind, codes_dishes, receives_stock, sort_order, status)
         values (${rid}, ${code}, ${input.name}, ${input.deptGroup}, ${input.deptKind}, ${input.codesDishes},
+                ${input.receivesStock},
                 ${input.sortOrder === '' ? next : Number(input.sortOrder)}, ${input.status})`
     })
     return { ok: true }
@@ -221,19 +224,22 @@ export async function createDepartment(raw: {
 
 export async function updateDepartment(
   id: string,
-  raw: { name: string; sortOrder: string; status: 'active' | 'inactive' },
+  raw: { name: string; sortOrder: string; status: 'active' | 'inactive'; receivesStock: boolean },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     if (!/^[0-9a-f-]{36}$/i.test(id)) throw new SettingsError('Malformed department id')
     const input = DeptSchema.parse(raw)
     const restaurant = await getRestaurant()
 
-    // name, sort_order and status are the ONLY granted columns. code and
-    // dept_group are absent by design.
+    // code and dept_group stay absent by design — the code is part of every
+    // dish code and cannot be moved. receives_stock CAN change: a department
+    // starts consuming, or stops, and that is a fact about today rather than
+    // an identity.
     const updated = await sql<{ id: string }[]>`
       update sections set
         name = ${input.name},
         sort_order = ${input.sortOrder === '' ? sql`sort_order` : Number(input.sortOrder)},
+        receives_stock = ${raw.receivesStock},
         status = ${input.status}
       where id = ${id} and restaurant_id = ${restaurant.id}
       returning id`

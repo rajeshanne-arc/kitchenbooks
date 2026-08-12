@@ -14,7 +14,8 @@ import { sql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
-import { enteredBy } from '@/server/current-user'
+import { enteredBy, getSessionUser } from '@/server/current-user'
+import { canAccess } from '@/lib/roles'
 import {
   getClosingCurrent,
   getClosingLines,
@@ -36,6 +37,8 @@ import type {
   SaveKitchenWastageResult,
   SaveProductionInput,
   SaveProductionResult,
+  UpdateIndentInput,
+  UpdateIndentResult,
   VoidKitchenWastageResult,
   VoidProductionResult,
 } from '@/lib/types'
@@ -69,6 +72,21 @@ async function assertKitchenSection(restaurantId: string, sectionId: string): Pr
     where id = ${sectionId} and restaurant_id = ${restaurantId} and status = 'active'
       and dept_group in ('Kitchen', 'Bar')`
   if (!rows[0]) throw new KitchenError('Pick a kitchen or bar section')
+}
+
+/** A department that can actually be given stock. Raising an indent for one
+ *  that cannot is asking for a delivery nobody may make — and it used to be
+ *  possible to create such a request and then find it uneditable, because
+ *  updateIndent checks this and saveIndent did not. Create and edit now
+ *  agree. */
+async function assertReceivesStock(restaurantId: string, sectionId: string): Promise<void> {
+  const rows = await sql<{ name: string; receives_stock: boolean }[]>`
+    select name, receives_stock from sections
+    where id = ${sectionId} and restaurant_id = ${restaurantId} and status = 'active'`
+  if (!rows[0]) throw new KitchenError('That department no longer exists')
+  if (!rows[0].receives_stock) {
+    throw new KitchenError(`${rows[0].name} does not receive stock — pick a department that does`)
+  }
 }
 
 // ------------------------------------------------------------ save closing
@@ -294,6 +312,7 @@ export async function saveIndent(raw: SaveIndentInput): Promise<SaveIndentResult
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     await assertKitchenSection(rid, input.sectionId)
+    await assertReceivesStock(rid, input.sectionId)
     const by = await enteredBy()
     const sessions = await getList(rid, 'session')
     if (!sessions.some((v) => v.toLowerCase() === input.session.toLowerCase())) {
@@ -347,6 +366,186 @@ export async function cancelIndent(id: string): Promise<IndentStatusResult> {
     const indent = await getIndent(rid, id)
     if (!indent || indent.status !== 'cancelled') throw new KitchenError('Verification failed: indent not cancelled')
     return { ok: true, indent }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ---------------------------------------------------------- update indent
+// The general rule of this codebase, in one place: a record is editable only
+// while it asserts an INTENTION and nothing depends on it yet. Once anything
+// reads it as history it FREEZES and corrections become reversals.
+//
+// An indent is a REQUEST. While nobody has acted on it, changing it edits a
+// description of what the kitchen wants. The moment an issue carries its
+// indent_id the request has been ANSWERED and the asked-vs-given gap acquires
+// meaning — editing then would rewrite the question after the answer, and the
+// gap would be measuring nothing.
+//
+//   EDITABLE  status = 'open' AND no row in issues carries this indent_id
+//   FROZEN    otherwise — cancelled, issued, or answered by any issue
+//
+// There is no UPDATE grant on indent_lines.item_id: changing WHICH item a
+// line asks for is a delete plus an insert, never an update. entered_by is
+// not granted either, so the indent keeps the name of whoever raised it.
+
+const UpdateIndentSchema = z.object({
+  indentId: z.string().regex(UUID),
+  indentDate: z.string().regex(DATE_RE),
+  session: z.string().trim().min(1, 'Pick the session').max(40),
+  sectionId: z.string().regex(UUID),
+  note: z.string().trim().max(300),
+  lines: z
+    .array(z.object({ id: z.string().regex(UUID).nullable(), itemId: z.string().regex(UUID), qty: qtyStr }))
+    .max(40),
+})
+
+export async function updateIndent(raw: UpdateIndentInput): Promise<UpdateIndentResult> {
+  try {
+    const input = UpdateIndentSchema.parse(raw)
+    assertRealDate(input.indentDate, 'Indent date')
+
+    // whoever may RAISE an indent may edit one — the matrix is the single
+    // source, so this cannot drift from the gate on the page itself
+    const user = await getSessionUser()
+    if (!user || !canAccess(user.role, '/kitchen/indent')) {
+      throw new KitchenError('Editing a request needs a kitchen or store account — ask a manager')
+    }
+
+    if (input.lines.length === 0) {
+      throw new KitchenError('A request with no lines is a cancelled request — cancel it instead')
+    }
+    for (const [i, l] of input.lines.entries()) {
+      const q = parseQty(l.qty)
+      if (q === null || q <= 0) throw new KitchenError(`Line ${i + 1}: quantity must be more than zero`)
+    }
+    const seen = new Set<string>()
+    for (const l of input.lines) {
+      if (seen.has(l.itemId)) throw new KitchenError('The same item appears twice — combine the quantities')
+      seen.add(l.itemId)
+    }
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    await assertKitchenSection(rid, input.sectionId)
+    // The picker is not the check. An indent asks the STORE for stock, so the
+    // department has to be one stock can reach, whatever was posted.
+    const [dept] = await sql<{ name: string; receives_stock: boolean }[]>`
+      select name, receives_stock from sections
+      where id = ${input.sectionId} and restaurant_id = ${rid} and status = 'active'`
+    if (!dept) throw new KitchenError('Department not found')
+    if (!dept.receives_stock) {
+      throw new KitchenError(`${dept.name} does not receive stock — pick a department that does`)
+    }
+    const sessions = await getList(rid, 'session')
+    if (!sessions.some((v) => v.toLowerCase() === input.session.toLowerCase())) {
+      await noteListSuggestion(rid, 'session', input.session, user.username)
+    }
+
+    await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+
+      // THE FREEZE, re-read INSIDE the lock. An issue filed while this form
+      // was open must still freeze the edit, so the state that decides is the
+      // state now — never what the page rendered.
+      const [indent] = await tx<{ status: string }[]>`
+        select status from indents
+        where id = ${input.indentId} and restaurant_id = ${rid}
+        for update`
+      if (!indent) throw new KitchenError('Request not found')
+      const [answered] = await tx<{ id: string }[]>`
+        select id from issues where indent_id = ${input.indentId} limit 1`
+      if (answered) {
+        throw new KitchenError(
+          'An issue has been made against this request — editing what was asked would leave the asked-vs-given gap measuring nothing. Raise a new indent for whatever is still needed.',
+        )
+      }
+      if (indent.status === 'cancelled') {
+        throw new KitchenError('This request was cancelled — it stays on record. Raise a new indent instead.')
+      }
+      if (indent.status !== 'open') {
+        throw new KitchenError(`This request is ${indent.status} — only an open request can be edited`)
+      }
+
+      for (const [i, l] of input.lines.entries()) {
+        const item = await tx<{ id: string }[]>`
+          select id from items where id = ${l.itemId} and restaurant_id = ${rid} and status = 'active'`
+        if (!item[0]) throw new KitchenError(`Line ${i + 1}: item not found`)
+      }
+
+      // A line id that is not this request's own is a stale form, not an edit.
+      // Nor is a kept line whose ITEM has moved: there is no update grant on
+      // indent_lines.item_id, so that update would change the quantity and
+      // leave the old item behind — the row would disagree with the form and
+      // nothing on screen would say so. Refuse, and name the way through.
+      const existing = await tx<{ id: string; item_id: string }[]>`
+        select id, item_id from indent_lines where indent_id = ${input.indentId}`
+      const existingItem = new Map(existing.map((r) => [r.id, r.item_id]))
+      const keptIds = input.lines.flatMap((l) => (l.id === null ? [] : [l.id]))
+      for (const l of input.lines) {
+        if (l.id === null) continue
+        const was = existingItem.get(l.id)
+        if (was === undefined) {
+          throw new KitchenError('A line being edited is not part of this request — reload the page and try again')
+        }
+        if (was !== l.itemId) {
+          throw new KitchenError(
+            'A line cannot change which item it asks for — remove that line and add the new item instead',
+          )
+        }
+      }
+
+      await tx`
+        update indents set
+          indent_date = ${input.indentDate},
+          session = ${input.session},
+          section_id = ${input.sectionId},
+          note = ${input.note === '' ? null : input.note}
+        where id = ${input.indentId} and restaurant_id = ${rid}`
+
+      // Gone from the form = gone from the request. With every line new the
+      // kept set is empty and every old line goes, which is correct.
+      await tx`
+        delete from indent_lines
+        where indent_id = ${input.indentId} and not (id = any(${keptIds}::text[]::uuid[]))`
+      for (const l of input.lines) {
+        if (l.id === null) continue
+        await tx`
+          update indent_lines set qty_requested = ${l.qty.trim()}
+          where id = ${l.id} and indent_id = ${input.indentId}`
+      }
+      const fresh = input.lines.flatMap((l) =>
+        l.id === null ? [{ indent_id: input.indentId, item_id: l.itemId, qty_requested: l.qty.trim() }] : [],
+      )
+      if (fresh.length > 0) {
+        await tx`insert into indent_lines ${tx(fresh, 'indent_id', 'item_id', 'qty_requested')}`
+      }
+    })
+
+    // Read it back, like the neighbouring actions — an edit that did not land
+    // is worse than one that refused.
+    const indent = await getIndent(rid, input.indentId)
+    if (!indent) throw new KitchenError('Could not verify the edit — request missing after commit')
+    if (indent.status !== 'open') throw new KitchenError('Verification failed: the request is no longer open')
+    if (indent.line_count !== input.lines.length) {
+      throw new KitchenError(`Verification failed: expected ${input.lines.length} lines, found ${indent.line_count}`)
+    }
+    if (
+      indent.indent_date !== input.indentDate ||
+      indent.section_id !== input.sectionId ||
+      indent.session !== input.session
+    ) {
+      throw new KitchenError('Verification failed: the request did not come back as it was saved')
+    }
+    const savedLines = await getIndentLines(input.indentId)
+    const asked = new Map(input.lines.map((l) => [l.itemId, Number(l.qty)]))
+    for (const l of savedLines) {
+      const q = asked.get(l.item_id)
+      if (q === undefined || Number(l.qty_requested) !== q) {
+        throw new KitchenError('Verification failed: a quantity did not come back as it was saved')
+      }
+    }
+    return { ok: true }
   } catch (e) {
     return fail(e)
   }

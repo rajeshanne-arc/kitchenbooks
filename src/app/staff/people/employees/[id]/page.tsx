@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import StaffForm from '@/components/labour/StaffForm'
 import { getRestaurant } from '@/server/queries'
-import { getSections } from '@/server/store-queries'
+import { getAllSections } from '@/server/store-queries'
 import { getStaffDetail, listActiveStaff } from '@/server/labour-queries'
 import { RetiredBadge } from '@/components/books/Badges'
 
@@ -17,7 +17,7 @@ export default async function StaffDetailPage({ params }: { params: Promise<{ id
   const staff = await getStaffDetail(restaurant.id, id)
   if (!staff) notFound()
 
-  const [sections, people] = await Promise.all([getSections(restaurant.id), listActiveStaff(restaurant.id)])
+  const [sections, people] = await Promise.all([getAllSections(restaurant.id), listActiveStaff(restaurant.id)])
 
   return (
     <div className="mt-4">

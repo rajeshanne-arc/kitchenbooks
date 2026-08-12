@@ -15,7 +15,7 @@
 // return is a toggle, not a second screen the store has to go find. A return
 // is not a void: the trip out really happened and stays on record.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import type {
   IndentPrefill,
@@ -121,6 +121,11 @@ export default function IssueEntry({
   // A department alone can have a morning ask and an evening ask open at
   // once; asking for both narrows it to the request actually in hand, and
   // when exactly one matches it fills itself.
+  // in-flight prefill, so a click that is still running is cancelled when
+  // another starts or the form goes away
+  const adoptCtl = useRef<AbortController | null>(null)
+  useEffect(() => () => adoptCtl.current?.abort(), [])
+
   useEffect(() => {
     if (sectionId === '' || session === '' || indent !== null) return
     const ctl = new AbortController()
@@ -144,9 +149,18 @@ export default function IssueEntry({
       ? suggestions.rows
       : []
 
+  // ABORTED AND TIMED OUT, like every other fetch here. This one was
+  // neither: it is called from a click rather than an effect, so it had no
+  // cleanup, and a stalled request would stay pending until the browser
+  // gave up on its own. A pending fetch is enough to stop a document ever
+  // reaching idle — which is what a 45-second wait on this page looked like.
   async function adoptIndent(id: string) {
+    adoptCtl.current?.abort()
+    const ctl = new AbortController()
+    adoptCtl.current = ctl
+    const timer = setTimeout(() => ctl.abort(), 10_000)
     try {
-      const res = await fetch(`/api/indents?id=${id}`, { cache: 'no-store' })
+      const res = await fetch(`/api/indents?id=${id}`, { cache: 'no-store', signal: ctl.signal })
       if (!res.ok) return
       const p = (await res.json()) as IndentPrefill
       setIndent(p)
@@ -156,6 +170,9 @@ export default function IssueEntry({
       setNextKey((k) => k + p.lines.length + 1)
     } catch {
       /* suggestion only — the plain form still works */
+    } finally {
+      clearTimeout(timer)
+      if (adoptCtl.current === ctl) adoptCtl.current = null
     }
   }
 

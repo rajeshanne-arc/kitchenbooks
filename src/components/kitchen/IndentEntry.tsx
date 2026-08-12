@@ -4,7 +4,7 @@
 // — item lines with quantities, no costs anywhere. The store issues
 // against it; asked vs given (the gap) lives on the indent's page.
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { IssuableItemHit, SaveIndentResult, Section } from '@/lib/types'
 import { saveIndent } from '@/server/kitchen-actions'
@@ -33,6 +33,8 @@ export default function IndentEntry({
 }) {
   const { label } = useLang()
   const [date, setDate] = useState(todayLocal)
+  const refillCtl = useRef<AbortController | null>(null)
+  useEffect(() => () => refillCtl.current?.abort(), [])
   const [sectionId, setSectionId] = useState('')
   const [session, setSession] = useState(sessions[0] ?? '')
   const [note, setNote] = useState('')
@@ -48,14 +50,20 @@ export default function IndentEntry({
   // things every evening, and retyping fifteen lines was the single biggest
   // daily cost in the product. It fills the form and stops — every quantity
   // is still editable, and nothing is saved until save is pressed.
+  // aborted and timed out: a stalled request would leave the button spinning
+  // and the document never idle
   async function refillFromLast() {
     if (sectionId === '' || session === '') return
+    refillCtl.current?.abort()
+    const ctl = new AbortController()
+    refillCtl.current = ctl
+    const timer = setTimeout(() => ctl.abort(), 10_000)
     setRefilling(true)
     setRefillNote(null)
     try {
       const res = await fetch(
         `/api/indents?last=1&section=${sectionId}&session=${encodeURIComponent(session)}`,
-        { cache: 'no-store' },
+        { cache: 'no-store', signal: ctl.signal },
       )
       if (!res.ok) {
         setRefillNote('No earlier request for this department and session yet.')
@@ -75,6 +83,8 @@ export default function IndentEntry({
     } catch {
       setRefillNote('Could not reach the server.')
     } finally {
+      clearTimeout(timer)
+      if (refillCtl.current === ctl) refillCtl.current = null
       setRefilling(false)
     }
   }

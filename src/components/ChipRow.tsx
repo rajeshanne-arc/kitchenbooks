@@ -19,9 +19,14 @@ export default function ChipRow({ base, chips }: { base: string; chips: ChipDef[
       data-chrome="true"
       className="-mx-4 mb-4 flex gap-2 overflow-x-auto whitespace-nowrap px-4 sm:mx-0 sm:px-0"
     >
-      {chips.map((c) => {
+      {chips.map((c, i) => {
         const href = `${base}/${c.key}`
-        const active = pathname === href || pathname.startsWith(`${href}/`)
+        // The parent URL now RENDERS the first chip instead of redirecting to
+        // it, so the first chip has to light up there too — otherwise a tab
+        // click lands on a screen with nothing marked and the row reads as
+        // broken. `base` itself is the first chip.
+        const active =
+          pathname === href || pathname.startsWith(`${href}/`) || (i === 0 && pathname === base)
         return (
           <Link
             key={c.key}

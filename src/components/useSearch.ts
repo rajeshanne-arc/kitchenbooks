@@ -13,6 +13,11 @@ export function useSearch<T>(url: string | null) {
   useEffect(() => {
     if (url === null) return
     const ctl = new AbortController()
+    // A STALLED REQUEST IS NOT A SLOW ONE. Without this the fetch stays
+    // pending until the browser gives up, and a pending fetch is enough to
+    // stop a document reaching idle — which is what a long wait on the
+    // issue page looked like from outside.
+    const kill = setTimeout(() => ctl.abort(), 10_000)
     const t = setTimeout(async () => {
       try {
         const res = await fetch(url, { signal: ctl.signal })
@@ -25,6 +30,7 @@ export function useSearch<T>(url: string | null) {
     }, 180)
     return () => {
       clearTimeout(t)
+      clearTimeout(kill)
       ctl.abort()
     }
   }, [url])

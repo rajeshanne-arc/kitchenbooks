@@ -125,10 +125,12 @@ snapshot tables casually.
 "Enter what you take from the store, including what gets trimmed away."
 If a chef writes net quantities, costs understate silently.
 
-**The DELETE exception.** `recipe_lines` carries the system's only DELETE
-grant: recipes are masters and lines are editable detail — removing an
-ingredient from a card is normal chef editing, not history erasure. Nothing
-else may ever gain DELETE.
+**The DELETE exception.** `recipe_lines` may be deleted: removing an
+ingredient from a card is normal chef editing, not history erasure. This
+was written as "the system's only DELETE grant, nothing else may ever gain
+one" — see **"Editable, then frozen"** at the end of this file for the
+general rule that superseded it. There are now three, and the count is not
+the point; the reason is.
 
 **Cycle guard is server-side**: before inserting a sub component, walk the
 component graph (recursive CTE) and refuse loops. The view's depth cap is
@@ -1655,7 +1657,8 @@ there is nothing to preserve and nothing to reverse; leaving it beside a
 correction would assert two contradictory things at once and leave
 `unmatched_lines` wrong forever. Same shape as the `recipe_lines`
 exception: removing an ingredient from a card is editing a description, not
-erasing history. **These two are the only DELETEs in the system.**
+erasing history. See **"Editable, then frozen"** at the end of this file:
+this is one instance of a general rule, not a special case.
 
 *How this was got wrong:* the grant was checked in
 `information_schema.column_privileges`, where DELETE — a TABLE privilege —
@@ -1730,3 +1733,121 @@ query, but every word in it looked like a column: it reported `read` and
 stripped before the string literals, so a quote inside a comment cannot
 unbalance the next step. The `--self-test` still catches the
 `pnl_monthly.revenue` regression.
+
+## Editable, then frozen — the rule the exception list was hiding
+
+This replaces the growing list of "DELETE exceptions". There is one rule:
+
+> **A record is editable only while it asserts an INTENTION and nothing
+> depends on it yet. Once anything reads it as history, it freezes, and
+> corrections become reversals.**
+
+Every event table holds OCCURRENCES — money moved, goods arrived, somebody
+worked a day — and an occurrence cannot be made not to have happened. Those
+stay append-only forever. The editable few are not exceptions to that; they
+are a different kind of record:
+
+| Record | What it asserts | Frozen by |
+|---|---|---|
+| `recipe_lines` | what a dish is made of | nothing — a card is always a description |
+| `reconciliation_matches` | a human's judgement that two rows are one transaction | nothing — a wrong judgement was never true |
+| `indent_lines`, open `indents` | what a department is asking for | an issue carrying that `indent_id` |
+
+The indent is the clearest case because it does both. While it is open,
+changing it is editing a request nobody has acted on. The instant an issue
+stamps its `indent_id`, the asked-vs-given GAP acquires meaning — and
+editing the ask afterwards would rewrite that gap retroactively, which is
+the one thing the whole indent loop exists to prevent. So: editable while
+`status = 'open'` AND no issue links to it; frozen otherwise, with the
+reason said in words (an issue was made against it, or it was cancelled —
+those are different sentences).
+
+**The freeze is checked INSIDE the transaction**, not on the page and not
+before the lock: an issue filed while the edit form was open must still
+stop the save. The grants permit more than the rule allows, and that is
+deliberate — the database cannot know whether an issue exists yet, so the
+rule lives in code and a test holds it there.
+
+Same shape as draft → approved payroll, and as a statement line that has
+been matched. When adding a table, ask which kind it is: does this row say
+what someone MEANS to do, or what someone DID?
+
+## Who can receive stock
+
+`sections.receives_stock` — 12 of the 16 org units. **Store, Accounts,
+Valet and Security cannot**: the store issuing to itself is not a movement,
+and the other three consume nothing the store holds. The picker was
+offering all sixteen, which is the same class of bug as the dish picker
+offering Security, and it let stock be issued from the store to the store.
+
+`getSections` is now the ISSUABLE list and `getAllSections` is everything.
+Choosing wrongly between them breaks in the opposite direction: **a staff
+posting and casual labour must see every department**, because a guard is
+posted to Security and a day hand can unload for Valet. Three screens were
+switched to `getAllSections` for exactly that reason.
+
+**THE PICKER IS NOT THE CHECK.** `saveIssue` refuses a non-receiving
+department by name on BOTH the issue and the return path — stock cannot
+come back from a department it could never have gone to. A form can always
+be posted to directly; the filter is a courtesy to the person, the refusal
+is the rule.
+
+Unlike `code` and `dept_group`, `receives_stock` CAN change — a department
+starts consuming, or stops — so it is editable on the Departments screen
+beside `codes_dishes`, and the row shows "no stock" for the four, because
+the absence is the interesting case.
+
+## Editing an open indent, and the checklist that could not be finished
+
+**The indent is the clearest instance of "editable, then frozen".** Editable
+while `status = 'open'` AND no issue carries its `indent_id`; frozen the
+instant one does, because the asked-vs-given GAP acquires meaning and
+editing the ask afterwards would rewrite it retroactively. The freeze is
+re-read INSIDE the transaction, so an issue filed while the edit form was
+open still stops the save. Three of the four test indents were cancelled
+because cancel-and-recreate was the only correction available; that is what
+this fixes.
+
+**A line cannot change which item it asks for.** There is no UPDATE grant on
+`indent_lines.item_id`, so moving an item is a delete plus an insert — and
+the action refuses it by name rather than updating the quantity and leaving
+the old item on the row, which is what it did before the verify pass caught
+it.
+
+**`IndentRow.session` was declared and never selected**, so `indent.session`
+was `undefined` everywhere it was read. Found while wiring the editor.
+
+**The daily checklist is gone, replaced by open indents.** "1 of 16
+entered" could never be honestly completed: a zero beside Bakery cannot
+distinguish "took nothing today" from "nobody wrote it down", so the only
+way to finish the list was to issue stock to a department that did not want
+any. **A list that cannot be completed is a list people stop reading.** An
+open indent is finite, actionable, and belongs to a person who is waiting.
+
+## Every tab click cost two round trips
+
+Thirteen chip parents redirected to their first child — `/store/receive` →
+`/store/receive/purchase` — so every tab click was one request to be told
+where to go and another to go there. They render the child directly now,
+one implementation, no drift. `dynamic` is declared locally rather than
+re-exported, because Next parses that field statically and refuses to
+follow it through a re-export; `/accounts/registers` supplies the default
+`key` because its child is a dynamic route and a bare re-export would
+arrive with none.
+
+`ChipRow` marks the FIRST chip active at the parent URL — without that the
+screen arrives with nothing selected and the row reads as broken.
+
+**`/kitchen/shift` was worse than slow: it was wrong.** It redirected to
+`/kitchen/shift/production`, which stopped existing when production moved
+out of the shift segment, so the retired-URL shim caught it and sent the
+user to `/kitchen/production` — clicking "End of shift" landed on
+Production, two hops away. It renders Closing now.
+
+**Fonts: 223.8 KB of preloaded font became 102.9 KB.** Noto Sans Telugu is
+120.9 KB and exists for the Telugu labels on five staff-facing forms; it is
+`preload: false` now, so it is fetched when a page actually renders Telugu
+rather than on the login screen of every device. It stays in the stack, so
+those labels are still words and never tofu. Archivo is pinned to 600/700 —
+the only weights the display face is ever asked for — instead of shipping
+every weight from 100 to 900 as a variable font.

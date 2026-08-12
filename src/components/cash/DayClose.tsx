@@ -6,7 +6,7 @@
 // The preview does its arithmetic in paise; the REVEAL reads day_close_ladder
 // back from the database. Difference is red whenever it is not zero.
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ClosePrefill, CloseDayResult, DayCloseLadderRow, MoneyAccount } from '@/lib/types'
 import { closeDay, setFirstOpening } from '@/server/cash-actions'
@@ -103,18 +103,30 @@ export default function DayClose({
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<DayCloseLadderRow | null>(null)
   const reqSeq = useRef(0)
+  const prefillCtl = useRef<AbortController | null>(null)
+  useEffect(() => () => prefillCtl.current?.abort(), [])
 
+  // reqSeq already makes a late reply lose to a newer one, but a STALLED
+  // request stays pending regardless — and a pending fetch is enough to stop
+  // the document reaching idle. Aborted on the next load and on unmount.
   async function loadPrefill(d: string) {
     const seq = ++reqSeq.current
+    prefillCtl.current?.abort()
+    const ctl = new AbortController()
+    prefillCtl.current = ctl
+    const timer = setTimeout(() => ctl.abort(), 10_000)
     setPrefill(null)
     try {
-      const res = await fetch(`/api/cash/prefill?date=${d}`, { cache: 'no-store' })
+      const res = await fetch(`/api/cash/prefill?date=${d}`, { cache: 'no-store', signal: ctl.signal })
       const data = (await res.json()) as ClosePrefill
       if (seq === reqSeq.current) setPrefill(data)
     } catch {
       if (seq === reqSeq.current) {
         setPrefill({ ok: false, blocked: 'no_opening', missingDate: null, anyCloses: false, error: 'Could not load the ladder — retry.' })
       }
+    } finally {
+      clearTimeout(timer)
+      if (prefillCtl.current === ctl) prefillCtl.current = null
     }
   }
 

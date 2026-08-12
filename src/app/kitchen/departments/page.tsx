@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
 export default async function DepartmentsPage() {
   const restaurant = await getRestaurant()
   const rows = await sql<DepartmentRow[]>`
-    select s.id, s.code, s.name, s.dept_group, s.dept_kind, s.sort_order, s.status,
+    select s.id, s.code, s.name, s.dept_group, s.dept_kind, s.receives_stock, s.sort_order, s.status,
            (select count(*)::int from issues i where i.section_id = s.id) as issues,
            (select count(*)::int from recipes r where r.section_id = s.id) as dishes,
            (select count(*)::int from staff st where st.section_id = s.id) as staff

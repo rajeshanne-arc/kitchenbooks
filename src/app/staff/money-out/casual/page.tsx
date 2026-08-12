@@ -1,7 +1,7 @@
 import { getRestaurant } from '@/server/queries'
 import { getList } from '@/server/settings'
 import { listCasualLabour } from '@/server/expenses-queries'
-import { getSections } from '@/server/store-queries'
+import { getAllSections } from '@/server/store-queries'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { CasualLabourClient } from '@/components/staff/LabourOutClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
@@ -13,7 +13,7 @@ export default async function CasualLabourPage() {
   const [modes, rows, sections, accounts] = await Promise.all([
     getList(restaurant.id, 'payment_mode'),
     listCasualLabour(restaurant.id),
-    getSections(restaurant.id),
+    getAllSections(restaurant.id),
     listMoneyAccounts(restaurant.id),
   ])
   return (

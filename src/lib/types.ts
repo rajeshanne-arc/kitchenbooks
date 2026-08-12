@@ -337,6 +337,10 @@ export type Section = {
   sort_order: number
   status: 'active' | 'inactive'
   dept_group: DeptGroup
+  /** whether stock can be ISSUED to this department. Store, Accounts, Valet
+   *  and Security cannot receive: the store issuing to itself is not a
+   *  movement, and the other three consume nothing the store holds. */
+  receives_stock: boolean
 }
 
 /** Typeahead hit for issue/wastage forms — existing items only, costs hidden */
@@ -379,6 +383,9 @@ export type DepartmentRow = {
    *  the two tabs are — a chef looking for Tandoori should not scroll past
    *  Security to reach it. */
   dept_kind: string
+  /** whether stock can be ISSUED here. Unlike the code this can change: a
+   *  department starts consuming, or stops. */
+  receives_stock: boolean
   sort_order: number
   status: 'active' | 'inactive'
   issues: number
@@ -2288,3 +2295,21 @@ export type SectionConsumptionDay = {
   consumed_value: string
   movements: number
 }
+
+/** Editing an OPEN indent. Editable only while it asserts an intention and
+ *  nothing depends on it yet — once an issue carries its indent_id the
+ *  asked-vs-given gap has meaning and the request freezes.
+ *
+ *  A line with an id is updated, one without is inserted, and an id absent
+ *  from this list is deleted. There is no update grant on item_id: changing
+ *  WHICH item a line is for is a delete plus an insert, not an edit. */
+export type UpdateIndentInput = {
+  indentId: string
+  indentDate: string
+  session: string
+  sectionId: string
+  note: string
+  lines: { id: string | null; itemId: string; qty: string }[]
+}
+
+export type UpdateIndentResult = { ok: true } | { ok: false; error: string }
