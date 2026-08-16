@@ -28,7 +28,14 @@ export async function proxy(request: NextRequest) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     url.search = pathname === '/' ? '' : `?next=${encodeURIComponent(pathname)}`
-    return NextResponse.redirect(url)
+    const res = NextResponse.redirect(url)
+    // CLEAR THE COOKIE ON THE WAY OUT. A token that did not verify is not a
+    // session, and leaving it in the jar means the browser presents it again
+    // on every request for the next thirty days. That is how one stale cookie
+    // — a v1 token from before the tenant claim existed — followed Rajesh
+    // from page to page. An unrecognised session must end as a sign-out.
+    res.cookies.set(SESSION_COOKIE, '', { path: '/', maxAge: 0 })
+    return res
   }
 
   // THE DENIAL PAGE IS REACHABLE BY EVERY SIGNED-IN ROLE, and it has to be.

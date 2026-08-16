@@ -4,7 +4,11 @@
 // DELETE grants — the append-only rule is enforced by the database itself.
 import 'server-only'
 import postgres from 'postgres'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { currentTenant, tenantGuc } from '@/lib/tenant'
+
+/** True while a session lookup is resolving the tenant — see txn(). */
+const resolvingSession = new AsyncLocalStorage<boolean>()
 
 declare global {
   var __kbSql: ReturnType<typeof postgres> | undefined
@@ -56,9 +60,18 @@ export async function txn<T>(fn: (tx: postgres.TransactionSql) => Promise<T>): P
   // loaded by smoke scripts that have no request. It already returns null
   // outside one, so a null tenant simply announces nothing.
   let tenant = currentTenant()
-  if (tenant === null) {
+  if (tenant === null && !resolvingSession.getStore()) {
+    // RE-ENTRANCY GUARD. getSessionUser() reads app_users through tsql, which
+    // lands back here; if that read still cannot name a tenant this would ask
+    // the session again, and again. That recursion exhausted the heap in
+    // about three minutes and returned 500 on every route including /login,
+    // so the user could not even sign out to escape it.
+    //
+    // The flag makes the loop impossible rather than unlikely: while a
+    // session lookup is in flight, this falls through to the deployment
+    // tenant instead of asking a second time.
     const { getSessionUser } = await import('@/server/current-user')
-    tenant = (await getSessionUser())?.restaurantId ?? null
+    tenant = await resolvingSession.run(true, async () => (await getSessionUser())?.restaurantId ?? null)
   }
   // THE SESSIONLESS PATHS, and the outage they caused.
   //

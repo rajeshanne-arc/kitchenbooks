@@ -18,8 +18,21 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 const store = new AsyncLocalStorage<string>()
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /** Run `fn` with this tenant in scope. Everything it awaits sees it. */
 export function withTenant<T>(restaurantId: string, fn: () => Promise<T>): Promise<T> {
+  // A BLANK TENANT IS A CALLER BUG, and it must not become a quiet null.
+  //
+  // `withTenant(undefined)` used to store undefined, `currentTenant()`
+  // answered null, and txn() then tried to resolve the tenant from the
+  // session — which called withTenant(undefined) again. That recursion ate
+  // 1.8GB and killed the process on every route. Refusing here turns a
+  // programming mistake into one loud error instead of an outage, and the
+  // shape check is the same one tenantGuc applies before interpolating.
+  if (typeof restaurantId !== 'string' || !UUID.test(restaurantId)) {
+    throw new Error('withTenant needs a restaurant id — refusing to run with no tenant in scope')
+  }
   return store.run(restaurantId, fn)
 }
 
@@ -30,7 +43,6 @@ export function withTenant<T>(restaurantId: string, fn: () => Promise<T>): Promi
  */
 export const currentTenant = (): string | null => store.getStore() ?? null
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
  * The GUC statement, or null when there is no tenant to announce.

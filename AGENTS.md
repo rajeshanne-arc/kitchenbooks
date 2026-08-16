@@ -2547,3 +2547,70 @@ written rather than the day someone remembers to list it.
 **The general form, and it is the same shape as the schema gate's blind half:
 a check scoped by where we EXPECT the fault cannot find the fault we did not
 expect.** Three instruments, one assumption, two live 500s.
+
+## ONE STALE COOKIE TOOK THE APP DOWN — and it was the OOM all along
+
+Rajesh could not use the app in Chrome; Safari, where he had logged in
+freshly, was fine. Reproduced by minting a pre-Phase-1.5 token and presenting
+it to production. The actual failure, not the expected one:
+
+    verifySession on an OLD cookie:  returns null? false
+                                     u=rajeshanne r=owner t=undefined
+    /         500     806ms
+    /login    500  192592ms      <-- three minutes, then dead
+    /owner    500     730ms
+    /kitchen  500     100ms
+
+**`verifySession` checked `u`, `r` and `exp` — and not `t`.** Phase 1.5 added
+the tenant claim to a payload already in circulation and never taught
+verification to require it, so a v1 cookie VERIFIED and handed back a payload
+whose tenant was `undefined`.
+
+Then the loop: `withTenant(undefined)` stored undefined → `currentTenant()`
+answered `undefined ?? null` = null → `txn` tried to resolve the tenant by
+calling `getSessionUser()` → which called `withTenant(undefined)` again.
+**Unbounded recursion**, 1.8 GB of heap, `FATAL ERROR: Ineffective
+mark-compacts near heap limit`, SIGABRT, and 500 on EVERY route — including
+`/login`, so the user could not sign out to escape it. The only exit was
+clearing cookies by hand.
+
+**This is the heap-OOM that was flagged as un-root-caused two sessions
+running.** It was never a leak or a fan-out; it was one browser holding a v1
+cookie, which is also why it appeared on `/` and `/login` and nowhere else.
+
+**Fixed in four layers, because one would have been an instance and not a
+class:**
+
+1. **The payload is VERSIONED.** `SESSION_VERSION = 'v2'`, and a token of any
+   other version is not a session — no attempt is made to interpret it.
+   Bumping it is now the supported way to change the shape: every older cookie
+   becomes a clean sign-out. v1 → v2 is "`t` became required".
+2. **Every field is checked, not the ones that happened to exist when the
+   check was written** — `u` and `r` non-empty, `t` UUID-shaped, `exp` finite.
+   A field the type declares required is verified here, or the type is a
+   comment.
+3. **`withTenant` refuses a blank tenant loudly** rather than letting it decay
+   into a null. A caller bug becomes one error, not an out-of-memory.
+4. **`txn` cannot re-enter the session lookup.** An AsyncLocalStorage flag is
+   set while `getSessionUser()` is resolving, so a read that still cannot name
+   a tenant falls through to `KB_TENANT` instead of asking again. The loop is
+   impossible rather than unlikely.
+
+And the proxy **clears the cookie** when a token fails to verify. Leaving it
+in the jar means the browser presents it again on every request for thirty
+days, which is exactly how one stale cookie followed a user from page to page.
+An unrecognised session must END as a sign-out.
+
+**The rule: a payload that crosses a deploy boundary is a wire format.**
+Adding a required field to one already in circulation is a breaking change,
+and the old shape must be REJECTED rather than half-read. Anything else means
+the field is optional in practice and required in the type — which is the gap
+this fell through.
+
+Guarded in `smoke:a2` four ways: a payload with no tenant is refused, so are
+blank/malformed ones and payloads missing `u` or `r`; a token of any other
+version is refused; `withTenant` throws on a blank tenant; and the proxy's
+login redirect is asserted to clear the cookie with `maxAge: 0`.
+
+**Everyone signed in before this deploy is signed out by it.** That is the
+intended behaviour and the whole point of the version bump.

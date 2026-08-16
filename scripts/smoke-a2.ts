@@ -2202,6 +2202,90 @@ async function run() {
     console.log(`      ${targets.join(' · ')} — reachable by every role`)
   })
 
+  /* ── AN OLD-SHAPE COOKIE IS A SIGN-OUT, NEVER AN OUTAGE ────────────────
+     A v1 token — minted before the tenant claim existed — verified cleanly
+     because verification checked u, r and exp and not t. The payload came
+     back with t undefined, withTenant(undefined) made currentTenant() answer
+     null, txn asked getSessionUser() for the tenant, and that called
+     withTenant(undefined) again. Heap dead in about three minutes, 500 on
+     every route INCLUDING /login, so the user could not sign out to escape
+     it. One stale cookie, whole app down for that browser. */
+
+  await check('a session payload missing its tenant is refused', async () => {
+    const { signSession, verifySession, SESSION_VERSION } = await import('../src/lib/session')
+    const secret = 'zz-smoke-secret-not-the-real-one'
+    const exp = Math.floor(Date.now() / 1000) + 3600
+
+    const good = await signSession({ u: 'zz', r: 'owner', t: rid, exp }, secret)
+    assert.ok((await verifySession(good, secret)) !== null, 'a well-formed session must still verify')
+    assert.ok(good.startsWith(`${SESSION_VERSION}.`), 'tokens carry the current version')
+
+    // The exact shape Rajesh's browser was holding.
+    const oldShape = { u: 'zz', r: 'owner', exp } as unknown as Parameters<typeof signSession>[0]
+    const stale = await signSession(oldShape, secret)
+    assert.equal(await verifySession(stale, secret), null, 'a payload with NO tenant is not a session')
+
+    // and every other way the claim can be wrong
+    for (const t of ['', 'not-a-uuid', '   ', '00000000-0000-4000-8000']) {
+      const bad = await signSession({ u: 'zz', r: 'owner', t, exp } as Parameters<typeof signSession>[0], secret)
+      assert.equal(await verifySession(bad, secret), null, `tenant ${JSON.stringify(t)} must be refused`)
+    }
+    for (const field of ['u', 'r'] as const) {
+      const p2 = { u: 'zz', r: 'owner', t: rid, exp } as Record<string, unknown>
+      delete p2[field]
+      const bad = await signSession(p2 as Parameters<typeof signSession>[0], secret)
+      assert.equal(await verifySession(bad, secret), null, `a payload missing ${field} is not a session`)
+    }
+  })
+
+  await check('a token of any other version is not a session', async () => {
+    // The point of versioning: the NEXT shape change must be a sign-out too,
+    // without anyone remembering to add a check for the new field.
+    const { signSession, verifySession, SESSION_VERSION } = await import('../src/lib/session')
+    const secret = 'zz-smoke-secret-not-the-real-one'
+    const exp = Math.floor(Date.now() / 1000) + 3600
+    const token = await signSession({ u: 'zz', r: 'owner', t: rid, exp }, secret)
+
+    const [, body, sig] = token.split('.')
+    for (const v of ['v1', 'v3', 'v99', 'x']) {
+      if (v === SESSION_VERSION) continue
+      assert.equal(await verifySession(`${v}.${body}.${sig}`, secret), null, `${v} must not verify`)
+    }
+    console.log(`      current is ${SESSION_VERSION}; v1 tokens are signed out, not interpreted`)
+  })
+
+  await check('a blank tenant is refused loudly, never turned into a null', async () => {
+    // The recursion needed withTenant(undefined) to become "no tenant". It
+    // now throws instead, so a caller bug is one loud error rather than an
+    // out-of-memory on every route.
+    const { withTenant } = await import('../src/lib/tenant')
+    for (const bad of [undefined, null, '', 'nope']) {
+      await assert.rejects(
+        async () => withTenant(bad as unknown as string, async () => 1),
+        /refusing to run with no tenant/,
+        `withTenant(${JSON.stringify(bad)}) must throw`,
+      )
+    }
+    // and the good case still works
+    assert.equal(await withTenant(rid, async () => 'ok'), 'ok')
+  })
+
+  await check('the proxy ends an unrecognised session by clearing the cookie', async () => {
+    // Leaving a token that did not verify in the jar means the browser
+    // presents it again on every request for thirty days — which is how one
+    // stale cookie followed a user from page to page.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/proxy.ts', 'utf8')
+    const redirectBlock = src.slice(src.indexOf('const payload = await verifySession'))
+    const loginRedirect = redirectBlock.slice(0, redirectBlock.indexOf('canAccess'))
+    assert.match(
+      loginRedirect,
+      /cookies\.set\(SESSION_COOKIE,\s*''/,
+      'the login redirect must clear the session cookie',
+    )
+    assert.match(loginRedirect, /maxAge:\s*0/, 'and expire it immediately')
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )
