@@ -8,9 +8,10 @@ import { useState } from 'react'
 import type { MoneyAccount, SaveOtherIncomeResult, Unit } from '@/lib/types'
 import { saveOtherIncome } from '@/server/cash-actions'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function OtherIncomeForm({
   units,
@@ -26,7 +27,8 @@ export default function OtherIncomeForm({
   buyerNames?: string[]
   receiverNames?: string[]
 }) {
-  const [date, setDate] = useState(todayLocal)
+  const businessToday = useBusinessToday()
+  const [date, setDate] = useState(businessToday)
   const [item, setItem] = useState('')
   const [qty, setQty] = useState('')
   const [unit, setUnit] = useState('')
@@ -83,7 +85,7 @@ export default function OtherIncomeForm({
     setBuyer('')
     setReceivedBy('')
     setError(null)
-    setDate(todayLocal())
+    setDate(businessToday)
   }
 
   if (saved !== null) {

@@ -17,10 +17,10 @@ import { useRouter } from 'next/navigation'
 import type { MoneyAccount } from '@/lib/types'
 import { importStatement } from '@/server/reconciliation-actions'
 import { decimalStringToPaise, formatPaise } from '@/lib/money'
-import { todayLocal } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 import {
   btnCls,
   cardCls,
@@ -155,10 +155,11 @@ function parsePaste(text: string): Parsed {
 }
 
 export default function StatementImport({ accounts }: { accounts: MoneyAccount[] }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
   const [accountId, setAccountId] = useState('')
   const [periodStart, setPeriodStart] = useState('')
-  const [periodEnd, setPeriodEnd] = useState(todayLocal())
+  const [periodEnd, setPeriodEnd] = useState(businessToday)
   const [opening, setOpening] = useState('')
   const [closing, setClosing] = useState('')
   const [note, setNote] = useState('')

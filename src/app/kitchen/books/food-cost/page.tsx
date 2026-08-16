@@ -1,11 +1,12 @@
 import { getRestaurant } from '@/server/queries'
 import { getFoodCost } from '@/server/kitchen-queries'
-import { getSectionConsumptionDaily, monthStartIST, todayIST } from '@/server/store-queries'
+import { getSectionConsumptionDaily } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import Honesty, { HonestyPill } from '@/components/Honesty'
 import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import type { FoodCostRow } from '@/lib/types'
+import { businessMonthStart, businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,12 +62,12 @@ function Row({ r }: { r: FoodCostRow }) {
 
 export default async function FoodCostPage() {
   const restaurant = await getRestaurant()
-  const monthStart = monthStartIST()
+  const monthStart = await businessMonthStart()
   const [rows, consumption] = await Promise.all([
     getFoodCost(restaurant.id, monthStart),
     // the same movement counted in money, day by day — this is the page
     // where a chef is answerable for it
-    getSectionConsumptionDaily(restaurant.id, monthStart, todayIST()),
+    getSectionConsumptionDaily(restaurant.id, monthStart, await businessToday()),
   ])
   const live = rows.filter((r) => r.has_activity)
   const closed = live.filter((r) => r.consumed_total !== null).length

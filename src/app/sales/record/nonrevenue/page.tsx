@@ -1,9 +1,9 @@
 import { getRestaurant } from '@/server/queries'
 import { getGiveawayMonth, listGiveawayDishes, listNonRevenue } from '@/server/cashier-queries'
 import { getList, getNameHistory } from '@/server/settings'
-import { monthStartIST } from '@/server/store-queries'
 import NonRevenueClient from '@/components/cash/NonRevenueClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
+import { businessMonthStart } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +13,7 @@ export default async function NonRevenuePage() {
     getList(restaurant.id, 'non_revenue_reason'),
     listGiveawayDishes(restaurant.id),
     listNonRevenue(restaurant.id, 20),
-    getGiveawayMonth(restaurant.id, monthStartIST()),
+    getGiveawayMonth(restaurant.id, await businessMonthStart()),
     getNameHistory(restaurant.id, 'non_revenue_given_to'),
   ])
 

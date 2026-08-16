@@ -16,10 +16,11 @@ import { useRouter } from 'next/navigation'
 import type { MoneyAccount, Partner, PartnerSummaryRow, SaveSettlementResult, SettlementRow } from '@/lib/types'
 import { saveSettlement, voidSettlement } from '@/server/cashier-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 const moneyClean = (s: string) => s.replace(/[^\d.]/g, '')
 
@@ -38,10 +39,11 @@ export default function SettlementsClient({
   summaries: PartnerSummaryRow[]
   accounts: MoneyAccount[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
   const [partner, setPartner] = useState('')
   const [periodStart, setPeriodStart] = useState('')
-  const [periodEnd, setPeriodEnd] = useState(todayLocal)
+  const [periodEnd, setPeriodEnd] = useState(businessToday)
   const [gross, setGross] = useState('')
   const [commission, setCommission] = useState('')
   const [deductions, setDeductions] = useState('')

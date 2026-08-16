@@ -13,9 +13,9 @@ import { txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy } from '@/server/current-user'
 import { getCount, getCountVariances, getIssueHistoryDays } from '@/server/counts-queries'
-import { todayIST } from '@/server/store-queries'
 import { parseQty } from '@/lib/money'
 import type { PhotographResult, SaveCountInput, SaveCountResult } from '@/lib/types'
+import { businessToday } from '@/server/business-day'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -109,7 +109,7 @@ export async function photographMenu(): Promise<PhotographResult> {
   try {
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    const snapDate = todayIST()
+    const snapDate = await businessToday()
 
     const inserted = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`

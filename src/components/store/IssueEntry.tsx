@@ -29,7 +29,7 @@ import type {
 } from '@/lib/types'
 import { saveIssue, saveReturn } from '@/server/store-actions'
 import { parseQty, formatMoneyString } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import {
   cardCls,
   dataTableCls,
@@ -42,6 +42,7 @@ import {
 } from '@/components/ui'
 import IssueItemPicker from './IssueItemPicker'
 import { useLang } from '@/components/useLang'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 type Line = { key: number; item: IssuableItemHit | null; qty: string; note: string }
 const newLine = (key: number): Line => ({ key, item: null, qty: '', note: '' })
@@ -78,7 +79,8 @@ export default function IssueEntry({
   returnReasons: string[]
   initialIndent?: IndentPrefill | null
 }) {
-  const [issueDate, setIssueDate] = useState(todayLocal)
+  const businessToday = useBusinessToday()
+  const [issueDate, setIssueDate] = useState(businessToday)
   const [direction, setDirection] = useState<Direction>('out')
   const [reason, setReason] = useState('')
   // Deliberately BLANK. issues.session defaults to 'Morning' in the
@@ -261,7 +263,7 @@ export default function IssueEntry({
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
-    setIssueDate(todayLocal())
+    setIssueDate(businessToday)
   }
 
   if (saved !== null) {

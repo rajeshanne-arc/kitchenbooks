@@ -14,10 +14,10 @@ import { useRouter } from 'next/navigation'
 import type { IssuableItemHit, VendorReturnInput, VendorSel } from '@/lib/types'
 import { saveVendorReturn } from '@/server/vendor-return-actions'
 import { formatMicro, lineValueMicro, parseMoney, parseQty, sumMicro } from '@/lib/money'
-import { todayLocal } from '@/lib/format'
 import { toast } from '@/components/Toasts'
 import VendorPicker from '@/components/VendorPicker'
 import IssueItemPicker from '@/components/store/IssueItemPicker'
+import { useBusinessToday } from '@/components/BusinessDay'
 import {
   btnCls,
   cardCls,
@@ -43,8 +43,9 @@ const cleanNum = (raw: string) => {
 }
 
 export default function VendorReturnEntry() {
+  const businessToday = useBusinessToday()
   const router = useRouter()
-  const [returnDate, setReturnDate] = useState(todayLocal)
+  const [returnDate, setReturnDate] = useState(businessToday)
   const [vendor, setVendor] = useState<VendorSel | null>(null)
   // A vendor cannot be born on a return the way one is born on a bill: the
   // goods came from somebody already on file. Typing a new name is answered
@@ -111,7 +112,7 @@ export default function VendorReturnEntry() {
         setNote('')
         setLines([newLine(nextKey)])
         setNextKey((k) => k + 1)
-        setReturnDate(todayLocal())
+        setReturnDate(businessToday)
         router.refresh()
       } else {
         setError(res.error)

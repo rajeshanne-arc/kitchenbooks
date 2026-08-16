@@ -9,12 +9,12 @@ import {
   listCourses,
 } from '@/server/recipes-queries'
 import { getQtySold } from '@/server/sales-queries'
-import { monthStartIST } from '@/server/store-queries'
 import { formatMoneyString } from '@/lib/money'
 import RecipeEditor from '@/components/recipes/RecipeEditor'
 import DishCardPanel from '@/components/recipes/DishCardPanel'
 import SubCardPanel from '@/components/recipes/SubCardPanel'
 import { RetiredBadge } from '@/components/books/Badges'
+import { businessMonthStart } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,7 +30,7 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
   const [lines, { units }, sold, card, media, courses] = await Promise.all([
     getRecipeLines(id),
     getMasters(),
-    recipe.kind === 'dish' ? getQtySold(restaurant.id, monthStartIST()) : Promise.resolve([]),
+    recipe.kind === 'dish' ? getQtySold(restaurant.id, await businessMonthStart()) : Promise.resolve([]),
     recipe.kind === 'dish' ? getDishCard(restaurant.id, id) : Promise.resolve(null),
     getRecipeMedia(restaurant.id, id),
     recipe.kind === 'dish' ? listCourses(restaurant.id) : Promise.resolve([]),

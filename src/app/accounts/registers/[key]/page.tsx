@@ -10,12 +10,12 @@ import {
   REGISTER_SOURCES,
   REGISTER_TITLES,
 } from '@/server/register-queries'
-import { todayIST } from '@/server/store-queries'
 import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
 import { fmtDate } from '@/lib/format'
 import RegisterTable from '@/components/accountant/RegisterTable'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import { cardCls, pageSubCls, pageTitleCls } from '@/components/ui'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,7 +30,7 @@ export default async function RegisterPage({
   if (!isRegisterKey(key)) notFound()
   const { period: periodParam } = await searchParams
   const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, todayIST())
+  const period = resolvePeriod(periodKey, await businessToday())
 
   const restaurant = await getRestaurant()
   const rows = await getRegister(restaurant.id, key, period.from, period.to)

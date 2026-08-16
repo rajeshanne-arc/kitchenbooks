@@ -25,7 +25,7 @@ import {
   voidContractBill,
 } from '@/server/expenses-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import {
   cardCls,
@@ -43,6 +43,7 @@ import {
   trCls,
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 const clean = (s: string) => s.replace(/[^\d.]/g, '')
 
@@ -65,10 +66,11 @@ export function ContractBillsClient({
   modes: string[]
   rows: ContractBillRow[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
   const nonCash = modes.filter((m) => m.toLowerCase() !== 'cash')
   const [f, setF] = useState({
-    date: todayLocal(),
+    date: businessToday,
     vendorName: '',
     service: '',
     headcount: '',
@@ -258,10 +260,11 @@ export function CasualLabourClient({
   sections: Section[]
   rows: CasualLabourRow[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
   const nonCash = modes.filter((m) => m.toLowerCase() !== 'cash')
   const [f, setF] = useState({
-    date: todayLocal(),
+    date: businessToday,
     sectionId: '',
     persons: '1',
     description: '',

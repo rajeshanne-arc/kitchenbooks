@@ -4,15 +4,15 @@
 // warning is COMPUTED from real issue history, never asserted.
 import 'server-only'
 import { sql, tsql } from '@/lib/db'
-import { todayIST } from '@/server/store-queries'
 import type { CountableItem, CountHeader, CountVarianceRow, SnapshotGroup, SnapshotRow } from '@/lib/types'
+import { businessToday } from '@/server/business-day'
 
 /** Days of consumption history behind the book stock: today minus the first
  * live (non-voided) issue, inclusive. 0 when nothing has ever been issued.
  * Under 14, a count mostly measures missing bills — warn, never block. */
 export async function getIssueHistoryDays(restaurantId: string): Promise<number> {
   const rows = await tsql<{ days: number | null }[]>`
-    select (${todayIST()}::date - min(i.issue_date) + 1)::int as days
+    select (${await businessToday()}::date - min(i.issue_date) + 1)::int as days
     from issues i
     where i.restaurant_id = ${restaurantId}
       and i.reverses_id is null

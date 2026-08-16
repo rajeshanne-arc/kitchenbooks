@@ -10,7 +10,7 @@ import { useRouter } from 'next/navigation'
 import type { ExpenseRow, MoneyAccount, RecurringExpenseOffer, SaveExpenseResult } from '@/lib/types'
 import { saveExpense, voidExpense } from '@/server/expenses-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import {
   cardCls,
@@ -22,6 +22,7 @@ import {
   selectCls,
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function ExpensesClient({
   accounts,
@@ -40,9 +41,10 @@ export default function ExpensesClient({
   /** last month's bills, offered back at last month's figure */
   recurring: RecurringExpenseOffer[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
   const nonCashModes = modes.filter((m) => m.toLowerCase() !== 'cash')
-  const [date, setDate] = useState(todayLocal)
+  const [date, setDate] = useState(businessToday)
   const [category, setCategory] = useState('')
   const [payee, setPayee] = useState('')
   const [amount, setAmount] = useState('')

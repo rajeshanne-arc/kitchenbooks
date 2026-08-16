@@ -14,10 +14,11 @@ import { useRouter } from 'next/navigation'
 import type { KitchenComponentHit, ProductionRow, SaveItemizedClosingResult, Section } from '@/lib/types'
 import { saveItemizedClosing } from '@/server/kitchen-actions'
 import { formatMoneyString, parseQty } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
 import KitchenComponentPicker from './KitchenComponentPicker'
 import { useLang } from '@/components/useLang'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 type Line = { key: number; component: KitchenComponentHit | null; qty: string }
 const newLine = (key: number): Line => ({ key, component: null, qty: '' })
@@ -35,9 +36,10 @@ export default function ClosingEntry({
   sections: Section[]
   todaysProductions: ProductionRow[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
   const { label } = useLang()
-  const [date, setDate] = useState(todayLocal)
+  const [date, setDate] = useState(businessToday)
   const [sectionId, setSectionId] = useState('')
   const [note, setNote] = useState('')
   const [lines, setLines] = useState<Line[]>([newLine(1)])

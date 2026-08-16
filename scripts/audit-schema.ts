@@ -166,10 +166,15 @@ async function main() {
     //
     // The literals go second: `insert … select -qty, 'void', id` would
     // otherwise offer "void" as a column name, which it very much is not.
+    // `at time zone` is an OPERATOR, not three columns. Stripped as a PHRASE
+    // rather than by adding at/time/zone to the keyword set: a table may
+    // legitimately have a column called `time`, and blinding the gate to it
+    // to silence a false positive is how a gate stops finding things.
     const clean = st.sql
       .replace(/--[^\n]*/g, ' ')
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .replace(/'[^']*'/g, " '' ")
+      .replace(/\bat\s+time\s+zone\b/gi, ' ')
     const rels = relationsOf(clean).filter((r) => schema.has(r.name))
     if (rels.length === 0) continue
     checkedStmts++

@@ -10,9 +10,10 @@ import { useState } from 'react'
 import type { MoneyAccount, PaidBy, SaveVoucherResult } from '@/lib/types'
 import { saveVoucher } from '@/server/cash-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function VoucherForm({
   ownerNames,
@@ -26,7 +27,8 @@ export default function VoucherForm({
   paidToNames?: string[]
   accounts: MoneyAccount[]
 }) {
-  const [date, setDate] = useState(todayLocal)
+  const businessToday = useBusinessToday()
+  const [date, setDate] = useState(businessToday)
   const [amount, setAmount] = useState('')
   const [paidTo, setPaidTo] = useState('')
   const [paidBy, setPaidBy] = useState<PaidBy>('cashier')
@@ -85,7 +87,7 @@ export default function VoucherForm({
     setCategory(categories[0] ?? 'General')
     setNote('')
     setError(null)
-    setDate(todayLocal())
+    setDate(businessToday)
   }
 
   if (saved !== null) {

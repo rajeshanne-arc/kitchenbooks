@@ -11,7 +11,7 @@ import { getRegister, isRegisterKey, REGISTER_TITLES } from '@/server/register-q
 import { canAccess } from '@/lib/roles'
 import { csvFilename, toCsv } from '@/lib/csv'
 import { isPeriodKey, resolvePeriod } from '@/lib/period'
-import { todayIST } from '@/server/store-queries'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   if (!isRegisterKey(key)) return new NextResponse('Unknown register', { status: 400 })
 
   const periodParam = url.searchParams.get('period') ?? ''
-  const period = resolvePeriod(isPeriodKey(periodParam) ? periodParam : 'this-month', todayIST())
+  const period = resolvePeriod(isPeriodKey(periodParam) ? periodParam : 'this-month', await businessToday())
 
   const restaurant = await getRestaurant()
   const rows = await getRegister(restaurant.id, key, period.from, period.to)

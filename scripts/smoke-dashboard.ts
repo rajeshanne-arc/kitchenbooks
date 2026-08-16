@@ -20,7 +20,8 @@ process.loadEnvFile('.env.local')
 let ACCOUNT = ''
 
 async function main() {
-  const { getRestaurant } = await import('../src/server/queries')
+const { businessMonthStart, businessToday } = await import('../src/server/business-day')
+    const { getRestaurant } = await import('../src/server/queries')
   const {
     getMissingCloses, getOwed, getStaffCard, getStockAlarms, getUnknownStatusCount,
     getUnmappedSummary, getWasteMonth, getYesterday,
@@ -31,7 +32,7 @@ async function main() {
   const { saveIssue, voidIssue, saveWastage, voidWastage } = await import('../src/server/store-actions')
   const { saveKitchenWastage, voidKitchenWastage } = await import('../src/server/kitchen-actions')
   const { getKitchenSections } = await import('../src/server/kitchen-queries')
-  const { getSections, monthStartIST, todayIST } = await import('../src/server/store-queries')
+  const { getSections } = await import('../src/server/store-queries')
   const { searchIssuableItems } = await import('../src/server/store-queries')
   const { formatPaise, decimalStringToPaise } = await import('../src/lib/money')
   const { DICT, t } = await import('../src/lib/i18n')
@@ -41,7 +42,7 @@ async function main() {
   const restaurant = await getRestaurant()
   const rid = restaurant.id
   ACCOUNT = await ensureSmokeAccount(rid)
-  const monthStart = monthStartIST()
+  const monthStart = await businessMonthStart()
   console.log('restaurant:', restaurant.name)
 
   // Order-independent close target: on a virgin cash state, seed the opening
@@ -84,7 +85,7 @@ async function main() {
   assert.equal(y.difference, null)
   const owed = await getOwed(rid)
   assert.ok(Number(owed.vendorTotal) >= 0)
-  const staff = await getStaffCard(rid, todayIST())
+  const staff = await getStaffCard(rid, await businessToday())
   assert.ok(staff.activeStaff >= 0 && staff.markedToday >= 0)
   const unmapped0 = await getUnmappedSummary(rid, FROM, TO)
   const unknown0 = await getUnknownStatusCount(rid, FROM, TO)
@@ -148,7 +149,7 @@ async function main() {
   const sections = await getSections(rid)
   const ch = sections.find((s) => s.code === 'CH')
   assert.ok(ch)
-  const over = await saveIssue({ issueDate: todayIST(), sectionId: ch.id, lines: [{ itemId: plt2.id, qty: '25', note: '' }], session: 'Morning' })
+  const over = await saveIssue({ issueDate: await businessToday(), sectionId: ch.id, lines: [{ itemId: plt2.id, qty: '25', note: '' }], session: 'Morning' })
   assert.ok(over.ok, `over-issue failed: ${over.ok === false ? over.error : ''}`)
   const alarms1 = await getStockAlarms(rid)
   const alarm = alarms1.find((a) => a.code === 'PLT-002')
@@ -160,11 +161,11 @@ async function main() {
 
   // ---- 7. waste this month: store + kitchen, voids net out
   const waste0 = await getWasteMonth(rid, monthStart)
-  const sw = await saveWastage({ wasteDate: todayIST(), itemId: plt2.id, qty: '1', reason: 'Spoilage', note: 'zz dash smoke' })
+  const sw = await saveWastage({ wasteDate: await businessToday(), itemId: plt2.id, qty: '1', reason: 'Spoilage', note: 'zz dash smoke' })
   assert.ok(sw.ok, `store wastage failed: ${sw.ok === false ? sw.error : ''}`)
   const kitchenSections = await getKitchenSections(rid)
   const kw = await saveKitchenWastage({
-    date: todayIST(), sectionId: kitchenSections[0].id, reason: 'Burnt', note: 'zz dash smoke',
+    date: await businessToday(), sectionId: kitchenSections[0].id, reason: 'Burnt', note: 'zz dash smoke',
     component: { kind: 'none', value: '75' },
   })
   assert.ok(kw.ok, `kitchen wastage failed: ${kw.ok === false ? kw.error : ''}`)

@@ -21,7 +21,6 @@ import { getRestaurant } from '@/server/queries'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getGstDays, getInputTax, listWithholdings } from '@/server/register-queries'
 import { getSettingValue } from '@/server/settings'
-import { todayIST } from '@/server/store-queries'
 import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
 import { decimalStringToPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -30,6 +29,7 @@ import OutputTax from '@/components/accountant/OutputTax'
 import InputTaxPanel from '@/components/accountant/InputTaxPanel'
 import WithholdingsPanel from '@/components/accountant/WithholdingsPanel'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,7 +40,7 @@ export default async function TaxPage({
 }) {
   const { period: periodParam } = await searchParams
   const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const today = todayIST()
+  const today = await businessToday()
   const period = resolvePeriod(periodKey, today)
 
   const restaurant = await getRestaurant()

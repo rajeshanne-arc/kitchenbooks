@@ -17,7 +17,7 @@ import { useRouter } from 'next/navigation'
 import type { MoneyAccount, PaymentResult, VendorDueRow } from '@/lib/types'
 import { recordPayment } from '@/server/books-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import {
   btnCls,
@@ -29,6 +29,7 @@ import {
   selectCls,
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function BankPayment({
   vendors,
@@ -39,9 +40,10 @@ export default function BankPayment({
   accounts: MoneyAccount[]
   modes: string[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
   const [vendorId, setVendorId] = useState('')
-  const [paidDate, setPaidDate] = useState(todayLocal())
+  const [paidDate, setPaidDate] = useState(businessToday)
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState('')
   const [accountId, setAccountId] = useState('')

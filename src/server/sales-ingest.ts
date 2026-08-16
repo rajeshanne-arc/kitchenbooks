@@ -58,6 +58,9 @@ export type ParsedLine = {
 
 export type ParsedOrder = {
   pos_order_id: string
+  /** Petpooja's local wall-clock string, anchored to the restaurant's
+   *  timezone in SQL. Null when the payload carried no time at all. */
+  order_time_local: string | null
   channel: string | null
   order_type: string | null
   payment_mode: string | null
@@ -80,6 +83,8 @@ export type NormalizedPayload = {
   skippedOtherDates: number
   otherDates: Record<string, number>
   duplicateIds: number
+  /** How many orders arrived with a usable timestamp. */
+  withTime: number
   compDisagreements: number
   note: string | null
 }
@@ -99,6 +104,7 @@ export function normalizePayload(payload: unknown, businessDate: string): Normal
   const seenIds = new Set<string>()
   let duplicateIds = 0
   let compDisagreements = 0
+  let withTime = 0
 
   for (const entry of body.order_json as RawEntry[]) {
     const o = entry?.Order
@@ -121,9 +127,23 @@ export function normalizePayload(payload: unknown, businessDate: string): Normal
     const statusClass = classifyStatus(statusRaw)
     if (/^c/i.test(posOrderId) && statusClass !== 'complimentary') compDisagreements += 1
 
+    // WHEN the order was rung up. Petpooja sends a local wall-clock string
+    // with no offset — '2026-08-11 00:30:12' — so it is kept raw here and
+    // anchored to the restaurant's timezone in SQL, where that setting already
+    // lives. Guessing the offset in JS would put a 00:30 order five and a half
+    // hours out, which is precisely the day it does not belong to.
+    //
+    // Absent is a real answer: the column is nullable, and
+    // business_day_disagreements stays empty rather than reporting a
+    // comparison it could not make.
+    const orderTime =
+      str(o.created_on, 40) ?? str(o.order_time, 40) ?? str(o.created_at, 40) ?? null
+    if (orderTime !== null) withTime += 1
+
     const items = Array.isArray(entry.OrderItem) ? (entry.OrderItem as Record<string, unknown>[]) : []
     orders.push({
       pos_order_id: posOrderId,
+      order_time_local: orderTime,
       channel: str(o.order_from, 60),
       order_type: str(o.order_type, 60),
       payment_mode: str(o.payment_type, 60),
@@ -165,9 +185,14 @@ export function normalizePayload(payload: unknown, businessDate: string): Normal
       `${compDisagreements} C-prefixed order${compDisagreements === 1 ? '' : 's'} not marked Complimentary — status won`,
     )
   }
+  // No time on any order is worth saying: it is the reason
+  // business_day_disagreements will sit empty, and an empty view with no
+  // explanation reads as agreement.
+  if (orders.length > 0 && withTime === 0) noteParts.push('no order carried a time — business-day comparison not possible')
+  else if (withTime < orders.length) noteParts.push(`${orders.length - withTime} order(s) carried no time`)
   const note = noteParts.length > 0 ? `API returned ${apiOrderCount}; ${noteParts.join('; ')}`.slice(0, 500) : null
 
-  return { orders, apiOrderCount, skippedOtherDates, otherDates, duplicateIds, compDisagreements, note }
+  return { orders, apiOrderCount, skippedOtherDates, otherDates, duplicateIds, compDisagreements, withTime, note }
 }
 
 export type PersistedFetch = {
@@ -195,10 +220,18 @@ export async function persistFetch(
     for (const o of norm.orders) {
       const [order] = await tx<{ id: string }[]>`
         insert into pos_orders (fetch_id, restaurant_id, business_date, pos_order_id,
+                                order_time,
                                 channel, order_type, payment_mode, covers,
                                 status_raw, status_class, subtotal, discount, tax,
                                 service_charge, container, round_off, order_total)
         values (${fetch.id}, ${restaurantId}, ${businessDate}, ${o.pos_order_id},
+                -- Anchored to the restaurant's timezone, the same setting the
+                -- business-day cutover reads. ADDITIVE ONLY: order_time is not
+                -- in any key, not in latest_fetches, and not in the in-payload
+                -- dedupe (which is pos_order_id alone), so neither which fetch
+                -- wins nor how a re-fetch dedupes is affected.
+                ${o.order_time_local}::timestamp at time zone coalesce(
+                  (select value from settings where key = 'timezone'), 'UTC'),
                 ${o.channel}, ${o.order_type}, ${o.payment_mode}, ${o.covers},
                 ${o.status_raw}, ${o.status_class}, ${o.subtotal}, ${o.discount}, ${o.tax},
                 ${o.service_charge}, ${o.container}, ${o.round_off}, ${o.order_total})

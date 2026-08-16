@@ -10,7 +10,7 @@ import Link from 'next/link'
 import type { CountableItem, SaveCountResult } from '@/lib/types'
 import { saveCount } from '@/server/counts-actions'
 import { decimalStringToPaise, formatMoneyString, parseQty } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import {
   cardCls,
   dataTableCls,
@@ -25,6 +25,7 @@ import {
 } from '@/components/ui'
 import { useLang } from '@/components/useLang'
 import Honesty from '@/components/Honesty'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export function FirstCountWarning({ days }: { days: number }) {
   if (days >= 14) return null
@@ -37,8 +38,9 @@ export function FirstCountWarning({ days }: { days: number }) {
 }
 
 export default function CountEntry({ items, historyDays }: { items: CountableItem[]; historyDays: number }) {
+  const businessToday = useBusinessToday()
   const { label } = useLang()
-  const [countDate, setCountDate] = useState(todayLocal)
+  const [countDate, setCountDate] = useState(businessToday)
   const [note, setNote] = useState('')
   const [filter, setFilter] = useState('')
   const [qtys, setQtys] = useState<Record<string, string>>({})

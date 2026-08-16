@@ -13,7 +13,6 @@ import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
 import { getVendorDetail } from '@/server/books-queries'
 import { getVendorStatement } from '@/server/register-queries'
-import { todayIST } from '@/server/store-queries'
 import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -22,6 +21,7 @@ import PeriodControl from '@/components/dashboard/PeriodControl'
 import PrintButton from '@/components/accountant/PrintButton'
 import StatementTable from '@/components/accountant/StatementTable'
 import { cardCls, heroNumCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,7 +48,7 @@ export default async function VendorStatementPage({
   if (!UUID.test(id)) notFound()
   const { period: periodParam } = await searchParams
   const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const today = todayIST()
+  const today = await businessToday()
   const period = resolvePeriod(periodKey, today)
 
   const restaurant = await getRestaurant()

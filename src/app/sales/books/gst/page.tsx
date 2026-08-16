@@ -1,6 +1,5 @@
 import { getRestaurant } from '@/server/queries'
 import { getGstServiceByDay } from '@/server/reports-queries'
-import { todayIST } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
@@ -19,6 +18,7 @@ import {
 } from '@/components/ui'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import Honesty from '@/components/Honesty'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,7 +42,7 @@ export default async function GstPage({
 }) {
   const { period: periodParam } = await searchParams
   const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, todayIST())
+  const period = resolvePeriod(periodKey, await businessToday())
   const restaurant = await getRestaurant()
   const rows = await getGstServiceByDay(restaurant.id, period.from, period.to)
 

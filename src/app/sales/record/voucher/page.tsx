@@ -3,11 +3,11 @@ import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getOwnerNames, getOwnersOwed, listVouchers } from '@/server/cash-queries'
 import { getVoucherCategorySummary } from '@/server/cashier-queries'
 import { getList, getNameHistory } from '@/server/settings'
-import { monthStartIST } from '@/server/store-queries'
 import VoucherForm from '@/components/cash/VoucherForm'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { businessMonthStart } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +18,7 @@ export default async function VouchersPage() {
     getList(restaurant.id, 'voucher_category'),
     getNameHistory(restaurant.id, 'voucher_paid_to'),
     listVouchers(restaurant.id, 15),
-    getVoucherCategorySummary(restaurant.id, monthStartIST()),
+    getVoucherCategorySummary(restaurant.id, await businessMonthStart()),
     getOwnersOwed(restaurant.id),
     listMoneyAccounts(restaurant.id),
   ])

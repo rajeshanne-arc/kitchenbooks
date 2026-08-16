@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation'
 import { recordPayment } from '@/server/books-actions'
 import type { MoneyAccount, PaymentResult } from '@/lib/types'
 import { formatMoneyString, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, docNoCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function PaymentForm({
   vendorId,
@@ -27,7 +28,8 @@ export default function PaymentForm({
   modes: string[]
   accounts: MoneyAccount[]
 }) {
-  const [paidDate, setPaidDate] = useState(todayLocal)
+  const businessToday = useBusinessToday()
+  const [paidDate, setPaidDate] = useState(businessToday)
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState(modes[0] ?? '')
   const [accountId, setAccountId] = useState('')

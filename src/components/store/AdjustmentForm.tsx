@@ -17,15 +17,16 @@ import type { IssuableItemHit } from '@/lib/types'
 import { saveAdjustment } from '@/server/adjustment-actions'
 import { toast } from '@/components/Toasts'
 import { parseQty } from '@/lib/money'
-import { todayLocal } from '@/lib/format'
 import IssueItemPicker from '@/components/store/IssueItemPicker'
 import { btnCls, cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 const OTHER = '__other__'
 
 export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
-  const [date, setDate] = useState(todayLocal)
+  const [date, setDate] = useState(businessToday)
   const [item, setItem] = useState<IssuableItemHit | null>(null)
   const [direction, setDirection] = useState<'onto' | 'off'>('onto')
   const [qty, setQty] = useState('')

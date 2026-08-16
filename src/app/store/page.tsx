@@ -1,16 +1,6 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import {
-  countItemsWithReorderLevel,
-  countReorderDue,
-  getIssuesBySection,
-  getPaymentsTotal,
-  getPurchaseSeries,
-  getPurchasesByVendor,
-  getSectionConsumptionDaily,
-  listOpenIndents,
-  todayIST,
-} from '@/server/store-queries'
+import { countItemsWithReorderLevel, countReorderDue, getIssuesBySection, getPaymentsTotal, getPurchaseSeries, getPurchasesByVendor, getSectionConsumptionDaily, listOpenIndents } from '@/server/store-queries'
 import { getStockAlarms } from '@/server/dashboard-queries'
 import { listActiveVendors, listVendorsWithDues } from '@/server/books-queries'
 import { listIndents } from '@/server/kitchen-queries'
@@ -38,6 +28,7 @@ import PeriodControl from '@/components/dashboard/PeriodControl'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
 import { MagnitudeBars, SalesLine } from '@/components/dashboard/Charts'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,7 +53,7 @@ export default async function StoreHome({
 }) {
   const { period: periodParam } = await searchParams
   const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const today = todayIST()
+  const today = await businessToday()
   const period = resolvePeriod(periodKey, today)
 
   const restaurant = await getRestaurant()

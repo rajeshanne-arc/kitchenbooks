@@ -1,6 +1,5 @@
 import { getRestaurant } from '@/server/queries'
 import { getDailyPurchases } from '@/server/reports-queries'
-import { todayIST } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
@@ -10,6 +9,7 @@ import {
 } from '@/components/ui'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import { SalesLine } from '@/components/dashboard/Charts'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,7 +23,7 @@ export default async function DailyPurchasesPage({
 }) {
   const { period: periodParam } = await searchParams
   const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, todayIST())
+  const period = resolvePeriod(periodKey, await businessToday())
   const restaurant = await getRestaurant()
   const rows = await getDailyPurchases(restaurant.id, period.from, period.to)
 

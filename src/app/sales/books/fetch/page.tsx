@@ -1,10 +1,11 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import { getSalesDays, yesterdayIST } from '@/server/sales-queries'
+import { getSalesDays } from '@/server/sales-queries'
 import FetchDay from '@/components/sales/FetchDay'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { businessYesterday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,7 +21,7 @@ export default async function CashFetchPage() {
       </header>
 
       <div className="space-y-4">
-        <FetchDay defaultDate={yesterdayIST()} />
+        <FetchDay defaultDate={await businessYesterday()} />
 
         <section className={cardCls}>
           <div className="flex items-baseline justify-between gap-3">

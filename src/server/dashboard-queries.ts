@@ -3,7 +3,7 @@
 // states; nulls stay null so honesty pills render instead of zeros.
 import 'server-only'
 import { tsql } from '@/lib/db'
-import { getSalesDay, yesterdayIST } from '@/server/sales-queries'
+import { getSalesDay } from '@/server/sales-queries'
 import type {
   EntryPulse,
   SalesDayRow,
@@ -11,6 +11,7 @@ import type {
   SectionCostRangeRow,
   SettlementGapRow,
 } from '@/lib/types'
+import { businessYesterday } from '@/server/business-day'
 
 export type YesterdayCard = {
   date: string
@@ -19,7 +20,7 @@ export type YesterdayCard = {
 }
 
 export async function getYesterday(restaurantId: string): Promise<YesterdayCard> {
-  const date = yesterdayIST()
+  const date = await businessYesterday()
   const sales = await getSalesDay(restaurantId, date)
   const diff = await tsql<{ difference: string }[]>`
     select difference::text as difference from day_close_ladder

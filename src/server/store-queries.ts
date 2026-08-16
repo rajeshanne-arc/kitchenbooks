@@ -23,16 +23,6 @@ import type {
   WastageDetail,
 } from '@/lib/types'
 
-/** Today's date in IST, YYYY-MM-DD — bookkeeping runs on kitchen time */
-export function todayIST(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date())
-}
-
-/** First day of the current IST month, YYYY-MM-DD */
-export function monthStartIST(): string {
-  return `${todayIST().slice(0, 7)}-01`
-}
-
 /** Departments that can RECEIVE stock — what the issue picker offers.
  *
  *  Not all sixteen. `sections` is one table: the same row codes a dish,

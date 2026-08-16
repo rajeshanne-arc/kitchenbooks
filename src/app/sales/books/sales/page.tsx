@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import { countUnmapped, getSalesDays, listUnknownOrders, yesterdayIST } from '@/server/sales-queries'
+import { countUnmapped, getSalesDays, listUnknownOrders } from '@/server/sales-queries'
 import FetchDay from '@/components/sales/FetchDay'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import Honesty from '@/components/Honesty'
+import { businessYesterday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,7 +20,7 @@ export default async function SalesPage() {
 
   return (
     <section className="mt-4 space-y-4">
-      <FetchDay defaultDate={yesterdayIST()} />
+      <FetchDay defaultDate={await businessYesterday()} />
 
       <Link
         href="/sales/books/sales/mapping"

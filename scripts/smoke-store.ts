@@ -10,15 +10,15 @@ import assert from 'node:assert/strict'
 process.loadEnvFile('.env.local')
 
 async function main() {
-  const { getRestaurant } = await import('../src/server/queries')
+const { businessMonthStart, businessToday } = await import('../src/server/business-day')
+    const { getRestaurant } = await import('../src/server/queries')
   const { saveIssue, saveWastage, voidIssue, voidWastage } = await import('../src/server/store-actions')
-  const { getChecklist, getSections, getSectionsWithMonth, getStockSnaps, listStock, monthStartIST, searchIssuableItems, todayIST } =
-    await import('../src/server/store-queries')
+  const { getChecklist, getSections, getSectionsWithMonth, getStockSnaps, listStock, searchIssuableItems } = await import('../src/server/store-queries')
   const { sql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
-  const today = todayIST()
-  const monthStart = monthStartIST()
+  const today = await businessToday()
+  const monthStart = await businessMonthStart()
   console.log('restaurant:', restaurant.name, '| today IST:', today)
 
   const sections = await getSections(restaurant.id)

@@ -3,7 +3,6 @@ import { getRestaurant } from '@/server/queries'
 import { getSalesSeries, getYesterday, getUnmappedSummary, getMissingCloses } from '@/server/dashboard-queries'
 import { getSalesDays } from '@/server/sales-queries'
 import { getGstServiceByDay } from '@/server/reports-queries'
-import { todayIST } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
@@ -17,6 +16,7 @@ import Honesty from '@/components/Honesty'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,7 +43,7 @@ export default async function SalesDashboard({
 }) {
   const { period: periodParam } = await searchParams
   const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, todayIST())
+  const period = resolvePeriod(periodKey, await businessToday())
   const restaurant = await getRestaurant()
 
   const [series, yesterday, unmapped, missing, gst, everFetched] = await Promise.all([

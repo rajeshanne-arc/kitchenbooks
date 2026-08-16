@@ -11,16 +11,17 @@ import assert from 'node:assert/strict'
 process.loadEnvFile('.env.local')
 
 async function main() {
-  const { getRestaurant } = await import('../src/server/queries')
-  const { getSections, todayIST, monthStartIST } = await import('../src/server/store-queries')
+const { businessMonthStart, businessToday } = await import('../src/server/business-day')
+    const { getRestaurant } = await import('../src/server/queries')
+  const { getSections } = await import('../src/server/store-queries')
   const { createStaff, saveAttendance, updateStaff } = await import('../src/server/labour-actions')
   const { getDaySheet, getSectionCosts, listRoster } = await import('../src/server/labour-queries')
   const { sql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
-  const today = todayIST()
-  const monthStart = monthStartIST()
+  const today = await businessToday()
+  const monthStart = await businessMonthStart()
   const daysInMonth = new Date(Number(monthStart.slice(0, 4)), Number(monthStart.slice(5, 7)), 0).getDate()
   console.log('restaurant:', restaurant.name, '| today:', today, '| days in month:', daysInMonth)
 

@@ -3,9 +3,9 @@ import { redirect } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { groupsFor, homeFor } from '@/lib/roles'
-import { todayIST } from '@/server/store-queries'
 import { fmtDate } from '@/lib/format'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,7 +40,7 @@ export default async function Home() {
     <main className="mx-auto max-w-2xl px-4 pb-10 pt-6 sm:px-6">
       <header>
         <h1 className={pageTitleCls}>Today at {restaurantName}</h1>
-        <p className={pageSubCls}>{fmtDate(todayIST())}</p>
+        <p className={pageSubCls}>{fmtDate(await businessToday())}</p>
       </header>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         {groups.map((g, i) => (

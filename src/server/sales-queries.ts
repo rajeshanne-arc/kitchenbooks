@@ -5,7 +5,6 @@
 // are surfaced, never banked.
 import 'server-only'
 import { sql, tsql } from '@/lib/db'
-import { todayIST } from '@/server/store-queries'
 import type {
   DishOption,
   PosMapRow,
@@ -14,14 +13,6 @@ import type {
   UnknownOrderRow,
   UnmappedPosItem,
 } from '@/lib/types'
-
-/** Yesterday in IST — the default Fetch Day target: yesterday is complete,
- * today is still ringing up. */
-export function yesterdayIST(): string {
-  const d = new Date(`${todayIST()}T00:00:00Z`)
-  d.setUTCDate(d.getUTCDate() - 1)
-  return d.toISOString().slice(0, 10)
-}
 
 const DAY_SELECT = `
   select d.business_date::text as business_date,

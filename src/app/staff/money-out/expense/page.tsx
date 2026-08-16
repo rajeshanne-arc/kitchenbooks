@@ -9,16 +9,16 @@ import {
   listExpenses,
 } from '@/server/expenses-queries'
 import { getList, getNameHistory } from '@/server/settings'
-import { monthStartIST } from '@/server/store-queries'
 import ExpensesClient from '@/components/staff/ExpensesClient'
 import { formatMoneyString } from '@/lib/money'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { businessMonthStart } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ExpensesPage() {
   const restaurant = await getRestaurant()
-  const month = monthStartIST()
+  const month = await businessMonthStart()
   const [accounts, categories, modes, payeeNames, rows, byCategory, labour, attendance, recurring] = await Promise.all([
     listMoneyAccounts(restaurant.id),
     getList(restaurant.id, 'expense_category'),

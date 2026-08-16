@@ -11,10 +11,12 @@ import {
   listQueries,
 } from '@/server/accountant-queries'
 import { countUnaccountedMovements } from '@/server/accounts-queries'
+import { countOrdersWithTime, getBusinessDayDisagreements } from '@/server/business-day'
 import { getAggregatorReceivable } from '@/server/register-queries'
 import QueueClient from '@/components/accountant/QueueClient'
 import Honesty from '@/components/Honesty'
 import { formatMoneyString } from '@/lib/money'
+import { fmtDate } from '@/lib/format'
 import { cardCls, moneyCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
@@ -27,12 +29,14 @@ const TONE: Record<string, 'alarm' | 'pending'> = {
 
 export default async function AccountsReviewPage() {
   const restaurant = await getRestaurant()
-  const [completeness, open, all, unaccounted, receivable] = await Promise.all([
+  const [completeness, open, all, unaccounted, receivable, dayGaps, timed] = await Promise.all([
     getBooksCompleteness(restaurant.id),
     listOpenQueries(restaurant.id),
     listQueries(restaurant.id, 40),
     countUnaccountedMovements(restaurant.id),
     getAggregatorReceivable(restaurant.id),
+    getBusinessDayDisagreements(restaurant.id),
+    countOrdersWithTime(restaurant.id),
   ])
 
   // Only partners who actually owe something. A row at zero is settled, and
@@ -40,6 +44,11 @@ export default async function AccountsReviewPage() {
   const owed = receivable.filter((p) => Number(p.outstanding) > 0)
 
   const resolved = all.filter((q) => q.status === 'resolved').slice(0, 10)
+
+  // A day that does not end at midnight is the accountant's problem before it
+  // is anybody else's: if our cutover and the POS disagree, the same orders sit
+  // on different dates in the two systems and no total can be reconciled.
+  const disagreedOrders = dayGaps.reduce((n, r) => n + r.orders, 0)
 
   return (
     <>
@@ -79,6 +88,52 @@ export default async function AccountsReviewPage() {
             </p>
           )}
         </section>
+
+        {/* WHICH DAY AN ORDER BELONGS TO. A restaurant serving past midnight
+            has a day that does not end at midnight, and if our cutover and
+            Petpooja's disagree the same orders sit on different dates in the
+            two systems — no total reconciles and nobody can say which is
+            right. Shown here first because it is the reviewer's problem. */}
+        {dayGaps.length > 0 ? (
+          <section className={cardCls}>
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className={sectionHeadCls}>The POS and we disagree about which day</h2>
+              <span className="font-mono text-[10px] text-stone-400">business_day_disagreements</span>
+            </div>
+            <p className="mt-1.5 text-sm text-stone-700">
+              {disagreedOrders} {disagreedOrders === 1 ? 'order is' : 'orders are'} filed under one
+              date by Petpooja and another by us. Until the two agree, a figure read here and the
+              same figure read in their dashboard will not match.
+            </p>
+            <ul className="mt-2 divide-y divide-rule-soft">
+              {dayGaps.map((r) => (
+                <li key={`${r.pos_says}-${r.we_say}`} className="flex items-center justify-between gap-3 py-1.5">
+                  <span className="min-w-0 text-sm text-stone-900">
+                    POS says {fmtDate(r.pos_says)} · we say {fmtDate(r.we_say)}
+                  </span>
+                  <span className="shrink-0 font-mono text-sm text-stone-900">{r.orders}</span>
+                </li>
+              ))}
+            </ul>
+            <Honesty level="alarm" verdict="cutover disagrees" compact>
+              The likely cause is the business_day_start setting not matching how the POS was
+              configured. Nothing here is wrong on its own — the two systems are simply cutting the
+              night in different places.
+            </Honesty>
+          </section>
+        ) : timed.total > 0 && timed.withTime === 0 ? (
+          <section className={cardCls}>
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className={sectionHeadCls}>Which day an order belongs to</h2>
+              <span className="font-mono text-[10px] text-stone-400">business_day_disagreements</span>
+            </div>
+            <Honesty verdict="cannot be checked" compact>
+              None of the {timed.total} orders fetched so far carried a time, so whether our cutover
+              matches Petpooja&apos;s cannot be compared. An empty result here is not agreement. The
+              next fetch stores the time and this begins to answer.
+            </Honesty>
+          </section>
+        ) : null}
 
         {owed.length > 0 && (
           <section className={cardCls}>

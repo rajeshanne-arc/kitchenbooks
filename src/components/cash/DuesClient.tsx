@@ -10,9 +10,10 @@ import { useRouter } from 'next/navigation'
 import type { DueOutstandingRow, DueRow, SaveDueResult } from '@/lib/types'
 import { saveDue, voidDue } from '@/server/cashier-actions'
 import { decimalStringToPaise, formatMoneyString, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function DuesClient({
   parties,
@@ -23,8 +24,9 @@ export default function DuesClient({
   rows: DueRow[]
   outstanding: DueOutstandingRow[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
-  const [date, setDate] = useState(todayLocal)
+  const [date, setDate] = useState(businessToday)
   const [party, setParty] = useState('')
   const [direction, setDirection] = useState<'given' | 'received'>('given')
   const [amount, setAmount] = useState('')

@@ -10,11 +10,11 @@ import { useRouter } from 'next/navigation'
 import type { KitchenComponentHit, Section } from '@/lib/types'
 import { saveKitchenWastage } from '@/server/kitchen-actions'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
-import { todayLocal } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 import KitchenComponentPicker from './KitchenComponentPicker'
 import { toast } from '@/components/Toasts'
 import { useLang } from '@/components/useLang'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function KitchenWastageForm({
   sections,
@@ -23,9 +23,10 @@ export default function KitchenWastageForm({
   sections: Section[]
   wasteReasons: string[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
   const { label } = useLang()
-  const [date, setDate] = useState(todayLocal)
+  const [date, setDate] = useState(businessToday)
   const [sectionId, setSectionId] = useState('')
   const [mode, setMode] = useState<'component' | 'value'>('component')
   const [component, setComponent] = useState<KitchenComponentHit | null>(null)

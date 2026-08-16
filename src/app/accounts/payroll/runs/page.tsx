@@ -10,10 +10,10 @@
 // adjust anything on screen.
 import { getRestaurant } from '@/server/queries'
 import { getPayrollDraft, listPayrollRuns } from '@/server/payroll-queries'
-import { todayIST } from '@/server/store-queries'
 import PayrollRunsList from '@/components/accountant/PayrollRunsList'
 import PrepareRun from '@/components/accountant/PrepareRun'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,7 +49,7 @@ export default async function PayrollRunsPage({
   searchParams: Promise<{ from?: string; to?: string }>
 }) {
   const { from: fromParam, to: toParam } = await searchParams
-  const offered = lastMonth(todayIST())
+  const offered = lastMonth(await businessToday())
   const from = isDate(fromParam) ? fromParam : offered.from
   const to = isDate(toParam) ? toParam : offered.to
 

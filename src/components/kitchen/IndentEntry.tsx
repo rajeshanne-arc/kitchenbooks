@@ -9,10 +9,11 @@ import Link from 'next/link'
 import type { IssuableItemHit, SaveIndentResult, Section } from '@/lib/types'
 import { saveIndent } from '@/server/kitchen-actions'
 import { parseQty } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
 import IssueItemPicker from '@/components/store/IssueItemPicker'
 import { useLang } from '@/components/useLang'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 type Line = { key: number; item: IssuableItemHit | null; qty: string }
 const newLine = (key: number): Line => ({ key, item: null, qty: '' })
@@ -31,8 +32,9 @@ export default function IndentEntry({
   /** the `session` list — an indent is for a SHIFT, not a day */
   sessions: string[]
 }) {
+  const businessToday = useBusinessToday()
   const { label } = useLang()
-  const [date, setDate] = useState(todayLocal)
+  const [date, setDate] = useState(businessToday)
   const refillCtl = useRef<AbortController | null>(null)
   useEffect(() => () => refillCtl.current?.abort(), [])
   const [sectionId, setSectionId] = useState('')
@@ -136,7 +138,7 @@ export default function IndentEntry({
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
-    setDate(todayLocal())
+    setDate(businessToday)
   }
 
   if (saved !== null) {

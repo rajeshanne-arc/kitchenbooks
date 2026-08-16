@@ -69,18 +69,11 @@ function payload(orders: FixtureOrder[]) {
 }
 
 async function main() {
-  const { getRestaurant } = await import('../src/server/queries')
+const { businessYesterday } = await import('../src/server/business-day')
+    const { getRestaurant } = await import('../src/server/queries')
   const { classifyStatus, normalizePayload, persistFetch } = await import('../src/server/sales-ingest')
   const { mapPosItem, fetchDay } = await import('../src/server/sales-actions')
-  const {
-    countUnmapped,
-    getQtySold,
-    getSalesDay,
-    listDishOptions,
-    listUnknownOrders,
-    listUnmapped,
-    yesterdayIST,
-  } = await import('../src/server/sales-queries')
+  const { countUnmapped, getQtySold, getSalesDay, listDishOptions, listUnknownOrders, listUnmapped } = await import('../src/server/sales-queries')
   const { getSectionCosts } = await import('../src/server/labour-queries')
   const { getSections } = await import('../src/server/store-queries')
   const { createRecipe } = await import('../src/server/recipes-actions')
@@ -88,7 +81,7 @@ async function main() {
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
-  console.log('restaurant:', restaurant.name, '| yesterday IST:', yesterdayIST())
+  console.log('restaurant:', restaurant.name, '| yesterday IST:', await businessYesterday())
 
   // ---- 0. the whitelist is a whitelist
   assert.equal(classifyStatus('Success'), 'revenue')

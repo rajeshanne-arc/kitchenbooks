@@ -1,10 +1,10 @@
 import { getRestaurant } from '@/server/queries'
-import { monthStartIST } from '@/server/store-queries'
 import { getSectionCosts } from '@/server/labour-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import { HonestyPill } from '@/components/Honesty'
 import type { SectionCostRow } from '@/lib/types'
+import { businessMonthStart } from '@/server/business-day'
 
 const monthLabel = (monthStart: string) =>
   new Date(`${monthStart}T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
@@ -58,7 +58,7 @@ function Row({ r, loud }: { r: SectionCostRow; loud?: boolean }) {
 
 export default async function SectionsView() {
   const restaurant = await getRestaurant()
-  const monthStart = monthStartIST()
+  const monthStart = await businessMonthStart()
   const rows = await getSectionCosts(restaurant.id, monthStart)
   const unassigned = rows.filter((r) => r.section_code === '—')
   const regular = rows.filter((r) => r.section_code !== '—')

@@ -14,7 +14,7 @@ import { getRestaurant } from '@/server/queries'
 import { getKitchenDay, getWasteByReason } from '@/server/kitchen-queries'
 import { getQtySold } from '@/server/sales-queries'
 import { listDishCosts } from '@/server/recipes-queries'
-import { getSectionConsumptionDaily, monthStartIST, todayIST } from '@/server/store-queries'
+import { getSectionConsumptionDaily } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
@@ -24,13 +24,14 @@ import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
+import { businessMonthStart, businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
 export default async function KitchenDashboardPage() {
   const restaurant = await getRestaurant()
-  const today = todayIST()
-  const month = monthStartIST()
+  const today = await businessToday()
+  const month = await businessMonthStart()
   const [day, wasteByReason, qtySold, dishCosts, consumption] = await Promise.all([
     getKitchenDay(restaurant.id, today),
     getWasteByReason(restaurant.id, month),

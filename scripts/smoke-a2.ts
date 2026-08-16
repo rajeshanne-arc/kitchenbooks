@@ -1921,6 +1921,173 @@ async function run() {
     console.log(`      ${reasons.join(' · ')}`)
   })
 
+  /* ── THE BUSINESS DAY ─────────────────────────────────────────────────
+     A restaurant serving past midnight has a day that does not end at
+     midnight, so every date this app defaults must be the BUSINESS day. The
+     assertions below are by VALUE at the boundary, because "it returned a
+     date" is true of the wrong answer too. */
+
+  await check('the business day rolls at the cutover, not at midnight', async () => {
+    const [s] = await tsql<{ tz: string; start: string }[]>`
+      select (select value from settings where key = 'timezone') as tz,
+             (select value from settings where key = 'business_day_start') as start`
+    assert.equal(s.start, '05:00', 'business_day_start moved — these boundary cases assume 05:00')
+    console.log(`      ${s.tz}, day starts ${s.start}`)
+
+    // Local IST wall-clock -> the day it belongs to. 04:59 is still last night.
+    const cases: [string, string][] = [
+      ['2026-08-12 00:30', '2026-08-11'],
+      ['2026-08-12 04:59', '2026-08-11'],
+      ['2026-08-12 05:01', '2026-08-12'],
+      ['2026-08-12 14:00', '2026-08-12'],
+    ]
+    for (const [localAt, expected] of cases) {
+      // ::text FIRST, deliberately. Left to infer, the driver sends this as a
+      // timestamptz, and `at time zone` then converts an already-anchored
+      // instant a SECOND time — putting 05:01 five and a half hours out. Only
+      // the boundary case catches it: 00:30, 04:59 and 14:00 all land on the
+      // right day even when double-converted, and would have passed a broken
+      // test. That is the whole argument for asserting at the boundary.
+      const [row] = await tsql<{ d: string; tstz: string; start: string }[]>`
+        select business_date(
+                 (${localAt})::text::timestamp at time zone
+                   (select value from settings where key = 'timezone')
+               )::text as d,
+               ((${localAt})::text::timestamp at time zone
+                   (select value from settings where key = 'timezone'))::text as tstz,
+               (select value from settings where key = 'business_day_start') as start`
+      assert.equal(
+        row.d,
+        expected,
+        `${localAt} IST (${row.tstz}, cutover ${row.start}) should be business day ${expected}, got ${row.d}`,
+      )
+    }
+    console.log('      00:30 -> 11th · 04:59 -> 11th · 05:01 -> 12th · 14:00 -> 12th')
+  })
+
+  await check('a start of 00:00 makes the function a no-op', async () => {
+    // The setting has to be able to mean "we close before midnight", or the
+    // feature is not configurable, it is just India.
+    await txn(async (tx) => {
+      await tx`update settings set value = '00:00' where key = 'business_day_start' and restaurant_id = ${rid}`
+      const [row] = await tx<{ d: string }[]>`
+        select business_date(
+          '2026-08-12 00:30'::timestamp at time zone
+            (select value from settings where key = 'timezone')
+        )::text as d`
+      assert.equal(row.d, '2026-08-12', 'with a 00:00 cutover a 00:30 order belongs to the calendar day')
+      throw new Error('ROLLBACK')
+    }).catch((e: Error) => {
+      if (e.message !== 'ROLLBACK') throw e
+    })
+    const [after] = await tsql<{ v: string }[]>`
+      select value as v from settings where key = 'business_day_start' and restaurant_id = ${rid}`
+    assert.equal(after.v, '05:00', 'the probe must not have changed the live setting')
+  })
+
+  await check('business_date refuses to answer for another tenant', async () => {
+    // It takes no restaurant argument BY DESIGN: settings is RLS'd, so it can
+    // only read the tenant announced on this transaction. Announcing a
+    // stranger must not yield this restaurant's cutover.
+    const { withTenant } = await import('../src/lib/tenant')
+    const ours = await tsql<{ d: string }[]>`select business_date(now())::text as d`
+    const theirs = await withTenant('00000000-0000-4000-8000-0000000000ff', () =>
+      tsql<{ d: string }[]>`
+        select business_date('2026-08-12 00:30+05:30'::timestamptz)::text as d`,
+    )
+    // With no settings visible the function falls back to UTC and no offset,
+    // so a stranger cannot read our cutover through it.
+    assert.ok(ours[0].d.length === 10, 'our own business day still resolves')
+    assert.equal(theirs[0].d, '2026-08-11', 'a stranger gets the UTC fallback, never our settings')
+  })
+
+  await check('no date default in the app reaches for the calendar date', async () => {
+    // The helpers were DELETED rather than left beside the new ones. A grep is
+    // the honest test here: the failure mode is someone reaching for the
+    // shorter name, and it would only be wrong for two hours a night.
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d)) {
+        const q = join(d, e)
+        statSync(q).isDirectory() ? walk(q, out) : /\.tsx?$/.test(q) && out.push(q)
+      }
+      return out
+    }
+    const offenders = walk('src')
+      .filter((f) => !f.endsWith('src/server/business-day.ts'))
+      .flatMap((f) => {
+        const src = readFileSync(f, 'utf8')
+        return /\btodayIST\b|\btodayLocal\b|\bmonthStartIST\b|\byesterdayIST\b/.test(src) ? [f] : []
+      })
+    assert.deepEqual(offenders, [], `these still use a calendar-date helper: ${offenders.join(', ')}`)
+  })
+
+  await check('order_time does not disturb the dedupe or which fetch wins', async () => {
+    // THE CAUTION, asserted rather than reasoned about. Re-fetching is
+    // latest-fetch-wins and in-payload duplicates are skipped on pos_order_id
+    // alone; order_time is in neither, so adding it must change neither.
+    const def = await tsql<{ d: string }[]>`select pg_get_viewdef('latest_fetches'::regclass, true) as d`
+    assert.ok(!/order_time/.test(def[0].d), 'latest_fetches must not read order_time')
+    const cur = await tsql<{ d: string }[]>`select pg_get_viewdef('sales_current'::regclass, true) as d`
+    assert.ok(!/order_time/.test(cur[0].d), 'sales_current must not filter on order_time')
+
+    const { normalizePayload } = await import('../src/server/sales-ingest')
+    const entry = (id: string, at: string | null) => ({
+      Order: {
+        orderID: id, order_date: '2026-08-11', status: 'Success', total: '100',
+        ...(at === null ? {} : { created_on: at }),
+      },
+      OrderItem: [],
+    })
+    // Same id twice, different times: still ONE order, and the first wins.
+    const dup = normalizePayload(
+      { order_json: [entry('A1', '2026-08-11 20:00:00'), entry('A1', '2026-08-12 01:00:00')] },
+      '2026-08-11',
+    )
+    assert.equal(dup.orders.length, 1, 'a duplicate id is still skipped')
+    assert.equal(dup.duplicateIds, 1, 'and still counted')
+    assert.equal(dup.orders[0].order_time_local, '2026-08-11 20:00:00', 'the first occurrence still wins')
+
+    // A payload with no times at all parses, and SAYS it carried none.
+    const none = normalizePayload({ order_json: [entry('B1', null)] }, '2026-08-11')
+    assert.equal(none.withTime, 0)
+    assert.equal(none.orders[0].order_time_local, null, 'absent is null, never invented')
+    assert.ok(
+      /no order carried a time/.test(none.note ?? ''),
+      'an empty disagreement view must be explained, not read as agreement',
+    )
+  })
+
+  await check('a wall-clock order time lands on the right side of the cutover', async () => {
+    // The adapter keeps Petpooja's local string raw and anchors it in SQL.
+    // Anchoring it in JS would put a 00:30 order five and a half hours out —
+    // onto exactly the day it does not belong to.
+    const [row] = await tsql<{ ts: string; d: string }[]>`
+      select ('2026-08-12 00:30:00'::timestamp at time zone
+                (select value from settings where key = 'timezone'))::text as ts,
+             business_date('2026-08-12 00:30:00'::timestamp at time zone
+                (select value from settings where key = 'timezone'))::text as d`
+    assert.equal(row.d, '2026-08-11', 'a 00:30 IST order belongs to the previous business day')
+    console.log(`      00:30 local -> ${row.ts} -> business day ${row.d}`)
+  })
+
+  await check('business_day_disagreements is empty for a reason it can state', async () => {
+    const gaps = await tsql<{ n: number }[]>`
+      select count(*)::int as n from business_day_disagreements where restaurant_id = ${rid}`
+    const [t] = await tsql<{ with_time: number; total: number }[]>`
+      select count(*) filter (where order_time is not null)::int as with_time,
+             count(*)::int as total from pos_orders where restaurant_id = ${rid}`
+    if (t.total === 0) {
+      console.log('      no POS order fetched yet — UNTESTED, and the screens say so rather than "agreed"')
+    } else if (t.with_time === 0) {
+      assert.equal(gaps[0].n, 0, 'nothing can disagree while nothing carries a time')
+      console.log(`      ${t.total} orders, none with a time — UNTESTED, surfaced as cannot-assess`)
+    } else {
+      console.log(`      ${t.with_time}/${t.total} orders comparable · ${gaps[0].n} disagreeing day-pair(s)`)
+    }
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

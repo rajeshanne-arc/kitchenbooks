@@ -3,7 +3,6 @@ import { getRestaurant } from '@/server/queries'
 import { listDishCosts, listSubCosts } from '@/server/recipes-queries'
 import { getQtySold } from '@/server/sales-queries'
 import { listSnapshots } from '@/server/counts-queries'
-import { monthStartIST } from '@/server/store-queries'
 import { formatMoneyString } from '@/lib/money'
 import { RetiredBadge } from '@/components/books/Badges'
 import SnapshotButton from '@/components/counts/SnapshotButton'
@@ -13,6 +12,7 @@ import { HonestyPill } from '@/components/Honesty'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
 import type { DishCostRow } from '@/lib/types'
+import { businessMonthStart } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,7 +31,7 @@ export default async function RecipesPage() {
   const [dishes, subs, sold, snapshots] = await Promise.all([
     listDishCosts(restaurant.id),
     listSubCosts(restaurant.id),
-    getQtySold(restaurant.id, monthStartIST()),
+    getQtySold(restaurant.id, await businessMonthStart()),
     listSnapshots(restaurant.id),
   ])
   const soldByRecipe = new Map(sold.map((s) => [s.recipe_id, s]))

@@ -18,7 +18,7 @@ import { useRouter } from 'next/navigation'
 import type { AdvanceOutstanding, MoneyAccount } from '@/lib/types'
 import { saveAdvance } from '@/server/payroll-actions'
 import { decimalStringToPaise, formatMoneyString, formatPaise, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import Honesty from '@/components/Honesty'
 import {
@@ -31,6 +31,7 @@ import {
   selectCls,
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 /** What this screen is allowed to know about a person. `contract` is not an
  *  identifier — it is the one employment fact this form has to act on, because
@@ -47,8 +48,9 @@ export default function AdvanceForm({
   outstanding: AdvanceOutstanding[]
   accounts: MoneyAccount[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
-  const [advDate, setAdvDate] = useState(todayLocal())
+  const [advDate, setAdvDate] = useState(businessToday)
   const [staffId, setStaffId] = useState('')
   const [amount, setAmount] = useState('')
   const [accountId, setAccountId] = useState('')

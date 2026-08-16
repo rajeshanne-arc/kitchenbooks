@@ -16,17 +16,18 @@ process.loadEnvFile('.env.local')
 const COUNT_DATE = '2001-03-01'
 
 async function main() {
-  const { getRestaurant } = await import('../src/server/queries')
+const { businessToday } = await import('../src/server/business-day')
+    const { getRestaurant } = await import('../src/server/queries')
   const { photographMenu, saveCount } = await import('../src/server/counts-actions')
   const { getCountVariances, getIssueHistoryDays, getSnapshot, listCountableItems, listCounts, listSnapshots } =
     await import('../src/server/counts-queries')
   const { saveIssue, voidIssue, saveWastage, voidWastage } = await import('../src/server/store-actions')
-  const { getSections, getStockSnaps, todayIST } = await import('../src/server/store-queries')
+  const { getSections, getStockSnaps } = await import('../src/server/store-queries')
   const { sql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
-  const today = todayIST()
+  const today = await businessToday()
   console.log('restaurant:', restaurant.name, '| today IST:', today)
 
   // ---- 1. the first-count warning is computed, not asserted

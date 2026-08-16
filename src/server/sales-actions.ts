@@ -11,8 +11,8 @@ import { getRestaurant } from '@/server/queries'
 import { fetchPetpoojaOrders, PetpoojaError } from '@/server/petpooja'
 import { normalizePayload, persistFetch, SalesIngestError } from '@/server/sales-ingest'
 import { countUnmapped, getSalesDay, listUnknownOrders } from '@/server/sales-queries'
-import { todayIST } from '@/server/store-queries'
 import type { FetchDayResult, MapItemResult, PosMapRow } from '@/lib/types'
+import { businessToday } from '@/server/business-day'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -46,7 +46,7 @@ export async function fetchDay(raw: { date: string }): Promise<FetchDayResult> {
   try {
     const input = FetchSchema.parse(raw)
     assertRealDate(input.date, 'Business date')
-    if (input.date > todayIST()) throw new SalesError('That date has not happened yet — pick today or earlier')
+    if (input.date > await businessToday()) throw new SalesError('That date has not happened yet — pick today or earlier')
 
     const restaurant = await getRestaurant()
     const payload = await fetchPetpoojaOrders(input.date)

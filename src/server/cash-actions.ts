@@ -20,7 +20,6 @@ import {
   getOtherIncome,
   getVoucher,
 } from '@/server/cash-queries'
-import { todayIST } from '@/server/store-queries'
 import { nextDocNo } from '@/server/doc-numbers'
 import { parseMoney, parseQty } from '@/lib/money'
 import type {
@@ -32,6 +31,7 @@ import type {
   SaveVoucherResult,
   SetOpeningResult,
 } from '@/lib/types'
+import { businessToday } from '@/server/business-day'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const moneyStr = z.string().regex(/^\d{1,7}(\.\d{1,2})?$/, 'plain amount, up to 2 decimals')
@@ -237,7 +237,7 @@ export async function closeDay(raw: CloseDayInput): Promise<CloseDayResult> {
   try {
     const input = CloseSchema.parse(raw)
     assertRealDate(input.date, 'Close date')
-    if (input.date > todayIST()) throw new CashError('That day has not happened yet')
+    if (input.date > await businessToday()) throw new CashError('That day has not happened yet')
     const handed = input.handedOver === '' ? 0 : (parseMoney(input.handedOver) ?? 0)
     if (handed > 0 && input.handedTo === '') throw new CashError('Handed over to whom? Name the person')
     if (parseMoney(input.cashCounted) === null) throw new CashError('Counted cash must be a plain amount')

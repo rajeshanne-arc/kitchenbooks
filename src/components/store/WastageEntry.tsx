@@ -8,16 +8,18 @@ import Link from 'next/link'
 import type { IssuableItemHit, SaveWastageResult } from '@/lib/types'
 import { saveWastage } from '@/server/store-actions'
 import { parseQty, formatMoneyString } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
 import IssueItemPicker from './IssueItemPicker'
 import { useLang } from '@/components/useLang'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 const FALLBACK_REASONS = ['Spoilage', 'Overproduction', 'Prep error', 'Expired', 'Other']
 
 export default function WastageEntry({ reasons = FALLBACK_REASONS }: { reasons?: string[] }) {
+  const businessToday = useBusinessToday()
   const { label } = useLang()
-  const [wasteDate, setWasteDate] = useState(todayLocal)
+  const [wasteDate, setWasteDate] = useState(businessToday)
   const [item, setItem] = useState<IssuableItemHit | null>(null)
   const [qty, setQty] = useState('')
   const [reason, setReason] = useState('')
@@ -60,7 +62,7 @@ export default function WastageEntry({ reasons = FALLBACK_REASONS }: { reasons?:
     setReason('')
     setNote('')
     setError(null)
-    setWasteDate(todayLocal())
+    setWasteDate(businessToday)
   }
 
   if (saved !== null) {

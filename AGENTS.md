@@ -2300,3 +2300,104 @@ app's own path. The one deliberate exception is the check that `set local`
 does not survive its transaction — that reads on the bare pool on purpose,
 because `tsql` would announce the tenant itself and the assertion would pass
 by causing the thing it tests for.
+
+## THE BUSINESS DAY — a restaurant's day does not end at midnight
+
+Migration `business_day_and_pos_order_time`. This is a CLASS of bug, not an
+incident, and it is worth stating as one: **anywhere a system records "today",
+it has assumed a definition of "day" that its users may not share.**
+
+A restaurant serving past midnight has a day that ends at the cutover, not at
+00:00. Petpooja already knew — it sends `business_date`, so a 00:30 order sits
+on the previous night. Everything KitchenBooks recorded ITSELF defaulted to
+the calendar date, so a cashier closing at 00:30 filed against the 12th while
+the sales sat on the 11th, and `day_close_ladder` joined the drawer to the
+wrong day's POS cash. Thrayam has orders at 00:04, 00:21 and 01:35 — this was
+live, not theoretical, and it was wrong for about two hours every night.
+
+**`business_date(timestamptz) -> date` takes NO restaurant argument, and that
+is the security property.** `settings` is RLS'd, so it can only read the
+tenant announced on the current transaction; passing an id would let one
+tenant ask for another's day. It therefore MUST be called through `tsql`/`txn`
+— on the bare pool there is no GUC and the settings read finds nothing.
+
+**Both halves are settings because both vary by restaurant:** `timezone` and
+`business_day_start`. A start of `00:00` makes the function a no-op, which is
+the right answer for anywhere closing before midnight. This is the phase-C
+global rule again — capture the shape, configure the local fact — and the gate
+asserts the `00:00` case so the feature stays configurable rather than being
+India with extra steps.
+
+**One helper, and the wrong ones are DELETED.** `src/server/business-day.ts`
+is the only way the app asks what day it is. `todayIST`, `monthStartIST`,
+`yesterdayIST` and `todayLocal` are gone rather than left beside it: the
+failure mode is the next person reaching for the shorter name, and the result
+would be invisible except for two hours a night. `smoke:a2` greps the tree and
+fails if any of those names comes back. **No date column in the schema carries
+a DB default** — every date is supplied by the app — which is what makes an
+app-side sweep sufficient.
+
+**The client never computes the date.** `todayLocal()` read the BROWSER's
+clock, which at 00:47 says tomorrow. The server resolves the day once per
+request in each of the six group layouts and passes it through
+`BusinessDayProvider`; `useBusinessDay()` THROWS outside a provider rather
+than falling back to `new Date()`, because a silent fallback would reproduce
+the exact bug at exactly the hour nobody is testing.
+
+**Said out loud, once per group, only when it matters.** `<BusinessDayNote>`
+renders in the group layout — so no future form can forget it — and renders
+NOTHING while the business day equals the calendar day. Past midnight it says
+which day the entries belong to and why, because the natural thing for a
+cashier to do with a date field reading yesterday is to "correct" it.
+
+**`order_time` is ADDITIVE and provably so.** The dedupe is `pos_order_id`
+alone within a payload, and which fetch wins is `latest_fetches`
+(`DISTINCT ON (restaurant_id, business_date) … ORDER BY fetched_at DESC`) —
+there is no unique constraint on `(business_date, pos_order_id)` at all, only
+the primary key on `id`. `order_time` appears in none of those, and the gate
+asserts that neither view mentions it and that a duplicate id is still skipped
+with the first occurrence still winning.
+
+Petpooja sends a local wall-clock string with no offset. It is kept RAW in the
+adapter and anchored in SQL against the same `timezone` setting; anchoring it
+in JS would put a 00:30 order five and a half hours out — onto precisely the
+day it does not belong to.
+
+**An empty `business_day_disagreements` is not agreement.** The view can only
+speak for orders that carried a time, so both surfaces — the accountant's
+Review and the owner dashboard — say "none of the N orders carried a time"
+rather than reporting a clean bill of health. The dashboard card uses
+`requires()` and takes `UNASSESSABLE_URGENCY`, the same law as every other
+card that cannot see its own precondition.
+
+### ASSERT AT THE BOUNDARY — the other three cases pass while broken
+
+The boundary assertion caught a real defect in its own probe, and the lesson
+generalises. `${localAt}::timestamp at time zone …` let the driver infer the
+parameter as `timestamptz`, so `at time zone` converted an already-anchored
+instant a SECOND time. Of the four cases:
+
+| local | double-converted result | correct | agrees? |
+|---|---|---|---|
+| 00:30 | 11th | 11th | yes — passes while broken |
+| 04:59 | 11th | 11th | yes — passes while broken |
+| **05:01** | **11th** | **12th** | **NO — the only case that catches it** |
+| 14:00 | 12th | 12th | yes — passes while broken |
+
+Three of four boundary cases are satisfied by the wrong answer. Casting
+through `::text` first removes the inference. **A parameter's inferred type
+can change the meaning of a timezone conversion**, and only a case that
+straddles the cutover will ever say so.
+
+**The schema gate cried wolf a second time, and was fixed rather than
+blunted.** `at time zone` is an operator, and its three words read as columns.
+They are stripped as a PHRASE rather than added to the keyword set — a table
+may legitimately have a column called `time`, and blinding a gate to a real
+name in order to silence a false positive is how a gate stops finding things.
+Same reasoning as `both`/`leading`/`trailing`, opposite remedy.
+
+**The tenancy gate was right about the settings read.** `businessDayContext`
+read `settings` unscoped and worked only because RLS was on. A read that is
+correct solely because a policy is switched on is invisible in review, so it
+now names the tenant through `current_setting('app.restaurant_id')::uuid` —
+explicit, at no extra round trip. Implicit scoping is not scoping.

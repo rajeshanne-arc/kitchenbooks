@@ -1,7 +1,6 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getActivityFacets, getActivityLog } from '@/server/reports-queries'
-import { todayIST } from '@/server/store-queries'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
 import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
@@ -18,6 +17,7 @@ import {
   trCls,
 } from '@/components/ui'
 import PeriodControl from '@/components/dashboard/PeriodControl'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,7 +47,7 @@ export default async function ActivityPage({
 }) {
   const { period: periodParam, who, what } = await searchParams
   const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, todayIST())
+  const period = resolvePeriod(periodKey, await businessToday())
   const restaurant = await getRestaurant()
 
   const [rows, facets] = await Promise.all([

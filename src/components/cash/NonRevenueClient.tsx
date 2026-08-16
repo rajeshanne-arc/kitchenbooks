@@ -11,9 +11,10 @@ import { useRouter } from 'next/navigation'
 import type { NonRevenueRow, SaveNonRevenueResult } from '@/lib/types'
 import { saveNonRevenue, voidNonRevenue } from '@/server/cashier-actions'
 import { decimalStringToPaise, formatMoneyString, formatPaise, parseMoney, parseQty } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export type GiveawayDish = { id: string; code: string; name: string; selling_price: string | null; has_cost: boolean }
 
@@ -30,8 +31,9 @@ export default function NonRevenueClient({
   giveaway: { entries: number; cost_value: string; menu_value: string }
   givenToNames: string[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
-  const [date, setDate] = useState(todayLocal)
+  const [date, setDate] = useState(businessToday)
   const [reason, setReason] = useState('')
   const [mode, setMode] = useState<'dish' | 'description'>('dish')
   const [recipeId, setRecipeId] = useState('')

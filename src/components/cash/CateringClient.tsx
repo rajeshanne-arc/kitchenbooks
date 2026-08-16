@@ -19,7 +19,7 @@ import { useRouter } from 'next/navigation'
 import type { CateringSummaryRow } from '@/lib/types'
 import { addCateringExpense, saveCateringEvent, updateCateringRevenue } from '@/server/catering-actions'
 import { decimalStringToPaise, formatMoneyString, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import {
   cardCls,
   dataTableCls,
@@ -36,6 +36,7 @@ import {
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function CateringClient({
   events,
@@ -44,9 +45,10 @@ export default function CateringClient({
   events: CateringSummaryRow[]
   modes: string[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
   const [f, setF] = useState({
-    date: todayLocal(),
+    date: businessToday,
     name: '',
     customer: '',
     contact: '',

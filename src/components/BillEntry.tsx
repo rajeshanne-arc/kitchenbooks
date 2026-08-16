@@ -18,16 +18,11 @@ import ItemPicker from './ItemPicker'
 import SaveReveal from './SaveReveal'
 import { inputCls, numCls } from './ui'
 import { sectionHeadCls } from '@/components/ui'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 type Line = { key: number; item: ItemSel | null; qty: string; rate: string; prefillRate: string | null }
 
 const newLine = (key: number): Line => ({ key, item: null, qty: '', rate: '', prefillRate: null })
-
-function todayLocal(): string {
-  const d = new Date()
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-}
 
 /** keep free typing but drop anything that can never be part of an amount */
 const sanitizeAmount = (raw: string) => {
@@ -44,7 +39,8 @@ export default function BillEntry({
   categories: Category[]
   units: Unit[]
 }) {
-  const [billDate, setBillDate] = useState(todayLocal)
+  const businessToday = useBusinessToday()
+  const [billDate, setBillDate] = useState(businessToday)
   const [vendor, setVendor] = useState<VendorSel | null>(null)
   const [lines, setLines] = useState<Line[]>([newLine(1)])
   const [nextKey, setNextKey] = useState(2)
@@ -143,7 +139,7 @@ export default function BillEntry({
     setTransport('')
     setExtrasOpen(false)
     setError(null)
-    setBillDate(todayLocal())
+    setBillDate(businessToday)
   }
 
   if (saved) return <SaveReveal saved={saved} onAgain={startAnother} />

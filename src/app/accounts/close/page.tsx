@@ -8,9 +8,9 @@ import { getRestaurant } from '@/server/queries'
 import { listClosedPeriods, listOpenQueries } from '@/server/accountant-queries'
 import { getStaffFundBalance } from '@/server/register-queries'
 import { listMoneyAccounts } from '@/server/accounts-queries'
-import { todayIST } from '@/server/store-queries'
 import CloseClient from '@/components/accountant/CloseClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,7 +28,7 @@ function lastMonth(today: string): { from: string; to: string } {
 
 export default async function ClosePeriodPage() {
   const restaurant = await getRestaurant()
-  const today = todayIST()
+  const today = await businessToday()
   // one fan-out, not four awaits — the pool is shared with the group layout
   const [blocking, closed, fund, accounts] = await Promise.all([
     listOpenQueries(restaurant.id),

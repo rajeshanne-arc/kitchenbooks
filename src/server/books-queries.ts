@@ -96,7 +96,10 @@ export async function listVendorsWithDues(restaurantId: string): Promise<VendorD
            d.paid::text as paid,
            lp.last_paid_date::text as last_paid_date,
            case when lp.last_paid_date is null then null
-                else (current_date - lp.last_paid_date)::int end as days_since_payment
+                -- business_date(now()), not current_date: "paid 3 days ago" must
+                -- count from the day the restaurant is working, or the answer
+                -- changes at midnight while the shift is still running.
+                else (business_date(now()) - lp.last_paid_date)::int end as days_since_payment
     from vendor_dues d
     join vendors v on v.id = d.vendor_id
     join categories c on c.code = v.primary_category

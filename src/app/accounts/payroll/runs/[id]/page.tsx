@@ -14,7 +14,6 @@ import { getPayrollLines, getPayrollRun } from '@/server/payroll-queries'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getSessionUser } from '@/server/current-user'
 import { getList } from '@/server/settings'
-import { todayIST } from '@/server/store-queries'
 import { canAccess } from '@/lib/roles'
 import type { MoneyAccount } from '@/lib/types'
 import { formatMoneyString } from '@/lib/money'
@@ -31,6 +30,7 @@ import {
   pageTitleCls,
   sectionHeadCls,
 } from '@/components/ui'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -123,7 +123,7 @@ export default async function PayrollRunPage({ params }: { params: Promise<{ id:
           status={run.status}
           accounts={accounts}
           modes={modes}
-          today={todayIST()}
+          today={await businessToday()}
           canApprove={isOwner}
         />
 

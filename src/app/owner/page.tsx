@@ -2,7 +2,6 @@ import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
-import { todayIST } from '@/server/store-queries'
 import { getFoodCost } from '@/server/kitchen-queries'
 import {
   getEntryPulse,
@@ -22,6 +21,7 @@ import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/mone
 import { fmtDate } from '@/lib/format'
 import { isPeriodKey, monthLabel, resolvePeriod, type PeriodKey } from '@/lib/period'
 import { requires, UNASSESSABLE_URGENCY } from '@/lib/precondition'
+import { countOrdersWithTime, getBusinessDayDisagreements } from '@/server/business-day'
 import { cardCls, heroNumCls, moneyCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import Honesty, { HonestyPill } from '@/components/Honesty'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
@@ -35,6 +35,7 @@ import {
   TargetBars,
   TwoSeriesLegend,
 } from '@/components/dashboard/Charts'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,6 +70,7 @@ const HEALTHY_WITH_CONTENT = UNASSESSABLE_URGENCY - 10
 const URGENCY = {
   impossible: 900, // negative stock — arithmetic that cannot be true
   unbanked: 800, // money the app refuses to count
+  miscut: 750, // the POS and we disagree about which day an order belongs to
   unclosed: 700, // a day that sold food and was never counted
   gap: 600, // an aggregator disagreeing with us
   unclaimed: 500, // revenue belonging to no section
@@ -169,7 +171,7 @@ export default async function DashboardPage({
 }) {
   const { period: periodParam } = await searchParams
   const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const today = todayIST()
+  const today = await businessToday()
   const period = resolvePeriod(periodKey, today)
 
   const restaurant = await getRestaurant()
@@ -189,6 +191,8 @@ export default async function DashboardPage({
     unknownCount,
     missing,
     staff,
+    dayGaps,
+    timed,
   ] = await Promise.all([
     getEntryPulse(restaurant.id, period.from, period.to),
     getSalesSeries(restaurant.id, period.from, period.to),
@@ -203,6 +207,8 @@ export default async function DashboardPage({
     getUnknownStatusCount(restaurant.id, period.from, period.to),
     getMissingCloses(restaurant.id, period.from, period.to),
     getStaffCard(restaurant.id, today),
+    getBusinessDayDisagreements(restaurant.id),
+    countOrdersWithTime(restaurant.id),
   ])
 
   // What the sales-dependent cards rest on, stated ONCE so five of them ask
@@ -247,6 +253,65 @@ export default async function DashboardPage({
         />
       ),
   })
+
+  /* ── Which day an order belongs to ──────────────────────────────────── */
+  {
+    // The comparison can only be made over orders that carried a TIME. No
+    // times means no comparison — not agreement — so this card declares that
+    // precondition rather than reporting a confident all-clear over nothing.
+    const disagreed = dayGaps.reduce((n, r) => n + r.orders, 0)
+    const check = requires(
+      timed.withTime > 0,
+      disagreed,
+      'no order carried a time',
+      timed.total === 0
+        ? 'No POS order has been fetched, so whether our day and Petpooja\u2019s start at the same hour cannot be compared.'
+        : `None of the ${timed.total} orders fetched so far carried a time, so our cutover cannot be compared with Petpooja\u2019s. The next fetch stores it.`,
+    )
+    questions.push({
+      key: 'business-day',
+      urgency: !check.assessable ? UNASSESSABLE_URGENCY : check.data > 0 ? URGENCY.miscut : 0,
+      node: !check.assessable ? (
+        <CannotAssess
+          title="Which day an order belongs to"
+          source="business_day_disagreements"
+          href="/sales/books/sales"
+          check={check}
+        >
+          A restaurant serving past midnight has a day that does not end at midnight. This card
+          checks that we and the POS cut the night in the same place.
+        </CannotAssess>
+      ) : check.data > 0 ? (
+        <Card
+          title="Which day an order belongs to"
+          source="business_day_disagreements"
+          href="/accounts"
+          level="alarm"
+          sentence={`${check.data} ${plural(check.data, 'order')} sits on a different date in Petpooja than it does here, so those days cannot be reconciled against their dashboard.`}
+        >
+          <ul className="mt-1 space-y-1">
+            {dayGaps.slice(0, 4).map((r) => (
+              <li key={`${r.pos_says}-${r.we_say}`} className="text-sm text-stone-700">
+                POS says {fmtDate(r.pos_says)} · we say {fmtDate(r.we_say)} —{' '}
+                <span className="font-mono">{r.orders}</span>
+              </li>
+            ))}
+          </ul>
+          <Honesty level="alarm" verdict="cutover disagrees" compact>
+            The likely cause is business_day_start not matching how the POS was configured. Neither
+            side is wrong on its own; they are simply cutting the night in different places.
+          </Honesty>
+        </Card>
+      ) : (
+        <Card
+          title="Which day an order belongs to"
+          source="business_day_disagreements"
+          href="/accounts"
+          sentence="Every order sits on the same day here as it does in Petpooja."
+        />
+      ),
+    })
+  }
 
   /* ── POS statuses the app refuses to bank ───────────────────────────── */
   {

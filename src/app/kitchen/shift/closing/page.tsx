@@ -1,15 +1,15 @@
 import { getRestaurant } from '@/server/queries'
 import { getClosingChecklist, getKitchenSections, getTodaysProductions } from '@/server/kitchen-queries'
-import { todayIST } from '@/server/store-queries'
 import ClosingEntry from '@/components/kitchen/ClosingEntry'
 import { formatMoneyString } from '@/lib/money'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ClosingPage() {
   const restaurant = await getRestaurant()
-  const today = todayIST()
+  const today = await businessToday()
   const [sections, checklist] = await Promise.all([
     getKitchenSections(restaurant.id),
     getClosingChecklist(restaurant.id, today),

@@ -9,10 +9,11 @@ import { useRouter } from 'next/navigation'
 import type { MoneyAccount, OffBookRow, SaveOffBookResult } from '@/lib/types'
 import { saveOffBook, voidOffBook } from '@/server/cashier-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
-import { fmtDate, todayLocal } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function OffBookClient({
   dishes,
@@ -26,8 +27,9 @@ export default function OffBookClient({
   accounts: MoneyAccount[]
   rows: OffBookRow[]
 }) {
+  const businessToday = useBusinessToday()
   const router = useRouter()
-  const [date, setDate] = useState(todayLocal)
+  const [date, setDate] = useState(businessToday)
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState(modes.includes('Cash') ? 'Cash' : '')
