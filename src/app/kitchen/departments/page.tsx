@@ -1,5 +1,5 @@
 import { getRestaurant } from '@/server/queries'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import DepartmentsClient from '@/components/settings/DepartmentsClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
 import type { DepartmentRow } from '@/lib/types'
@@ -13,7 +13,10 @@ export const dynamic = 'force-dynamic'
 
 export default async function DepartmentsPage() {
   const restaurant = await getRestaurant()
-  const rows = await sql<DepartmentRow[]>`
+  // tsql, never bare sql: under RLS a statement outside a tenant-announcing
+  // transaction has no GUC, so the policy casts an empty current_setting to
+  // uuid and raises 22P02. This page 500'd on every load for exactly that.
+  const rows = await tsql<DepartmentRow[]>`
     select s.id, s.code, s.name, s.dept_group, s.dept_kind, s.receives_stock, s.sort_order, s.status,
            (select count(*)::int from issues i where i.section_id = s.id) as issues,
            (select count(*)::int from recipes r where r.section_id = s.id) as dishes,

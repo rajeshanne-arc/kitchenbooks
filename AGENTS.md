@@ -2504,3 +2504,46 @@ have missed, not from the one that prompted it.** A regression test written
 from the original bug proves only that the original bug is caught — and if the
 instrument is narrow in the same direction the bug was, the test agrees with
 it forever.
+
+## Sweeping every route found two more, and both gates were looking in one place
+
+A sweep of all 102 static routes as a signed-in owner: 84 clean, 17 legacy
+shims correctly 307-ing to live targets, and **two real failures**.
+
+**`/kitchen/departments` 500'd on every load** with `22P02 invalid input
+syntax for type uuid: ""` — the RLS signature of a statement that announced
+no tenant. It used a bare `sql` rather than `tsql`. So did
+`/kitchen/indent/[id]`.
+
+**Why the sweep that removed every bare read missed them: they are in
+`src/app`, not `src/server`.** Every one of these instruments scanned only the
+server layer, on the unexamined assumption that all SQL lives there:
+
+| gate | scanned | missed |
+|---|---|---|
+| `audit:schema` | `walk('src/server')` | SQL written in a page |
+| `audit:tenancy` | `walk('src/server')` | same |
+| six `smoke:a2` static sweeps | `readdirSync('src/server')` flat, `.ts` only | `src/app`, every `.tsx`, and any subdirectory |
+
+All of them now read `[...walk('src/server'), ...walk('src/app')]`, recursively,
+`.ts` and `.tsx`. The rule: **a gate must scan wherever the thing it forbids
+can be WRITTEN, not where it is expected to live.** Proved by reintroducing
+the bare `sql` and watching the gate name the file and line.
+
+**`/denied` was an infinite redirect loop.** The matrix fails closed on unknown
+paths, which is right — but the proxy REDIRECTS to `/denied` on refusal, and
+`/denied` is not in the matrix, so it denied itself: `/denied` → `canAccess`
+false → redirect to `/denied` → forever. **Every genuine permission denial was
+`ERR_TOO_MANY_REDIRECTS` instead of the sentence naming who to ask**, which is
+the whole of LAW 1's promise. It is now admitted after the session check —
+signed out still means go and sign in.
+
+`audit:matrix` could never have caught this: it checks every LINK a role can
+see, and nothing links to `/denied`. It is only ever a redirect target. So the
+new assertion reads the redirect targets OUT OF THE PROXY SOURCE and requires
+every role to be able to open each one — a new target is covered the day it is
+written rather than the day someone remembers to list it.
+
+**The general form, and it is the same shape as the schema gate's blind half:
+a check scoped by where we EXPECT the fault cannot find the fault we did not
+expect.** Three instruments, one assumption, two live 500s.

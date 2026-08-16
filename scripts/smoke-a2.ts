@@ -530,9 +530,19 @@ async function run() {
     // purchase is a liability, the PAYMENT is the money. A reversal must
     // carry the original's account or that account stays short forever.
     const ACCOUNTED = NUMBERED.filter((t) => t !== 'purchases')
-    const files = readdirSync('src/server')
-      .filter((f) => f.endsWith('.ts'))
-      .map((f) => `src/server/${f}`)
+    // Same widening as the tenancy sweeps: an insert can be written in a page
+    // as easily as in an action, and this gate should read wherever SQL lives.
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) {
+          out.push(q)
+        }
+      }
+      return out
+    }
+    const files = [...walk('src/server'), ...walk('src/app')]
     const missing: string[] = []
     let sites = 0
     let allocations = 0
@@ -1753,7 +1763,21 @@ async function run() {
     // A cross-tenant WRITE is worse than a cross-tenant read: it corrupts
     // another restaurant's workflow rather than merely exposing it.
     const { readdirSync, readFileSync } = await import('node:fs')
-    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    // WHEREVER SQL CAN BE WRITTEN, not where we assume it lives. This was a
+    // flat listing of src/server/*.ts, so a PAGE importing `sql` directly was
+    // invisible — and two did. /kitchen/departments announced no tenant and
+    // 500'd on every load with 22P02 while this suite reported all clear.
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) {
+          out.push(q)
+        }
+      }
+      return out
+    }
+    const files = [...walk('src/server'), ...walk('src/app')]
     const scoped = new Set(
       (
         await tsql<{ table_name: string }[]>`
@@ -1781,7 +1805,21 @@ async function run() {
     // the only thing that emits `set local app.restaurant_id`, and a
     // transaction that skips it will be denied wholesale once RLS is on.
     const { readdirSync, readFileSync } = await import('node:fs')
-    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    // WHEREVER SQL CAN BE WRITTEN, not where we assume it lives. This was a
+    // flat listing of src/server/*.ts, so a PAGE importing `sql` directly was
+    // invisible — and two did. /kitchen/departments announced no tenant and
+    // 500'd on every load with 22P02 while this suite reported all clear.
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) {
+          out.push(q)
+        }
+      }
+      return out
+    }
+    const files = [...walk('src/server'), ...walk('src/app')]
     const raw = files.filter((f) => /\bsql\.begin\(/.test(readFileSync(f, 'utf8')))
     assert.deepEqual(raw, [], `these bypass the tenant GUC:\n      ${raw.join('\n      ')}`)
 
@@ -1836,7 +1874,21 @@ async function run() {
     ).map((r) => r.table_name)
     assert.ok(lineTables.length >= 13, `expected the line tables to carry a tenant, found ${lineTables.length}`)
 
-    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    // WHEREVER SQL CAN BE WRITTEN, not where we assume it lives. This was a
+    // flat listing of src/server/*.ts, so a PAGE importing `sql` directly was
+    // invisible — and two did. /kitchen/departments announced no tenant and
+    // 500'd on every load with 22P02 while this suite reported all clear.
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) {
+          out.push(q)
+        }
+      }
+      return out
+    }
+    const files = [...walk('src/server'), ...walk('src/app')]
     const missing: string[] = []
     for (const f of files) {
       const src = readFileSync(f, 'utf8').replace(/\$\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, ' ? ')
@@ -1860,7 +1912,21 @@ async function run() {
     // an app that looks like an empty database, which is a worse outage
     // than a loud failure because nobody suspects security.
     const { readdirSync, readFileSync } = await import('node:fs')
-    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    // WHEREVER SQL CAN BE WRITTEN, not where we assume it lives. This was a
+    // flat listing of src/server/*.ts, so a PAGE importing `sql` directly was
+    // invisible — and two did. /kitchen/departments announced no tenant and
+    // 500'd on every load with 22P02 while this suite reported all clear.
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) {
+          out.push(q)
+        }
+      }
+      return out
+    }
+    const files = [...walk('src/server'), ...walk('src/app')]
     const bare: string[] = []
     for (const f of files) {
       // Strip ${…} holes first. A fragment — `${cond ? sql`and x = ${y}` :
@@ -1889,7 +1955,21 @@ async function run() {
     // connection, and waits for a second one that the first is blocking.
     // That is the max:4 deadlock again, in a new costume.
     const { readdirSync, readFileSync } = await import('node:fs')
-    const files = readdirSync('src/server').filter((f) => f.endsWith('.ts')).map((f) => `src/server/${f}`)
+    // WHEREVER SQL CAN BE WRITTEN, not where we assume it lives. This was a
+    // flat listing of src/server/*.ts, so a PAGE importing `sql` directly was
+    // invisible — and two did. /kitchen/departments announced no tenant and
+    // 500'd on every load with 22P02 while this suite reported all clear.
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) {
+          out.push(q)
+        }
+      }
+      return out
+    }
+    const files = [...walk('src/server'), ...walk('src/app')]
     const nested: string[] = []
     for (const f of files) {
       const src = readFileSync(f, 'utf8')
@@ -2010,7 +2090,8 @@ async function run() {
     const walk = (d: string, out: string[] = []): string[] => {
       for (const e of readdirSync(d)) {
         const q = join(d, e)
-        statSync(q).isDirectory() ? walk(q, out) : /\.tsx?$/.test(q) && out.push(q)
+        if (statSync(q).isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
       }
       return out
     }
@@ -2086,6 +2167,39 @@ async function run() {
     } else {
       console.log(`      ${t.with_time}/${t.total} orders comparable · ${gaps[0].n} disagreeing day-pair(s)`)
     }
+  })
+
+  await check('every destination the proxy redirects to, it will let you reach', async () => {
+    // /denied denied itself. The matrix fails closed on unknown paths, which
+    // is right, but this proxy REDIRECTS to /denied on refusal — so a real
+    // permission denial became ERR_TOO_MANY_REDIRECTS instead of the sentence
+    // naming who to ask. audit:matrix could not see it because it checks
+    // LINKS, and nothing links to /denied: it is only ever a redirect target.
+    //
+    // So the targets are read out of the proxy itself rather than listed here
+    // by hand — a new redirect target is covered the day it is written.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/proxy.ts', 'utf8')
+    const targets = [...src.matchAll(/url\.pathname\s*=\s*'([^']+)'/g)].map((m) => m[1])
+    assert.ok(targets.length > 0, 'no redirect targets found — has the proxy been rewritten?')
+
+    const { ALL_ROLES, canAccess } = await import('../src/lib/roles')
+    const publicOrExempt = new Set(
+      [...src.matchAll(/PUBLIC_PATHS\s*=\s*\[([^\]]*)\]/g)]
+        .flatMap((m) => [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]))
+        .concat([...src.matchAll(/pathname === '([^']+)'\) return NextResponse\.next\(\)/g)].map((m) => m[1])),
+    )
+
+    for (const t of targets) {
+      if (publicOrExempt.has(t)) continue
+      for (const role of ALL_ROLES) {
+        assert.ok(
+          canAccess(role, t),
+          `the proxy redirects to ${t} but ${role} cannot open it — that is a redirect loop`,
+        )
+      }
+    }
+    console.log(`      ${targets.join(' · ')} — reachable by every role`)
   })
 
   console.log(

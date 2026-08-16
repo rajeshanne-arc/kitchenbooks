@@ -31,6 +31,19 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
+  // THE DENIAL PAGE IS REACHABLE BY EVERY SIGNED-IN ROLE, and it has to be.
+  //
+  // `/denied` is not in the matrix, and the matrix fails closed on unknown
+  // paths — correctly. But this proxy REDIRECTS here on denial, so the page
+  // denied itself: /denied -> canAccess false -> redirect to /denied -> …
+  // Every genuine permission denial was ERR_TOO_MANY_REDIRECTS rather than
+  // the sentence naming who to ask, which is LAW 1's whole point.
+  //
+  // It is admitted after the session check, not added to PUBLIC_PATHS: signed
+  // out still means go and sign in. A destination this proxy can send someone
+  // to must be a destination it will let them arrive at.
+  if (pathname === '/denied') return NextResponse.next()
+
   if (!canAccess(payload.r as Role, pathname)) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'your role cannot use this' }, { status: 403 })

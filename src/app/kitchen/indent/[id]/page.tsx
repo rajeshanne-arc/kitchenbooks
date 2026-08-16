@@ -23,7 +23,7 @@ import {
   thNumCls,
   trCls,
 } from '@/components/ui'
-import { sql } from '@/lib/db'
+import { tsql } from '@/lib/db'
 import type { Section } from '@/lib/types'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
@@ -61,7 +61,9 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
   // Returns are not tied to an indent — they are department-level stock
   // going back. Matched by item since the indent date, and captioned as
   // context rather than presented as this document's own line.
-  const returnedRows = await sql<{ item_code: string; qty: string }[]>`
+  // tsql, never bare sql — see the departments page: a bare statement under
+  // RLS announces no tenant and raises 22P02 rather than returning nothing.
+  const returnedRows = await tsql<{ item_code: string; qty: string }[]>`
     select it.code as item_code, sum(rl.qty)::text as qty
     from return_lines rl
     join returns r on r.id = rl.return_id

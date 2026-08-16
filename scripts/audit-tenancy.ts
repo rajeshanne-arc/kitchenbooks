@@ -136,7 +136,12 @@ async function main() {
     where table_schema = 'public' and column_name = 'restaurant_id'`
   const scoped = new Set(cols.map((c) => c.table_name))
 
-  const files = walk('src/server')
+  // src/app TOO. Both audits walked only src/server on the assumption that all
+  // SQL lives there — but a page can import `sql` directly, and two did.
+  // `/kitchen/departments` used a bare `sql` and so announced no tenant: under
+  // RLS the policy cast an empty current_setting to uuid and the page 500'd on
+  // every load, invisibly to a gate that never read the file.
+  const files = [...walk('src/server'), ...walk('src/app')]
   const statements = files.flatMap((f) => extract(f, readFileSync(f, 'utf8')))
 
   type Leak = { file: string; line: number; relations: string[]; sql: string }
