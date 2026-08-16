@@ -2457,3 +2457,50 @@ same fan-out that deadlocked the item master at `max: 4`.
 switchover. Warm requests are ~135ms. A restaurant app used in bursts will
 meet a cold start occasionally; that is a separate question from this one and
 has not been addressed.
+
+## The owner and cashier dashboards were dead for five days
+
+`/owner` and `/sales` returned 500 on every load from 11 August. Nobody
+noticed because nobody opened them; the error surfaced the moment a browser
+with a session actually loaded the page.
+
+`getUnmappedSummary` filtered `unmapped_pos_items` on `business_date`. **That
+view has never had a date column** — it groups per item across all time
+(`restaurant_id, pos_item_id, item_name, qty, revenue`). Postgres answered
+`42703 column "business_date" does not exist`, and since the query sat inside
+the page's `Promise.all`, the whole dashboard fell over.
+
+The fix reads the view's own base relations with the date filter added,
+mirroring its `WHERE` exactly. The dashboard has ONE period control and every
+card must answer for it, so an all-time figure among period-scoped ones was
+not an option — that is a different lie from a crash. The duplication is
+stated in a comment; the tidy fix is a view carrying `business_date`.
+
+### THE SCHEMA GATE HAD NEVER READ A `WHERE` CLAUSE
+
+This is the seventh instance of a check structurally incapable of finding what
+it exists to find, and the worst of them, because the gate was written for
+exactly this bug class and reported success while examining half of each
+statement:
+
+```js
+const selectPart = clean.split(/\bfrom\b/i)[0] ?? ''   // everything BEFORE `from`
+```
+
+The unqualified pass scanned the select list only. Every `where`, `join … on`,
+`group by` and `having` in the codebase went unchecked. It passed its own
+`--self-test` because the `pnl_monthly.revenue` break it was written for
+happened to live in a select list — **the self-test encoded the blind spot
+rather than exposing it.**
+
+Scanning the whole statement took the check from 2090 column references to
+2567, about 23% more, and caught the live break on the first run. Relation
+names and aliases are already in `byAlias`, so the `from` clause skips itself;
+the only new false positive was `select … for update`, so the row-lock words
+joined the keyword set.
+
+**The rule this yields: a gate's self-test must be built from a case it would
+have missed, not from the one that prompted it.** A regression test written
+from the original bug proves only that the original bug is caught — and if the
+instrument is narrow in the same direction the bug was, the test agrees with
+it forever.

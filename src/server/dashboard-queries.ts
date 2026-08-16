@@ -67,11 +67,31 @@ export async function getUnmappedSummary(
   from: string,
   to: string,
 ): Promise<UnmappedCard> {
+  // NOT `unmapped_pos_items`, and this is why: that view groups per item
+  // across ALL time and carries no date, so the period filter this card needs
+  // named a column that has never existed. /owner and /sales both 500'd on
+  // every load for five days.
+  //
+  // The dashboard has ONE period control and every card must answer for it —
+  // an all-time figure sitting among period-scoped ones is a different lie
+  // from a crash. So the summary reads the view's own base relations with the
+  // date filter added, mirroring its WHERE exactly. The tidy fix is a view
+  // that carries business_date; until that migration exists the duplication
+  // is stated here rather than hidden.
   const [row] = await tsql<{ items: number; revenue: string }[]>`
-    select count(*)::int as items, coalesce(sum(revenue), 0)::text as revenue
-    from unmapped_pos_items
-    where restaurant_id = ${restaurantId}
-      and business_date between ${from}::date and ${to}::date`
+    select count(*)::int as items, coalesce(sum(t.revenue), 0)::text as revenue
+    from (
+      select pl.pos_item_id, sum(pl.amount) as revenue
+      from sales_current sc
+      join pos_lines pl on pl.order_id = sc.id
+      left join pos_item_map m
+        on m.restaurant_id = sc.restaurant_id and m.pos_item_id = pl.pos_item_id
+      where sc.restaurant_id = ${restaurantId}
+        and sc.business_date between ${from}::date and ${to}::date
+        and sc.status_class = 'revenue'
+        and m.recipe_id is null
+      group by pl.pos_item_id
+    ) t`
   return row ?? { items: 0, revenue: '0' }
 }
 

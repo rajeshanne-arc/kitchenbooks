@@ -49,6 +49,9 @@ const SQL_KEYWORDS = new Set([
   // flagged `both` as a missing column on purchase_register: a gate that
   // cries wolf is a gate people start ignoring.
   'both', 'leading', 'trailing',
+  // Row-lock clauses. Only visible once the scan covered the whole statement
+  // rather than the select list — `select … for update` had never been read.
+  'for', 'share', 'nowait', 'skip', 'locked', 'key',
 ])
 
 /* ── read every sql template out of the server layer ───────────────────── */
@@ -207,14 +210,27 @@ async function main() {
     if (distinct.length === 1 && !isWrite && !/\bwith\b/i.test(clean)) {
       const rel = distinct[0]
       const set = schema.get(rel)!
-      const selectPart = clean.split(/\bfrom\b/i)[0] ?? ''
-      for (const m of selectPart.matchAll(/\b([a-z_][a-z0-9_]*)\b/gi)) {
+      // THE WHOLE STATEMENT, not just the select list.
+      //
+      // This scanned `clean.split(/\bfrom\b/i)[0]` — everything BEFORE `from`
+      // — so it had never once looked at a WHERE clause, and reported "every
+      // column reference resolves" while checking half of each statement. It
+      // passed its own --self-test because the pnl break it was written for
+      // happened to live in a select list.
+      //
+      // What it could not see: `getUnmappedSummary` filtering
+      // `unmapped_pos_items` on a `business_date` that view has never had. The
+      // owner dashboard 500'd on every load for five days and the gate stayed
+      // green. Relation names and aliases are already in `byAlias`, so the
+      // `from` clause skips itself.
+      const body = clean
+      for (const m of body.matchAll(/\b([a-z_][a-z0-9_]*)\b/gi)) {
         const word = m[1].toLowerCase()
         if (SQL_KEYWORDS.has(word) || local.has(word) || byAlias.has(word)) continue
         if (/^\d/.test(word)) continue
         // only flag words that look like they were MEANT to be columns
-        const after = selectPart.slice(m.index! + m[1].length)
-        const before = selectPart.slice(0, m.index!)
+        const after = body.slice(m.index! + m[1].length)
+        const before = body.slice(0, m.index!)
         if (after.trimStart().startsWith('(')) continue // a function call
         if (after.startsWith('.')) continue // an alias: p.restaurant_id
         if (before.endsWith('.')) continue // the column half of a qualified ref
