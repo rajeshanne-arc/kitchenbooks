@@ -2401,3 +2401,59 @@ read `settings` unscoped and worked only because RLS was on. A read that is
 correct solely because a policy is switched on is invisible in review, so it
 now names the tenant through `current_setting('app.restaurant_id')::uuid` —
 explicit, at no extra round trip. Implicit scoping is not scoping.
+
+## RUN THE FUNCTIONS WHERE THE DATABASE IS — and measure from where the user is
+
+Clicking between pages took about a second each. The cause was geography, and
+the reason it went unnoticed for weeks is a measurement taken in the wrong
+place.
+
+**Measured, not guessed.** Static assets and the proxy 307 bothreturn in ~110ms,
+so the network to Vercel was never the problem. `/login` — which does ONE
+database read — took 1.06–1.14s, steady across ten samples. About 950ms of
+that was server side.
+
+The functions ran in **iad1** (Washington DC). The Supabase pooler is
+**ap-south-1** (Mumbai). That is ~200ms per round trip. And since the RLS
+work, every read is a TRANSACTION rather than a statement — `BEGIN`,
+`SET LOCAL app.restaurant_id`, the query, `COMMIT`.
+
+Measured from a laptop in India:
+
+| | per call | round trips |
+|---|---|---|
+| bare `` sql`select 1` `` | 41.9 ms | 1 |
+| `` tsql`select 1` `` | 120.1 ms | **3** (2.87×) |
+| 5 reads inside ONE `txn` | 240.2 ms | vs 600 ms as five `tsql` |
+
+Three round trips per read is cheap next to the database and brutal across an
+ocean: at a 200ms RTT the same single read costs **~600ms**. The users are in
+India too, so every page crossed the planet twice — browser to Virginia,
+Virginia to Mumbai once per read, and back.
+
+`vercel.json` now pins `regions: ["bom1"]`, which fixes both legs at once.
+`/login` went from **1.06s to 0.135s** steady — the server-side portion from
+~950ms to ~35ms.
+
+**THE LESSON, and it is the important part: a latency measurement taken next
+to the database cannot see the cost that only exists 12,000 km away.** The
+`tsql` conversion was benchmarked at "20 concurrent reads, ~245ms sustained"
+and "three page renders, 24 reads, ~305ms" — from this laptop, 42ms from the
+database, which is the one location on earth where a three-round-trip read
+looks free. Production was 12,000 km further away and the same code was five
+times slower per read. This belongs with the "an assertion that cannot fail
+has not been tested" family: **a benchmark run in the wrong environment is not
+evidence, it is a reading of a different system.** Benchmark from where the
+code will run, or state the RTT the number assumes.
+
+**Two things worth keeping, now that they are cheap rather than free.** A `txn`
+holding five reads costs one transaction instead of five — 2.5× less — so a
+genuinely hot path should batch reads into one `txn` rather than issuing five
+`tsql`. And a page doing `Promise.all` over more than twelve queries exceeds
+`max: 12` and queues; at ~6ms a read that no longer matters, but it is the
+same fan-out that deadlocked the item master at `max: 4`.
+
+**Cold starts remain**, and a fresh lambda was seen at 9.5s during the region
+switchover. Warm requests are ~135ms. A restaurant app used in bursts will
+meet a cold start occasionally; that is a separate question from this one and
+has not been addressed.
