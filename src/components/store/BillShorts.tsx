@@ -6,10 +6,16 @@
 // says 10 and the crate holds 8. Asking for it anywhere else means asking
 // somebody to remember it later, and they do not. The quantity in the line
 // above stays WHAT ARRIVED; this records what was billed and did not.
+//
+// THE BILL IS THE HEADER, and several lines are recorded in ONE act. Saving
+// them one at a time punished checking a delivery carefully: the receiver who
+// counted every crate paid for it with three trips through a form, and the
+// one who waved it through paid nothing. Exactly backwards — so every short
+// on this delivery is filled in, then saved once.
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { saveShort } from '@/server/shorts-actions'
+import { saveShorts } from '@/server/shorts-actions'
 import { toast } from '@/components/Toasts'
 import { formatMoneyString } from '@/lib/money'
 import {
@@ -53,47 +59,71 @@ export type ShortableLine = {
 const BLANK = { qtyShort: '', kind: '' as ShortKind | '', settlement: 'open' as ShortSettlement, creditNoteRef: '', note: '' }
 
 export default function BillShorts({
+  purchaseId,
   lines,
   shorts,
   locked,
 }: {
+  /** THE HEADER. Passed explicitly so the server can refuse a batch that
+   *  somehow spans two bills, rather than inferring it from the lines. */
+  purchaseId: string
   lines: ShortableLine[]
   shorts: ValuedShort[]
   /** why this bill cannot take a short, if it cannot — voided, or a reversal */
   locked: string | null
 }) {
-  const [openLine, setOpenLine] = useState<string | null>(null)
-  const [form, setForm] = useState(BLANK)
+  // A line is being shorted if it has an entry here. Several may be open at
+  // once — that is the whole point of the change.
+  const [forms, setForms] = useState<Record<string, typeof BLANK>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
   function start(lineId: string) {
-    setForm(BLANK)
     setError(null)
-    setOpenLine(lineId)
+    setForms((f) => ({ ...f, [lineId]: { ...BLANK } }))
   }
+  function drop(lineId: string) {
+    setForms((f) => {
+      const next = { ...f }
+      delete next[lineId]
+      return next
+    })
+  }
+  const patch = (lineId: string, p: Partial<typeof BLANK>) =>
+    setForms((f) => ({ ...f, [lineId]: { ...f[lineId], ...p } }))
 
-  async function submit(lineId: string) {
-    if (form.kind === '') {
-      setError('Pick what happened — short, damaged or rejected')
+  const entries = Object.entries(forms)
+
+  async function submit() {
+    if (entries.length === 0) return
+    const blank = entries.find(([, v]) => v.kind === '')
+    if (blank) {
+      setError('Every line needs what happened — short, damaged or rejected')
       return
     }
     setBusy(true)
     setError(null)
     try {
-      const res = await saveShort({
-        purchaseLineId: lineId,
-        qtyShort: form.qtyShort,
-        kind: form.kind,
-        settlement: form.settlement,
-        creditNoteRef: form.creditNoteRef,
-        note: form.note,
+      // ONE act. The server refuses the whole batch if any line is wrong, so
+      // a delivery is either recorded as the receiver saw it or not at all.
+      const res = await saveShorts({
+        purchaseId,
+        lines: entries.map(([purchaseLineId, v]) => ({
+          purchaseLineId,
+          qtyShort: v.qtyShort,
+          kind: v.kind as ShortKind,
+          settlement: v.settlement,
+          creditNoteRef: v.creditNoteRef,
+          note: v.note,
+        })),
       })
       if (res.ok) {
-        toast('Short recorded against this line', 'ok')
-        setOpenLine(null)
-        setForm(BLANK)
+        toast(
+          res.count === 1 ? 'Short recorded against this bill' : `${res.count} shorts recorded against this bill`,
+          'ok',
+        )
+        setForms({})
         router.refresh()
       } else {
         setError(res.error)
@@ -147,7 +177,7 @@ export default function BillShorts({
                   <td className={`${tdNumCls} text-stone-500`}>{formatMoneyString(l.rate)}</td>
                   <td className={`${tdNumCls} text-stone-400`}>{rows.length === 0 ? '—' : ''}</td>
                   <td className={`${tdCls} text-right`}>
-                    {locked === null && openLine !== l.id && (
+                    {locked === null && forms[l.id] === undefined && (
                       <button
                         type="button"
                         onClick={() => start(l.id)}
@@ -183,7 +213,7 @@ export default function BillShorts({
                   </tr>
                 )),
 
-                openLine === l.id ? (
+                forms[l.id] !== undefined ? (
                   <tr key={`${l.id}-form`}>
                     <td colSpan={6} className="border-b border-rule-soft px-3 py-3">
                       <p className="text-sm text-stone-600">
@@ -198,8 +228,8 @@ export default function BillShorts({
                             id={`qty-${l.id}`}
                             inputMode="decimal"
                             autoComplete="off"
-                            value={form.qtyShort}
-                            onChange={(e) => setForm((f) => ({ ...f, qtyShort: e.target.value }))}
+                            value={forms[l.id].qtyShort}
+                            onChange={(e) => patch(l.id, { qtyShort: e.target.value })}
                             className={`${numCls} w-28`}
                           />
                         </div>
@@ -211,8 +241,8 @@ export default function BillShorts({
                           </label>
                           <select
                             id={`kind-${l.id}`}
-                            value={form.kind}
-                            onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value as ShortKind }))}
+                            value={forms[l.id].kind}
+                            onChange={(e) => patch(l.id, { kind: e.target.value as ShortKind })}
                             className={selectCls}
                           >
                             <option value="">Pick one</option>
@@ -231,10 +261,8 @@ export default function BillShorts({
                           </label>
                           <select
                             id={`settle-${l.id}`}
-                            value={form.settlement}
-                            onChange={(e) =>
-                              setForm((f) => ({ ...f, settlement: e.target.value as ShortSettlement }))
-                            }
+                            value={forms[l.id].settlement}
+                            onChange={(e) => patch(l.id, { settlement: e.target.value as ShortSettlement })}
                             className={selectCls}
                           >
                             {SHORT_SETTLEMENTS.map((s) => (
@@ -244,7 +272,7 @@ export default function BillShorts({
                             ))}
                           </select>
                         </div>
-                        {form.settlement === 'credit_note' && (
+                        {forms[l.id].settlement === 'credit_note' && (
                           <div className="w-44">
                             <label className={fieldLabelCls} htmlFor={`cn-${l.id}`}>
                               Credit note no.
@@ -252,8 +280,8 @@ export default function BillShorts({
                             <input
                               id={`cn-${l.id}`}
                               autoComplete="off"
-                              value={form.creditNoteRef}
-                              onChange={(e) => setForm((f) => ({ ...f, creditNoteRef: e.target.value }))}
+                              value={forms[l.id].creditNoteRef}
+                              onChange={(e) => patch(l.id, { creditNoteRef: e.target.value })}
                               className={inputCls}
                             />
                           </div>
@@ -265,28 +293,15 @@ export default function BillShorts({
                           <input
                             id={`note-${l.id}`}
                             autoComplete="off"
-                            value={form.note}
-                            onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+                            value={forms[l.id].note}
+                            onChange={(e) => patch(l.id, { note: e.target.value })}
                             className={inputCls}
                           />
                         </div>
                       </div>
-                      {error !== null && (
-                        <p role="alert" className="mt-2 text-sm text-red-800">
-                          {error}
-                        </p>
-                      )}
-                      <div className="mt-3 flex items-center gap-2">
-                        <button type="button" disabled={busy} onClick={() => submit(l.id)} className={btnCls}>
-                          {busy ? 'Recording…' : 'Record the short'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => setOpenLine(null)}
-                          className={btnGhostCls}
-                        >
-                          Cancel
+                      <div className="mt-3">
+                        <button type="button" disabled={busy} onClick={() => drop(l.id)} className={btnGhostCls}>
+                          Not this line
                         </button>
                       </div>
                     </td>
@@ -297,6 +312,27 @@ export default function BillShorts({
           </tbody>
         </table>
       </div>
+
+      {error !== null && (
+        <p role="alert" className="mt-3 text-sm text-red-800">
+          {error}
+        </p>
+      )}
+
+      {entries.length > 0 && (
+        <div className="mt-3 flex items-center gap-3">
+          <button type="button" disabled={busy} onClick={submit} className={btnCls}>
+            {busy
+              ? 'Recording…'
+              : entries.length === 1
+                ? 'Record the short'
+                : `Record ${entries.length} shorts`}
+          </button>
+          <span className="text-sm text-stone-500">
+            one delivery, one act — nothing is written until this is pressed
+          </span>
+        </div>
+      )}
     </section>
   )
 }

@@ -2395,7 +2395,8 @@ export type ShortRow = {
   entered_by: string | null
 }
 
-export type SaveShortInput = {
+/** One shorted line. The BILL is the header — see SaveShortsInput. */
+export type ShortLineInput = {
   purchaseLineId: string
   qtyShort: string
   kind: ShortKind
@@ -2403,6 +2404,18 @@ export type SaveShortInput = {
   creditNoteRef: string
   note: string
 }
+
+/**
+ * THE HEADER IS THE BILL, and it was already sitting there.
+ *
+ * One delivery shorts several lines at once — the driver leaves, three crates
+ * are light. Recording that as three separate saves punished checking a
+ * delivery carefully, which is the exact behaviour the app wants to
+ * encourage. The purchase id is passed explicitly rather than inferred from
+ * the lines, so the server can refuse a batch that spans two bills.
+ */
+export type SaveShortsInput = { purchaseId: string; lines: ShortLineInput[] }
+export type SaveShortsResult = { ok: true; count: number } | { ok: false; error: string }
 
 export type SettleShortInput = {
   id: string

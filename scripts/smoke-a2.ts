@@ -2410,6 +2410,54 @@ async function run() {
     assert.match(body, /not exists \(select 1 from productions v where v\.reverses_id = p\.id\)/, 'and so are voided originals')
   })
 
+  await check('shorts are recorded against the BILL, several lines in one act', async () => {
+    // Saving one short at a time punished checking a delivery carefully. The
+    // batch either lands whole or not at all, so a receiver who counted every
+    // crate records what they saw in one act.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/shorts-actions.ts', 'utf8')
+    assert.ok(!/export async function saveShort\b/.test(src), 'the one-row-per-save path is gone, not left beside it')
+    assert.match(src, /export async function saveShorts/, 'the batch action exists')
+
+    const fn = src.slice(src.indexOf('export async function saveShorts'))
+    const body = fn.slice(0, fn.indexOf('\n/* ──'))
+    // the bill is checked ONCE, as a header
+    assert.match(body, /is_reversal/, 'a reversal bill is still refused')
+    assert.match(body, /is_voided/, 'a voided bill is still refused')
+    // and every line must belong to it
+    assert.match(body, /not on this bill/, 'a batch spanning two bills is refused')
+    // duplicates, within the batch and against what is already open
+    assert.match(body, /listed twice with the same reason/, 'a double tap inside one batch is refused')
+    assert.match(body, /settle that one instead/, 'an existing open short of the same kind is still refused')
+
+    await txn(async (tx) => {
+      const [line] = await tx<{ id: string; purchase_id: string }[]>`
+        select pl.id, pl.purchase_id
+        from purchase_lines pl join bills b on b.id = pl.purchase_id
+        where pl.restaurant_id = ${rid} and not b.is_voided and not b.is_reversal
+        limit 1`
+      if (!line) {
+        console.log('      no live bill line to short — UNTESTED')
+        throw new Error('ROLLBACK')
+      }
+      // two shorts of DIFFERENT kinds on one line is real (part missing, part
+      // damaged) and must remain possible inside one batch
+      for (const kind of ['short', 'damaged']) {
+        await tx`
+          insert into purchase_line_shorts
+            (restaurant_id, purchase_line_id, qty_short, kind, settlement, entered_by)
+          values (${rid}, ${line.id}, '1', ${kind}, 'open', 'zz-smoke')`
+      }
+      const [{ n }] = await tx<{ n: number }[]>`
+        select count(*)::int as n from purchase_line_shorts
+        where purchase_line_id = ${line.id} and entered_by = 'zz-smoke'`
+      assert.equal(n, 2, 'two kinds on one line, one act')
+      throw new Error('ROLLBACK')
+    }).catch((e: Error) => {
+      if (e.message !== 'ROLLBACK') throw e
+    })
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

@@ -147,6 +147,7 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
       </section>
 
       <BillShorts
+        purchaseId={id}
         lines={lines.map((l) => ({
           id: l.id,
           item_code: l.item_code,

@@ -21,7 +21,7 @@ import {
   shortsActor,
 } from '@/server/shorts-queries'
 import { SHORT_KIND_LABELS } from '@/components/store/shorts'
-import type { SaveShortInput, SettleShortInput, ShortResult } from '@/lib/types'
+import type { SaveShortsInput, SaveShortsResult, SettleShortInput, ShortResult } from '@/lib/types'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -33,9 +33,18 @@ function fail(e: unknown): { ok: false; error: string } {
   return { ok: false, error: `Failed — nothing was written. (${detail})` }
 }
 
-/* ── record a short ─────────────────────────────────────────────────────── */
+/* ── record shorts, the BILL as header ──────────────────────────────────── */
+//
+// One delivery shorts several lines at once. Recording that as three separate
+// saves PUNISHED CHECKING A DELIVERY CAREFULLY — the receiver who counted
+// every crate paid for their diligence with three trips through a form, and
+// the one who waved it through paid nothing. That is exactly backwards, so
+// the bill is the header and the whole delivery is one act.
+//
+// Errors name the ITEM, never a line number: the receiver is looking at a
+// bill with names on it and has no idea which row is "line 3".
 
-const SaveSchema = z.object({
+const ShortLineSchema = z.object({
   purchaseLineId: z.string().regex(UUID),
   qtyShort: z.string().trim().min(1, 'How much was short?'),
   kind: z.string().trim(),
@@ -44,76 +53,92 @@ const SaveSchema = z.object({
   note: z.string().trim().max(300),
 })
 
-export async function saveShort(raw: SaveShortInput): Promise<ShortResult> {
+const SaveShortsSchema = z.object({
+  purchaseId: z.string().regex(UUID),
+  lines: z.array(ShortLineSchema).min(1, 'Nothing to record').max(60),
+})
+
+export async function saveShorts(raw: SaveShortsInput): Promise<SaveShortsResult> {
   try {
-    const input = SaveSchema.parse(raw)
+    const input = SaveShortsSchema.parse(raw)
     const by = await shortsActor('Recording a short')
-
-    // The kind has no natural default and the picker starts empty, so a
-    // blank one is refused BY NAME rather than falling through zod's
-    // generic message — the same rule as issues.session.
-    const kind = input.kind
-    const settlement = input.settlement
-    if (!isShortKind(kind)) throw new ShortsError('Pick what happened — short, damaged or rejected')
-    if (!isShortSettlement(settlement)) throw new ShortsError('Pick where this stands')
-    if (settlement === 'credit_note' && input.creditNoteRef === '') {
-      throw new ShortsError('A credit note needs its number — that is what you quote when it is disputed')
-    }
-
-    const qty = parseQty(input.qtyShort)
-    if (qty === null || qty <= 0) throw new ShortsError('The short quantity must be more than zero')
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const saved = await txn(async (tx) => {
-      // The line must be OURS. A purchase_lines id is a uuid off the wire,
-      // and this action is a public endpoint.
-      const line = await tx<
-        { id: string; item_name: string; is_voided: boolean; is_reversal: boolean }[]
-      >`
-        select pl.id, i.name as item_name, b.is_voided, b.is_reversal
-        from purchase_lines pl
-        join purchases p on p.id = pl.purchase_id
-        join bills b on b.id = p.id
-        join items i on i.id = pl.item_id
-        where pl.id = ${input.purchaseLineId} and p.restaurant_id = ${rid}`
-      if (!line[0]) throw new ShortsError('That bill line was not found')
-      if (line[0].is_reversal) {
+    await txn(async (tx) => {
+      // The bill must be OURS and must be able to take a short at all. Checked
+      // ONCE for the batch rather than per line — it is the header.
+      const [bill] = await tx<{ id: string; is_voided: boolean; is_reversal: boolean }[]>`
+        select p.id, b.is_voided, b.is_reversal
+        from purchases p join bills b on b.id = p.id
+        where p.id = ${input.purchaseId} and p.restaurant_id = ${rid}`
+      if (!bill) throw new ShortsError('That bill was not found')
+      if (bill.is_reversal) {
         throw new ShortsError('This is a reversal bill — record the short against the bill it cancels')
       }
-      if (line[0].is_voided) {
+      if (bill.is_voided) {
         throw new ShortsError('That bill was voided — there is nothing left for the vendor to owe on it')
       }
 
-      // Nothing here can be edited or deleted afterwards, so a double tap
-      // would leave a permanent second claim in vendor_performance. A
-      // second short of a DIFFERENT kind on the same line is real (part
-      // missing, part damaged) and stays allowed.
-      const dup = await tx<{ id: string }[]>`
-        select id from purchase_line_shorts
-        where purchase_line_id = ${input.purchaseLineId}
-          and kind = ${kind} and settlement = 'open'`
-      if (dup[0]) {
-        throw new ShortsError(
-          `${line[0].item_name} already has an open “${SHORT_KIND_LABELS[kind]}” on this line — settle that one instead`,
-        )
-      }
+      // Every line must belong to THIS bill. A purchase_lines id is a uuid off
+      // the wire and this action is a public endpoint, so a batch that spans
+      // two bills is refused rather than quietly split.
+      const owned = await tx<{ id: string; item_name: string }[]>`
+        select pl.id, i.name as item_name
+        from purchase_lines pl join items i on i.id = pl.item_id
+        where pl.purchase_id = ${input.purchaseId}`
+      const nameOf = new Map(owned.map((l) => [l.id, l.item_name]))
 
-      const [row] = await tx<{ id: string }[]>`
-        insert into purchase_line_shorts
-          (restaurant_id, purchase_line_id, qty_short, kind, settlement, credit_note_ref, note, entered_by)
-        values (${rid}, ${input.purchaseLineId}, ${input.qtyShort}, ${kind}, ${settlement},
-                ${input.creditNoteRef === '' ? null : input.creditNoteRef},
-                ${input.note === '' ? null : input.note}, ${by})
-        returning id`
-      if (!row) throw new ShortsError('The short was not written — nothing was saved')
-      return { id: row.id }
+      const seen = new Set<string>()
+      for (const l of input.lines) {
+        const item = nameOf.get(l.purchaseLineId)
+        if (item === undefined) throw new ShortsError('One of those lines is not on this bill')
+
+        if (!isShortKind(l.kind)) {
+          throw new ShortsError(`${item}: pick what happened — short, damaged or rejected`)
+        }
+        if (!isShortSettlement(l.settlement)) throw new ShortsError(`${item}: pick where this stands`)
+        if (l.settlement === 'credit_note' && l.creditNoteRef === '') {
+          throw new ShortsError(
+            `${item}: a credit note needs its number — that is what you quote when it is disputed`,
+          )
+        }
+        const qty = parseQty(l.qtyShort)
+        if (qty === null || qty <= 0) throw new ShortsError(`${item}: the short quantity must be more than zero`)
+
+        // Twice in ONE batch, same line and kind, is a double tap on the form.
+        const fingerprint = `${l.purchaseLineId}:${l.kind}`
+        if (seen.has(fingerprint)) {
+          throw new ShortsError(`${item} is listed twice with the same reason — combine them into one line`)
+        }
+        seen.add(fingerprint)
+
+        // Nothing here can be edited or deleted afterwards, so a repeat would
+        // leave a permanent second claim in vendor_performance. A second short
+        // of a DIFFERENT kind on the same line is real (part missing, part
+        // damaged) and stays allowed.
+        const dup = await tx<{ id: string }[]>`
+          select id from purchase_line_shorts
+          where purchase_line_id = ${l.purchaseLineId} and kind = ${l.kind} and settlement = 'open'`
+        if (dup[0]) {
+          throw new ShortsError(
+            `${item} already has an open “${SHORT_KIND_LABELS[l.kind]}” on this line — settle that one instead`,
+          )
+        }
+
+        const [row] = await tx<{ id: string }[]>`
+          insert into purchase_line_shorts
+            (restaurant_id, purchase_line_id, qty_short, kind, settlement, credit_note_ref, note, entered_by)
+          values (${rid}, ${l.purchaseLineId}, ${l.qtyShort}, ${l.kind}, ${l.settlement},
+                  ${l.creditNoteRef === '' ? null : l.creditNoteRef},
+                  ${l.note === '' ? null : l.note}, ${by})
+          returning id`
+        if (!row) throw new ShortsError(`${item}: the short was not written — nothing was saved`)
+      }
     })
 
-    const short = await getShort(rid, saved.id)
-    if (!short) throw new ShortsError('Could not verify the save — the short is missing after commit')
-    return { ok: true }
+    return { ok: true, count: input.lines.length }
   } catch (e) {
     return fail(e)
   }

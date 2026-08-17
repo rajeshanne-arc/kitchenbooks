@@ -2754,3 +2754,52 @@ considered were: storing a `prefilled` flag on the line — rejected, it makes a
 UI fact permanent and the correction path is already re-filing; and blocking
 the save — rejected above. The third option, saying it on the reveal, is what
 shipped.)*
+
+## A RENDERED FORM SHOWS ONE MODE, NOT THE WHOLE CAPABILITY
+
+Two claims in the batch-entry brief were wrong in the same way, and the fault
+is worth naming because it is cheap to repeat: **both were inferred from a
+rendered page instead of read in the handler.**
+
+- `kitchen_wastage.qty` was called unused. It was live behind a `component |
+  value` mode toggle — the screen that was read happened to be showing
+  value-only mode.
+- `saveProduction` was said not to enforce subs-only. It refused a dish BY
+  NAME, server-side, and had done since the phase that introduced it.
+
+A form renders the branch it is currently in. A picker filtered to one kind, a
+field hidden behind a toggle, a validation that only fires on submit — none of
+them appear on the screen a reader is looking at. **Before calling a column
+unused or a rule unenforced, read the action and the schema.** The screen is
+evidence of one path through the code, never of its absence.
+
+## Shorts: the header was the bill, and it was already sitting there
+
+`saveShort` wrote one row per save, so a delivery that shorted three lines was
+three trips through a form. **That shape punished checking a delivery
+carefully** — the receiver who counted every crate paid for their diligence
+with three saves, and the one who waved it through paid nothing. Exactly
+backwards for the behaviour the app wants.
+
+`saveShorts` takes the PURCHASE as its header and a line per shorted item.
+The bill's own checks — reversal, voided — run ONCE because they belong to the
+header; per-line checks run per line and **name the ITEM, never a line
+number**, because the receiver is holding a bill with names on it and has no
+idea which row is "line 3".
+
+The purchase id is passed EXPLICITLY rather than inferred from the lines, so a
+batch that somehow spans two bills is refused instead of quietly split. The
+batch is all-or-nothing: a delivery is recorded as the receiver saw it, or not
+at all.
+
+Two duplicate rules, both kept: a second short of a DIFFERENT kind on one line
+is real (part missing, part damaged) and stays allowed; the same line and kind
+twice — in one batch or against an already-open short — is refused, because
+nothing here can be edited afterwards and a double tap would leave a permanent
+second claim in `vendor_performance`.
+
+`saveShort` was DELETED rather than left beside `saveShorts`. Two paths to one
+table is how they drift.
+
+**Still one-per-save, deliberately:** `saveContractBill`. One bill is one
+document.
