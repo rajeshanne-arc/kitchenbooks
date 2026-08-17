@@ -167,6 +167,18 @@ export default async function ReorderPage() {
             </section>
           ))}
 
+          {/* SLOW-MOVING is the same question from the other end — what to buy
+              against what was over-bought — so it belongs next to this list
+              rather than in a tab of its own. It was previously a chip
+              pointing at /store/reorder/slow, a route that never existed, so
+              it 404'd and nothing else linked to it either. */}
+          <p className="text-sm text-stone-600">
+            <Link href="/store/slow-moving" className="font-medium text-emerald-700 underline underline-offset-2">
+              Slow-moving stock &rarr;
+            </Link>{' '}
+            — what is sitting unused, which is the same question from the other end.
+          </p>
+
           <p className="text-xs text-stone-400">
             reorder_due · suggested quantity brings stock back to the par level where one is set
           </p>

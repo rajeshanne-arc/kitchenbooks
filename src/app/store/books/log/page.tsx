@@ -26,7 +26,7 @@ export default async function StoreLogPage() {
             Issue to section
           </Link>
           <Link
-            href="/store/loss"
+            href="/store/stock/loss"
             className="rounded-xl border border-stone-300 px-5 py-2.5 text-sm font-semibold text-stone-700 hover:border-amber-400"
           >
             Record wastage

@@ -7,9 +7,18 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import type { TabBadges, TabDef } from '@/lib/tabs'
+import type { TabBadges, TabDef, TabHrefs } from '@/lib/tabs'
 
-export default function TabStrip({ tabs, badges = {} }: { tabs: TabDef[]; badges?: TabBadges }) {
+export default function TabStrip({
+  tabs,
+  badges = {},
+  hrefs = {},
+}: {
+  tabs: TabDef[]
+  badges?: TabBadges
+  /** Per-tab destination override — a badged tab opens what it is about. */
+  hrefs?: TabHrefs
+}) {
   const pathname = usePathname()
   const active = tabs.reduce<TabDef | null>((best, t) => {
     const match = pathname === t.href || pathname.startsWith(`${t.href}/`)
@@ -24,7 +33,10 @@ export default function TabStrip({ tabs, badges = {} }: { tabs: TabDef[]; badges
         return (
           <Link
             key={t.key}
-            href={t.href}
+            // The override sends a badged tab to the view it is complaining
+            // about; ACTIVE-state matching still uses t.href, so the tab
+            // lights up wherever inside itself the caller ends up.
+            href={hrefs[t.key] ?? t.href}
             className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors sm:text-sm ${
               on ? 'bg-emerald-700 text-white' : 'text-stone-600 hover:bg-stone-100'
             }`}

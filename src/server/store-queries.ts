@@ -344,6 +344,61 @@ export async function listReorderDue(restaurantId: string): Promise<ReorderRow[]
     order by usual_vendor nulls last, name asc`
 }
 
+/** What the Stock tab's badge is counting, and which view to open. */
+export type StockBadge = {
+  /** items showing less than nothing on the shelf — a bill is probably missing */
+  negative: number
+  /** counts saved and never accepted into the book */
+  unaccepted: number
+  /** items at or below their reorder level */
+  reorder: number
+}
+
+/**
+ * The Stock badge fires on ANY of three problems, not just reorder.
+ *
+ * One statement, three scalar subqueries: this renders with the tab strip on
+ * every page in the group, so it must cost one round trip and not three. It
+ * sits beside the page's own reads in the layout+page fan-out — the thing
+ * that once deadlocked this app at `max: 4`.
+ *
+ * Nothing new is computed. `stock_on_hand`, `stock_counts.accepted_at` and
+ * `reorder_due` are the same sources the four views already read.
+ */
+export async function getStockBadge(restaurantId: string): Promise<StockBadge> {
+  const [row] = await tsql<{ negative: number; unaccepted: number; reorder: number }[]>`
+    select
+      (select count(*)::int from stock_on_hand
+        where restaurant_id = ${restaurantId} and on_hand_qty < 0) as negative,
+      (select count(*)::int from stock_counts
+        where restaurant_id = ${restaurantId} and accepted_at is null) as unaccepted,
+      (select count(*)::int from reorder_due
+        where restaurant_id = ${restaurantId}) as reorder`
+  return {
+    negative: row?.negative ?? 0,
+    unaccepted: row?.unaccepted ?? 0,
+    reorder: row?.reorder ?? 0,
+  }
+}
+
+/**
+ * Which Stock view the badge opens — the MOST SERIOUS thing firing.
+ *
+ * The order is not arbitrary. Negative stock means the arithmetic is already
+ * impossible and a bill is missing. An unaccepted count means somebody
+ * measured a discrepancy and nobody has stood behind it. Reorder is ordinary
+ * work. Landing on a fixed default instead would send a manager to the
+ * shopping list while the book says minus four kilos.
+ *
+ * Null when nothing is firing — and then the tab wears no badge at all.
+ */
+export function stockBadgeHref(b: StockBadge): string | null {
+  if (b.negative > 0) return '/store/stock/on-hand'
+  if (b.unaccepted > 0) return '/store/stock/count'
+  if (b.reorder > 0) return '/store/stock/reorder'
+  return null
+}
+
 export async function countReorderDue(restaurantId: string): Promise<number> {
   const [row] = await tsql<{ n: number }[]>`
     select count(*)::int as n from reorder_due where restaurant_id = ${restaurantId}`

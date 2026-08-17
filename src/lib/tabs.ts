@@ -59,6 +59,11 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
   ],
   store: [
     { key: 'dashboard', href: '/store', label: 'Dashboard' },
+    // ISSUE BEFORE RECEIVE, deliberately. A store manager issues several
+    // times a day and receives once, so FREQUENCY sets the order — not the
+    // sequence in which goods physically arrive. The old order described the
+    // warehouse; this one describes the job.
+    { key: 'issue', href: '/store/issue', label: 'Issue' },
     {
       key: 'receive',
       href: '/store/receive',
@@ -71,23 +76,27 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       ],
     },
     {
-      key: 'reorder',
-      href: '/store/reorder',
-      label: 'Reorder',
-      // Slow-moving sits beside Reorder because they are the same question
-      // from opposite ends: what to buy, and what was over-bought.
+      // STOCK absorbed Reorder, Count and Loss. Four tabs asking one
+      // question from four sides became one tab with four views, and the
+      // badge on it fires for any of three problems — see badgesFor().
+      //
+      // LOSS IS THE ONE THAT NEEDED AN ARGUMENT. Wastage is chronically
+      // under-recorded in every restaurant precisely because it is
+      // uncomfortable, so burying it costs real data. It is only acceptable
+      // here because the store dashboard carries a Wastage quick tile: the
+      // one-click path survives on the landing page and this is merely the
+      // second route. `smoke:phase-a` asserts that tile exists — if it ever
+      // goes, this stops being safe and Loss comes back out as a tab.
+      key: 'stock',
+      href: '/store/stock',
+      label: 'Stock',
       chips: [
-        { key: 'due', label: 'To reorder' },
-        { key: 'slow', label: 'Slow-moving' },
+        { key: 'on-hand', label: 'On hand' },
+        { key: 'reorder', label: 'Reorder' },
+        { key: 'count', label: 'Count' },
+        { key: 'loss', label: 'Loss' },
       ],
     },
-    { key: 'issue', href: '/store/issue', label: 'Issue' },
-    { key: 'loss', href: '/store/loss', label: 'Loss' },
-    { key: 'count', href: '/store/count', label: 'Count' },
-    // Its own tab rather than a chip under Count: /store/count/[id] already
-    // owns that segment, and an adjustment can stand alone anyway — opening
-    // stock is one with no count behind it.
-    { key: 'adjustments', href: '/store/adjustments', label: 'Adjustments' },
     {
       key: 'masters',
       href: '/store/masters',
@@ -235,6 +244,19 @@ export function resolveTabs(group: TabGroup, raw: string | null): TabDef[] {
   for (const def of defaults) if (!seen.has(def.key)) out.push(def)
   return out
 }
+
+/**
+ * Where a BADGED tab should land, keyed by tab key — overriding its own href.
+ *
+ * The Stock badge fires for three different problems and must open the one it
+ * is complaining about: negative stock, then unaccepted counts, then reorder.
+ * Sending a manager to a fixed default while the book says minus four kilos
+ * would make the badge a decoration.
+ *
+ * The KEY and the tab's own URL are still not settings-editable; this is a
+ * server-computed destination for one render, not a second registry.
+ */
+export type TabHrefs = Partial<Record<string, string>>
 
 /** Counts painted on tabs, keyed by tab key. A tab with no entry, or a
  *  count of zero, wears NO badge — a "0" is a thing to read and dismiss

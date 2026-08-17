@@ -52,7 +52,7 @@ export default async function AdjustmentsPage() {
           level="alarm"
           verdict={unaccepted.length === 1 ? 'a count is waiting' : 'counts are waiting'}
           action={{
-            href: `/store/count/${unaccepted[0].count_id}`,
+            href: `/store/stock/count/${unaccepted[0].count_id}`,
             label: `Open the count of ${fmtDate(unaccepted[0].count_date)}`,
           }}
         >
@@ -91,7 +91,7 @@ export default async function AdjustmentsPage() {
             <span className="font-mono text-xs font-semibold text-stone-400">2</span>
             <span>
               Count against the empty book —{' '}
-              <Link href="/store/count/new" className="font-medium text-emerald-700 underline underline-offset-2">
+              <Link href="/store/stock/count/new" className="font-medium text-emerald-700 underline underline-offset-2">
                 Count
               </Link>
               . Everything will show as a surplus, because the book holds nothing yet.
@@ -172,7 +172,7 @@ export default async function AdjustmentsPage() {
                             somebody made on its own. */}
                         {a.count_id !== null ? (
                           <Link
-                            href={`/store/count/${a.count_id}`}
+                            href={`/store/stock/count/${a.count_id}`}
                             className="text-[11px] font-medium text-emerald-700 underline underline-offset-2"
                           >
                             from a count

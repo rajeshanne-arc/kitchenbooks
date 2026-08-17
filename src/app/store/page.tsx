@@ -164,7 +164,7 @@ export default async function StoreHome({
         <div className="mb-4 grid gap-3 sm:grid-cols-3">
           {alarms.length > 0 && (
             <Link
-              href="/store/books/stock"
+              href="/store/stock/on-hand"
               className={`${cardCls} block border-red-300 bg-red-50/50 hover:border-red-400`}
             >
               <h2 className={`${sectionHeadCls} text-red-700`}>Negative stock</h2>
@@ -175,7 +175,7 @@ export default async function StoreHome({
             </Link>
           )}
           {reorderCount > 0 && (
-            <Link href="/store/reorder" className={`${cardCls} block border-amber-300 bg-amber-50/40`}>
+            <Link href="/store/stock/reorder" className={`${cardCls} block border-amber-300 bg-amber-50/40`}>
               <h2 className={sectionHeadCls}>To reorder</h2>
               <p className={`mt-1 text-[26px] ${heroNumCls} text-amber-900`}>{reorderCount}</p>
               <p className="text-xs text-amber-900">at or below their reorder level</p>
@@ -190,6 +190,32 @@ export default async function StoreHome({
           )}
         </div>
       )}
+
+      {/* THE WASTAGE QUICK TILE — and it is load-bearing, not decoration.
+          Loss stopped being a top-level tab and became a view inside Stock.
+          Wastage is chronically under-recorded in every restaurant precisely
+          because it is uncomfortable, so an extra tap costs real data. This
+          keeps the one-click path on the landing page, which is the only
+          reason burying the tab is acceptable at all.
+
+          UNCONDITIONAL, unlike the alarm tiles above: those appear when
+          something is wrong, and this is a door that must always be open.
+          `smoke:phase-a` asserts it is here — if it ever goes, Loss comes
+          back out as a tab. */}
+      <Link
+        href="/store/stock/loss"
+        className={`${cardCls} mb-4 flex items-baseline justify-between gap-3 border-rule bg-field hover:border-stone-400`}
+      >
+        <span>
+          <h2 className={sectionHeadCls}>Record a loss</h2>
+          <p className="mt-1 text-xs text-stone-600">
+            Spoiled, broken, thrown away. Easier to write down now than to explain later.
+          </p>
+        </span>
+        <span aria-hidden className="shrink-0 text-sm text-stone-400">
+          &rarr;
+        </span>
+      </Link>
 
       <div className="grid gap-3 sm:grid-cols-2">
         {/* goods in */}

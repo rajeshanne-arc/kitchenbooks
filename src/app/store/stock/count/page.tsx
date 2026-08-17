@@ -33,6 +33,17 @@ export default async function CountsPage() {
     <section className="mt-4 space-y-4">
       <FirstCountWarning days={historyDays} />
 
+      {/* ADJUSTMENTS lost its own tab in the eight-to-six pass. Accepting a
+          count is what writes one, so this is where a person looks for them —
+          and an adjustment can still stand alone, which is how opening stock
+          is set with no count behind it. */}
+      <p className="text-sm text-stone-600">
+        <Link href="/store/adjustments" className="font-medium text-emerald-700 underline underline-offset-2">
+          Stock adjustments &rarr;
+        </Link>{' '}
+        — what a count corrected in the book, and opening stock set without one.
+      </p>
+
       {/* An unaccepted count is the quiet failure this screen exists to make
           loud: nothing looks broken, and the same variance comes back. */}
       {waiting.length > 0 && (

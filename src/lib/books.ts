@@ -16,7 +16,10 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
   store: [
     { href: '/store/books/bills', label: 'Bills' },
     { href: '/store/books/log', label: 'Store log' },
-    { href: '/store/books/stock', label: 'Stock' },
+    // STOCK MOVED OUT of Books and became a top-level tab with four views.
+    // Keeping an entry here would be a second door to the same component in
+    // the same group — the duplication test says one mount per group, and the
+    // top-level tab is the one that wins. /store/books/stock now redirects.
     { href: '/store/books/purchases', label: 'Daily purchases' },
     // what the vendor billed and did not deliver, and how each vendor does
     // on that over time — the same question from the line and from the year

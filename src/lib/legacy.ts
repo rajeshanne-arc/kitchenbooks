@@ -12,7 +12,9 @@ const FIXED: [from: string, to: string][] = [
   ['/books/vendors', '/store/masters/vendors'],
   ['/books/wastage', '/store/books/wastage'],
   ['/books/issues', '/store/books/issues'],
-  ['/books/counts', '/store/count'],
+  // Chained through the restructure: /store/count is itself retired now, and a
+  // retired URL must land on a LIVE route, never on a second redirect.
+  ['/books/counts', '/store/stock/count'],
   ['/books/items', '/store/masters/items'],
   ['/books/bills', '/store/books/bills'],
   ['/books/store', '/store/books/log'],
@@ -40,7 +42,7 @@ const FIXED: [from: string, to: string][] = [
   ['/pnl', '/owner/pnl'],
   ['/bill', '/store/receive/purchase'],
   ['/issue', '/store/issue'],
-  ['/wastage', '/store/loss'],
+  ['/wastage', '/store/stock/loss'],
   // /cash WAS the day close, and the day close now lives inside Record.
   ['/cash', '/sales/record/close'],
   // Simplification pass: two tabs folded and two duplicate mounts dropped.
@@ -49,6 +51,15 @@ const FIXED: [from: string, to: string][] = [
   ['/accounts/export', '/accounts/registers/purchase'],
   ['/staff/books/sections', '/kitchen/books/sections'],
   ['/staff/books', '/kitchen/books/sections'],
+  // STORE RESTRUCTURE: eight tabs to six. Reorder, Count and Loss stopped
+  // being top-level tabs and became views inside Stock, and Stock came out of
+  // Books to be a tab of its own. Every old URL still lands on the right
+  // VIEW, not merely the right tab — a bookmark that opens the wrong screen
+  // is barely better than a 404.
+  ['/store/reorder', '/store/stock/reorder'],
+  ['/store/count', '/store/stock/count'],
+  ['/store/loss', '/store/stock/loss'],
+  ['/store/books/stock', '/store/stock'],
 ]
 
 /** The Phase-A home of a retired URL, for this role. Null when nothing maps. */
@@ -57,7 +68,7 @@ export function legacyTarget(pathname: string, role: Role): string | null {
 
   // role-aware: mounted in more than one group
   if (clean === '/books/stock' || clean.startsWith('/books/stock/')) {
-    return canAccess(role, '/store/books/stock') ? '/store/books/stock' : '/kitchen/books/stock'
+    return canAccess(role, '/store/stock') ? '/store/stock' : '/kitchen/books/stock'
   }
   if (clean === '/books/sections' || clean.startsWith('/books/sections/')) {
     return canAccess(role, '/kitchen/books/sections') ? '/kitchen/books/sections' : '/staff/books/sections'
@@ -76,4 +87,4 @@ export function legacyTarget(pathname: string, role: Role): string | null {
   return null
 }
 
-export const LEGACY_PREFIXES = ['/books', '/bill', '/issue', '/wastage', '/cash', '/attendance', '/expenses', '/dashboard', '/pnl', '/settings', '/store/payment']
+export const LEGACY_PREFIXES = ['/store/reorder', '/store/count', '/store/loss', '/store/books/stock', '/books', '/bill', '/issue', '/wastage', '/cash', '/attendance', '/expenses', '/dashboard', '/pnl', '/settings', '/store/payment']

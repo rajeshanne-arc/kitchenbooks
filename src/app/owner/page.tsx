@@ -232,7 +232,7 @@ export default async function DashboardPage({
         <Card
           title="Stock alarms"
           source="stock_on_hand"
-          href="/store/books/stock"
+          href="/store/stock/on-hand"
           level="alarm"
           sentence={`${alarms.length} ${plural(alarms.length, 'item has', 'items have')} been issued more than ${plural(alarms.length, 'it was', 'they were')} ever bought. A purchase bill is missing.`}
         >
@@ -248,7 +248,7 @@ export default async function DashboardPage({
         <Card
           title="Stock alarms"
           source="stock_on_hand"
-          href="/store/books/stock"
+          href="/store/stock/on-hand"
           sentence="No item is showing negative stock."
         />
       ),

@@ -2614,3 +2614,66 @@ login redirect is asserted to clear the cookie with `maxAge: 0`.
 
 **Everyone signed in before this deploy is signed out by it.** That is the
 intended behaviour and the whole point of the version bump.
+
+## STORE: eight tabs to six — Dashboard · Issue · Receive · Stock · Masters · Books
+
+Reorder, Count and Loss stopped being top-level tabs and became views inside
+**Stock — On hand | Reorder | Count | Loss**. Adjustments folded in too.
+
+**ISSUE MOVED AHEAD OF RECEIVE.** A store manager issues several times a day
+and receives once, so FREQUENCY sets the order, not the sequence in which
+goods physically arrive. The old order described the warehouse; this one
+describes the job.
+
+**PROMOTING STOCK IS THE POINT, not tidiness.** `stock_on_hand` carries the
+loudest sentence in the app — "more issued than purchased on record, a bill is
+probably missing" — and it was two taps deep inside Books. It is now the third
+tab, so the warning is read daily rather than found. Nothing became a new
+source of truth: every view reads `stock_on_hand`, `reorder_due`,
+`count_variances` and the wastage tables exactly as before, and negative stock
+keeps its red line and its sentence.
+
+**The badge moved to Stock and fires on ANY of three conditions** — negative
+on-hand, counts saved but never accepted, items at or below reorder level —
+in one statement with three scalar subqueries, because it renders with the
+strip on every page in the group and must cost one round trip, not three.
+Tapping it opens **the most serious thing firing**: negative stock, then
+unaccepted counts, then reorder. `TabHrefs` is how a badged tab overrides its
+own destination for one render; the key and the tab's URL are still not
+settings-editable. With a quiet shelf there is no badge and no override, and
+the tab opens On hand.
+
+**THE BRIEF'S SAFETY CONDITION FOR LOSS WAS NOT TRUE, so it was made true.**
+The argument for burying Loss was that "the store dashboard already carries a
+Wastage quick tile". It did not — the dashboard linked to stock, reorder,
+issue, new vendor, pay and indent-prefill, and nothing else. Since the whole
+justification rests on that one-click path existing, the tile was ADDED, and
+`smoke:phase-a` now asserts it is there AND that it is unconditional: the
+alarm tiles appear when something is wrong, but a door has to be open all the
+time. If the tile goes, the gate fails and Loss comes back out as a tab.
+
+**Two doors would have been lost silently, and were not:** Adjustments is
+linked from the Count view (accepting a count is what writes one, and one can
+still stand alone — that is how opening stock is set), and Slow-moving from
+the Reorder view, where it belongs as the same question from the other end.
+
+### THE REORDER TAB'S CHIPS HAD BEEN 404ing ALL ALONG
+
+`{ key: 'reorder', chips: [{ key: 'due' }, { key: 'slow' }] }` built
+`/store/reorder/due` and `/store/reorder/slow`. Neither directory ever
+existed. Both chips 404'd on the live site for as long as that tab has been
+there, and `/store/slow-moving` was orphaned besides — nothing linked to it at
+all.
+
+**`audit:matrix` could not have caught it: chip URLs are BUILT from the tab
+registry (`${base}/${chip.key}`), so they are never literal hrefs in a page,
+and that gate reads literal hrefs.** Same blind spot as `/denied`, which was
+only ever a redirect target. `smoke:phase-a` now walks `src/app` for real
+routes and checks all 33 chips across all six groups against it — verified by
+reintroducing a dead chip and watching the gate name it.
+
+**The gate also caught a CHAINED redirect**, which is its own small law:
+`/books/counts → /store/count` and `/wastage → /store/loss` both pointed at
+URLs that this restructure retired. A retired URL must land on a LIVE route,
+never on a second redirect. Both retargeted; 51 retired URLs now resolve for
+all six roles.

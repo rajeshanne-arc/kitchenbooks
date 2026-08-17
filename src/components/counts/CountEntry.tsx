@@ -131,13 +131,13 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
           makes, on the count&rsquo;s own screen.
         </p>
         <Link
-          href={`/store/count/${saved.count.id}`}
+          href={`/store/stock/count/${saved.count.id}`}
           className="block w-full rounded-xl bg-emerald-700 py-3 text-center text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
         >
           Decide about this count →
         </Link>
         <Link
-          href="/store/count"
+          href="/store/stock/count"
           className="block text-center text-sm font-medium text-stone-500 hover:text-stone-800"
         >
           Back to counts
