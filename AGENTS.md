@@ -2677,3 +2677,80 @@ reintroducing a dead chip and watching the gate name it.
 URLs that this restructure retired. A retired URL must land on a LIVE route,
 never on a second redirect. Both retargeted; 51 retired URLs now resolve for
 all six roles.
+
+## Four forms take the closing form's shape — header + lines
+
+Kitchen loss, store loss and production now look like `/kitchen/shift/closing`:
+header (date · department) + a line table + ＋ Add item + Note + Save. One save
+writes N rows sharing the header's date and section.
+
+**No schema change, and the reason is worth stating:** every one of these
+tables already carries its own date and section ON EACH ROW. A batch is
+therefore N ordinary rows, and nothing about how they are READ changes — no
+parent table, no join, no migration. Where that is not true (kitchen closings)
+a real line table already exists.
+
+**REASON IS PER LINE on both loss forms.** Burnt gravy and expired milk go in
+the same bin on the same night for different reasons, and the reason is what
+makes waste analysis worth anything. This is the one place loss must differ
+from closing. Four write-offs from one shift used to be four saves with the
+department and date re-picked each time.
+
+**Value is computed and read-only, everywhere.** `KitchenComponentHit` gained
+`unit_cost` so a line can show what it is worth AS IT IS TYPED, from the same
+figure the server freezes at save. The chef sees the number and never types
+it; the saved value is still the authority.
+
+### Two premises in the brief that were already true
+
+Worth recording, because both were about to be "added" twice:
+
+- **`kitchen_wastage.qty` was NOT unused.** The form already carried a
+  `component | value` mode toggle — component mode takes a quantity and
+  freezes qty × cost, value-only is the fallback. What reads as "Value only"
+  on the screen is one of two modes. Quantity moved from a mode toggle to a
+  per-line choice; it was not introduced.
+- **`saveProduction` already refused a dish BY NAME**, server-side. The
+  schema comment was accurate. `saveProductions` keeps the check and
+  `smoke:a2` now asserts it exists in the source, because a picker filtered to
+  subs is a courtesy and a form can always be posted to directly.
+
+### NO SESSION ON PRODUCTION, asserted rather than remembered
+
+An indent carries a session because the STORE must match a request to a shift.
+Production has no counterpart doing that, so a session here would be a column
+with no reader — the `issues.session` mistake in reverse. `smoke:a2` asserts
+`productions` has no `session` column and that `indents` still does, so nobody
+adds one by reflex.
+
+### REFILL FROM LAST, and the one place it is dangerous
+
+Production and closing both offer the previous set for that department,
+editable, saving nothing until Save. Worth most on production: a kitchen makes
+broadly the same batches every day. Voided batches are never offered back — a
+cancelled batch is not a suggestion for tomorrow, and both the reversal and
+the row it reverses are excluded.
+
+**Closing is the dangerous one and it is handled in three parts.** A closing
+feeds food cost and COGS, so a chef saving last night's numbers without
+recounting is worse than a blank form, because it looks like a count.
+
+1. The offer is amber, not blue, and says so: "From last night — check every
+   line … anything you do not recount will be wrong in the books rather than
+   merely stale."
+2. Each refilled line remembers the quantity it ARRIVED with.
+3. On the reveal, lines saved with that quantity untouched are counted and
+   named in an alarm-level honesty strip.
+
+**It is said, not blocked, and that is deliberate.** A shelf genuinely can
+hold the same thing two nights running, so blocking would be wrong on real
+data — and worse, it would teach people to nudge a digit to get past it, which
+destroys the signal entirely. The count is a UI honesty matter and is NOT
+stored: nothing in the schema records "this was prefilled", because the
+closing itself is either right or it is re-filed.
+
+*(The brief asked for a proposal before building this. The alternatives
+considered were: storing a `prefilled` flag on the line — rejected, it makes a
+UI fact permanent and the correction path is already re-filing; and blocking
+the save — rejected above. The third option, saying it on the reveal, is what
+shipped.)*

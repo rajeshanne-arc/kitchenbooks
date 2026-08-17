@@ -1,5 +1,10 @@
 import { getRestaurant } from '@/server/queries'
-import { getClosingChecklist, getKitchenSections, getTodaysProductions } from '@/server/kitchen-queries'
+import {
+  getClosingChecklist,
+  getKitchenSections,
+  getLastClosingSet,
+  getTodaysProductions,
+} from '@/server/kitchen-queries'
 import ClosingEntry from '@/components/kitchen/ClosingEntry'
 import { formatMoneyString } from '@/lib/money'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
@@ -17,6 +22,12 @@ export default async function ClosingPage() {
   const todaysProductions = (
     await Promise.all(sections.map((s) => getTodaysProductions(restaurant.id, s.id, today)))
   ).flat()
+  // Last night's winning closing per department, for the refill offer.
+  const lastSets = Object.fromEntries(
+    await Promise.all(
+      sections.map(async (s) => [s.id, await getLastClosingSet(restaurant.id, s.id)] as const),
+    ),
+  )
   const closed = checklist.filter((c) => c.closing_value !== null).length
 
   return (
@@ -29,7 +40,11 @@ export default async function ClosingPage() {
       </header>
 
       <div className="space-y-4">
-        <ClosingEntry sections={sections} todaysProductions={todaysProductions} />
+        <ClosingEntry
+          sections={sections}
+          todaysProductions={todaysProductions}
+          lastSets={lastSets}
+        />
 
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>Tonight so far</h2>

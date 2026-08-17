@@ -35,7 +35,13 @@ import type {
   SaveItemizedClosingResult,
   SaveKitchenWastage2Input,
   SaveKitchenWastageResult,
+  KitchenWastageRow,
+  ProductionRow,
   SaveProductionInput,
+  SaveProductionsInput,
+  SaveProductionsResult,
+  SaveKitchenLossesInput,
+  SaveKitchenLossesResult,
   SaveProductionResult,
   UpdateIndentInput,
   UpdateIndentResult,
@@ -231,6 +237,201 @@ export async function saveKitchenWastage(raw: SaveKitchenWastage2Input): Promise
     const wastage = await getKitchenWastageById(rid, saved.id)
     if (!wastage) throw new KitchenError('Could not verify the save — wastage missing after commit')
     return { ok: true, wastage }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ------------------------------------------- kitchen losses, header + lines
+//
+// The closing form's shape: one header (date · section), N lines, one save.
+// Every kitchen_wastage row already carries its own date and section, so a
+// batch is N ordinary rows — nothing about how they are READ changes.
+//
+// REASON IS PER LINE. Burnt gravy and expired milk go in the same bin on the
+// same night for different reasons, and the reason is the whole value of
+// waste analysis. Value-only survives as a per-line fallback for "half a tray
+// of gravy", where a quantity means nothing — the exception, not the mode.
+
+const KitchenLossesSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  sectionId: z.string().regex(UUID),
+  note: z.string().trim().max(300),
+  lines: z
+    .array(
+      z.discriminatedUnion('kind', [
+        z.object({
+          kind: z.literal('item'),
+          id: z.string().regex(UUID),
+          qty: qtyStr,
+          reason: z.string().trim().min(1).max(60),
+        }),
+        z.object({
+          kind: z.literal('recipe'),
+          id: z.string().regex(UUID),
+          qty: qtyStr,
+          reason: z.string().trim().min(1).max(60),
+        }),
+        z.object({
+          kind: z.literal('none'),
+          value: moneyStr,
+          reason: z.string().trim().min(1).max(60),
+        }),
+      ]),
+    )
+    .min(1, 'A loss needs at least one line')
+    .max(60),
+})
+
+export async function saveKitchenLosses(raw: SaveKitchenLossesInput): Promise<SaveKitchenLossesResult> {
+  try {
+    const input = KitchenLossesSchema.parse(raw)
+    assertRealDate(input.date, 'Loss date')
+    input.lines.forEach((l, i) => {
+      const n = i + 1
+      if (l.kind === 'none') {
+        const v = parseMoney(l.value)
+        if (v === null || v <= 0) throw new KitchenError(`Line ${n}: value must be more than zero`)
+      } else {
+        const q = parseQty(l.qty)
+        if (q === null || q <= 0) throw new KitchenError(`Line ${n}: quantity must be more than zero`)
+      }
+    })
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    await assertKitchenSection(rid, input.sectionId)
+    const by = await enteredBy()
+
+    const saved = await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const ids: string[] = []
+      for (const [i, l] of input.lines.entries()) {
+        let itemId: string | null = null
+        let recipeId: string | null = null
+        let qty: string | null = null
+        let value: string
+        if (l.kind === 'item') {
+          const rows = await tx<{ name: string; issue_cost: string | null }[]>`
+            select ic.name, ic.issue_cost::text as issue_cost
+            from item_costs ic join items it on it.id = ic.item_id
+            where ic.item_id = ${l.id} and ic.restaurant_id = ${rid} and it.status = 'active'`
+          if (!rows[0]) throw new KitchenError(`Line ${i + 1}: item not found`)
+          if (rows[0].issue_cost === null) {
+            throw new KitchenError(
+              `Line ${i + 1}: “${rows[0].name}” has no cost on record — enter its purchase bill first`,
+            )
+          }
+          itemId = l.id
+          qty = l.qty
+          const [v] = await tx<{ v: string }[]>`
+            select (${qty}::numeric * ${rows[0].issue_cost}::numeric)::text as v`
+          value = v.v
+        } else if (l.kind === 'recipe') {
+          const { cost } = await recipeUnitCost(tx, rid, l.id)
+          recipeId = l.id
+          qty = l.qty
+          const [v] = await tx<{ v: string }[]>`
+            select (${qty}::numeric * ${cost}::numeric)::text as v`
+          value = v.v
+        } else {
+          value = l.value
+        }
+        const [row] = await tx<{ id: string }[]>`
+          insert into kitchen_wastage (restaurant_id, section_id, waste_date, item_id, recipe_id, qty,
+                                       value, reason, note, entered_by)
+          values (${rid}, ${input.sectionId}, ${input.date}, ${itemId}, ${recipeId}, ${qty},
+                  ${value}, ${l.reason}, ${input.note === '' ? null : input.note}, ${by})
+          returning id`
+        ids.push(row.id)
+      }
+      return ids
+    })
+
+    const rows: KitchenWastageRow[] = []
+    for (const id of saved) {
+      const w = await getKitchenWastageById(rid, id)
+      if (!w) throw new KitchenError('Could not verify the save — a loss row is missing after commit')
+      rows.push(w)
+    }
+    const total = rows.reduce((n, r) => n + Number(r.value), 0).toFixed(2)
+    return { ok: true, rows, total }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ----------------------------------------------- productions, header + lines
+//
+// NO SESSION FIELD, and the reason belongs in the code rather than in
+// somebody's memory: an INDENT carries a session because the STORE has to
+// match a request to a shift. Production has no counterpart doing that, so a
+// session here would be a column with no reader — the `issues.session`
+// mistake in reverse.
+
+const ProductionsSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  sectionId: z.string().regex(UUID),
+  note: z.string().trim().max(300),
+  lines: z
+    .array(z.object({ recipeId: z.string().regex(UUID), outputQty: qtyStr }))
+    .min(1, 'A production needs at least one line')
+    .max(60),
+})
+
+export async function saveProductions(raw: SaveProductionsInput): Promise<SaveProductionsResult> {
+  try {
+    const input = ProductionsSchema.parse(raw)
+    assertRealDate(input.date, 'Production date')
+    input.lines.forEach((l, i) => {
+      const q = parseQty(l.outputQty)
+      if (q === null || q <= 0) throw new KitchenError(`Line ${i + 1}: output quantity must be more than zero`)
+    })
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    await assertKitchenSection(rid, input.sectionId)
+    const by = await enteredBy()
+
+    const saved = await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const ids: string[] = []
+      for (const [i, l] of input.lines.entries()) {
+        const [recipe] = await tx<{ kind: string; name: string; cost: string | null }[]>`
+          select r.kind, r.name, rc.cost_per_output_unit::text as cost
+          from recipes r
+          left join recipe_costs rc on rc.recipe_id = r.id
+          where r.id = ${l.recipeId} and r.restaurant_id = ${rid} and r.status = 'active'`
+        if (!recipe) throw new KitchenError(`Line ${i + 1}: recipe not found`)
+        // SUBS ONLY, refused BY NAME. The schema comment says the app enforces
+        // this, so the app enforces it — a picker filtered to subs is a
+        // courtesy to the chef, never the check.
+        if (recipe.kind !== 'sub') {
+          throw new KitchenError(
+            `Line ${i + 1}: “${recipe.name}” is a dish — production records batches of SUB-recipes only`,
+          )
+        }
+        if (recipe.cost === null) {
+          throw new KitchenError(`Line ${i + 1}: “${recipe.name}” cannot be costed yet — add its ingredient lines first`)
+        }
+        const [row] = await tx<{ id: string }[]>`
+          insert into productions (restaurant_id, section_id, prod_date, recipe_id, output_qty, unit_cost, note, entered_by)
+          values (${rid}, ${input.sectionId}, ${input.date}, ${l.recipeId}, ${l.outputQty.trim()},
+                  ${recipe.cost}, ${input.note === '' ? null : input.note}, ${by})
+          returning id`
+        ids.push(row.id)
+      }
+      return ids
+    })
+
+    const rows: ProductionRow[] = []
+    for (const id of saved) {
+      const p = await getProduction(rid, id)
+      if (!p) throw new KitchenError('Could not verify the save — a production row is missing after commit')
+      rows.push(p)
+    }
+    const total = rows.reduce((n, r) => n + Number(r.value), 0).toFixed(2)
+    return { ok: true, rows, total }
   } catch (e) {
     return fail(e)
   }

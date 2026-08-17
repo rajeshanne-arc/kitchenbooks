@@ -11,16 +11,30 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { KitchenComponentHit, ProductionRow, SaveItemizedClosingResult, Section } from '@/lib/types'
+import type {
+  KitchenComponentHit,
+  ProductionRow,
+  RefillSet,
+  SaveItemizedClosingResult,
+  Section,
+} from '@/lib/types'
 import { saveItemizedClosing } from '@/server/kitchen-actions'
 import { formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
+import Honesty from '@/components/Honesty'
 import KitchenComponentPicker from './KitchenComponentPicker'
 import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
 
-type Line = { key: number; component: KitchenComponentHit | null; qty: string }
+type Line = {
+  key: number
+  component: KitchenComponentHit | null
+  qty: string
+  /** the quantity this line ARRIVED with from a refill, if it did. Kept so
+   *  the reveal can say which lines were saved without being touched. */
+  prefillQty?: string
+}
 const newLine = (key: number): Line => ({ key, component: null, qty: '' })
 const cleanQty = (raw: string) => {
   const cleaned = raw.replace(/[^\d.]/g, '')
@@ -32,9 +46,12 @@ const cleanQty = (raw: string) => {
 export default function ClosingEntry({
   sections,
   todaysProductions,
+  lastSets,
 }: {
   sections: Section[]
   todaysProductions: ProductionRow[]
+  /** last winning closing per section id, for refill — resolved server-side */
+  lastSets?: Record<string, RefillSet>
 }) {
   const businessToday = useBusinessToday()
   const router = useRouter()
@@ -47,6 +64,7 @@ export default function ClosingEntry({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveItemizedClosingResult, { ok: true }> | null>(null)
+  const [savedUntouched, setSavedUntouched] = useState(0)
 
   const patchLine = (key: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
@@ -61,6 +79,42 @@ export default function ClosingEntry({
   const lineOk = (l: Line) => l.component !== null && parseQty(l.qty.trim()) !== null && Number(l.qty) > 0
   const canSave = !saving && sectionId !== '' && filled.every(lineOk)
   const isEmptyClosing = filled.length === 0
+
+  const last = sectionId === '' ? null : (lastSets?.[sectionId] ?? null)
+
+  /** Lines saved exactly as they arrived from the refill.
+   *
+   *  A closing feeds food cost and COGS, so prefilling it carries a real
+   *  risk: a chef can save last night's numbers without recounting, which is
+   *  worse than a blank form because it looks like a count. It is NOT
+   *  blocked — a shelf genuinely can hold the same thing two nights running,
+   *  and blocking would teach people to nudge a digit to get past it. It is
+   *  SAID, on the reveal, where it can still be re-filed. */
+  const untouched = lines.filter(
+    (l) => l.prefillQty !== undefined && l.qty.trim() === l.prefillQty && l.component !== null,
+  ).length
+
+  /** REFILL FROM LAST NIGHT. Editable, saves nothing until Save. */
+  function refill() {
+    if (last === null) return
+    setLines(
+      last.lines.map((l, i) => ({
+        key: nextKey + i,
+        component: {
+          kind: l.kind,
+          id: l.id,
+          code: l.code,
+          name: l.name,
+          unit_name: l.unit_name,
+          has_cost: true,
+          unit_cost: null,
+        },
+        qty: l.qty,
+        prefillQty: l.qty,
+      })),
+    )
+    setNextKey((k) => k + last.lines.length)
+  }
 
   const suggestions =
     sectionId === ''
@@ -79,6 +133,8 @@ export default function ClosingEntry({
       name: p.recipe_name,
       unit_name: p.output_unit,
       has_cost: true,
+      // the batch's own frozen cost — the same figure the closing will freeze
+      unit_cost: p.unit_cost,
     }
     setLines((ls) => {
       const empty = ls.findIndex((l) => l.component === null && l.qty.trim() === '')
@@ -106,6 +162,7 @@ export default function ClosingEntry({
         }),
       })
       if (res.ok) {
+        setSavedUntouched(untouched)
         setSaved(res)
         router.refresh()
       } else {
@@ -161,6 +218,14 @@ export default function ClosingEntry({
             ))}
           </ul>
         )}
+        {savedUntouched > 0 && (
+          <Honesty level="alarm" verdict="not recounted" compact>
+            {savedUntouched} of {saved.lines.length}{' '}
+            {savedUntouched === 1 ? 'line was' : 'lines were'} saved exactly as last night&apos;s
+            closing, unchanged. If the shelf was not actually recounted, file this closing again —
+            food cost and cost of goods both read this number.
+          </Honesty>
+        )}
         <p className="mt-2 text-xs text-stone-400">costs frozen at save · header = sum of lines · kitchen_closing_current</p>
         <button
           type="button"
@@ -206,6 +271,26 @@ export default function ClosingEntry({
           </div>
         </div>
       </section>
+
+      {last !== null && last.lines.length > 0 && (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-amber-900">
+            From last night — check every line
+          </h3>
+          <p className="mt-1 text-sm text-amber-900">
+            {fmtDate(last.on)} — {last.lines.length} {last.lines.length === 1 ? 'line' : 'lines'}.
+            This is a starting point, not a count: a closing feeds food cost and cost of goods, so
+            anything you do not recount will be wrong in the books rather than merely stale.
+          </p>
+          <button
+            type="button"
+            onClick={refill}
+            className="mt-2 rounded-full border border-amber-400 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:border-amber-600"
+          >
+            ＋ Start from last night
+          </button>
+        </section>
+      )}
 
       {suggestions.length > 0 && (
         <section className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4">

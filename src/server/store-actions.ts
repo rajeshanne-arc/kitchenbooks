@@ -29,7 +29,10 @@ import type {
   SaveIssueResult,
   SaveReturnInput,
   SaveReturnResult,
+  SaveStoreLossesInput,
+  SaveStoreLossesResult,
   SaveWastageInput,
+  WastageDetail,
   SaveWastageResult,
   VoidIssueResult,
   VoidWastageResult,
@@ -322,6 +325,88 @@ export async function saveWastage(raw: SaveWastageInput): Promise<SaveWastageRes
     if (!wastage) throw new StoreError('Could not verify the save — wastage row missing after commit')
     const [stock] = await getStockSnaps(rid, [input.itemId])
     return { ok: true, wastage, stock }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// --------------------------------------------- store losses, header + lines
+//
+// The closing form's shape. One header (date), N lines, one save — every
+// `wastage` row already carries its own date, so a batch is N ordinary rows
+// and nothing about how they are read changes.
+//
+// REASON IS PER LINE. Spoilage and breakage happen in the same bin on the
+// same day for different reasons, and the reason is what makes the waste
+// report worth reading. Cost stays attached automatically: unit_cost is
+// frozen from item_costs.issue_cost at save and `value` is GENERATED, so the
+// store manager types a quantity and never a rupee.
+
+const StoreLossesSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  note: z.string().trim().max(300),
+  lines: z
+    .array(
+      z.object({
+        itemId: z.string().regex(UUID),
+        qty: z.string().trim(),
+        reason: z.string().trim().min(1, 'Every line needs a reason').max(60),
+        note: z.string().trim().max(200),
+      }),
+    )
+    .min(1, 'A loss needs at least one line')
+    .max(60),
+})
+
+export async function saveStoreLosses(raw: SaveStoreLossesInput): Promise<SaveStoreLossesResult> {
+  try {
+    const input = StoreLossesSchema.parse(raw)
+    assertRealDate(input.date, 'Wastage date')
+    input.lines.forEach((l, i) => {
+      const q = parseQty(l.qty)
+      if (q === null || q <= 0) throw new StoreError(`Line ${i + 1}: quantity must be more than zero`)
+    })
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+
+    const saved = await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const ids: string[] = []
+      for (const [i, l] of input.lines.entries()) {
+        const rows = await tx<{ name: string; issue_cost: string | null }[]>`
+          select ic.name, ic.issue_cost::text as issue_cost
+          from item_costs ic join items it on it.id = ic.item_id
+          where ic.item_id = ${l.itemId} and ic.restaurant_id = ${rid} and it.status = 'active'`
+        if (!rows[0]) throw new StoreError(`Line ${i + 1}: item not found`)
+        if (rows[0].issue_cost === null) {
+          throw new StoreError(
+            `Line ${i + 1}: “${rows[0].name}” has no cost on record — enter its purchase bill first`,
+          )
+        }
+        // The line's own note wins; the header note is the fallback, so a
+        // shared explanation does not have to be typed on every row.
+        const note = l.note !== '' ? l.note : input.note
+        const [w] = await tx<{ id: string }[]>`
+          insert into wastage (restaurant_id, waste_date, item_id, qty, unit_cost, reason, note, entered_by)
+          values (${rid}, ${input.date}, ${l.itemId}, ${l.qty.trim()}, ${rows[0].issue_cost},
+                  ${l.reason}, ${note === '' ? null : note}, ${by})
+          returning id`
+        ids.push(w.id)
+      }
+      return ids
+    })
+
+    const rows: WastageDetail[] = []
+    for (const id of saved) {
+      const w = await getWastage(rid, id)
+      if (!w) throw new StoreError('Could not verify the save — a wastage row is missing after commit')
+      rows.push(w)
+    }
+    const stock = await getStockSnaps(rid, [...new Set(input.lines.map((l) => l.itemId))])
+    const total = rows.reduce((n, r) => n + Number(r.value), 0).toFixed(2)
+    return { ok: true, rows, stock, total }
   } catch (e) {
     return fail(e)
   }

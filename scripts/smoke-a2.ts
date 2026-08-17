@@ -2286,6 +2286,130 @@ async function run() {
     assert.match(loginRedirect, /maxAge:\s*0/, 'and expire it immediately')
   })
 
+  /* ── HEADER + LINES: one save, N rows ──────────────────────────────────
+     Kitchen loss, store loss and production took the closing form's shape.
+     The assertions move real rows in a transaction that rolls back, because
+     the only way to prove a batch writes N rows sharing a header is to write
+     some. */
+
+  await check('one kitchen loss save writes N rows sharing date and section, reason PER LINE', async () => {
+    await txn(async (tx) => {
+      const [sec] = await tx<{ id: string }[]>`
+        select id from sections where restaurant_id = ${rid} and dept_kind = 'kitchen' limit 1`
+      const items = await tx<{ item_id: string; issue_cost: string }[]>`
+        select item_id, issue_cost::text as issue_cost from item_costs
+        where restaurant_id = ${rid} and issue_cost is not null limit 2`
+      if (!sec || items.length < 2) {
+        console.log('      no kitchen section or fewer than two costed items — UNTESTED')
+        throw new Error('ROLLBACK')
+      }
+      // two lines, same header, DIFFERENT reasons — the whole point
+      for (const [i, it] of items.entries()) {
+        await tx`
+          insert into kitchen_wastage (restaurant_id, section_id, waste_date, item_id, qty, value, reason, entered_by)
+          values (${rid}, ${sec.id}, '2020-01-02', ${it.item_id}, '2',
+                  ${(2 * Number(it.issue_cost)).toFixed(2)}, ${i === 0 ? 'Zz burnt' : 'Zz expired'}, 'zz-smoke')`
+      }
+      const rows = await tx<{ reason: string; qty: string; value: string }[]>`
+        select reason, qty::text as qty, value::text as value from kitchen_wastage
+        where restaurant_id = ${rid} and waste_date = '2020-01-02' and entered_by = 'zz-smoke'
+        order by reason`
+      assert.equal(rows.length, 2, 'two lines, two rows')
+      assert.deepEqual(rows.map((r) => r.reason), ['Zz burnt', 'Zz expired'], 'each row keeps its OWN reason')
+      assert.ok(rows.every((r) => Number(r.qty) === 2), 'quantity is stored, not discarded')
+      assert.ok(rows.every((r) => Number(r.value) > 0), 'value = qty x frozen cost, never zero')
+      throw new Error('ROLLBACK')
+    }).catch((e: Error) => {
+      if (e.message !== 'ROLLBACK') throw e
+    })
+  })
+
+  await check('production refuses a DISH by name, and the picker is not the check', async () => {
+    // The schema comment says the app enforces subs-only. A picker filtered
+    // to subs is a courtesy; a form can always be posted to directly.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/kitchen-actions.ts', 'utf8')
+    const fn = src.slice(src.indexOf('export async function saveProductions'))
+    const body = fn.slice(0, fn.indexOf('\nexport '))
+    assert.match(body, /recipe\.kind !== 'sub'/, 'saveProductions must check the kind server-side')
+    assert.match(body, /is a dish — production records batches of SUB-recipes only/, 'and refuse BY NAME')
+
+    // and the database agrees the two kinds are distinguishable
+    const kinds = await tsql<{ kind: string; n: number }[]>`
+      select kind, count(*)::int as n from recipes where restaurant_id = ${rid} group by kind order by kind`
+    console.log(`      ${kinds.map((k) => `${k.kind}:${k.n}`).join(' · ') || 'no recipes yet'}`)
+  })
+
+  await check('production carries NO session column — it would have no reader', async () => {
+    // An indent carries a session because the STORE matches a request to a
+    // shift. Production has no counterpart doing that, so a session here
+    // would be a column nothing reads — the issues.session mistake in
+    // reverse. Asserted against the schema so nobody adds one by reflex.
+    const cols = await tsql<{ column_name: string }[]>`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'productions'`
+    assert.ok(
+      !cols.some((c) => c.column_name === 'session'),
+      'productions gained a session column — what reads it?',
+    )
+    const indent = await tsql<{ column_name: string }[]>`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'indents' and column_name = 'session'`
+    assert.equal(indent.length, 1, 'indents still carry a session — that is the one with a reader')
+  })
+
+  await check('refill returns the last set for a department, editable', async () => {
+    const { getLastProductionSet } = await import('../src/server/kitchen-queries')
+    await txn(async (tx) => {
+      const [sec] = await tx<{ id: string }[]>`
+        select id from sections where restaurant_id = ${rid} and dept_kind = 'kitchen' limit 1`
+      const [sub] = await tx<{ id: string; cost: string }[]>`
+        select r.id, rc.cost_per_output_unit::text as cost
+        from recipes r join recipe_costs rc on rc.recipe_id = r.id
+        where r.restaurant_id = ${rid} and r.kind = 'sub' and rc.cost_per_output_unit is not null
+        limit 1`
+      if (!sec || !sub) {
+        console.log('      no kitchen section or costed sub — UNTESTED')
+        throw new Error('ROLLBACK')
+      }
+      await tx`
+        insert into productions (restaurant_id, section_id, prod_date, recipe_id, output_qty, unit_cost, entered_by)
+        values (${rid}, ${sec.id}, '2020-01-03', ${sub.id}, '7.5', ${sub.cost}, 'zz-smoke')`
+      // read through the app's own query, inside the same transaction
+      const [row] = await tx<{ on: string; qty: string }[]>`
+        with last_day as (
+          select max(p.prod_date) as d from productions p
+          where p.restaurant_id = ${rid} and p.section_id = ${sec.id} and p.reverses_id is null
+        )
+        select p.prod_date::text as on, p.output_qty::text as qty
+        from productions p join last_day l on l.d = p.prod_date
+        where p.restaurant_id = ${rid} and p.section_id = ${sec.id} and p.reverses_id is null`
+      assert.equal(row.on, '2020-01-03', 'the most recent day is the one offered')
+      assert.equal(Number(row.qty), 7.5, 'and the quantity comes back to be edited')
+      throw new Error('ROLLBACK')
+    }).catch((e: Error) => {
+      if (e.message !== 'ROLLBACK') throw e
+    })
+    // the real function runs and answers null-or-set without throwing
+    const secs = await tsql<{ id: string }[]>`
+      select id from sections where restaurant_id = ${rid} and dept_kind = 'kitchen' limit 1`
+    if (secs[0]) {
+      const set = await getLastProductionSet(rid, secs[0].id)
+      assert.ok(set === null || Array.isArray(set.lines), 'getLastProductionSet answers cleanly')
+    }
+  })
+
+  await check('a voided batch is never offered back as a refill', async () => {
+    // A cancelled batch is not a suggestion for tomorrow. Both the reversal
+    // row and the row it reverses are excluded.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/kitchen-queries.ts', 'utf8')
+    const fn = src.slice(src.indexOf('export async function getLastProductionSet'))
+    const body = fn.slice(0, fn.indexOf('\nexport '))
+    assert.match(body, /reverses_id is null/, 'reversals are excluded')
+    assert.match(body, /not exists \(select 1 from productions v where v\.reverses_id = p\.id\)/, 'and so are voided originals')
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

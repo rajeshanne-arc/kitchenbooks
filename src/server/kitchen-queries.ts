@@ -22,6 +22,7 @@ import type {
   ProductionRow,
   Section,
   WasteByReasonRow,
+  RefillSet,
 } from '@/lib/types'
 
 /** The stock-holding sections a chef closes: Kitchen and Bar org units. */
@@ -239,7 +240,8 @@ export async function searchKitchenComponents(restaurantId: string, q: string): 
   const like = `%${q}%`
   const prefix = `${q}%`
   const items = await tsql<Omit<KitchenComponentHit, 'kind'>[]>`
-    select i.id, i.code, i.name, u.name as unit_name, (ic.issue_cost is not null) as has_cost
+    select i.id, i.code, i.name, u.name as unit_name, (ic.issue_cost is not null) as has_cost,
+           ic.issue_cost::text as unit_cost
     from items i
     join units u on u.code = i.purchase_unit
     left join item_costs ic on ic.item_id = i.id
@@ -250,7 +252,8 @@ export async function searchKitchenComponents(restaurantId: string, q: string): 
   const recipes = await tsql<KitchenComponentHit[]>`
     select case when r.kind = 'sub' then 'sub' else 'dish' end as kind,
            r.id, r.code, r.name, u.name as unit_name,
-           (case when r.kind = 'sub' then rc.cost_per_output_unit else dc.dish_cost end is not null) as has_cost
+           (case when r.kind = 'sub' then rc.cost_per_output_unit else dc.dish_cost end is not null) as has_cost,
+           (case when r.kind = 'sub' then rc.cost_per_output_unit else dc.dish_cost end)::text as unit_cost
     from recipes r
     join units u on u.code = r.output_unit
     left join recipe_costs rc on rc.recipe_id = r.id
@@ -384,4 +387,111 @@ export async function getLastIndentFor(
     order by indent_date desc, created_at desc
     limit 1`
   return rows[0]?.id ?? null
+}
+
+/* ── REFILL FROM LAST ──────────────────────────────────────────────────────
+   The same mechanic the indent already has: load the most recent set for
+   this department, put it on screen editable, and write nothing until Save.
+
+   Worth most on production — a kitchen makes broadly the same batches every
+   day. Worth nearly as much on closing, where last night is the best first
+   guess at tonight and the chef corrects rather than starting blank at
+   midnight.
+
+   Reversals and voided rows are excluded: a batch that was cancelled is not
+   a suggestion for tomorrow. */
+
+/** The most recent day this department recorded production, and what it made. */
+export async function getLastProductionSet(
+  restaurantId: string,
+  sectionId: string,
+): Promise<RefillSet> {
+  const rows = await tsql<
+    { on: string; id: string; code: string; name: string; unit_name: string; qty: string }[]
+  >`
+    with last_day as (
+      select max(p.prod_date) as d
+      from productions p
+      where p.restaurant_id = ${restaurantId} and p.section_id = ${sectionId}
+        and p.reverses_id is null
+        and not exists (select 1 from productions v where v.reverses_id = p.id)
+    )
+    select p.prod_date::text as on, r.id, r.code, r.name,
+           coalesce(r.output_unit, 'unit') as unit_name,
+           p.output_qty::text as qty
+    from productions p
+    join recipes r on r.id = p.recipe_id
+    join last_day l on l.d = p.prod_date
+    where p.restaurant_id = ${restaurantId} and p.section_id = ${sectionId}
+      and p.reverses_id is null
+      and not exists (select 1 from productions v where v.reverses_id = p.id)
+    order by r.name asc`
+  if (rows.length === 0) return null
+  return {
+    on: rows[0].on,
+    lines: rows.map((r) => ({
+      kind: 'sub' as const,
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      unit_name: r.unit_name,
+      qty: r.qty,
+    })),
+  }
+}
+
+/** The most recent closing this department filed, and what it held.
+ *
+ *  Only the WINNING filing for that date — a closing is re-filed to correct
+ *  it, and suggesting a superseded one would hand back the number somebody
+ *  already decided was wrong. */
+export async function getLastClosingSet(
+  restaurantId: string,
+  sectionId: string,
+): Promise<RefillSet> {
+  const rows = await tsql<
+    {
+      on: string
+      kind: 'item' | 'sub' | 'dish'
+      id: string
+      code: string
+      name: string
+      unit_name: string
+      qty: string
+    }[]
+  >`
+    with winner as (
+      select c.id, c.close_date
+      from kitchen_closings c
+      where c.restaurant_id = ${restaurantId} and c.section_id = ${sectionId}
+      order by c.close_date desc, c.created_at desc
+      limit 1
+    )
+    select w.close_date::text as on,
+           case when cl.component_item_id is not null then 'item'
+                when r.kind = 'sub' then 'sub' else 'dish' end as kind,
+           coalesce(cl.component_item_id, cl.component_recipe_id)::text as id,
+           coalesce(i.code, r.code) as code,
+           coalesce(i.name, r.name) as name,
+           coalesce(u.name, r.output_unit, 'unit') as unit_name,
+           cl.qty::text as qty
+    from kitchen_closing_lines cl
+    join winner w on w.id = cl.closing_id
+    left join items i on i.id = cl.component_item_id
+    left join units u on u.code = i.stock_unit
+    left join recipes r on r.id = cl.component_recipe_id
+    where cl.restaurant_id = ${restaurantId}
+    order by name asc`
+  if (rows.length === 0) return null
+  return {
+    on: rows[0].on,
+    lines: rows.map((r) => ({
+      kind: r.kind,
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      unit_name: r.unit_name,
+      qty: r.qty,
+    })),
+  }
 }

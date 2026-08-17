@@ -1316,6 +1316,12 @@ export type KitchenComponentHit = {
   name: string
   unit_name: string
   has_cost: boolean
+  /** The frozen-at-save cost, so a line can show what it is worth AS IT IS
+   *  TYPED. Null when the component cannot be costed yet — the form shows a
+   *  dash rather than a confident zero, and the server refuses the save with
+   *  the component named. The authority is still the value frozen at save;
+   *  this is the same figure read a moment earlier. */
+  unit_cost: string | null
 }
 
 export type ClosingLineInput = { kind: 'item' | 'sub' | 'dish'; id: string; qty: string }
@@ -2449,3 +2455,63 @@ export type VendorPerformanceRow = {
   unsettled: number
   returned_value: string
 }
+
+// ---------- Header + lines: four forms, one shape (phase: batch entry) ----------
+//
+// The closing form's shape — header (date · section) + a line table + Add
+// item + Note + Save — applied to kitchen loss, store loss and production.
+// One save writes N rows sharing the header's date and section. No schema
+// change: every one of these tables already carries its own date and section
+// on each row, which is why they can be written as a batch and still be read
+// one row at a time.
+
+/** One line of a kitchen loss.
+ *
+ *  REASON IS PER LINE, not per header. Burnt gravy and expired milk go in the
+ *  same bin on the same night for different reasons, and the reason is what
+ *  makes waste analysis worth anything. This is the one place the loss forms
+ *  must differ from closing. */
+export type KitchenLossLineInput =
+  | { kind: 'item'; id: string; qty: string; reason: string }
+  | { kind: 'recipe'; id: string; qty: string; reason: string }
+  /** value-only, for "half a tray of gravy" where a quantity means nothing */
+  | { kind: 'none'; value: string; reason: string }
+
+export type SaveKitchenLossesInput = {
+  date: string
+  sectionId: string
+  note: string
+  lines: KitchenLossLineInput[]
+}
+export type SaveKitchenLossesResult =
+  | { ok: true; rows: KitchenWastageRow[]; total: string }
+  | { ok: false; error: string }
+
+export type StoreLossLineInput = { itemId: string; qty: string; reason: string; note: string }
+export type SaveStoreLossesInput = { date: string; note: string; lines: StoreLossLineInput[] }
+export type SaveStoreLossesResult =
+  | { ok: true; rows: WastageDetail[]; stock: StockSnap[]; total: string }
+  | { ok: false; error: string }
+
+export type ProductionLineInput = { recipeId: string; outputQty: string }
+export type SaveProductionsInput = {
+  date: string
+  sectionId: string
+  note: string
+  lines: ProductionLineInput[]
+}
+export type SaveProductionsResult =
+  | { ok: true; rows: ProductionRow[]; total: string }
+  | { ok: false; error: string }
+
+/** One line of "what this department made / held last time", for refill.
+ *  Quantities come back editable; nothing is written until Save. */
+export type RefillLine = {
+  kind: 'item' | 'sub' | 'dish'
+  id: string
+  code: string
+  name: string
+  unit_name: string
+  qty: string
+}
+export type RefillSet = { on: string; lines: RefillLine[] } | null

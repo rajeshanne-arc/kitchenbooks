@@ -1,5 +1,5 @@
 import { getRestaurant } from '@/server/queries'
-import { getKitchenSections, listProductions } from '@/server/kitchen-queries'
+import { getKitchenSections, getLastProductionSet, listProductions } from '@/server/kitchen-queries'
 import { listSubCosts } from '@/server/recipes-queries'
 import ProductionEntry from '@/components/kitchen/ProductionEntry'
 import ProductionList from '@/components/kitchen/ProductionList'
@@ -15,6 +15,15 @@ export default async function ProductionPage() {
     listProductions(restaurant.id),
   ])
 
+  // REFILL FROM LAST, resolved per department on the server so the chef sees
+  // the offer the moment a department is picked rather than after a round
+  // trip. One small read per department, and there are nine.
+  const lastSets = Object.fromEntries(
+    await Promise.all(
+      sections.map(async (s) => [s.id, await getLastProductionSet(restaurant.id, s.id)] as const),
+    ),
+  )
+
   return (
     <>
       <header className="pb-4">
@@ -23,7 +32,11 @@ export default async function ProductionPage() {
       </header>
 
       <div className="space-y-4">
-        <ProductionEntry sections={sections} subs={subs.filter((s) => s.status === 'active')} />
+        <ProductionEntry
+          sections={sections}
+          subs={subs.filter((s) => s.status === 'active')}
+          lastSets={lastSets}
+        />
         <ProductionList rows={recent} />
       </div>
     </>
