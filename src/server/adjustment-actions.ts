@@ -30,14 +30,16 @@ import { noteListSuggestion } from '@/server/settings-actions'
 import {
   AdjustmentRefusal,
   assertAdjustableItem,
-  getAdjustment,
   getCountAcceptance,
 } from '@/server/adjustment-queries'
-import type { AcceptCountResult, AdjustmentInput, AdjustmentResult } from '@/lib/types'
+import type {
+  AcceptCountResult,
+  SaveAdjustmentsInput,
+  SaveAdjustmentsResult,
+} from '@/lib/types'
 import type { Role } from '@/lib/roles'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 /** signed, because a correction goes both ways — the shelf can hold more
  *  than the book says as easily as less */
 const SIGNED_QTY = /^-?\d{1,5}(\.\d{1,3})?$/
@@ -180,13 +182,21 @@ export async function acceptCount(countId: string): Promise<AcceptCountResult> {
 
 // ──────────────────────────── a standalone adjustment ─────────────────────
 
-const AdjustmentSchema = z.object({
-  date: z.string().regex(DATE_RE),
-  itemId: z.string().regex(UUID),
-  qty: z.string().trim().regex(SIGNED_QTY, 'plain quantity, up to 3 decimals, minus for a shortfall'),
-  reason: z.string().trim().min(1, 'Say why the book is being corrected').max(60),
+const AdjustmentsSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  reason: z.string().trim().min(1, 'A reason is required').max(60),
   note: z.string().trim().max(300),
+  lines: z
+    .array(
+      z.object({
+        itemId: z.string().regex(UUID),
+        qty: z.string().regex(SIGNED_QTY, 'plain quantity, up to 3 decimals, minus for a shortfall'),
+      }),
+    )
+    .min(1, 'Nothing to correct')
+    .max(200),
 })
+
 
 function assertRealDate(s: string, label: string) {
   const d = new Date(`${s}T00:00:00Z`)
@@ -207,45 +217,66 @@ function assertRealDate(s: string, label: string) {
  * would stop the work, and the person holding the shelf cannot wait for an
  * owner to log in.
  */
-export async function saveAdjustment(raw: AdjustmentInput): Promise<AdjustmentResult> {
+export async function saveAdjustments(raw: SaveAdjustmentsInput): Promise<SaveAdjustmentsResult> {
   try {
-    const input = AdjustmentSchema.parse(raw)
+    const input = AdjustmentsSchema.parse(raw)
     assertRealDate(input.date, 'Adjustment date')
-    // Zero is not a correction. Unlike a count, where 0 is a real answer,
-    // an adjustment of nothing says nothing and would sit in the log
-    // implying something happened.
-    if (Number(input.qty) === 0) {
-      throw new AdjustmentRefusal('A correction of zero corrects nothing — type the difference, minus for a shortfall')
+
+    // Zero is not a correction. Unlike a count, where 0 is a real answer, an
+    // adjustment of nothing says nothing and would sit in the log implying
+    // something happened. Checked PER LINE.
+    input.lines.forEach((l, i) => {
+      if (Number(l.qty) === 0) {
+        throw new AdjustmentRefusal(
+          `Line ${i + 1}: a correction of zero corrects nothing — type the difference, minus for a shortfall`,
+        )
+      }
+    })
+
+    // ONE ITEM ONCE PER BATCH. `created_at` defaults to now(), the
+    // TRANSACTION timestamp, which does not advance within a transaction — so
+    // two corrections of the same item written together tie, and acceptCount's
+    // "everything already corrected since this count was frozen" arithmetic
+    // cannot order them. Refusing here keeps that sum decidable.
+    const seen = new Set<string>()
+    for (const l of input.lines) {
+      if (seen.has(l.itemId)) {
+        throw new AdjustmentRefusal('The same item is listed twice — combine it into one line')
+      }
+      seen.add(l.itemId)
     }
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await actor(['store', 'manager', 'owner'], 'Correcting the book')
 
+    // OUTSIDE the transaction, deliberately: noteListSuggestion opens its own
+    // statement, and a tsql inside a txn() callback holds one connection while
+    // waiting for a second — the deadlock the tenancy gate exists to refuse.
     const reasons = await getList(rid, 'adjustment_reason')
     if (!reasons.some((r) => r.toLowerCase() === input.reason.toLowerCase())) {
       await noteListSuggestion(rid, 'adjustment_reason', input.reason, by)
     }
 
-    const saved = await txn(async (tx) => {
+    await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
-      // The cost is snapshotted server-side, full precision, inside the
-      // transaction — the store never sees or types a rate on this screen,
-      // exactly as on an issue.
-      const item = await assertAdjustableItem(tx, rid, input.itemId)
-      const [row] = await tx<{ id: string }[]>`
-        insert into stock_adjustments
-          (restaurant_id, adj_date, item_id, qty, unit_cost, reason, count_id, note, entered_by)
-        values (${rid}, ${input.date}, ${item.id}, ${input.qty}::numeric, ${item.unitCost}::numeric,
-                ${input.reason}, null, ${input.note === '' ? null : input.note}, ${by})
-        returning id`
-      if (!row) throw new AdjustmentRefusal('The adjustment could not be saved')
-      return row.id
+      for (const l of input.lines) {
+        // The cost is snapshotted server-side, full precision, inside the
+        // transaction — the store never sees or types a rate on this screen,
+        // exactly as on an issue. assertAdjustableItem names the item when it
+        // has no cost yet, so the refusal is readable in a batch.
+        const item = await assertAdjustableItem(tx, rid, l.itemId)
+        const [row] = await tx<{ id: string }[]>`
+          insert into stock_adjustments
+            (restaurant_id, adj_date, item_id, qty, unit_cost, reason, count_id, note, entered_by)
+          values (${rid}, ${input.date}, ${item.id}, ${l.qty}::numeric, ${item.unitCost}::numeric,
+                  ${input.reason}, null, ${input.note === '' ? null : input.note}, ${by})
+          returning id`
+        if (!row) throw new AdjustmentRefusal('The adjustment could not be saved')
+      }
     })
 
-    const adjustment = await getAdjustment(rid, saved)
-    if (!adjustment) throw new AdjustmentRefusal('Could not verify the save — the adjustment is missing after commit')
-    return { ok: true }
+    return { ok: true, count: input.lines.length }
   } catch (e) {
     return fail(e)
   }

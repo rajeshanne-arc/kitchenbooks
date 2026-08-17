@@ -2351,6 +2351,28 @@ export type AdjustmentInput = {
 
 export type AdjustmentResult = { ok: true } | { ok: false; error: string }
 
+/** One corrected item. Signed: minus is a shortfall. */
+export type AdjustmentLineInput = { itemId: string; qty: string }
+
+/**
+ * Header + lines, because OPENING STOCK IS INHERENTLY MANY ITEMS AT ONCE —
+ * and it is the flow every new restaurant hits first, before anyone has any
+ * patience for the app.
+ *
+ * The reason and note are HEADER fields here, unlike the loss forms where the
+ * reason is per line. The difference is real: two things in one bin are lost
+ * for two different reasons, but a batch of corrections is one EVENT — a
+ * stocktake, an opening balance, a found crate. Two reasons means two events,
+ * which is two saves.
+ */
+export type SaveAdjustmentsInput = {
+  date: string
+  reason: string
+  note: string
+  lines: AdjustmentLineInput[]
+}
+export type SaveAdjustmentsResult = { ok: true; count: number } | { ok: false; error: string }
+
 /** ACCEPTING A VARIANCE IS A JUDGEMENT, NOT A CONSEQUENCE. A variance can
  *  be a counting error as easily as a stock error, so the book is never
  *  corrected automatically — a person accepts the count, and that writes

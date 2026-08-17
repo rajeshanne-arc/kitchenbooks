@@ -14,22 +14,38 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { IssuableItemHit } from '@/lib/types'
-import { saveAdjustment } from '@/server/adjustment-actions'
+import { saveAdjustments } from '@/server/adjustment-actions'
 import { toast } from '@/components/Toasts'
 import { parseQty } from '@/lib/money'
 import IssueItemPicker from '@/components/store/IssueItemPicker'
-import { btnCls, cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
+import {
+  btnCls,
+  cardCls,
+  dataTableCls,
+  fieldLabelCls,
+  inputCls,
+  numCls,
+  sectionHeadCls,
+  selectCls,
+  tdCls,
+  tdNumCls,
+  thCls,
+  thNumCls,
+  trCls,
+} from '@/components/ui'
 import { useBusinessToday } from '@/components/BusinessDay'
 
 const OTHER = '__other__'
+
+type Line = { key: number; item: IssuableItemHit | null; direction: 'onto' | 'off'; qty: string }
+const newLine = (key: number): Line => ({ key, item: null, direction: 'onto', qty: '' })
 
 export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
   const businessToday = useBusinessToday()
   const router = useRouter()
   const [date, setDate] = useState(businessToday)
-  const [item, setItem] = useState<IssuableItemHit | null>(null)
-  const [direction, setDirection] = useState<'onto' | 'off'>('onto')
-  const [qty, setQty] = useState('')
+  const [lines, setLines] = useState<Line[]>([newLine(1)])
+  const [nextKey, setNextKey] = useState(2)
   const [picked, setPicked] = useState(reasons.length === 0 ? OTHER : '')
   const [typedReason, setTypedReason] = useState('')
   const [note, setNote] = useState('')
@@ -37,25 +53,51 @@ export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
   const [error, setError] = useState<string | null>(null)
 
   const reason = picked === OTHER ? typedReason.trim() : picked
-  const qtyParsed = parseQty(qty.trim())
-  const canSave = !saving && item !== null && qtyParsed !== null && qtyParsed > 0 && reason !== ''
+
+  const patchLine = (key: number, patch: Partial<Line>) =>
+    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
+  const addLine = () => {
+    setLines((ls) => [...ls, newLine(nextKey)])
+    setNextKey((k) => k + 1)
+  }
+  const removeLine = (key: number) =>
+    setLines((ls) => (ls.length === 1 ? [newLine(nextKey)] : ls.filter((l) => l.key !== key)))
+
+  const filled = lines.filter((l) => l.item !== null || l.qty.trim() !== '')
+  const lineOk = (l: Line) => {
+    const q = parseQty(l.qty.trim())
+    return l.item !== null && q !== null && q > 0
+  }
+  // The same item twice would tie on created_at inside one transaction, which
+  // the count-acceptance arithmetic cannot order — the server refuses it, and
+  // the form says so before the trip.
+  const ids = filled.map((l) => l.item?.id).filter(Boolean)
+  const duplicate = ids.length !== new Set(ids).size
+  const canSave =
+    !saving && filled.length > 0 && filled.every(lineOk) && reason !== '' && !duplicate
 
   async function onSave() {
-    if (!canSave || item === null) return
+    if (!canSave) return
     setSaving(true)
     setError(null)
     try {
-      const res = await saveAdjustment({
+      const res = await saveAdjustments({
         date,
-        itemId: item.id,
-        qty: direction === 'off' ? `-${qty.trim()}` : qty.trim(),
         reason,
         note: note.trim(),
+        lines: filled.map((l) => ({
+          itemId: (l.item as IssuableItemHit).id,
+          // signed: minus is a shortfall, and the direction toggle is what
+          // composes the sign so nobody types a minus by hand
+          qty: l.direction === 'off' ? `-${l.qty.trim()}` : l.qty.trim(),
+        })),
       })
       if (res.ok) {
-        toast(`Book corrected — ${item.name} ${direction === 'off' ? 'off' : 'onto'} the book`)
-        setItem(null)
-        setQty('')
+        toast(
+          res.count === 1 ? 'Book corrected — 1 item' : `Book corrected — ${res.count} items`,
+        )
+        setLines([newLine(nextKey)])
+        setNextKey((k) => k + 1)
         setNote('')
         router.refresh()
       } else {
@@ -77,68 +119,120 @@ export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
       </p>
 
       <div className="mt-3 space-y-3">
-        {/* The direction sits above everything it changes, in the shelf's
-            own words — the same shape as the issue form's out/back. */}
-        <div className="grid grid-cols-2 gap-2" role="group" aria-label="Direction of the correction">
-          {(
-            [
-              { key: 'onto', title: 'Onto the book', sub: 'the shelf holds more' },
-              { key: 'off', title: 'Off the book', sub: 'the shelf holds less' },
-            ] as const
-          ).map((d) => (
-            <button
-              key={d.key}
-              type="button"
-              aria-pressed={direction === d.key}
-              onClick={() => setDirection(d.key)}
-              className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                direction === d.key
-                  ? 'border-emerald-700 bg-emerald-700 text-white'
-                  : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
-              }`}
-            >
-              <span className="block text-[15px] font-semibold">{d.title}</span>
-              <span className={`block text-xs ${direction === d.key ? 'text-emerald-100' : 'text-stone-500'}`}>
-                {d.sub}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        <label className="block">
+        <label className="block sm:w-44">
           <span className={fieldLabelCls}>Date</span>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${numCls} w-full`} />
         </label>
 
-        <div className="block">
-          <span className={fieldLabelCls}>Item</span>
-          <IssueItemPicker value={item} onPick={setItem} onClear={() => setItem(null)} />
+        {/* THE REASON IS A HEADER FIELD, unlike the loss forms where it is per
+            line. A batch of corrections is one EVENT — a stocktake, an opening
+            balance, a found crate — and two reasons means two events, which is
+            two saves. Two things in one bin really are lost for two reasons;
+            two items corrected together really do share one. */}
+        <label className="block">
+          <span className={fieldLabelCls}>Reason — for all of these</span>
+          <select value={picked} onChange={(e) => setPicked(e.target.value)} className={selectCls}>
+            <option value="">—</option>
+            {reasons.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+            <option value={OTHER}>Something else…</option>
+          </select>
+        </label>
+
+        <div className="overflow-x-auto">
+          <table className={dataTableCls}>
+            <thead>
+              <tr>
+                <th className={thCls}>Item</th>
+                <th className={thCls}>Direction</th>
+                <th className={thNumCls}>Difference</th>
+                <th className={thCls}>Unit</th>
+                <th className={thCls}>
+                  <span className="sr-only">Remove</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.key} className={trCls}>
+                  <td className={tdCls}>
+                    <IssueItemPicker
+                      value={l.item}
+                      onPick={(hit) => patchLine(l.key, { item: hit })}
+                      onClear={() => patchLine(l.key, { item: null })}
+                    />
+                  </td>
+                  <td className={tdCls}>
+                    {/* the shelf's own words, per line — a stocktake finds
+                        surpluses and shortfalls in the same pass */}
+                    <div className="flex gap-1" role="group" aria-label="Direction of the correction">
+                      {(
+                        [
+                          { key: 'onto', short: 'Onto', sub: 'more' },
+                          { key: 'off', short: 'Off', sub: 'less' },
+                        ] as const
+                      ).map((d) => (
+                        <button
+                          key={d.key}
+                          type="button"
+                          aria-pressed={l.direction === d.key}
+                          onClick={() => patchLine(l.key, { direction: d.key })}
+                          className={`rounded-lg border px-2 py-1.5 text-[13px] font-medium ${
+                            l.direction === d.key
+                              ? 'border-emerald-700 bg-emerald-700 text-white'
+                              : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
+                          }`}
+                        >
+                          {d.short}
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                  <td className={tdNumCls}>
+                    <input
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={l.qty}
+                      onChange={(e) => patchLine(l.key, { qty: e.target.value.replace(/[^\d.]/g, '') })}
+                      className={`${numCls} w-24 text-right`}
+                    />
+                  </td>
+                  <td className={tdCls}>
+                    <span className="text-sm text-stone-500">{l.item?.purchase_unit ?? '—'}</span>
+                  </td>
+                  <td className={tdCls}>
+                    <button
+                      type="button"
+                      onClick={() => removeLine(l.key)}
+                      aria-label="Remove line"
+                      className="text-sm text-stone-400 hover:text-red-700"
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className={fieldLabelCls}>Difference{item !== null && <> ({item.purchase_unit})</>}</span>
-            <input
-              inputMode="decimal"
-              placeholder="0"
-              value={qty}
-              onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ''))}
-              className={`${numCls} w-full text-right`}
-            />
-          </label>
-          <label className="block">
-            <span className={fieldLabelCls}>Reason</span>
-            <select value={picked} onChange={(e) => setPicked(e.target.value)} className={selectCls}>
-              <option value="">—</option>
-              {reasons.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-              <option value={OTHER}>Something else…</option>
-            </select>
-          </label>
-        </div>
+        <button
+          type="button"
+          onClick={addLine}
+          className="rounded-full border border-rule bg-cell px-3.5 py-2 text-sm font-medium text-stone-700 hover:border-stone-400"
+        >
+          ＋ Add item
+        </button>
+
+        {duplicate && (
+          <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            The same item is listed twice. Combine it into one line — two corrections written together cannot be
+            told apart afterwards.
+          </p>
+        )}
 
         {picked === OTHER && (
           <label className="block">
@@ -164,21 +258,27 @@ export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
           />
         </label>
 
-        {item !== null && qtyParsed !== null && qtyParsed > 0 && (
-          <p className="text-sm text-stone-600">
-            {direction === 'onto' ? (
-              <>
-                Adds {qty.trim()} {item.purchase_unit} of {item.name} to the book. The book says{' '}
-                {item.on_hand_qty} {item.purchase_unit} today — it is being told the shelf holds more than that.
-              </>
-            ) : (
-              <>
-                Takes {qty.trim()} {item.purchase_unit} of {item.name} off the book. The book says{' '}
-                {item.on_hand_qty} {item.purchase_unit} today — it is being told that much is not on the shelf.
-              </>
-            )}
-          </p>
-        )}
+        {/* The sentence per line, so the correction is read in the shelf's
+            words before it is written. The book figure comes from the picker,
+            which is the same stock_on_hand the correction moves. */}
+        {filled.filter(lineOk).map((l) => {
+          const it = l.item as IssuableItemHit
+          return (
+            <p key={l.key} className="text-sm text-stone-600">
+              {l.direction === 'onto' ? (
+                <>
+                  Adds {l.qty.trim()} {it.purchase_unit} of {it.name} to the book. The book says{' '}
+                  {it.on_hand_qty} {it.purchase_unit} today — it is being told the shelf holds more than that.
+                </>
+              ) : (
+                <>
+                  Takes {l.qty.trim()} {it.purchase_unit} of {it.name} off the book. The book says{' '}
+                  {it.on_hand_qty} {it.purchase_unit} today — it is being told that much is not on the shelf.
+                </>
+              )}
+            </p>
+          )
+        })}
 
         {error !== null && (
           <p role="alert" className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">

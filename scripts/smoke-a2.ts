@@ -2458,6 +2458,32 @@ async function run() {
     })
   })
 
+  await check('adjustments batch, and the same item twice is refused', async () => {
+    // Opening stock is inherently many items at once, and it is the flow every
+    // NEW restaurant hits first — before anyone has patience for the app.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/adjustment-actions.ts', 'utf8')
+    assert.ok(!/export async function saveAdjustment\b/.test(src), 'the one-row path is gone, not left beside it')
+    assert.match(src, /export async function saveAdjustments/, 'the batch action exists')
+
+    const fn = src.slice(src.indexOf('export async function saveAdjustments'))
+    const body = fn.slice(0, fn.indexOf('\n}\n') + 3)
+    // created_at is the TRANSACTION timestamp and does not advance within one,
+    // so two corrections of one item written together tie — and acceptCount's
+    // "already corrected since this count was frozen" sum cannot order them.
+    assert.match(body, /same item is listed twice/, 'a repeated item in one batch is refused')
+    // the list suggestion must not open a statement inside the transaction
+    const suggestAt = body.indexOf('noteListSuggestion')
+    const txnAt = body.indexOf('await txn(')
+    assert.ok(suggestAt !== -1 && txnAt !== -1 && suggestAt < txnAt, 'noteListSuggestion runs BEFORE txn, never inside it')
+    // zero is still refused, now per line
+    assert.match(body, /a correction of zero corrects nothing/, 'zero is still refused')
+    assert.match(body, /Line \$\{i \+ 1\}/, 'and named per line')
+
+    // the cost is still frozen per item inside the transaction
+    assert.match(body, /assertAdjustableItem\(tx, rid, l\.itemId\)/, 'unit_cost frozen per line, on the tx')
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )
