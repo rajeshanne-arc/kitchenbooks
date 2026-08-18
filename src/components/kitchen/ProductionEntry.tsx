@@ -8,11 +8,15 @@
 //
 // VALUE IS SHOWN AS IT IS TYPED and never typed. A chef should see what a
 // batch is worth while entering it; `unit_cost` is frozen server-side at save
-// from recipe_costs.cost_per_output_unit, so the figure on screen is an
-// estimate from the same source and the saved number is the authority.
+// from the same figure, so the screen is an estimate and the saved number is
+// the authority.
 //
-// SUBS ONLY, and the server refuses a dish BY NAME. This picker offering only
-// subs is a courtesy to the chef — the refusal is the check.
+// SUBS AND DISHES, AND A QUANTITY MEANS DIFFERENT THINGS. A sub is made in
+// its batch unit and prices at cost_per_output_unit; A DISH IS PRODUCED IN
+// PORTIONS and prices at cost_per_portion. The picker keeps them in separate
+// groups because conflating them is how a batch cost silently becomes a
+// portion cost. A dish with no portions set is refused BY NAME server-side —
+// the warning here is a courtesy, the refusal is the check.
 //
 // NO SESSION FIELD. An indent carries a session because the STORE must match
 // a request to a shift; production has no counterpart doing that, so a
@@ -20,7 +24,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { RefillSet, SaveProductionsResult, Section, SubCostRow } from '@/lib/types'
+import type { ProducibleRow, RefillSet, SaveProductionsResult, Section } from '@/lib/types'
 import { saveProductions } from '@/server/kitchen-actions'
 import { formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -52,11 +56,12 @@ const cleanQty = (raw: string) => {
 
 export default function ProductionEntry({
   sections,
-  subs,
+  producibles,
   lastSets,
 }: {
   sections: Section[]
-  subs: SubCostRow[]
+  /** subs AND dishes — they differ in what a quantity means, see the picker */
+  producibles: ProducibleRow[]
   /** last production per section id, for refill — resolved on the server */
   lastSets?: Record<string, RefillSet>
 }) {
@@ -72,7 +77,7 @@ export default function ProductionEntry({
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveProductionsResult, { ok: true }> | null>(null)
 
-  const byId = new Map(subs.map((s) => [s.recipe_id, s]))
+  const byId = new Map(producibles.map((p) => [p.recipe_id, p]))
   const patchLine = (key: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
   const addLine = () => {
@@ -82,17 +87,27 @@ export default function ProductionEntry({
   const removeLine = (key: number) =>
     setLines((ls) => (ls.length === 1 ? [newLine(nextKey)] : ls.filter((l) => l.key !== key)))
 
+  /** A dish with no portions set cannot be costed — cost_per_portion divides
+   *  by it. The server refuses by name; this says so before the trip. */
+  const noPortions = (l: Line) => {
+    const p = byId.get(l.recipeId)
+    return p?.kind === 'dish' && (p.portions === null || Number(p.portions) <= 0)
+  }
+
   const filled = lines.filter((l) => l.recipeId !== '' || l.qty.trim() !== '')
-  const lineOk = (l: Line) => l.recipeId !== '' && parseQty(l.qty.trim()) !== null && Number(l.qty) > 0
+  const lineOk = (l: Line) =>
+    l.recipeId !== '' && parseQty(l.qty.trim()) !== null && Number(l.qty) > 0 && !noPortions(l)
   const canSave = !saving && sectionId !== '' && filled.length > 0 && filled.every(lineOk)
 
-  /** What this line is worth, from the same figure the server will freeze. */
+  /** What this line is worth, from the same figure the server will freeze —
+   *  cost_per_output_unit for a sub, cost_per_portion for a dish. */
   const lineValue = (l: Line): string | null => {
-    const sub = byId.get(l.recipeId)
+    const p = byId.get(l.recipeId)
     const q = parseQty(l.qty.trim())
-    if (!sub || q === null) return null
-    return (Number(l.qty) * Number(sub.cost_per_output_unit)).toFixed(2)
+    if (!p || q === null || p.unit_cost === null) return null
+    return (Number(l.qty) * Number(p.unit_cost)).toFixed(2)
   }
+
   const runningTotal = filled.reduce((n, l) => n + Number(lineValue(l) ?? 0), 0).toFixed(2)
 
   const last = sectionId === '' ? null : (lastSets?.[sectionId] ?? null)
@@ -167,7 +182,8 @@ export default function ProductionEntry({
           ))}
         </ul>
         <p className="mt-2 text-xs text-stone-400">
-          unit cost frozen at save from recipe_costs · production records, it does not move stock
+          unit cost frozen at save — per batch unit for a sub, per portion for a dish · production
+          records, it does not move stock
         </p>
         <button
           type="button"
@@ -185,7 +201,7 @@ export default function ProductionEntry({
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>What was made</h2>
-          <span className="text-xs text-stone-400">productions · subs only</span>
+          <span className="text-xs text-stone-400">productions · subs in batches, dishes in portions</span>
         </div>
         <div className="mt-3 grid gap-4 sm:grid-cols-[11rem_1fr]">
           <label className="block">
@@ -239,13 +255,13 @@ export default function ProductionEntry({
       )}
 
       <section className={cardCls}>
-        <h2 className={sectionHeadCls}>Batches</h2>
+        <h2 className={sectionHeadCls}>What was made</h2>
         <div className="mt-2 overflow-x-auto">
           <table className={dataTableCls}>
             <thead>
               <tr>
                 <th className={thCls}>Sub-recipe</th>
-                <th className={thNumCls}>Output qty</th>
+                <th className={thNumCls}>Made</th>
                 <th className={thCls}>Unit</th>
                 <th className={thNumCls}>Value</th>
                 <th className={thCls}>
@@ -257,6 +273,7 @@ export default function ProductionEntry({
               {lines.map((l) => {
                 const sub = byId.get(l.recipeId)
                 const v = lineValue(l)
+                const missingPortions = noPortions(l)
                 return (
                   <tr key={l.key} className={trCls}>
                     <td className={tdCls}>
@@ -266,11 +283,30 @@ export default function ProductionEntry({
                         className={selectCls}
                       >
                         <option value="">—</option>
-                        {subs.map((s) => (
-                          <option key={s.recipe_id} value={s.recipe_id}>
-                            {s.code} · {s.name}
-                          </option>
-                        ))}
+                        {/* KEPT VISIBLY APART. A sub is made in its batch
+                            unit, a dish in PORTIONS — conflating them is how
+                            a batch cost silently becomes a portion cost. */}
+                        <optgroup label="Sub-recipes — made in batches">
+                          {producibles
+                            .filter((p) => p.kind === 'sub')
+                            .map((p) => (
+                              <option key={p.recipe_id} value={p.recipe_id}>
+                                {p.code} · {p.name} ({p.unit_name})
+                              </option>
+                            ))}
+                        </optgroup>
+                        <optgroup label="Dishes — made in portions">
+                          {producibles
+                            .filter((p) => p.kind === 'dish')
+                            .map((p) => (
+                              <option key={p.recipe_id} value={p.recipe_id}>
+                                {p.code} · {p.name}
+                                {p.portions === null || Number(p.portions) <= 0
+                                  ? ' (no portions set)'
+                                  : ` (${p.portions} portions)`}
+                              </option>
+                            ))}
+                        </optgroup>
                       </select>
                     </td>
                     <td className={tdNumCls}>
@@ -283,7 +319,8 @@ export default function ProductionEntry({
                       />
                     </td>
                     <td className={tdCls}>
-                      <span className="text-sm text-stone-500">{sub?.output_unit ?? '—'}</span>
+                      {/* portions for a dish, the batch unit for a sub */}
+                      <span className="text-sm text-stone-500">{sub?.unit_name ?? '—'}</span>
                     </td>
                     <td className={tdNumCls}>
                       {/* read-only: a batch's worth is worked out, never typed */}
@@ -300,6 +337,11 @@ export default function ProductionEntry({
                       >
                         ✕
                       </button>
+                      {missingPortions && (
+                        <span className="mt-1 block text-xs text-red-700">
+                          no portions set — a dish is made in portions, so set how many the recipe makes first
+                        </span>
+                      )}
                     </td>
                   </tr>
                 )

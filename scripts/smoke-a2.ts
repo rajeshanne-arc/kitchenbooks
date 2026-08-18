@@ -2325,17 +2325,19 @@ async function run() {
     })
   })
 
-  await check('production refuses a DISH by name, and the picker is not the check', async () => {
-    // The schema comment says the app enforces subs-only. A picker filtered
-    // to subs is a courtesy; a form can always be posted to directly.
+  await check('production refuses an UNCOSTABLE dish by name — the picker is not the check', async () => {
+    // The subs-only rule is SUPERSEDED: a dish cooked ahead is produced in
+    // portions. What survives is the principle behind it — a form can always
+    // be posted to directly, so the refusal lives on the server. The rule it
+    // now enforces is that a dish with no portions has nothing to freeze.
     const { readFileSync } = await import('node:fs')
     const src = readFileSync('src/server/kitchen-actions.ts', 'utf8')
     const fn = src.slice(src.indexOf('export async function saveProductions'))
-    const body = fn.slice(0, fn.indexOf('\nexport '))
-    assert.match(body, /recipe\.kind !== 'sub'/, 'saveProductions must check the kind server-side')
-    assert.match(body, /is a dish — production records batches of SUB-recipes only/, 'and refuse BY NAME')
+    const body = fn.slice(0, fn.indexOf('\n}\n') + 3)
+    assert.match(body, /recipe\.kind === 'dish'/, 'saveProductions still branches on the kind server-side')
+    assert.match(body, /has no portions set/, 'and refuses an uncostable dish BY NAME')
+    assert.match(body, /cannot be costed yet/, 'an uncosted recipe is still refused by name')
 
-    // and the database agrees the two kinds are distinguishable
     const kinds = await tsql<{ kind: string; n: number }[]>`
       select kind, count(*)::int as n from recipes where restaurant_id = ${rid} group by kind order by kind`
     console.log(`      ${kinds.map((k) => `${k.kind}:${k.n}`).join(' · ') || 'no recipes yet'}`)
@@ -2595,6 +2597,99 @@ async function run() {
 
     const cl = types.slice(types.indexOf('export type CasualLabourLineInput'))
     assert.match(cl.slice(0, 400), /sectionId: string/, 'a casual labour line names its own department')
+  })
+
+  await check('a dish is produced in PORTIONS, priced per portion', async () => {
+    // A dish has no batch yield, so pricing it at cost_per_output_unit would
+    // freeze a number that looks fine and means nothing.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/kitchen-actions.ts', 'utf8')
+    const fn = src.slice(src.indexOf('export async function saveProductions'))
+    const body = fn.slice(0, fn.indexOf('\n}\n') + 3)
+    assert.match(body, /dc\.cost_per_portion/, 'a dish prices at cost_per_portion')
+    assert.match(body, /rc\.cost_per_output_unit/, 'a sub still prices at cost_per_output_unit')
+    assert.ok(
+      !/is a dish — production records batches of SUB-recipes only/.test(body),
+      'the subs-only refusal is gone — dishes are producible now',
+    )
+    // NO PORTIONS, NO PRODUCTION — refused by name, never defaulted
+    assert.match(body, /has no portions set/, 'a dish with no portions is refused')
+    assert.match(body, /recipe\.portions === null \|\| Number\(recipe\.portions\) <= 0/, 'and the check is real')
+
+    // the two costs really are different numbers in the database
+    const rows = await tsql<{ n: number }[]>`
+      select count(*)::int as n from dish_costs
+      where restaurant_id = ${rid} and portions is null`
+    console.log(`      ${rows[0].n} dish(es) with no portions set — those are refused by name`)
+  })
+
+  await check('produced dishes are held and counted, and the gap is surfaced', async () => {
+    // THE TEST THAT MAKES THE FEATURE REAL. Without a reader, producing a dish
+    // stores rows nobody looks at — the issues.session mistake again.
+    const { readFileSync } = await import('node:fs')
+    const dash = readFileSync('src/app/kitchen/page.tsx', 'utf8')
+    assert.match(dash, /getUnclosedDishes/, 'the kitchen dashboard reads the gap')
+    assert.match(dash, /Made today, not yet closed/, 'and says so in words')
+    assert.match(dash, /unclosedDishes\.length > 0 &&/, 'silent at zero — no permanent all-clear to dismiss')
+
+    // and it fires on real data: produced 20, closed 12 -> 8 unaccounted
+    await txn(async (tx) => {
+      const [sec] = await tx<{ id: string }[]>`
+        select id from sections where restaurant_id = ${rid} and dept_kind = 'kitchen' limit 1`
+      const [dish] = await tx<{ id: string }[]>`
+        select id from recipes where restaurant_id = ${rid} and kind = 'dish' limit 1`
+      if (!sec || !dish) {
+        console.log('      no kitchen section or dish — UNTESTED')
+        throw new Error('ROLLBACK')
+      }
+      await tx`insert into productions (restaurant_id, section_id, prod_date, recipe_id, output_qty, unit_cost, entered_by)
+               values (${rid}, ${sec.id}, '2020-02-02', ${dish.id}, '20', '10', 'zz-smoke')`
+      const [c] = await tx<{ id: string }[]>`
+        insert into kitchen_closings (restaurant_id, section_id, close_date, closing_value, entered_by)
+        values (${rid}, ${sec.id}, '2020-02-02', '120', 'zz-smoke') returning id`
+      await tx`insert into kitchen_closing_lines (restaurant_id, closing_id, component_recipe_id, qty, unit_cost)
+               values (${rid}, ${c.id}, ${dish.id}, '12', '10')`
+      const [row] = await tx<{ produced: string; closed: string }[]>`
+        with made as (
+          select p.section_id, p.recipe_id, sum(p.output_qty) as produced
+          from productions p join recipes r on r.id = p.recipe_id
+          where p.restaurant_id = ${rid} and p.prod_date = '2020-02-02'::date
+            and r.kind = 'dish' and p.reverses_id is null
+          group by p.section_id, p.recipe_id),
+        winner as (
+          select distinct on (c2.section_id) c2.id, c2.section_id from kitchen_closings c2
+          where c2.restaurant_id = ${rid} and c2.close_date = '2020-02-02'::date
+          order by c2.section_id, c2.created_at desc),
+        held as (
+          select w.section_id, cl.component_recipe_id as recipe_id, sum(cl.qty) as closed
+          from kitchen_closing_lines cl join winner w on w.id = cl.closing_id
+          where cl.restaurant_id = ${rid} and cl.component_recipe_id is not null
+          group by w.section_id, cl.component_recipe_id)
+        select m.produced::text as produced, coalesce(h.closed, 0)::text as closed
+        from made m
+        left join held h on h.section_id = m.section_id and h.recipe_id = m.recipe_id
+        where coalesce(h.closed, 0) < m.produced`
+      assert.ok(row, 'a produced-but-not-fully-closed dish must appear')
+      assert.equal(Number(row.produced) - Number(row.closed), 8, 'produced 20, closed 12, 8 unaccounted')
+      throw new Error('ROLLBACK')
+    }).catch((e: Error) => {
+      if (e.message !== 'ROLLBACK') throw e
+    })
+  })
+
+  await check('the picker keeps subs and dishes visibly apart', async () => {
+    // Conflating them is how a batch cost silently becomes a portion cost.
+    const { readFileSync } = await import('node:fs')
+    const form = readFileSync('src/components/kitchen/ProductionEntry.tsx', 'utf8')
+    assert.match(form, /Sub-recipes — made in batches/, 'subs are grouped and labelled')
+    assert.match(form, /Dishes — made in portions/, 'dishes are grouped and labelled')
+    assert.match(form, /no portions set/, 'a dish with no portions says so in the list')
+
+    const q = readFileSync('src/server/recipes-queries.ts', 'utf8')
+    const fn = q.slice(q.indexOf('export async function listProducibles'))
+    const body = fn.slice(0, fn.indexOf('\n}\n') + 3)
+    assert.match(body, /'portion' as unit_name/, "a dish's unit is portions, never its recipe output unit")
+    assert.match(body, /cost_per_portion/, 'and its cost is per portion')
   })
 
   console.log(

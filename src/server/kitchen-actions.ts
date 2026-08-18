@@ -363,6 +363,17 @@ export async function saveKitchenLosses(raw: SaveKitchenLossesInput): Promise<Sa
 
 // ----------------------------------------------- productions, header + lines
 //
+// SUBS AND DISHES BOTH, and they differ in what a quantity MEANS. A sub is
+// made in its batch unit; a DISH IS PRODUCED IN PORTIONS — biryani in
+// vessels, sweets made in the morning, anything portioned out later. Its
+// unit_cost freezes from dish_costs.cost_per_portion, and a dish with no
+// portions set is refused by name rather than defaulted.
+//
+// The loop that makes this real is the CLOSING: kitchen_closing_lines already
+// accepts a dish as a component, so produced-20 / closed-12 says twelve are
+// still there and eight went out. A dish produced and never closed has no
+// reader, and the kitchen dashboard says so.
+//
 // NO SESSION FIELD, and the reason belongs in the code rather than in
 // somebody's memory: an INDENT carries a session because the STORE has to
 // match a request to a shift. Production has no counterpart doing that, so a
@@ -397,18 +408,32 @@ export async function saveProductions(raw: SaveProductionsInput): Promise<SavePr
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
       const ids: string[] = []
       for (const [i, l] of input.lines.entries()) {
-        const [recipe] = await tx<{ kind: string; name: string; cost: string | null }[]>`
-          select r.kind, r.name, rc.cost_per_output_unit::text as cost
+        // A SUB IS MADE IN ITS BATCH UNIT; A DISH IS MADE IN PORTIONS.
+        //
+        // The cost of one output unit therefore comes from two different
+        // places — cost_per_output_unit for a sub, cost_per_portion for a
+        // dish — and taking the wrong one is how a batch cost silently
+        // becomes a portion cost. A dish has NO batch yield, so asking it for
+        // one would freeze a number that looks fine and means nothing.
+        const [recipe] = await tx<
+          { kind: string; name: string; cost: string | null; portions: string | null }[]
+        >`
+          select r.kind, r.name,
+                 (case when r.kind = 'sub' then rc.cost_per_output_unit
+                       else dc.cost_per_portion end)::text as cost,
+                 r.portions::text as portions
           from recipes r
           left join recipe_costs rc on rc.recipe_id = r.id
+          left join dish_costs dc on dc.recipe_id = r.id
           where r.id = ${l.recipeId} and r.restaurant_id = ${rid} and r.status = 'active'`
         if (!recipe) throw new KitchenError(`Line ${i + 1}: recipe not found`)
-        // SUBS ONLY, refused BY NAME. The schema comment says the app enforces
-        // this, so the app enforces it — a picker filtered to subs is a
-        // courtesy to the chef, never the check.
-        if (recipe.kind !== 'sub') {
+        // NO PORTIONS, NO PRODUCTION. cost_per_portion divides by `portions`,
+        // so a dish that has never been told how many it makes has nothing to
+        // freeze — the line would silently be worth zero. Refused by name,
+        // never defaulted: this is the `issues.session` rule again.
+        if (recipe.kind === 'dish' && (recipe.portions === null || Number(recipe.portions) <= 0)) {
           throw new KitchenError(
-            `Line ${i + 1}: “${recipe.name}” is a dish — production records batches of SUB-recipes only`,
+            `Line ${i + 1}: “${recipe.name}” has no portions set — a dish is produced in portions, so set how many the recipe makes before recording a batch`,
           )
         }
         if (recipe.cost === null) {

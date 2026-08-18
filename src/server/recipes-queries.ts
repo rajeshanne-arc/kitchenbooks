@@ -11,6 +11,7 @@ import type {
   RecipeLineRow,
   SubCostRow,
   SupplierExposureRow,
+  ProducibleRow,
 } from '@/lib/types'
 
 export async function listDishCosts(restaurantId: string): Promise<DishCostRow[]> {
@@ -40,6 +41,39 @@ export async function listSubCosts(restaurantId: string): Promise<SubCostRow[]> 
     join recipes r on r.id = rc.recipe_id
     where rc.restaurant_id = ${restaurantId} and rc.kind = 'sub'
     order by rc.code asc`
+}
+
+/**
+ * Everything the kitchen can record MAKING, subs and dishes together.
+ *
+ * The two are deliberately DIFFERENT in what a quantity means, and the picker
+ * must keep them visibly apart: a sub is made in its batch unit (litres of
+ * gravy), a dish is made in PORTIONS. Conflating them is how a batch cost
+ * silently becomes a portion cost.
+ *
+ * So each row carries the cost of ONE OUTPUT UNIT on its own terms —
+ * `cost_per_output_unit` for a sub, `cost_per_portion` for a dish — and the
+ * unit label to show beside the quantity.
+ */
+export async function listProducibles(restaurantId: string): Promise<ProducibleRow[]> {
+  return tsql<ProducibleRow[]>`
+    select rc.recipe_id, 'sub' as kind, rc.code, rc.name,
+           rc.output_unit as unit_name,
+           rc.cost_per_output_unit::text as unit_cost,
+           null::text as portions,
+           rc.uncosted_lines::int as uncosted_lines
+    from recipe_costs rc
+    join recipes r on r.id = rc.recipe_id
+    where rc.restaurant_id = ${restaurantId} and rc.kind = 'sub' and r.status = 'active'
+    union all
+    select dc.recipe_id, 'dish' as kind, dc.code, dc.name,
+           'portion' as unit_name,
+           dc.cost_per_portion::text as unit_cost,
+           dc.portions::text as portions,
+           dc.uncosted_lines::int as uncosted_lines
+    from dish_costs dc
+    where dc.restaurant_id = ${restaurantId} and dc.status = 'active'
+    order by kind desc, code asc`
 }
 
 export async function getRecipeDetail(restaurantId: string, id: string): Promise<RecipeDetail | null> {

@@ -2892,3 +2892,44 @@ A voucher line has seven; seven controls across a row is unusable on the phone
 these forms are filled in on, and one-question-at-a-time still rules inside
 each card. Losses, production and adjustments stayed as tables — item, qty,
 unit, reason is exactly the width a row can carry.
+
+## A DISH IS PRODUCED IN PORTIONS — the ruling, and the reader that justifies it
+
+Marinations were never the question: they are sub-recipes and the data was
+already where it belongs. This is about dishes cooked ahead — biryani in
+vessels, sweets made in the morning, anything portioned out later.
+
+**`output_qty` on a produced dish means PORTIONS MADE**, and `unit_cost`
+freezes from `dish_costs.cost_per_portion`, never `cost_per_output_unit`. The
+original objection — a dish has no batch yield — is exactly what this answers:
+asking a dish for a batch yield would have frozen a number that looked fine
+and meant nothing.
+
+**NO PORTIONS, NO PRODUCTION.** `cost_per_portion` divides by
+`recipes.portions`, which is NULLABLE with no default, so a dish nobody has
+told how many it makes has nothing to freeze and the line would silently be
+worth zero. It is refused BY NAME — not defaulted. That is the
+`issues.session` rule for the fourth time: a column default is never a
+substitute for an answer, and here there is not even a default to lean on.
+
+**THE READER IS THE CLOSING, and without it this feature should not exist.**
+`kitchen_closing_lines` already accepts a dish as a component, so the loop
+closes: produced 20, closed 12, eight went out. `getUnclosedDishes` compares
+today's production against the WINNING closing for that (section, date) — a
+re-filed closing must not make a gap disappear — and the kitchen dashboard
+carries **"Made today, not yet closed"**. It is silent at zero, because a
+permanent all-clear is a thing people learn to dismiss.
+
+That line is the whole justification. A dish produced and never closed would
+be a row nobody reads, which is the session mistake wearing a new hat.
+
+**SUBS AND DISHES STAY VISIBLY APART IN THE PICKER** — two labelled groups,
+"made in batches" against "made in portions", with the portion count shown
+and `(no portions set)` called out before the save refuses it. Same table,
+different quantity; conflating them is how a batch cost silently becomes a
+portion cost.
+
+**The superseded gate was replaced, not deleted.** `smoke:a2` used to assert
+"production refuses a DISH by name". That rule is gone, but the principle
+behind it is not — a form can always be posted to directly, so the refusal
+lives on the server. The assertion now checks the rule that actually holds.

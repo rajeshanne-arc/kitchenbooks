@@ -2671,3 +2671,51 @@ export type RefillLine = {
   qty: string
 }
 export type RefillSet = { on: string; lines: RefillLine[] } | null
+
+/**
+ * Something a kitchen can record MAKING — a sub batch or a dish cooked ahead.
+ *
+ * A DISH IS PRODUCED IN PORTIONS. Its `output_qty` means portions made, and
+ * its cost freezes from `dish_costs.cost_per_portion`, never
+ * `cost_per_output_unit`: a dish has no batch yield, so asking it for one
+ * would produce a number that looks fine and means nothing.
+ *
+ * `portions` is null when nobody has ever said how many a dish makes.
+ * cost_per_portion divides by it, so the save REFUSES such a dish by name
+ * rather than freezing a silent zero.
+ */
+export type ProducibleRow = {
+  recipe_id: string
+  kind: 'sub' | 'dish'
+  code: string
+  name: string
+  /** what ONE unit of output is called: a sub's batch unit, or 'portion' */
+  unit_name: string
+  /** cost of one output unit — cost_per_output_unit for a sub,
+   *  cost_per_portion for a dish. Null when it cannot be costed yet. */
+  unit_cost: string | null
+  /** dishes only: null when portions has never been set */
+  portions: string | null
+  uncosted_lines: number
+}
+
+/**
+ * A dish produced today that no closing has accounted for.
+ *
+ * THIS IS THE LINE THAT MAKES PRODUCED DISHES EARN THEIR PLACE. The loop is
+ * produced → held → counted: `kitchen_closing_lines` already accepts a dish
+ * as a component, so produced 20 / closed 12 says twelve are still there and
+ * eight went out. A dish produced and never closed has NO READER, and storing
+ * data nobody reads is the `issues.session` mistake wearing a new hat.
+ */
+export type UnclosedDishRow = {
+  section_id: string
+  section_name: string
+  recipe_id: string
+  code: string
+  name: string
+  /** portions made today */
+  produced: string
+  /** portions accounted for in tonight's winning closing — 0 when none */
+  closed: string
+}

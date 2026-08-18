@@ -11,7 +11,7 @@
 // down, so a zero there can never tell a clean month from an unwritten one.
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import { getKitchenDay, getWasteByReason } from '@/server/kitchen-queries'
+import { getKitchenDay, getUnclosedDishes, getWasteByReason } from '@/server/kitchen-queries'
 import { getQtySold } from '@/server/sales-queries'
 import { listDishCosts } from '@/server/recipes-queries'
 import { getSectionConsumptionDaily } from '@/server/store-queries'
@@ -32,7 +32,7 @@ export default async function KitchenDashboardPage() {
   const restaurant = await getRestaurant()
   const today = await businessToday()
   const month = await businessMonthStart()
-  const [day, wasteByReason, qtySold, dishCosts, consumption] = await Promise.all([
+  const [day, wasteByReason, qtySold, dishCosts, consumption, unclosedDishes] = await Promise.all([
     getKitchenDay(restaurant.id, today),
     getWasteByReason(restaurant.id, month),
     getQtySold(restaurant.id, month),
@@ -40,6 +40,10 @@ export default async function KitchenDashboardPage() {
     // the chef is accountable for what their departments consumed, so the
     // VALUE lives here — after the asking, never on the indent form
     getSectionConsumptionDaily(restaurant.id, month, today),
+    // THE READ THAT MAKES PRODUCED DISHES EARN THEIR PLACE. A dish is cooked
+    // ahead and portioned out later, so the portions must be HELD AND COUNTED
+    // at closing. Produced and never closed means the record has no reader.
+    getUnclosedDishes(restaurant.id, today),
   ])
 
   const perf = qtySold
@@ -109,6 +113,48 @@ export default async function KitchenDashboardPage() {
       </div>
 
       <div className="space-y-4">
+        {/* Dishes cooked ahead and not yet accounted for tonight. This is the
+            test that makes producing dishes real: kitchen_closing_lines takes
+            a dish as a component, so produced 20 / closed 12 says twelve are
+            still there and eight went out. Silent at zero — a permanent
+            "nothing outstanding" is a thing to read and dismiss every day. */}
+        {unclosedDishes.length > 0 && (
+          <section className={cardCls}>
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className={sectionHeadCls}>Made today, not yet closed</h2>
+              <span className="text-xs text-stone-400">productions · kitchen_closing_lines</span>
+            </div>
+            <ul className="mt-2 divide-y divide-rule-soft">
+              {unclosedDishes.map((d) => (
+                <li
+                  key={`${d.section_id}-${d.recipe_id}`}
+                  className="flex items-baseline justify-between gap-3 py-1.5"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm text-stone-900">{d.name}</span>
+                    <span className="block text-xs text-stone-500">{d.section_name}</span>
+                  </span>
+                  <span className="shrink-0 text-sm tabular-nums text-stone-900">
+                    {Number(d.produced) - Number(d.closed)}{' '}
+                    <span className="text-stone-400">of {d.produced} portions unaccounted</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <Honesty verdict="not closed" compact>
+              A dish cooked ahead is portioned out later, so what is left belongs in tonight&apos;s
+              closing. Anything genuinely sold or given away needs no line here — this only says that
+              nobody has told the books which it was.
+            </Honesty>
+            <Link
+              href="/kitchen/shift/closing"
+              className="mt-2 inline-block text-sm font-medium text-emerald-700 underline underline-offset-2"
+            >
+              File tonight&apos;s closing &rarr;
+            </Link>
+          </section>
+        )}
+
         <section className={`${cardCls} ${closings.assessable ? '' : unassessedToneCls}`}>
           <div className="flex items-baseline justify-between gap-3">
             <h2 className={sectionHeadCls}>Today per section</h2>

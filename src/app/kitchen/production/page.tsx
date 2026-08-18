@@ -1,6 +1,6 @@
 import { getRestaurant } from '@/server/queries'
 import { getKitchenSections, getLastProductionSet, listProductions } from '@/server/kitchen-queries'
-import { listSubCosts } from '@/server/recipes-queries'
+import { listProducibles } from '@/server/recipes-queries'
 import ProductionEntry from '@/components/kitchen/ProductionEntry'
 import ProductionList from '@/components/kitchen/ProductionList'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
@@ -9,9 +9,9 @@ export const dynamic = 'force-dynamic'
 
 export default async function ProductionPage() {
   const restaurant = await getRestaurant()
-  const [sections, subs, recent] = await Promise.all([
+  const [sections, producibles, recent] = await Promise.all([
     getKitchenSections(restaurant.id),
-    listSubCosts(restaurant.id),
+    listProducibles(restaurant.id),
     listProductions(restaurant.id),
   ])
 
@@ -34,7 +34,7 @@ export default async function ProductionPage() {
       <div className="space-y-4">
         <ProductionEntry
           sections={sections}
-          subs={subs.filter((s) => s.status === 'active')}
+          producibles={producibles}
           lastSets={lastSets}
         />
         <ProductionList rows={recent} />

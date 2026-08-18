@@ -23,6 +23,7 @@ import type {
   Section,
   WasteByReasonRow,
   RefillSet,
+  UnclosedDishRow,
 } from '@/lib/types'
 
 /** The stock-holding sections a chef closes: Kitchen and Bar org units. */
@@ -229,6 +230,55 @@ export async function getTodaysProductions(restaurantId: string, sectionId: stri
       and p.prod_date = ${date}::date and p.reverses_id is null
       and not exists (select 1 from productions x where x.reverses_id = p.id)
     order by p.created_at desc`
+}
+
+/**
+ * Dishes produced today that tonight's closing has not accounted for.
+ *
+ * The whole justification for producing dishes at all: produced portions must
+ * be HELD AND COUNTED. Without this read the feature stores rows nobody looks
+ * at, which is exactly the failure the session column taught.
+ *
+ * Compared against the WINNING closing for that (section, date) — a closing is
+ * re-filed to correct it, and a superseded one must not make a gap disappear.
+ * A section with no closing at all counts as closed = 0, which is the honest
+ * answer: nothing has accounted for it yet.
+ */
+export async function getUnclosedDishes(restaurantId: string, date: string): Promise<UnclosedDishRow[]> {
+  return tsql<UnclosedDishRow[]>`
+    with made as (
+      select p.section_id, p.recipe_id, sum(p.output_qty) as produced
+      from productions p
+      join recipes r on r.id = p.recipe_id
+      where p.restaurant_id = ${restaurantId} and p.prod_date = ${date}::date
+        and r.kind = 'dish'
+        and p.reverses_id is null
+        and not exists (select 1 from productions v where v.reverses_id = p.id)
+      group by p.section_id, p.recipe_id
+      having sum(p.output_qty) > 0
+    ),
+    winner as (
+      select distinct on (c.section_id) c.id, c.section_id
+      from kitchen_closings c
+      where c.restaurant_id = ${restaurantId} and c.close_date = ${date}::date
+      order by c.section_id, c.created_at desc
+    ),
+    held as (
+      select w.section_id, cl.component_recipe_id as recipe_id, sum(cl.qty) as closed
+      from kitchen_closing_lines cl
+      join winner w on w.id = cl.closing_id
+      where cl.restaurant_id = ${restaurantId} and cl.component_recipe_id is not null
+      group by w.section_id, cl.component_recipe_id
+    )
+    select m.section_id, s.name as section_name, m.recipe_id, r.code, r.name,
+           m.produced::text as produced,
+           coalesce(h.closed, 0)::text as closed
+    from made m
+    join recipes r on r.id = m.recipe_id
+    join sections s on s.id = m.section_id
+    left join held h on h.section_id = m.section_id and h.recipe_id = m.recipe_id
+    where coalesce(h.closed, 0) < m.produced
+    order by s.name asc, r.name asc`
 }
 
 // ----------------------------------- three-component picker (closing etc.)
