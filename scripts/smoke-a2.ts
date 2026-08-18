@@ -2949,32 +2949,57 @@ async function run() {
     assert.equal(await assertSourceLine(rid, line[0].vendor_id, ''), null, 'blank provenance is allowed')
   })
 
-  await check('the vendor-return void is refused exactly while the money views double it', async () => {
-    // NOT a pinned bug: an invariant that passes in both worlds and fails only
-    // when they disagree. stock_on_hand learned to skip a reversed pair;
-    // vendor_dues.credits and vendor_performance.returned_value did not, so a
-    // void credits the reversal's own amount a SECOND time. Measured here
-    // rather than read off the view definition.
-    const [v] = await tsql<{ id: string }[]>`
-      select v.id from purchases p join vendors v on v.id = p.vendor_id group by v.id limit 1`
+  await check('a vendor-return void returns EVERY view to where it started', async () => {
+    // This replaces the invariant that held the refusal in place (refusal in
+    // force iff the views doubled). That one had a job and it did it: it went
+    // red the day money_views_skip_reversed_returns landed. This is the
+    // permanent form — and it asserts ALL FIVE columns, not the money alone,
+    // because the fault has now moved between halves twice: 0022 fixed the
+    // stock and broke the money, and a gate watching one half agreed with both
+    // breaks in turn.
+    const [v] = await tsql<{ id: string; name: string }[]>`
+      select v.id, v.name from purchases p join vendors v on v.id = p.vendor_id group by v.id, v.name limit 1`
     const [item] = await tsql<{ id: string }[]>`select id from items limit 1`
-    assert.ok(v && item, 'need a vendor and an item to move money')
+    assert.ok(v && item, 'need a vendor and an item — nothing to move, so nothing is tested')
 
-    let viewsDouble = false
     await txn(async (tx) => {
-      const credits = async () => {
-        const [d] = await tx<{ c: string }[]>`
-          select coalesce(credits, 0)::text as c from vendor_dues where vendor_id = ${v.id}`
-        return Number(d?.c ?? 0)
+      const snapshot = async () => {
+        const [d] = await tx<{ balance: string; credits: string }[]>`
+          select balance::text as balance, coalesce(credits, 0)::text as credits
+          from vendor_dues where vendor_id = ${v.id}`
+        const [p] = await tx<{ returned: string }[]>`
+          select coalesce(returned_value, 0)::text as returned
+          from vendor_performance where vendor_id = ${v.id}`
+        const [st] = await tx<{ on_hand: string }[]>`
+          select coalesce(on_hand_qty, 0)::text as on_hand from stock_on_hand where item_id = ${item.id}`
+        const [rs] = await tx<{ lines: string; value: string }[]>`
+          select coalesce(sum(lines), 0)::text as lines, coalesce(sum(value), 0)::text as value
+          from vendor_return_reasons where vendor_id = ${v.id}`
+        return {
+          balance: Number(d?.balance ?? 0),
+          credits: Number(d?.credits ?? 0),
+          returned: Number(p?.returned ?? 0),
+          onHand: Number(st?.on_hand ?? 0),
+          reasonLines: Number(rs?.lines ?? 0),
+          reasonValue: Number(rs?.value ?? 0),
+        }
       }
-      const before = await credits()
+
+      const before = await snapshot()
       const [r] = await tx<{ id: string }[]>`
         insert into vendor_returns (restaurant_id, return_date, vendor_id, entered_by)
         values (${rid}, current_date, ${v.id}, 'smoke') returning id`
       await tx`insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate, reason)
                values (${rid}, ${r.id}, ${item.id}, 10, 50, 'Quality')`
-      const afterReturn = await credits()
-      assert.equal(afterReturn - before, 500, 'a 10 × 50 return must claim 500')
+
+      // The return must MOVE all five, or the void has nothing to prove.
+      const after = await snapshot()
+      assert.equal(after.credits - before.credits, 500, 'a 10 × 50 return claims 500')
+      assert.equal(before.balance - after.balance, 500, 'and takes 500 off what we owe them')
+      assert.equal(after.returned - before.returned, 500, 'and shows on vendor_performance')
+      assert.equal(before.onHand - after.onHand, 10, 'and takes 10 off the shelf')
+      assert.equal(after.reasonLines - before.reasonLines, 1, 'and one line reads Quality')
+      assert.equal(after.reasonValue - before.reasonValue, 500, 'worth 500')
 
       const [rev] = await tx<{ id: string }[]>`
         insert into vendor_returns (restaurant_id, return_date, vendor_id, reason, reverses_id, entered_by)
@@ -2983,29 +3008,138 @@ async function run() {
                  (restaurant_id, vendor_return_id, item_id, qty, rate, reason, source_purchase_line_id)
                select restaurant_id, ${rev.id}, item_id, qty, rate, reason, source_purchase_line_id
                from vendor_return_lines where vendor_return_id = ${r.id}`
-      const afterVoid = await credits()
-      viewsDouble = afterVoid !== before
-      console.log(`      credits: ${before} → ${afterReturn} → ${afterVoid} (void should return it to ${before})`)
+
+      const voided = await snapshot()
+      assert.deepEqual(
+        voided,
+        before,
+        'a void must return EVERY view to where it started — money, stock and the reason breakdown',
+      )
+      console.log(
+        `      balance ${before.balance} → ${after.balance} → ${voided.balance} · on hand ${before.onHand} → ${after.onHand} → ${voided.onHand}`,
+      )
       throw new Error('ROLLBACK')
     }).catch((e: Error) => {
       if (e.message !== 'ROLLBACK') throw e
     })
+  })
 
-    const { readFileSync } = await import('node:fs')
-    const src = readFileSync('src/server/vendor-return-actions.ts', 'utf8')
-    const refused = /const MONEY_VIEWS_SKIP_REVERSALS: boolean = false/.test(src)
-    assert.equal(
-      refused,
-      viewsDouble,
-      viewsDouble
-        ? 'the views still double the credit, so the void must stay refused'
-        : 'THE VIEWS ARE FIXED — flip MONEY_VIEWS_SKIP_REVERSALS, restore the Void button in VendorReturnList, and delete this half of the assertion',
-    )
-    if (viewsDouble) {
-      const list = readFileSync('src/components/store/VendorReturnList.tsx', 'utf8')
-      assert.ok(!/onClick=\{\(\) => setConfirmVoid/.test(list), 'no void button while the action can only refuse')
-      assert.match(list, /Voiding is switched off/, 'and the screen says why, once')
+  await check('the per-line reason has a reader, ranked by count not value', async () => {
+    // The reason existed with nothing reading it for one commit; vendor_
+    // performance carries only returned_value, which cannot tell four rotten
+    // crates from one expensive mis-delivery. Asserted INSIDE a rolled-back
+    // transaction because the view is empty on live data — an assertion over
+    // no rows would pass while proving nothing.
+    const { getVendorReturnReasons } = await import('../src/server/vendor-return-queries')
+    const [v] = await tsql<{ id: string }[]>`
+      select v.id from purchases p join vendors v on v.id = p.vendor_id group by v.id limit 1`
+    const items = await tsql<{ id: string }[]>`select id from items limit 2`
+    assert.ok(v && items.length === 2, 'need a vendor and two items')
+    assert.deepEqual(await getVendorReturnReasons(rid, 'not-a-uuid'), [], 'a malformed id is no rows, not a 500')
+
+    await txn(async (tx) => {
+      const add = async (reason: string, qty: number, rate: number, item: string) => {
+        const [r] = await tx<{ id: string }[]>`
+          insert into vendor_returns (restaurant_id, return_date, vendor_id, entered_by)
+          values (${rid}, current_date, ${v.id}, 'smoke') returning id`
+        await tx`insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate, reason)
+                 values (${rid}, ${r.id}, ${item}, ${qty}, ${rate}, ${reason})`
+        return r.id
+      }
+      // Quality: 3 lines worth 300. Wrong item: 1 line worth 9000.
+      // Count must win — that is the whole ranking argument.
+      await add('Quality', 1, 100, items[0].id)
+      await add('Quality', 1, 100, items[0].id)
+      await add('Quality', 1, 100, items[1].id)
+      const voided = await add('Wrong item', 1, 9000, items[1].id)
+
+      let rows = await tx<{ reason: string; lines: number; value: string }[]>`
+        select reason, lines::int as lines, value::text as value
+        from vendor_return_reasons
+        where restaurant_id = ${rid} and vendor_id = ${v.id}
+        order by lines desc, value desc, reason asc`
+      assert.deepEqual(
+        rows.map((r) => `${r.reason}:${r.lines}:${r.value}`),
+        ['Quality:3:300', 'Wrong item:1:9000'],
+        'three cheap Quality lines must rank above one expensive Wrong item — count, not value',
+      )
+
+      // and a voided return must stop counting against the supplier, which is
+      // the reason the void could come back at all
+      const [rev] = await tx<{ id: string }[]>`
+        insert into vendor_returns (restaurant_id, return_date, vendor_id, reason, reverses_id, entered_by)
+        values (${rid}, current_date, ${v.id}, 'void', ${voided}, 'smoke') returning id`
+      await tx`insert into vendor_return_lines
+                 (restaurant_id, vendor_return_id, item_id, qty, rate, reason, source_purchase_line_id)
+               select restaurant_id, ${rev.id}, item_id, qty, rate, reason, source_purchase_line_id
+               from vendor_return_lines where vendor_return_id = ${voided}`
+      rows = await tx<{ reason: string; lines: number; value: string }[]>`
+        select reason, lines::int as lines, value::text as value
+        from vendor_return_reasons
+        where restaurant_id = ${rid} and vendor_id = ${v.id}
+        order by lines desc, value desc, reason asc`
+      assert.deepEqual(
+        rows.map((r) => `${r.reason}:${r.lines}`),
+        ['Quality:3'],
+        'a voided return must vanish from the breakdown entirely, not net to zero lines',
+      )
+      throw new Error('ROLLBACK')
+    }).catch((e: Error) => {
+      if (e.message !== 'ROLLBACK') throw e
+    })
+  })
+
+  await check('every view over a qty>0 line table filters its PARENT reversal', async () => {
+    // THE RULE, as a structural gate rather than a habit. A CHECK (qty > 0) on
+    // a line table means that table can never use the negative-twin void, so
+    // the reversal is marked on the parent — and a view reading the lines
+    // without checking the parent counts a reversed pair twice. That has now
+    // been the fault three times, and each time it was found by a person
+    // rather than by a machine: GREP FOR THE PARENT, NOT THE LINE.
+    const lineTables = await tsql<{ line_table: string; parent_table: string; fk_column: string }[]>`
+      select distinct
+             c.conrelid::regclass::text as line_table,
+             fk.confrelid::regclass::text as parent_table,
+             att.attname as fk_column
+      from pg_constraint c
+      join pg_constraint fk
+        on fk.conrelid = c.conrelid and fk.contype = 'f'
+      join pg_attribute att
+        on att.attrelid = fk.conrelid and att.attnum = fk.conkey[1]
+      where c.contype = 'c'
+        and pg_get_constraintdef(c.oid) ilike '%qty > (0)%'
+        and exists (
+          select 1 from pg_attribute p
+          where p.attrelid = fk.confrelid and p.attname = 'reverses_id' and not p.attisdropped
+        )`
+    assert.ok(lineTables.length > 0, 'no qty>0 line table with a reversible parent — this gate proves nothing')
+
+    const seen = new Set<string>()
+    const offenders: string[] = []
+    for (const t of lineTables) {
+      if (seen.has(t.line_table)) continue
+      seen.add(t.line_table)
+      const views = await tsql<{ view_name: string; def: string }[]>`
+        select distinct dv.relname as view_name, pg_get_viewdef(dv.oid, true) as def
+        from pg_depend d
+        join pg_rewrite rw on d.objid = rw.oid
+        join pg_class dv on rw.ev_class = dv.oid
+        join pg_class src on d.refobjid = src.oid
+        where src.relname = ${t.line_table}
+          and dv.relkind = 'v'
+          and dv.relname <> ${t.line_table}`
+      for (const view of views) {
+        // The view must mention reverses_id somewhere: either its own filter or
+        // an is_voided/is_reversal column it derives from the parent.
+        if (!/reverses_id/.test(view.def)) offenders.push(`${view.view_name} reads ${t.line_table}`)
+      }
+      console.log(`      ${t.line_table} (parent ${t.parent_table}): ${views.length} view(s)`)
     }
+    assert.deepEqual(
+      offenders,
+      [],
+      `these views count a reversed pair twice — filter on the parent, not the line:\n      ${offenders.join('\n      ')}`,
+    )
   })
 
   console.log(

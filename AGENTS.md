@@ -3035,6 +3035,55 @@ dishes on non-revenue and off-book (`order by r.name asc` — staff meals are
 the same three dishes every day), and recipe-line components. The person
 pickers (`getNameHistory`) are `last_used desc` — recency only, half the rule.
 
+## GREP FOR THE PARENT, NOT THE LINE — the third off-by-one-view
+
+> **A CHECK (qty > 0) on a line table means that table can never use the
+> negative-twin void. The reversal is marked on the PARENT, so EVERY view
+> reading those lines must filter on the parent's state — no `reverses_id`, and
+> not itself reversed.**
+
+Migration `money_views_skip_reversed_returns` finished what 0022 started.
+`stock_on_hand` learned it first; `vendor_dues.credits`,
+`vendor_performance.returned_value` and the new `vendor_return_reasons` learned
+it here. `vendor_supplied_items` now excludes voided bills too, so a cancelled
+bill's rate can no longer prefill a credit claim.
+
+**Fixing one half moved the fault to the other, and the other was worse.** 0022
+made the stock exact and left the money doubling — and an overstated credit
+against a supplier is never discovered, because nobody counts what we owe them;
+it is simply underpaid. That is why the void was REFUSED in between rather than
+left running.
+
+Measured, live, rolled back — ₹500 of Chicken Boneless back to Golden Mutton,
+and the void must return EVERY column:
+
+| | balance | credits | returned | on hand | reasons |
+|---|---|---|---|---|---|
+| before | 17050 | 0 | 0 | 23.5 | — |
+| after the return | 16550 | 500 | 500 | 13.5 | Quality 1 / 500 |
+| after the VOID | 17050 | 0 | 0 | 23.5 | — |
+
+**`smoke:a2` now holds the RULE structurally, not the instance.** It reads
+`pg_constraint` for every line table carrying a `qty > 0` CHECK whose parent has
+`reverses_id`, walks `pg_depend` to every view over it, and asserts each view's
+definition mentions `reverses_id`. Two line tables, seven views, all filtering.
+Proved capable of failing by re-running the same enumeration against a token no
+view contains: it named all seven. A gate that has only ever returned an empty
+list has not been tested.
+
+That gate is the answer to the fault repeating three times: every previous fix
+was found by a person reading a view definition, which does not scale to the
+next table somebody adds.
+
+**The per-line reason now HAS a reader.** `vendor_return_reasons` on the vendor
+page, **ranked by COUNT, not value** — a rupee total is already on
+`vendor_performance` and cannot tell four rotten crates from one expensive
+mis-delivery. Two honesty details that are not fussiness: it counts LINES, not
+trips (two items back on one delivery is two lines and one visit, and calling
+that two returns overstates the case against a supplier), and it is SILENT AT
+ZERO, because "nothing has ever gone back to this vendor" is good news that
+becomes noise when it appears on all five vendor pages.
+
 ## A GATE CAN BE AN INVARIANT INSTEAD OF A PINNED BUG
 
 `vendor_dues.credits` and `vendor_performance.returned_value` sum every
@@ -3059,12 +3108,18 @@ docblocks from three rewrites, two of them stating the opposite of what the
 code did** — and the wrong sentence was on the SCREEN too, in an honesty strip
 telling the user the book was short twice over.
 
-**The gate is written as an INVARIANT, not as a pinned bug:** it moves ₹500
-through a rolled-back transaction, observes whether the views double it, and
-asserts `refusalInForce === viewsDouble`. That passes in both worlds and fails
-only when they disagree — so the day the migration lands, the gate says "flip
-`MONEY_VIEWS_SKIP_REVERSALS`, restore the Void button, delete this half". One
-`boolean` constant restores the capability.
+**The gate was written as an INVARIANT, not as a pinned bug:** it moved ₹500
+through a rolled-back transaction, observed whether the views doubled it, and
+asserted `refusalInForce === viewsDouble`. That passes in both worlds and fails
+only when they disagree.
+
+**IT WORKED.** `money_views_skip_reversed_returns` landed and the gate went red
+on the next run, naming what to do: flip the flag, restore the Void button,
+delete that half. The flag was DELETED rather than flipped — it existed only to
+hold the refusal, and a `boolean = true` left behind is dead scaffolding. The
+assertion that replaced it is the permanent one: a void must return every one of
+the five columns above to where it started, which is stronger than watching the
+money alone. Watching one half is exactly how the fault survived 0022.
 
 Better than the earlier form of the same trick (a gate "written to FAIL once
 the view was fixed"), which is green only by being wrong.

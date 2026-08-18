@@ -186,70 +186,43 @@ export async function saveVendorReturn(raw: VendorReturnInput): Promise<VendorRe
 /* ── void one entered in error ──────────────────────────────────────────── */
 
 /**
- * REFUSED, and the refusal is MEASURED rather than cautious.
+ * A negative twin is not available here, so the reversal is marked on the
+ * PARENT and every view that reads the lines filters on the parent's state.
  *
- * This function had three stacked docblocks from three successive rewrites,
- * two of them stating the opposite of what the code did. What the code does
- * now is copy every line EXACTLY — qty, rate, reason, provenance — and mark
- * the reversal on the PARENT, because `vendor_return_lines` carries
- * CHECK (qty > 0) and so can never use the negative twin every other void in
- * this app uses.
+ * WHY NOT THE NEGATIVE TWIN: `vendor_return_lines` carries CHECK (qty > 0), so
+ * the quantity cannot be negated. Every line is therefore copied EXACTLY — qty,
+ * rate, reason, provenance — and `vendor_returns.reverses_id` is what says the
+ * pair no longer stands. A reversal states the claim AS IT WAS MADE, not as
+ * anybody would describe it today.
  *
- * That fixed the STOCK. It broke the MONEY, and the previous docblock still
- * claimed money was exact. Measured on the live database inside a transaction
- * that rolled back, ₹500 of goods going back to Hemenic Foods:
+ * THE GENERAL RULE, and this is the third view-set in the project to need it:
+ * a CHECK (qty > 0) on a line table means that table can never use the
+ * negative-twin void, so when you find one, GREP FOR THE PARENT, NOT THE LINE.
+ * Four views read these lines and all four now filter:
+ * `stock_on_hand`, `vendor_dues.credits`, `vendor_performance.returned_value`
+ * and `vendor_return_reasons`. The first learned it in migration 0022 and the
+ * other three in `money_views_skip_reversed_returns` — and in between, the void
+ * was REFUSED rather than left to overstate a supplier credit that nobody would
+ * ever have noticed.
  *
- *                       balance   credits   returned_value   on hand
- *   before               12500         0                0      23.5
- *   after the return     12000       500              500      13.5
- *   after the VOID       11500      1000             1000      23.5
- *                        ^^^^^      ^^^^             ^^^^      ^^^^
- *                        wrong      wrong            wrong     right
+ * Measured on live data inside a transaction that rolled back, ₹500 of Chicken
+ * Boneless going back to Golden Mutton — the void must return EVERY column to
+ * where it started, and does:
  *
- * `stock_on_hand` learned to count only LIVE returns. `vendor_dues.credits`
- * and `vendor_performance.returned_value` did NOT — both still sum every
- * `vendor_return_lines` row with no reference to `vendor_returns.reverses_id`
- * — so the reversal's own positive amount is credited a second time and the
- * void takes ANOTHER ₹500 off what we owe the vendor.
+ *                    balance   credits   returned   on hand   reasons
+ *   before             17050         0          0      23.5   —
+ *   after the return   16550       500        500      13.5   Quality 1 / 500
+ *   after the VOID     17050         0          0      23.5   —
  *
- * WHY THAT IS THE WORSE HALF, by this file's own earlier argument: nobody
- * physically counts what we owe a supplier, so a wrong credit here is never
- * discovered — it is simply underpaid, month after month. A wrong book
- * quantity is found by the next count, loudly.
- *
- * So this refuses and names the fix, exactly as it refused once before when
- * the stock half was the broken one. The fix is a migration, one predicate in
- * each of two views, the same one `stock_on_hand` already carries: count only
- * returns that are neither a reversal nor themselves reversed. Writing a
- * compensating row here instead would hide it and break the one-path rule.
- *
- * THE GATE THAT HOLDS THIS IN PLACE IS WRITTEN TO FAIL THE DAY THE VIEWS ARE
- * FIXED (smoke:a2, "a vendor return void still doubles the credit"), so the
- * refusal comes back out on the same day the migration lands rather than
- * whenever somebody remembers it.
+ * `smoke:a2` asserts all five of those columns rather than the money alone.
+ * The gate that used to hold the refusal in place was an INVARIANT
+ * (refusal in force iff the views doubled), so it went red the day the
+ * migration landed instead of quietly agreeing with a pinned bug.
  */
-
-/**
- * ONE WORD RESTORES THE VOID. Flip this the same day the migration teaches
- * `vendor_dues.credits` and `vendor_performance.returned_value` to skip a
- * reversed pair. Typed as `boolean` rather than left as the literal `false` so
- * the reversal code below stays live code the compiler still checks.
- */
-const MONEY_VIEWS_SKIP_REVERSALS: boolean = false
-
 export async function voidVendorReturn(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     if (!UUID.test(id)) throw new VendorReturnRefusal('Malformed return id')
     const by = await actor('Voiding a vendor return')
-    if (!MONEY_VIEWS_SKIP_REVERSALS) {
-      throw new VendorReturnRefusal(
-        'Voiding a vendor return is switched off, on purpose. It would take the credit off this ' +
-          'vendor’s balance a SECOND time — measured: a ₹500 return voided leaves us ₹500 short of what ' +
-          'we actually owe them, and nobody counts what we owe a supplier, so it would never be found. ' +
-          'The stock half is already correct. Two views need one line each before this can come back; ' +
-          'record a credit note if the vendor settled it, and ask a manager meanwhile.',
-      )
-    }
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 

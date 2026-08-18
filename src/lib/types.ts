@@ -2639,6 +2639,26 @@ export type VendorReturnInput = {
 
 export type VendorReturnResult = { ok: true; id: string } | { ok: false; error: string }
 
+/**
+ * `vendor_return_reasons`, verbatim — what came back from this vendor and why.
+ *
+ * The per-line reason finally has a READER. `vendor_performance` carries only
+ * `returned_value`, and a rupee total cannot tell four rotten crates from one
+ * expensive wrong delivery. "Four Quality returns" is the fact that decides
+ * whether to keep buying from somebody.
+ *
+ * `lines` COUNTS LINES, NOT TRIPS — two lines on one return both marked Quality
+ * count as two. The screen says so rather than implying four separate visits.
+ */
+export type VendorReturnReasonRow = {
+  vendor_id: string
+  vendor_name: string
+  reason: string
+  lines: number
+  value: string
+  last_returned: string
+}
+
 /** A bill a return could be opened FROM. Reversals and voided bills are
  *  absent — there is nothing left on them to send back. */
 export type ReturnableBillRow = {

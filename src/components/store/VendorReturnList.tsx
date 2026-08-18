@@ -10,7 +10,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { VendorReturnRow } from '@/lib/types'
-import { recordCreditNote } from '@/server/vendor-return-actions'
+import { recordCreditNote, voidVendorReturn } from '@/server/vendor-return-actions'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import Honesty, { HonestyPill } from '@/components/Honesty'
@@ -55,8 +55,30 @@ export default function VendorReturnList({
 }) {
   const router = useRouter()
   const [openRef, setOpenRef] = useState<string | null>(null)
+  const [confirmVoid, setConfirmVoid] = useState<VendorReturnRow | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const anyVoided = recent.some((r) => r.is_voided)
+  async function runVoid(row: VendorReturnRow) {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await voidVendorReturn(row.id)
+      if (res.ok) {
+        toast('Return voided — the credit is cancelled and the goods are back on the book')
+        setConfirmVoid(null)
+        router.refresh()
+      } else {
+        setError(res.error)
+        setConfirmVoid(null)
+      }
+    } catch {
+      setError('Could not reach the server — nothing was voided.')
+      setConfirmVoid(null)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -164,47 +186,74 @@ export default function VendorReturnList({
                     </td>
                     <td className={tdNumCls}>{r.line_count}</td>
                     <td className={`${tdNumCls} font-semibold`}>{formatMoneyString(r.total)}</td>
-                    {/* NO VOID BUTTON while voidVendorReturn refuses. A control
-                        that can only produce an error is worse than its absence
-                        — the reason is said once below instead of once per tap.
-                        Restore it together with MONEY_VIEWS_SKIP_REVERSALS. */}
-                    <td className={`${tdCls} text-right`} />
+                    <td className={`${tdCls} text-right`}>
+                      {!r.is_reversal && !r.is_voided && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmVoid(r)}
+                          className="min-h-[40px] rounded-lg border border-red-300 px-2.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+                        >
+                          Void
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          {/* THIS STRIP USED TO SAY THE OPPOSITE, and it was on screen, not
-              just in a comment: "a void cancels the credit to the paisa, but
-              the book is short twice over". The migration that taught
-              stock_on_hand to skip a reversed pair inverted it — the stock is
-              right now and the MONEY is doubled — and the sentence was left
-              behind. Measured on live data inside a rolled-back transaction:
-              a ₹500 return, voided, moved the balance 12500 → 12000 → 11500. */}
-          <div className="mt-3">
-            {/* GOLD, not red, unless something is actually wrong right now. A
-                switched-off capability is a doubt; a return already voided is
-                real money mis-stated, and that earns the alarm. A permanent
-                red strip gets dismissed exactly like a permanent all-clear. */}
-            <Honesty level={anyVoided ? 'alarm' : 'pending'} verdict="Voiding is switched off">
-              A void would take the credit off this vendor&apos;s balance a <b>second</b> time —
-              {' '}vendor_dues and vendor_performance still count a reversal as another return, so a ₹500 return
-              voided leaves us ₹500 short of what we actually owe them. Nobody counts what we owe a supplier, so
-              it would never be found. Two views need one line each first. If the vendor settled it, record the
-              credit note; otherwise ask a manager.
-              {anyVoided && (
-                <>
-                  {' '}
-                  A return already voided is carrying that error now.
-                </>
-              )}
-            </Honesty>
-          </div>
         </section>
       )}
 
 
+      {error !== null && (
+        <div role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          {error}
+        </div>
+      )}
+
+      {confirmVoid !== null && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-stone-900/40 p-4 sm:items-center">
+          <div className="w-full max-w-md rounded-2xl border border-rule bg-cell p-5 shadow-xl">
+            <h3 className="text-lg font-bold text-stone-900">Void this return?</h3>
+            <div className="mt-3 space-y-2 text-sm text-stone-600">
+              <p>
+                The {fmtDate(confirmVoid.return_date)} return to <b>{confirmVoid.vendor_name}</b> for{' '}
+                <b>{formatMoneyString(confirmVoid.total)}</b> stays on record; a reversal is written against it
+                and both sides come back to exactly where they were — what we owe them, and the goods on the
+                book.
+              </p>
+              {/* This paragraph used to say the opposite, twice over, in two
+                  different directions. It is now measured: 17050 → 16550 →
+                  17050, and 23.5 → 13.5 → 23.5. Four views read these lines
+                  and all four filter the parent's reversal state. */}
+              <p>
+                It is a correction, not a deletion — the return and its reversal both stay visible, and the
+                credit note cannot be recorded against a voided claim.
+              </p>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmVoid(null)}
+                disabled={busy}
+                className="rounded-xl px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void runVoid(confirmVoid)}
+                disabled={busy}
+                className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:bg-stone-300"
+              >
+                {busy ? 'Voiding…' : 'Void return'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

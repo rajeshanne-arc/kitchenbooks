@@ -23,6 +23,7 @@ import type {
   IssuableItemHit,
   ItemSuggestion,
   ReturnableBillRow,
+  VendorReturnReasonRow,
   VendorReturnRow,
 } from '@/lib/types'
 
@@ -173,6 +174,32 @@ export async function listCreditBillOptions(
     seen.set(r.vendor_id, n)
     return n <= perVendor
   })
+}
+
+/**
+ * Why goods came back from one vendor, worst habit first.
+ *
+ * RANKED BY COUNT, not by value, and that is the argument: a rupee total is
+ * already on `vendor_performance`, and it cannot tell four rotten crates from
+ * one expensive mis-delivery. The repeated fault is the one that decides
+ * whether to keep buying from somebody.
+ *
+ * The view already filters reversed pairs, so a voided return does not count
+ * against a supplier — which is the whole reason the void could come back.
+ */
+export async function getVendorReturnReasons(
+  restaurantId: string,
+  vendorId: string,
+): Promise<VendorReturnReasonRow[]> {
+  if (!UUID.test(vendorId)) return []
+  return tsql<VendorReturnReasonRow[]>`
+    select vendor_id, vendor_name, reason,
+           lines::int as lines,
+           value::text as value,
+           last_returned::text as last_returned
+    from vendor_return_reasons
+    where restaurant_id = ${restaurantId} and vendor_id = ${vendorId}
+    order by lines desc, value desc, reason asc`
 }
 
 /* ── pickers, scoped by what is already known ───────────────────────────── */

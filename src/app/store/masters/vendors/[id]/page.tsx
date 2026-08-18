@@ -4,6 +4,7 @@ import { getRestaurant } from '@/server/queries'
 import { getVendorBills, getVendorDetail, getVendorPayments } from '@/server/books-queries'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getList } from '@/server/settings'
+import { getVendorReturnReasons } from '@/server/vendor-return-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { RetiredBadge } from '@/components/books/Badges'
@@ -39,11 +40,12 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
   const vendor = await getVendorDetail(restaurant.id, id)
   if (!vendor) notFound()
 
-  const [bills, payments, modes, accounts] = await Promise.all([
+  const [bills, payments, modes, accounts, returnReasons] = await Promise.all([
     getVendorBills(restaurant.id, id),
     getVendorPayments(id),
     getList(restaurant.id, 'payment_mode'),
     listMoneyAccounts(restaurant.id),
+    getVendorReturnReasons(restaurant.id, id),
   ])
   const balP = decimalStringToPaise(vendor.balance)
   const hasBank =
@@ -223,6 +225,50 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
       </section>
 
       {/* bills */}
+      {/* WHAT CAME BACK, AND WHY — silent at zero.
+          "Nothing has ever gone back to this vendor" is genuinely good news,
+          but a card saying it on all five vendor pages is a thing to read and
+          dismiss every visit, and absence says the same thing more quietly.
+          Same rule as the open-indents badge and the made-today card. */}
+      {returnReasons.length > 0 && (
+        <section className={cardCls}>
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className={sectionHeadCls}>What came back, and why</h3>
+            <span className="text-xs text-stone-400">vendor_return_reasons</span>
+          </div>
+          <div className="mt-2 overflow-x-auto">
+            <table className={dataTableCls}>
+              <thead>
+                <tr>
+                  <th className={thCls}>Reason</th>
+                  <th className={thNumCls}>Lines</th>
+                  <th className={thNumCls}>Value</th>
+                  <th className={thCls}>Last</th>
+                </tr>
+              </thead>
+              <tbody>
+                {returnReasons.map((r) => (
+                  <tr key={r.reason} className={trCls}>
+                    <td className={`${tdCls} font-medium`}>{r.reason}</td>
+                    <td className={tdNumCls}>{r.lines}</td>
+                    <td className={tdNumCls}>{formatMoneyString(r.value)}</td>
+                    <td className={`${tdCls} text-stone-500`}>{fmtDate(r.last_returned)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* The count is LINES, not trips. Two rotten items on one delivery are
+              two lines and one visit, and calling that "two returns" would
+              overstate the case against a supplier. */}
+          <p className="mt-2 text-xs text-stone-500">
+            Counted in lines, not trips — two items sent back on one delivery are two lines. A voided return
+            does not count against them. Worst habit first: the reason that keeps repeating is the one that
+            decides whether to keep buying here.
+          </p>
+        </section>
+      )}
+
       <section className={cardCls}>
         <h3 className={sectionHeadCls}>Bill history</h3>
         {bills.length === 0 ? (
