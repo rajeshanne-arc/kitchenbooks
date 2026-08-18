@@ -11,6 +11,7 @@ import type {
   IssuableItemHit,
   IssueDetail,
   IssueLineRow,
+  ItemSuggestion,
   ReorderRow,
   ReturnDetail,
   ReturnLineRow,
@@ -67,6 +68,79 @@ export async function searchIssuableItems(restaurantId: string, q: string): Prom
       and (i.name ilike ${like} or i.code ilike ${like})
     order by (i.name ilike ${prefix}) desc, i.name asc
     limit 10`
+}
+
+/**
+ * What this department actually takes — the Issues sheet's best habit, restored.
+ *
+ * The sheet filled the last ten days' items for a department, most frequent
+ * first, and the app lost it: every issue started from a blank typeahead over
+ * all 300-odd items, so the store manager searched for onions every single
+ * morning. `section_frequent_items` is the last 30 days, ignoring voids.
+ *
+ * RANKED FREQUENCY THEN RECENCY, and it SCOPES WITHOUT EXCLUDING: these sit at
+ * the top of the picker and the general search stays underneath. A department
+ * taking something for the first time has no history here, and a picker that
+ * only offered history would make that item unfindable.
+ *
+ * `typical_qty` rides along as a HINT beside the box, never as a prefill —
+ * the same ruling as the closing form, where a quantity nobody counted is
+ * worse than a blank one.
+ */
+export async function getSectionFrequentItems(
+  restaurantId: string,
+  sectionId: string,
+): Promise<ItemSuggestion[]> {
+  const rows = await tsql<
+    {
+      id: string
+      code: string
+      name: string
+      category_name: string
+      purchase_unit: string
+      unit_name: string
+      on_hand_qty: string
+      has_cost: boolean
+      times: number
+      last: string
+      typical_qty: string
+    }[]
+  >`
+    select f.item_id as id, f.item_code as code, f.item_name as name,
+           c.name as category_name, f.purchase_unit, u.name as unit_name,
+           coalesce(s.on_hand_qty, 0)::text as on_hand_qty,
+           (ic.issue_cost is not null) as has_cost,
+           f.times_issued::int as times,
+           f.last_issued::text as last,
+           round(f.typical_qty, 3)::text as typical_qty
+    from section_frequent_items f
+    join items i on i.id = f.item_id
+    join categories c on c.code = i.category
+    join units u on u.code = f.purchase_unit
+    left join stock_on_hand s on s.item_id = f.item_id
+    left join item_costs ic on ic.item_id = f.item_id
+    where f.restaurant_id = ${restaurantId}
+      and f.section_id = ${sectionId}
+      and i.status = 'active'
+    order by f.times_issued desc, f.last_issued desc, f.item_name asc
+    limit 20`
+  return rows.map((r) => ({
+    item: {
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      category_name: r.category_name,
+      purchase_unit: r.purchase_unit,
+      unit_name: r.unit_name,
+      on_hand_qty: r.on_hand_qty,
+      has_cost: r.has_cost,
+    },
+    times: r.times,
+    last: r.last,
+    typical_qty: r.typical_qty,
+    last_rate: null,
+    source_purchase_line_id: null,
+  }))
 }
 
 export async function listStock(restaurantId: string, q: string): Promise<StockRow[]> {

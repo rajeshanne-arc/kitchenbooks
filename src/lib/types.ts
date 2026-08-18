@@ -357,6 +357,32 @@ export type IssuableItemHit = {
   has_cost: boolean
 }
 
+/**
+ * An item the CONTEXT already knows about — what this department takes, what
+ * this vendor supplies.
+ *
+ * THE RULE IS SCOPE AND RANK, NEVER EXCLUDE. These sit at the top of the
+ * picker and the general search stays underneath, reaching everything: a
+ * first-time item has no history, and a picker that only offered history
+ * would make it unfindable. Same shape bill entry already uses for the
+ * starter library.
+ */
+export type ItemSuggestion = {
+  item: IssuableItemHit
+  /** how many times this context used it — the frequency half of the rank */
+  times: number
+  /** the recency half, as a date string */
+  last: string
+  /** SECTION scope: what a normal issue of this item looks like. A HINT shown
+   *  beside the field, never written into it — the closing-prefill ruling
+   *  applies, and a quantity nobody counted is worse than a blank one. */
+  typical_qty: string | null
+  /** VENDOR scope: what the last bill charged, and the LINE it came from, so
+   *  a credit rate has a provenance instead of being remembered. */
+  last_rate: string | null
+  source_purchase_line_id: string | null
+}
+
 /** One row of the stock_on_hand view (+ item status) */
 export type StockRow = {
   item_id: string
@@ -560,9 +586,11 @@ export type SaveReturnInput = {
   sectionId: string
   /** the session this stock went back from */
   session: string
-  /** from the return_reason managed list — membership enforced server-side */
-  reason: string
-  lines: { itemId: string; qty: string; note: string }[]
+  /** PER LINE, from the return_reason managed list. A tray of gravy that was
+   *  never needed and a crate of onions that turned go back on the same trip
+   *  for two different reasons, and the reason is what waste analysis reads.
+   *  Same ruling as kitchen and store loss. */
+  lines: { itemId: string; qty: string; note: string; reason: string }[]
 }
 
 export type SaveReturnResult =
@@ -2576,7 +2604,11 @@ export type VendorReturnRow = {
   return_date: string
   vendor_id: string
   vendor_name: string
-  reason: string
+  /** COMPUTED FROM THE LINES — one distinct reason names itself, several read
+   *  "Mixed". Never cached on the header: caching it would let the summary
+   *  disagree with the lines it summarises. Null only on rows that predate
+   *  per-line reasons. */
+  reason: string | null
   credit_note_ref: string | null
   settled_against_purchase_id: string | null
   note: string | null
@@ -2590,14 +2622,59 @@ export type VendorReturnRow = {
 export type VendorReturnInput = {
   date: string
   vendorId: string
-  reason: string
   creditNoteRef: string
   note: string
-  /** rate is what the credit is claimed at — usually the bill rate */
-  lines: { itemId: string; qty: string; rate: string }[]
+  /** PER LINE. A rotten crate and a wrong item go back on the same trip for
+   *  two reasons, so there is no header reason to collect — a list reads the
+   *  lines and says "Quality" or "Mixed". `sourcePurchaseLineId` is where the
+   *  goods came from, which is what gives the rate a provenance. */
+  lines: {
+    itemId: string
+    qty: string
+    rate: string
+    reason: string
+    sourcePurchaseLineId: string
+  }[]
 }
 
 export type VendorReturnResult = { ok: true; id: string } | { ok: false; error: string }
+
+/** A bill a return could be opened FROM. Reversals and voided bills are
+ *  absent — there is nothing left on them to send back. */
+export type ReturnableBillRow = {
+  id: string
+  doc_no: string | null
+  bill_no: string | null
+  bill_date: string
+  vendor_id: string
+  vendor_name: string
+  bill_total: string
+  line_count: number
+}
+
+/**
+ * A bill, opened as a return. Picking the bill answers the vendor, the items
+ * AND the rate at once — the three things the blank form was asking the store
+ * manager to remember about a delivery they are holding in their hands.
+ * Quantities stay BLANK: what arrived is not what is going back.
+ */
+export type BillReturnPrefill = {
+  purchase_id: string
+  vendor_id: string
+  vendor_name: string
+  bill_no: string | null
+  doc_no: string | null
+  bill_date: string
+  lines: {
+    item: IssuableItemHit
+    /** the rate this bill charged — the rate a credit is normally claimed at */
+    rate: string
+    /** how much the bill said arrived, shown as context beside the box */
+    billed_qty: string
+    /** provenance: vendor_return_lines.source_purchase_line_id */
+    purchase_line_id: string
+  }[]
+}
 
 /** vendor_performance, verbatim. `unsettled` is the one to surface: a short
  *  nobody chased is a different fact from one that was credited. */

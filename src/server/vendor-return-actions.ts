@@ -21,9 +21,12 @@ import {
   VendorReturnRefusal,
   assertItems,
   assertPurchaseForVendor,
+  assertSourceLine,
   assertVendor,
   getVendorReturn,
 } from '@/server/vendor-return-queries'
+import { getList } from '@/server/settings'
+import { noteListSuggestion } from '@/server/settings-actions'
 import type { VendorReturnInput, VendorReturnResult } from '@/lib/types'
 import type { Role } from '@/lib/roles'
 
@@ -56,12 +59,18 @@ const LineSchema = z.object({
   itemId: z.string().regex(UUID),
   qty: z.string().trim().min(1, 'How much went back?'),
   rate: z.string().trim().min(1, 'What is the credit claimed at?'),
+  /** PER LINE. A rotten crate and a wrong item go back on the same trip for
+   *  two different reasons, and one of them is a quality problem with the
+   *  supplier while the other is a picking mistake. Collapsing both onto the
+   *  header would lose the distinction the vendor conversation turns on. */
+  reason: z.string().trim().min(1, 'Say why this line is going back').max(120),
+  /** provenance for the rate — blank is allowed */
+  sourcePurchaseLineId: z.string().trim(),
 })
 
 const ReturnSchema = z.object({
   date: z.string().regex(DATE_RE),
   vendorId: z.string().trim(),
-  reason: z.string().trim().min(1, 'Say why the goods went back').max(300),
   creditNoteRef: z.string().trim().max(120),
   note: z.string().trim().max(300),
   lines: z.array(LineSchema),
@@ -70,10 +79,17 @@ const ReturnSchema = z.object({
 /**
  * Header and lines in ONE transaction.
  *
- * The RATE is what the credit is CLAIMED at — normally the rate off the bill
- * the goods arrived on. It is typed rather than looked up because a vendor
- * does not always credit at the price they charged, and quietly substituting
- * the bill rate would make the app state a claim nobody made.
+ * The RATE is what the credit is CLAIMED at, and it stays EDITABLE — a vendor
+ * does not always credit at the price they charged, so the app must be able to
+ * state a claim that differs from the bill. What changed is that it is no
+ * longer typed from memory: the form prefills it from
+ * `vendor_supplied_items.last_rate` and records
+ * `source_purchase_line_id` beside it, so the number has a provenance. The old
+ * screen said "normally the rate on the bill these arrived on", which was the
+ * app asking somebody to remember something the database was holding.
+ *
+ * A PREFILL IS NOT A SUBSTITUTION. The rate arrives filled in and the receiver
+ * can change it; nothing is written that nobody looked at.
  *
  * vendor_return_lines.amount is GENERATED (qty × rate) and is therefore absent
  * from the insert column list by necessity — the same trap as bill_total.
@@ -106,12 +122,35 @@ export async function saveVendorReturn(raw: VendorReturnInput): Promise<VendorRe
     const vendor = await assertVendor(rid, input.vendorId)
     await assertItems(rid, input.lines.map((l) => l.itemId))
 
+    // Every source line must be one of THIS vendor's. Resolved once per
+    // distinct id rather than per line, because a bill-opened return usually
+    // names several lines off one bill.
+    const sourceIds = new Map<string, string | null>()
+    for (const l of input.lines) {
+      if (sourceIds.has(l.sourcePurchaseLineId)) continue
+      sourceIds.set(l.sourcePurchaseLineId, await assertSourceLine(rid, vendor.id, l.sourcePurchaseLineId))
+    }
+
+    // LAW 2 AS AMENDED: a typed reason SAVES and lands in list_suggestions as
+    // pending. Refusing it would stop the work — and the person holding a
+    // rotten crate at the vendor's van cannot wait for an owner to log in.
+    // Checked outside the transaction and once per distinct value.
+    const known = await getList(rid, 'vendor_return_reason')
+    const lower = new Set(known.map((r) => r.toLowerCase()))
+    for (const value of new Set(input.lines.map((l) => l.reason))) {
+      if (!lower.has(value.toLowerCase())) await noteListSuggestion(rid, 'vendor_return_reason', value, by)
+    }
+
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      // NO HEADER REASON. It is nullable now and stays null on purpose: a
+      // cached predominant reason could disagree with the lines it claims to
+      // summarise, and nothing on screen would look wrong. The list reads the
+      // lines and says "Quality" or "Mixed".
       const [header] = await tx<{ id: string }[]>`
-        insert into vendor_returns (restaurant_id, return_date, vendor_id, reason,
+        insert into vendor_returns (restaurant_id, return_date, vendor_id,
                                     credit_note_ref, note, entered_by)
-        values (${rid}, ${input.date}, ${vendor.id}, ${input.reason},
+        values (${rid}, ${input.date}, ${vendor.id},
                 ${input.creditNoteRef === '' ? null : input.creditNoteRef},
                 ${input.note === '' ? null : input.note}, ${by})
         returning id`
@@ -119,8 +158,10 @@ export async function saveVendorReturn(raw: VendorReturnInput): Promise<VendorRe
 
       for (const line of input.lines) {
         await tx`
-          insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate)
-          values (${rid}, ${header.id}, ${line.itemId}, ${line.qty}::numeric, ${line.rate}::numeric)`
+          insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate,
+                                           reason, source_purchase_line_id)
+          values (${rid}, ${header.id}, ${line.itemId}, ${line.qty}::numeric, ${line.rate}::numeric,
+                  ${line.reason}, ${sourceIds.get(line.sourcePurchaseLineId) ?? null})`
       }
 
       // Read the lines back inside the transaction: if the count does not
@@ -145,86 +186,70 @@ export async function saveVendorReturn(raw: VendorReturnInput): Promise<VendorRe
 /* ── void one entered in error ──────────────────────────────────────────── */
 
 /**
- * A REVERSAL, never a delete: the entry happened and stays on record.
+ * REFUSED, and the refusal is MEASURED rather than cautious.
  *
- * THE NEGATIVE TWIN IS NOT AVAILABLE HERE, and the reason is a CHECK
- * constraint, not a preference. Every other void in this app inserts
- * `select -qty, unit_cost` — but `vendor_return_lines` carries
- * CHECK (qty > 0), so a negative quantity is refused by the database. The
- * negation therefore moves to the only column that can carry it: the RATE.
- * qty is copied EXACTLY, rate is negated, and `amount` (GENERATED as
- * qty × rate) comes out as the exact negative of the original.
+ * This function had three stacked docblocks from three successive rewrites,
+ * two of them stating the opposite of what the code did. What the code does
+ * now is copy every line EXACTLY — qty, rate, reason, provenance — and mark
+ * the reversal on the PARENT, because `vendor_return_lines` carries
+ * CHECK (qty > 0) and so can never use the negative twin every other void in
+ * this app uses.
  *
- * WHAT THAT FIXES AND WHAT IT DOES NOT:
+ * That fixed the STOCK. It broke the MONEY, and the previous docblock still
+ * claimed money was exact. Measured on the live database inside a transaction
+ * that rolled back, ₹500 of goods going back to Hemenic Foods:
  *
- *   MONEY — exact. vendor_dues.credits and vendor_performance.returned_value
- *   both sum vendor_return_lines.amount, so the pair nets to zero and the
- *   vendor's balance returns to what it was. This is the number that matters
- *   most: nobody physically counts what we owe a supplier, so a wrong credit
- *   here is never discovered — it is simply underpaid.
+ *                       balance   credits   returned_value   on hand
+ *   before               12500         0                0      23.5
+ *   after the return     12000       500              500      13.5
+ *   after the VOID       11500      1000             1000      23.5
+ *                        ^^^^^      ^^^^             ^^^^      ^^^^
+ *                        wrong      wrong            wrong     right
  *
- *   STOCK — left WORSE, and said so on screen. stock_on_hand subtracts
- *   sum(vendor_return_lines.qty) with no reference to vendor_returns at all,
- *   so it cannot tell a reversal from a return and takes the reversal's own
- *   (positive) quantity off as well: after a void the book is short by TWICE
- *   what went back. It is NOT patched up from here — putting stock back is a
- *   deliberate judgement someone makes on a stock adjustment, the same rule
- *   that stops a count auto-correcting the book, and the next physical count
- *   finds it either way.
+ * `stock_on_hand` learned to count only LIVE returns. `vendor_dues.credits`
+ * and `vendor_performance.returned_value` did NOT — both still sum every
+ * `vendor_return_lines` row with no reference to `vendor_returns.reverses_id`
+ * — so the reversal's own positive amount is credited a second time and the
+ * void takes ANOTHER ₹500 off what we owe the vendor.
  *
- * Verified in a transaction that was rolled back: a 10 × ₹50 return moved the
- * vendor balance 3000 → 2500 and returned_value 0 → 500; the void moved both
- * back exactly (3000, 0) and moved stock 4 → −6 → −16.
- *
- * WHY THAT TRADE, and not the other way round: nobody physically counts what
- * we owe a supplier, so a credit left standing after a void is never
+ * WHY THAT IS THE WORSE HALF, by this file's own earlier argument: nobody
+ * physically counts what we owe a supplier, so a wrong credit here is never
  * discovered — it is simply underpaid, month after month. A wrong book
- * quantity is found by the next count, loudly. So the money is made exact and
- * the stock gap is stated in words.
+ * quantity is found by the next count, loudly.
  *
- * The real fix is a migration (relax the CHECK, or teach the views to skip a
- * reversed pair). Until then this is on screen, not hidden.
+ * So this refuses and names the fix, exactly as it refused once before when
+ * the stock half was the broken one. The fix is a migration, one predicate in
+ * each of two views, the same one `stock_on_hand` already carries: count only
+ * returns that are neither a reversal nor themselves reversed. Writing a
+ * compensating row here instead would hide it and break the one-path rule.
+ *
+ * THE GATE THAT HOLDS THIS IN PLACE IS WRITTEN TO FAIL THE DAY THE VIEWS ARE
+ * FIXED (smoke:a2, "a vendor return void still doubles the credit"), so the
+ * refusal comes back out on the same day the migration lands rather than
+ * whenever somebody remembers it.
  */
+
 /**
- * REFUSED, DELIBERATELY, until stock_on_hand can tell a reversal from a
- * return. This is not caution — it is measured: 18.5 on hand, a return of
- * 10 leaves 8.5, and voiding it leaves −1.5. The quantity comes off TWICE.
- *
- * Why it cannot be fixed here: `vendor_return_lines` carries
- * CHECK (qty > 0), so a reversal cannot be the negative twin every other
- * void in this app is — the negation has to go on `rate`, which reverses
- * the money and not the goods. `stock_on_hand` then subtracts
- * sum(vendor_return_lines.qty) with no reference to `vendor_returns
- * .reverses_id`, so it counts the original and the reversal alike.
- *
- * Writing a compensating stock_adjustments row would hide it and break the
- * one-path rule: goods move through exactly one table. So the button
- * refuses and names the fix, because a void that corrupts the book is
- * worse than no void at all. The migration needed is one line in the view:
- * count only LIVE returns — those with no reverses_id, and not themselves
- * reversed — exactly as `bills.is_voided` already does for purchases.
+ * ONE WORD RESTORES THE VOID. Flip this the same day the migration teaches
+ * `vendor_dues.credits` and `vendor_performance.returned_value` to skip a
+ * reversed pair. Typed as `boolean` rather than left as the literal `false` so
+ * the reversal code below stays live code the compiler still checks.
  */
-/**
- * A negative twin, the way every other void in this app works — except that
- * `vendor_return_lines` carries CHECK (qty > 0), so the LINES cannot be
- * negated. They are copied EXACTLY and the reversal is marked on the
- * PARENT instead; `stock_on_hand` and both consumption views count only
- * returns that are neither a reversal nor themselves reversed, which is how
- * the goods come back onto the shelf.
- *
- * This was refused for one commit because the views did not yet filter, and
- * voiding took the stock off twice — 18.5, then 8.5, then −1.5. The rule
- * that came out of it is in AGENTS.md: a CHECK (qty > 0) on a line table
- * means that table can never use the negative-twin void, so every view
- * reading it must filter on the parent's reversal state instead.
- *
- * The rate is copied exactly too. A void reverses the claim as it was made,
- * not as the rate stands today.
- */
+const MONEY_VIEWS_SKIP_REVERSALS: boolean = false
+
 export async function voidVendorReturn(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     if (!UUID.test(id)) throw new VendorReturnRefusal('Malformed return id')
     const by = await actor('Voiding a vendor return')
+    if (!MONEY_VIEWS_SKIP_REVERSALS) {
+      throw new VendorReturnRefusal(
+        'Voiding a vendor return is switched off, on purpose. It would take the credit off this ' +
+          'vendor’s balance a SECOND time — measured: a ₹500 return voided leaves us ₹500 short of what ' +
+          'we actually owe them, and nobody counts what we owe a supplier, so it would never be found. ' +
+          'The stock half is already correct. Two views need one line each before this can come back; ' +
+          'record a credit note if the vendor settled it, and ask a manager meanwhile.',
+      )
+    }
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
@@ -248,9 +273,13 @@ export async function voidVendorReturn(id: string): Promise<{ ok: true } | { ok:
         values (${rid}, ${orig.return_date}, ${orig.vendor_id}, 'void', ${id}, ${by})
         returning id`
       // amount is GENERATED — absent from the column list by necessity
+      // reason and provenance are copied EXACTLY, like unit_cost on an issue
+      // void: a reversal states the claim as it was MADE, not as anybody would
+      // describe it today.
       await tx`
-        insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate)
-        select restaurant_id, ${rev.id}, item_id, qty, rate
+        insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate,
+                                         reason, source_purchase_line_id)
+        select restaurant_id, ${rev.id}, item_id, qty, rate, reason, source_purchase_line_id
         from vendor_return_lines where vendor_return_id = ${id}`
 
       const [check] = await tx<{ n: number }[]>`

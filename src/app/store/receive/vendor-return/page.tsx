@@ -3,8 +3,10 @@ import {
   creditNoteProgress,
   listAwaitingCreditNote,
   listCreditBillOptions,
+  listReturnableBills,
   listVendorReturns,
 } from '@/server/vendor-return-queries'
+import { getList } from '@/server/settings'
 import VendorReturnEntry from '@/components/store/VendorReturnEntry'
 import VendorReturnList from '@/components/store/VendorReturnList'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
@@ -19,10 +21,15 @@ export const dynamic = 'force-dynamic'
 
 export default async function VendorReturnPage() {
   const restaurant = await getRestaurant()
-  const [awaiting, recent, progress] = await Promise.all([
+  const [awaiting, recent, progress, bills, reasons] = await Promise.all([
     listAwaitingCreditNote(restaurant.id),
     listVendorReturns(restaurant.id),
     creditNoteProgress(restaurant.id),
+    // A return is normally about a delivery, so the bills come with the page
+    // rather than behind a search box — the same reasoning that opens the
+    // payment screen on the dues queue instead of a vendor lookup.
+    listReturnableBills(restaurant.id),
+    getList(restaurant.id, 'vendor_return_reason'),
   ])
   // Only the vendors actually waiting on a credit note need their bills — one
   // query for all of them rather than one per open row.
@@ -40,7 +47,7 @@ export default async function VendorReturnPage() {
         </p>
       </header>
       <div className="space-y-6">
-        <VendorReturnEntry />
+        <VendorReturnEntry bills={bills} reasons={reasons} />
         <VendorReturnList
           awaiting={awaiting}
           recent={recent}

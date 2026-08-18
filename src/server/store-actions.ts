@@ -195,9 +195,20 @@ const ReturnSchema = z.object({
   returnDate: z.string().regex(DATE_RE),
   sectionId: z.string().regex(UUID),
   session: z.string().trim().min(1, 'Pick the session'),
-  reason: z.string().trim().min(1, 'Pick a reason').max(60),
+  // REASON IS PER LINE. A tray of gravy that was never needed and a crate of
+  // onions that turned come back on the same trip for two different reasons,
+  // and the reason is the whole value of the record. Same ruling as kitchen
+  // and store loss; the opposite of a batch of corrections, where one reason
+  // IS the event.
   lines: z
-    .array(z.object({ itemId: z.string().regex(UUID), qty: qtyStr, note: z.string().trim().max(200) }))
+    .array(
+      z.object({
+        itemId: z.string().regex(UUID),
+        qty: qtyStr,
+        note: z.string().trim().max(200),
+        reason: z.string().trim().min(1, 'Pick a reason').max(60),
+      }),
+    )
     .min(1)
     .max(40),
 })
@@ -214,9 +225,12 @@ export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await enteredBy()
+    // Once per DISTINCT value: three lines sharing a typed reason are one new
+    // word, not three. LAW 2 as amended — the entry saves either way.
     const reasons = await getList(rid, 'return_reason')
-    if (!reasons.some((r) => r.toLowerCase() === input.reason.toLowerCase())) {
-      await noteListSuggestion(rid, 'return_reason', input.reason, by)
+    const known = new Set(reasons.map((r) => r.toLowerCase()))
+    for (const value of new Set(input.lines.map((l) => l.reason))) {
+      if (!known.has(value.toLowerCase())) await noteListSuggestion(rid, 'return_reason', value, by)
     }
 
     const saved = await txn(async (tx) => {
@@ -251,9 +265,17 @@ export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult
         costs.set(l.itemId, rows[0].issue_cost)
       }
 
+      // `returns.reason` is still NOT NULL — unlike vendor_returns.reason, that
+      // migration did not relax it — so the header has to carry something TRUE.
+      // One distinct reason names itself; several read "Mixed", which is the
+      // same rule the vendor-return list applies, computed the same way. It is
+      // a SUMMARY of the lines, never the authority: every reader that cares
+      // reads return_lines.reason.
+      const headerReason =
+        new Set(input.lines.map((l) => l.reason)).size === 1 ? input.lines[0].reason : 'Mixed'
       const [ret] = await tx<{ id: string }[]>`
         insert into returns (restaurant_id, return_date, section_id, reason, entered_by)
-        values (${rid}, ${input.returnDate}, ${input.sectionId}, ${input.reason}, ${by})
+        values (${rid}, ${input.returnDate}, ${input.sectionId}, ${headerReason}, ${by})
         returning id`
 
       const lineRows = input.lines.map((l) => ({
@@ -263,8 +285,9 @@ export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult
         qty: l.qty.trim(),
         unit_cost: costs.get(l.itemId)!,
         note: l.note === '' ? null : l.note,
+        reason: l.reason,
       }))
-      await tx`insert into return_lines ${tx(lineRows, 'restaurant_id', 'return_id', 'item_id', 'qty', 'unit_cost', 'note')}`
+      await tx`insert into return_lines ${tx(lineRows, 'restaurant_id', 'return_id', 'item_id', 'qty', 'unit_cost', 'note', 'reason')}`
       return { returnId: ret.id }
     })
 

@@ -20,6 +20,7 @@ export type ListKey =
   | 'non_revenue_reason'
   | 'expense_category'
   | 'return_reason'
+  | 'vendor_return_reason'
   | 'settlement_deduction'
   | 'session'
   | 'adjustment_reason'
@@ -32,6 +33,11 @@ export const LIST_KEYS: { key: ListKey; name: string; usedBy: string }[] = [
   { key: 'non_revenue_reason', name: 'Non-revenue reasons', usedBy: 'giveaways / staff meals' },
   { key: 'expense_category', name: 'Expense categories', usedBy: 'expenses' },
   { key: 'return_reason', name: 'Return reasons', usedBy: 'stock coming back from a section' },
+  {
+    key: 'vendor_return_reason',
+    name: 'Vendor return reasons',
+    usedBy: 'goods going back to the supplier',
+  },
   { key: 'settlement_deduction', name: 'Settlement deductions', usedBy: 'itemised deductions on a settlement' },
   { key: 'session', name: 'Sessions', usedBy: 'indents and issues — Morning, Evening, Extra, Catering' },
   {

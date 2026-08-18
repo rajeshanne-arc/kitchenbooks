@@ -2692,6 +2692,322 @@ async function run() {
     assert.match(body, /cost_per_portion/, 'and its cost is per portion')
   })
 
+  /* ── PICKERS: SCOPED AND RANKED, NEVER EXCLUDING ──────────────────────
+     One principle, three forms. The assertions that matter here are the ones
+     that can FAIL: "it returned some rows" is true of an unranked list and of
+     a list that quietly hides everything else. So the rank is asserted by
+     VALUE and the scope is asserted to be a SCOPE — narrower than the search,
+     with the search still reaching what it leaves out. */
+
+  await check('vendor_return_reason is a managed list with values', async () => {
+    const reasons = await getList(rid, 'vendor_return_reason')
+    assert.ok(reasons.length > 0, 'vendor_return_reason has no active options')
+    const { ALL_LIST_KEYS } = await import('../src/lib/lists')
+    assert.ok(
+      ALL_LIST_KEYS.includes('vendor_return_reason'),
+      'the DB holds the key and the registry does not — the Lists screen could not edit it',
+    )
+    console.log(`      ${reasons.join(' · ')}`)
+  })
+
+  await check('what a department takes is ranked frequency THEN recency', async () => {
+    const { getSectionFrequentItems } = await import('../src/server/store-queries')
+    const secs = await tsql<{ id: string; name: string }[]>`
+      select distinct s.id, s.name from issues i join sections s on s.id = i.section_id`
+    assert.ok(secs.length > 0, 'no department has ever been issued to — this assertion cannot fail, so it is not a test')
+    let checked = 0
+    for (const sec of secs) {
+      const rows = await getSectionFrequentItems(rid, sec.id)
+      if (rows.length === 0) continue
+      checked++
+      for (let i = 1; i < rows.length; i++) {
+        const a = rows[i - 1]
+        const b = rows[i]
+        assert.ok(
+          a.times > b.times || (a.times === b.times && a.last >= b.last),
+          `${sec.name}: ${a.item.code} (${a.times}×, ${a.last}) must not rank below ${b.item.code} (${b.times}×, ${b.last})`,
+        )
+      }
+      // typical_qty is the HINT, and it has to be present to be a hint
+      assert.ok(
+        rows.every((r) => r.typical_qty !== null && Number(r.typical_qty) > 0),
+        'every suggestion carries a typical quantity',
+      )
+      // vendor-only fields must stay null on a section suggestion: a rate here
+      // would be prefilled into a form that has no rate to prefill.
+      assert.ok(
+        rows.every((r) => r.last_rate === null && r.source_purchase_line_id === null),
+        'a department suggestion carries no rate',
+      )
+      console.log(`      ${sec.name}: ${rows.map((r) => `${r.item.code}(${r.times}×)`).join(' ')}`)
+    }
+    assert.ok(checked > 0, 'not one department produced a suggestion — the view or the join is wrong')
+  })
+
+  await check('what a vendor supplies is ranked MOST RECENT first, with the rate', async () => {
+    const { getVendorSuppliedItems } = await import('../src/server/vendor-return-queries')
+    const vendors = await tsql<{ id: string; name: string }[]>`
+      select distinct v.id, v.name from purchases p join vendors v on v.id = p.vendor_id`
+    assert.ok(vendors.length > 0, 'no vendor has ever billed us — nothing to test against')
+    let withRows = 0
+    for (const v of vendors) {
+      const rows = await getVendorSuppliedItems(rid, v.id)
+      if (rows.length === 0) continue
+      withRows++
+      for (let i = 1; i < rows.length; i++) {
+        // Recency leads here, DELIBERATELY differently from a department: at
+        // the moment of a return the delivery in dispute is the one that just
+        // arrived. Frequency breaks the tie.
+        const a = rows[i - 1]
+        const b = rows[i]
+        assert.ok(
+          a.last > b.last || (a.last === b.last && a.times >= b.times),
+          `${v.name}: ${a.item.code} (${a.last}) must not rank below ${b.item.code} (${b.last})`,
+        )
+      }
+      assert.ok(
+        rows.every((r) => r.last_rate !== null && r.source_purchase_line_id !== null),
+        `${v.name}: every supplied item must carry the rate AND the line it came from — a rate with no provenance is the thing this replaced`,
+      )
+      assert.ok(rows.every((r) => r.typical_qty === null), 'a vendor suggestion carries no typical quantity')
+    }
+    assert.ok(withRows > 0, 'not one vendor produced a suggestion')
+    assert.equal((await getVendorSuppliedItems(rid, 'not-a-uuid')).length, 0, 'a malformed id is no suggestions, not a 500')
+  })
+
+  await check('the same item can cost two different vendors two different rates', async () => {
+    // The reason the rate MUST be per vendor rather than "the last rate for
+    // this item". If this ever finds only one price per item everywhere, the
+    // assertion below stops proving anything and says so.
+    const { getVendorSuppliedItems } = await import('../src/server/vendor-return-queries')
+    const vendors = await tsql<{ id: string }[]>`select distinct vendor_id as id from purchases`
+    const byItem = new Map<string, Set<string>>()
+    for (const v of vendors) {
+      for (const r of await getVendorSuppliedItems(rid, v.id)) {
+        if (r.last_rate === null) continue
+        const set = byItem.get(r.item.code) ?? new Set<string>()
+        set.add(r.last_rate)
+        byItem.set(r.item.code, set)
+      }
+    }
+    const split = [...byItem.entries()].filter(([, rates]) => rates.size > 1)
+    if (split.length === 0) {
+      console.log('      UNTESTED: no item is currently bought from two vendors at two rates')
+    } else {
+      for (const [code, rates] of split) console.log(`      ${code}: ${[...rates].join(' vs ')}`)
+    }
+  })
+
+  await check('a scope is a SCOPE — narrower than the search, and never instead of it', async () => {
+    // The half that is easy to lose. A picker that only offered history would
+    // make a first-time item unfindable, so the general search has to still
+    // reach what the scope leaves out.
+    const { getVendorSuppliedItems } = await import('../src/server/vendor-return-queries')
+    const { searchIssuableItems } = await import('../src/server/store-queries')
+    const [v] = await tsql<{ id: string; name: string }[]>`
+      select v.id, v.name from purchases p join vendors v on v.id = p.vendor_id group by v.id, v.name limit 1`
+    const scoped = await getVendorSuppliedItems(rid, v.id)
+    const [{ n }] = await tsql<{ n: number }[]>`select count(*)::int as n from items where status = 'active'`
+    assert.ok(scoped.length > 0, 'the scope is empty — nothing to compare')
+    assert.ok(scoped.length < n, `the scope (${scoped.length}) must be narrower than all ${n} items, or it is not a scope`)
+
+    const searched = await searchIssuableItems(rid, '')
+    const scopedIds = new Set(scoped.map((r) => r.item.id))
+    assert.ok(
+      searched.some((r) => !scopedIds.has(r.id)),
+      'the general search must reach items the scope leaves out — otherwise a first-time item is unfindable',
+    )
+
+    const { readFileSync } = await import('node:fs')
+    const picker = readFileSync('src/components/store/IssueItemPicker.tsx', 'utf8')
+    assert.match(picker, /\/api\/items\/issuable/, 'the picker still searches everything underneath')
+    assert.match(picker, /Everything else/, 'and says so, so the second group is findable')
+  })
+
+  await check('a vendor return takes its reason PER LINE, and the header reads them', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/vendor-return-actions.ts', 'utf8')
+    const header = src.slice(src.indexOf('insert into vendor_returns (restaurant_id, return_date'))
+    assert.ok(
+      !header.slice(0, header.indexOf(')')).includes('reason'),
+      'the header must NOT collect a reason — a cached predominant reason can disagree with its own lines',
+    )
+    assert.match(src, /insert into vendor_return_lines[\s\S]{0,220}reason,\s*source_purchase_line_id/, 'lines carry reason and provenance')
+    // the void copies both EXACTLY — a reversal states the claim as it was made
+    const voidSql = src.slice(src.indexOf('export async function voidVendorReturn'))
+    assert.match(voidSql, /select restaurant_id, \$\{rev\.id\}, item_id, qty, rate, reason, source_purchase_line_id/, 'the void copies reason and provenance exactly')
+
+    // and the read side computes the summary rather than storing it
+    const q = readFileSync('src/server/vendor-return-queries.ts', 'utf8')
+    assert.match(q, /count\(distinct l\.reason\) > 1 then 'Mixed'/, 'several reasons read "Mixed"')
+
+    // by VALUE, in a transaction that rolls back: one reason names itself.
+    const [v] = await tsql<{ id: string }[]>`select id from vendors limit 1`
+    const items = await tsql<{ id: string }[]>`select id from items limit 2`
+    assert.ok(v && items.length === 2, 'need a vendor and two items to tell "Quality" from "Mixed"')
+    await txn(async (tx) => {
+      const summarise = async (reasons: string[]) => {
+        const [r] = await tx<{ id: string }[]>`
+          insert into vendor_returns (restaurant_id, return_date, vendor_id, entered_by)
+          values (${rid}, current_date, ${v.id}, 'smoke') returning id`
+        for (const [i, reason] of reasons.entries()) {
+          await tx`insert into vendor_return_lines
+            (restaurant_id, vendor_return_id, item_id, qty, rate, reason)
+            values (${rid}, ${r.id}, ${items[i % 2].id}, 1, 10, ${reason})`
+        }
+        const [row] = await tx<{ reason: string | null }[]>`
+          select coalesce(
+                   (select case when count(distinct l.reason) = 1 then min(l.reason)
+                                when count(distinct l.reason) > 1 then 'Mixed' end
+                    from vendor_return_lines l
+                    where l.vendor_return_id = vr.id and l.reason is not null),
+                   vr.reason) as reason
+          from vendor_returns vr where vr.id = ${r.id}`
+        return row?.reason ?? null
+      }
+      assert.equal(await summarise(['Quality']), 'Quality', 'one reason names itself')
+      assert.equal(await summarise(['Quality', 'Quality']), 'Quality', 'the same reason twice is still one reason')
+      assert.equal(await summarise(['Quality', 'Wrong item']), 'Mixed', 'two reasons read Mixed')
+      throw new Error('ROLLBACK')
+    }).catch((e: Error) => {
+      if (e.message !== 'ROLLBACK') throw e
+    })
+  })
+
+  await check('stock coming back from a department takes its reason per line', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/store-actions.ts', 'utf8')
+    const fn = src.slice(src.indexOf('const ReturnSchema'), src.indexOf('// ------------------------------------------------------------ save wastage'))
+    assert.match(fn, /'restaurant_id', 'return_id', 'item_id', 'qty', 'unit_cost', 'note', 'reason'/, 'return_lines carries reason')
+    // returns.reason is still NOT NULL — that migration was not relaxed — so
+    // the header must carry something TRUE rather than an empty string.
+    assert.match(fn, /size === 1 \? input\.lines\[0\]\.reason : 'Mixed'/, 'the header summarises the lines')
+    const [{ nullable }] = await tsql<{ nullable: string }[]>`
+      select is_nullable as nullable from information_schema.columns
+      where table_name = 'returns' and column_name = 'reason'`
+    assert.equal(nullable, 'NO', 'if returns.reason ever becomes nullable, stop summarising and store null')
+  })
+
+  await check('a return can be opened from the bill, with quantities left blank', async () => {
+    const { listReturnableBills, getBillReturnPrefill } = await import('../src/server/vendor-return-queries')
+    const bills = await listReturnableBills(rid)
+    assert.ok(bills.length > 0, 'no live bill to open a return from — nothing to test')
+    const pre = await getBillReturnPrefill(rid, bills[0].id)
+    assert.ok(pre !== null, 'a live bill must open')
+    assert.equal(pre.vendor_id, bills[0].vendor_id, 'the bill answers the vendor')
+    assert.ok(pre.lines.length > 0, 'and its lines')
+    assert.ok(
+      pre.lines.every((l) => Number(l.rate) > 0 && l.purchase_line_id !== '' && Number(l.billed_qty) > 0),
+      'every line carries the rate, the line it came from, and what was billed',
+    )
+    assert.equal(await getBillReturnPrefill(rid, 'not-a-uuid'), null, 'a malformed id is null, not a 500')
+
+    // A voided bill has nothing left to send back, and must not open.
+    const [dead] = await tsql<{ id: string }[]>`
+      select p.id from purchases p
+      where p.restaurant_id = ${rid}
+        and (p.reverses_id is not null
+             or exists (select 1 from purchases x where x.reverses_id = p.id))
+      limit 1`
+    if (dead) assert.equal(await getBillReturnPrefill(rid, dead.id), null, 'a voided or reversal bill must not open')
+    else console.log('      UNTESTED: no voided bill exists to prove the refusal')
+
+    const { readFileSync } = await import('node:fs')
+    const form = readFileSync('src/components/store/VendorReturnEntry.tsx', 'utf8')
+    assert.match(form, /qty: '',/, 'quantities arrive BLANK — what came is not what goes back')
+    assert.match(form, /billed \{line\.billedQty\}/, 'the billed quantity is context beside the box')
+  })
+
+  await check('editing a prefilled rate drops its provenance', async () => {
+    // A source line pointing at a figure the claim no longer makes is a false
+    // citation — worse than no citation, because it looks sourced.
+    const { readFileSync } = await import('node:fs')
+    const form = readFileSync('src/components/store/VendorReturnEntry.tsx', 'utf8')
+    assert.match(
+      form,
+      /rate: cleanNum\(e\.target\.value\), sourceLineId: ''/,
+      'typing over the rate must clear source_purchase_line_id',
+    )
+    // and the server refuses a line that is not this vendor's
+    const { assertSourceLine, VendorReturnRefusal } = await import('../src/server/vendor-return-queries')
+    const vs = await tsql<{ id: string }[]>`
+      select v.id from purchases p join vendors v on v.id = p.vendor_id group by v.id limit 2`
+    const line = await tsql<{ id: string; vendor_id: string }[]>`
+      select l.id, p.vendor_id from purchase_lines l join purchases p on p.id = l.purchase_id limit 1`
+    assert.ok(line[0], 'need a purchase line')
+    assert.equal(await assertSourceLine(rid, line[0].vendor_id, line[0].id), line[0].id, 'the right vendor is accepted')
+    const other = vs.find((v) => v.id !== line[0].vendor_id)
+    if (other) {
+      await assert.rejects(
+        () => assertSourceLine(rid, other.id, line[0].id),
+        (e: unknown) => e instanceof VendorReturnRefusal,
+        "another vendor's bill line must be refused by name",
+      )
+    } else {
+      console.log('      UNTESTED: only one vendor has billed us, so there is no wrong vendor to refuse')
+    }
+    assert.equal(await assertSourceLine(rid, line[0].vendor_id, ''), null, 'blank provenance is allowed')
+  })
+
+  await check('the vendor-return void is refused exactly while the money views double it', async () => {
+    // NOT a pinned bug: an invariant that passes in both worlds and fails only
+    // when they disagree. stock_on_hand learned to skip a reversed pair;
+    // vendor_dues.credits and vendor_performance.returned_value did not, so a
+    // void credits the reversal's own amount a SECOND time. Measured here
+    // rather than read off the view definition.
+    const [v] = await tsql<{ id: string }[]>`
+      select v.id from purchases p join vendors v on v.id = p.vendor_id group by v.id limit 1`
+    const [item] = await tsql<{ id: string }[]>`select id from items limit 1`
+    assert.ok(v && item, 'need a vendor and an item to move money')
+
+    let viewsDouble = false
+    await txn(async (tx) => {
+      const credits = async () => {
+        const [d] = await tx<{ c: string }[]>`
+          select coalesce(credits, 0)::text as c from vendor_dues where vendor_id = ${v.id}`
+        return Number(d?.c ?? 0)
+      }
+      const before = await credits()
+      const [r] = await tx<{ id: string }[]>`
+        insert into vendor_returns (restaurant_id, return_date, vendor_id, entered_by)
+        values (${rid}, current_date, ${v.id}, 'smoke') returning id`
+      await tx`insert into vendor_return_lines (restaurant_id, vendor_return_id, item_id, qty, rate, reason)
+               values (${rid}, ${r.id}, ${item.id}, 10, 50, 'Quality')`
+      const afterReturn = await credits()
+      assert.equal(afterReturn - before, 500, 'a 10 × 50 return must claim 500')
+
+      const [rev] = await tx<{ id: string }[]>`
+        insert into vendor_returns (restaurant_id, return_date, vendor_id, reason, reverses_id, entered_by)
+        values (${rid}, current_date, ${v.id}, 'void', ${r.id}, 'smoke') returning id`
+      await tx`insert into vendor_return_lines
+                 (restaurant_id, vendor_return_id, item_id, qty, rate, reason, source_purchase_line_id)
+               select restaurant_id, ${rev.id}, item_id, qty, rate, reason, source_purchase_line_id
+               from vendor_return_lines where vendor_return_id = ${r.id}`
+      const afterVoid = await credits()
+      viewsDouble = afterVoid !== before
+      console.log(`      credits: ${before} → ${afterReturn} → ${afterVoid} (void should return it to ${before})`)
+      throw new Error('ROLLBACK')
+    }).catch((e: Error) => {
+      if (e.message !== 'ROLLBACK') throw e
+    })
+
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/vendor-return-actions.ts', 'utf8')
+    const refused = /const MONEY_VIEWS_SKIP_REVERSALS: boolean = false/.test(src)
+    assert.equal(
+      refused,
+      viewsDouble,
+      viewsDouble
+        ? 'the views still double the credit, so the void must stay refused'
+        : 'THE VIEWS ARE FIXED — flip MONEY_VIEWS_SKIP_REVERSALS, restore the Void button in VendorReturnList, and delete this half of the assertion',
+    )
+    if (viewsDouble) {
+      const list = readFileSync('src/components/store/VendorReturnList.tsx', 'utf8')
+      assert.ok(!/onClick=\{\(\) => setConfirmVoid/.test(list), 'no void button while the action can only refuse')
+      assert.match(list, /Voiding is switched off/, 'and the screen says why, once')
+    }
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

@@ -2933,3 +2933,138 @@ portion cost.
 "production refuses a DISH by name". That rule is gone, but the principle
 behind it is not — a form can always be posted to directly, so the refusal
 lives on the server. The assertion now checks the rule that actually holds.
+
+## PICKERS: SCOPED AND RANKED BY WHAT IS ALREADY KNOWN
+
+One principle, and it is the whole of it:
+
+> **A picker WITH context is SCOPED AND RANKED by that context. A picker
+> WITHOUT context is ranked by FREQUENCY. And scoping NEVER EXCLUDES.**
+
+The second half is the one that is easy to lose. Scoped suggestions sit at the
+TOP under a named heading and the general search stays underneath reaching
+everything, because a first-time item has no history — a department taking
+chillies for the first time, a vendor sending something they have never sent —
+and a picker that only offered history would make it unfindable. Bill entry
+already used this shape for the starter library; `IssueItemPicker` is now where
+it lives, and it takes `suggestions` + `suggestLabel` from whichever form has
+context to give it.
+
+**Rank order is FREQUENCY THEN RECENCY. Alphabetical is the default nobody
+chose.** The one deliberate exception is a vendor return, ranked RECENCY first:
+at the moment of a return the delivery in dispute is the one that just came
+through the door, and how often that vendor has ever sent the item is the
+weaker signal. Frequency breaks the tie. Argued per picker, not inherited.
+
+**The suggestions are ranked BY THE SERVER and the component never re-sorts
+them** — it only narrows by what has been typed, so the order the query argued
+for survives to the screen.
+
+### The three that were fixed
+
+1. **Vendor return.** The form said, on screen, "normally the rate on the bill
+   these arrived on" — the app asking somebody to remember a number it was
+   holding. The item picker now leads with `vendor_supplied_items` for that
+   vendor and the RATE PREFILLS from `last_rate`, recording
+   `source_purchase_line_id` so the number has a provenance instead of a
+   memory. **A prefill is not a substitution:** the rate stays editable,
+   because a vendor does not always credit at the price they charged — and
+   **typing over it DROPS the provenance**, since a source line pointing at a
+   figure the claim no longer makes is a false citation, worse than none
+   because it looks sourced. Measured on live data: RR Chicken bills Chicken
+   Boneless at ₹330 and Sneha Chicken at ₹300, so the rate has to be per
+   vendor and could never have been "the last rate for this item".
+   A return can also be **opened FROM a bill**, the way a short is recorded:
+   pick the bill, see its lines, send some back — vendor, item and rate all
+   come free. **Quantities stay BLANK**; what arrived is not what is going
+   back, and a prefilled quantity looks exactly like a counted one. The bill's
+   quantity renders beside the empty box as context.
+2. **Issue — this was a REGRESSION FROM THE SHEET.** The Issues sheet filled
+   the last ten days' items for a department, most frequent first, and the app
+   lost it: every issue started from a blank typeahead over 300-odd items, so
+   the store manager searched for onions every morning. `section_frequent_items`
+   restores it. An open indent still wins where there is one — that is a
+   request somebody is waiting on, not a guess.
+3. **Back to store** scopes to the same list: you cannot return what was never
+   issued.
+
+`typical_qty` is a **HINT beside the box, never a prefill** — the closing-form
+ruling applies, and this one would be an average nobody counted.
+
+### Reason is per line on returns too
+
+`vendor_return_lines.reason` and `return_lines.reason`. A rotten crate and a
+wrongly-picked item go back on the same trip for two reasons — one is the
+supplier's fault and the other is ours — and one shared header reason made one
+of them false. Same conclusion already reached for kitchen and store loss.
+
+**The header reason is NOT cached, and must not be.** `vendor_returns.reason`
+is nullable now and stays null; the list COMPUTES the summary from the lines —
+one distinct reason names itself, several read "Mixed". A cached predominant
+reason can disagree with the lines it claims to summarise, and nothing on
+screen would look wrong. `returns.reason` is still NOT NULL (that migration was
+not relaxed), so there the header carries the same computed summary — a
+summary, never the authority. Every reader that cares reads the lines.
+
+New list key: `vendor_return_reason` (it was seeded in the database and missing
+from `lists.ts`, so the Lists screen could not edit it).
+
+### What the audit found, and the premise it corrected
+
+**PAYMENT WAS ALREADY RIGHT.** `listVendorsWithDues` is
+`order by d.balance desc` — the queue has always led with who is owed most, and
+so has the advance recovery list (`order by (advances − recovered) desc`). Only
+the search box underneath is alphabetical, which is correct: a search box is
+for finding a named vendor, not for ranking one. The premise that it sorted
+alphabetically came from reading the screen rather than the query — the same
+fault as `kitchen_wastage.qty` and `saveProduction`, for the third time.
+
+**Two orderings that are deliberately NOT frequency and must stay:** the count
+sheet is `on_hand_value desc` (count the expensive things first), and the
+attendance roster is the computed roster order (dept_group → sort_order →
+grade → name), where a frequency rank would move a person between mornings and
+lose the marker's place.
+
+**Still alphabetical with context sitting unused** — listed rather than built:
+bill-entry items (the VENDOR is picked before the lines, and
+`vendor_supplied_items` is exactly the right scope — the biggest remaining
+gap, and the view already exists), production (`order by kind desc, code asc`
+— the department is known and what it usually makes is not asked),
+kitchen closing and kitchen loss components (department known), giveaway
+dishes on non-revenue and off-book (`order by r.name asc` — staff meals are
+the same three dishes every day), and recipe-line components. The person
+pickers (`getNameHistory`) are `last_used desc` — recency only, half the rule.
+
+## A GATE CAN BE AN INVARIANT INSTEAD OF A PINNED BUG
+
+`vendor_dues.credits` and `vendor_performance.returned_value` sum every
+`vendor_return_lines` row with no reference to `vendor_returns.reverses_id`.
+`stock_on_hand` learned to skip a reversed pair; **those two did not**, and the
+docblock on `voidVendorReturn` still claimed "MONEY — exact". Measured on live
+data inside a rolled-back transaction, ₹500 going back to Hemenic Foods:
+
+|  | balance | credits | returned_value | on hand |
+|---|---|---|---|---|
+| before | 12500 | 0 | 0 | 23.5 |
+| after the return | 12000 | 500 | 500 | 13.5 |
+| **after the VOID** | **11500** | **1000** | **1000** | 23.5 |
+
+The trade-off inverted when the stock views were fixed and nobody moved the
+sentence: stock is right now and the MONEY is doubled. By this file's own
+earlier argument that is the worse half — nobody physically counts what we owe
+a supplier, so a wrong credit is never discovered, it is simply underpaid. So
+the void is REFUSED again, naming the fix, exactly as it was refused once
+before when stock was the broken half. **`voidVendorReturn` had three stacked
+docblocks from three rewrites, two of them stating the opposite of what the
+code did** — and the wrong sentence was on the SCREEN too, in an honesty strip
+telling the user the book was short twice over.
+
+**The gate is written as an INVARIANT, not as a pinned bug:** it moves ₹500
+through a rolled-back transaction, observes whether the views double it, and
+asserts `refusalInForce === viewsDouble`. That passes in both worlds and fails
+only when they disagree — so the day the migration lands, the gate says "flip
+`MONEY_VIEWS_SKIP_REVERSALS`, restore the Void button, delete this half". One
+`boolean` constant restores the capability.
+
+Better than the earlier form of the same trick (a gate "written to FAIL once
+the view was fixed"), which is green only by being wrong.

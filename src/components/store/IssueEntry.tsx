@@ -21,6 +21,7 @@ import type {
   IndentPrefill,
   IndentRow,
   IssuableItemHit,
+  ItemSuggestion,
   SaveIssueInput,
   SaveIssueResult,
   SaveReturnInput,
@@ -44,8 +45,18 @@ import IssueItemPicker from './IssueItemPicker'
 import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
 
-type Line = { key: number; item: IssuableItemHit | null; qty: string; note: string }
-const newLine = (key: number): Line => ({ key, item: null, qty: '', note: '' })
+type Line = {
+  key: number
+  item: IssuableItemHit | null
+  qty: string
+  note: string
+  /** PER LINE on the way back. Two things go back on one trip for two reasons. */
+  reason: string
+  /** what a normal issue of this item looks like, from section_frequent_items.
+   *  Shown beside the box and NEVER written into it. */
+  typical: string | null
+}
+const newLine = (key: number): Line => ({ key, item: null, qty: '', note: '', reason: '', typical: null })
 const cleanQty = (raw: string) => {
   const cleaned = raw.replace(/[^\d.]/g, '')
   const firstDot = cleaned.indexOf('.')
@@ -54,7 +65,7 @@ const cleanQty = (raw: string) => {
 }
 
 const prefillLines = (p: IndentPrefill, startKey: number): Line[] =>
-  p.lines.map((l, i) => ({ key: startKey + i, item: l.item, qty: l.qty, note: '' }))
+  p.lines.map((l, i) => ({ ...newLine(startKey + i), item: l.item, qty: l.qty }))
 
 type Direction = 'out' | 'back'
 
@@ -82,7 +93,6 @@ export default function IssueEntry({
   const businessToday = useBusinessToday()
   const [issueDate, setIssueDate] = useState(businessToday)
   const [direction, setDirection] = useState<Direction>('out')
-  const [reason, setReason] = useState('')
   // Deliberately BLANK. issues.session defaults to 'Morning' in the
   // database, and preselecting it here would reproduce exactly the silent
   // default that mislabelled the data: every evening issue quietly claiming
@@ -142,6 +152,38 @@ export default function IssueEntry({
       .catch(() => {})
     return () => ctl.abort()
   }, [sectionId, session, indent])
+  // WHAT THIS DEPARTMENT TAKES — the Issues sheet's habit, restored.
+  //
+  // The sheet filled the last ten days' items for a department, most frequent
+  // first, and the app lost it: every issue started from a blank typeahead
+  // over 300-odd items. section_frequent_items answers it, and it answers for
+  // BOTH directions — you cannot return what was never issued, so the same
+  // list is the right scope coming back as going out.
+  //
+  // Ranked by the server. Fetched per department, keyed by the department it
+  // was fetched for, so a stale batch can never be shown against another one.
+  const [frequent, setFrequent] = useState<{ sectionId: string; rows: ItemSuggestion[] } | null>(null)
+  useEffect(() => {
+    if (sectionId === '') return
+    const ctl = new AbortController()
+    const timer = setTimeout(() => ctl.abort(), 10_000)
+    fetch(`/api/items/frequent?section=${sectionId}`, { signal: ctl.signal, cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: ItemSuggestion[]) => {
+        if (!ctl.signal.aborted) setFrequent({ sectionId, rows })
+      })
+      .catch(() => {
+        /* suggestions are a courtesy; the search underneath still works */
+      })
+      .finally(() => clearTimeout(timer))
+    return () => {
+      clearTimeout(timer)
+      ctl.abort()
+    }
+  }, [sectionId])
+  const frequentRows = frequent?.sectionId === sectionId ? frequent.rows : []
+  const sectionName = sections.find((x) => x.id === sectionId)?.name ?? ''
+
   // Open indents are an offer to fill a request — meaningless on a return.
   const suggested =
     direction === 'out' &&
@@ -207,25 +249,27 @@ export default function IssueEntry({
     lines.length > 0 &&
     lines.every(lineReady) &&
     session !== '' &&
-    (direction === 'out' || reason !== '')
+    (direction === 'out' || lines.every((l) => l.reason !== ''))
 
   async function onSave() {
     if (!canSave) return
     setSaving(true)
     setError(null)
+    // Two shapes, because they are two events. An issue has no reason — the
+    // reason it went out is the indent, or the shift. A return does.
     const movedLines = lines.map((l) => ({
       itemId: (l.item as IssuableItemHit).id,
       qty: l.qty.trim(),
       note: l.note.trim(),
     }))
+    const returnedLines = lines.map((l, i) => ({ ...movedLines[i], reason: l.reason }))
     try {
       if (direction === 'back') {
         const payload: SaveReturnInput = {
           returnDate: issueDate,
           sectionId,
           session,
-          reason,
-          lines: movedLines,
+          lines: returnedLines,
         }
         const res = await saveReturn(payload)
         if (res.ok) setSaved({ kind: 'back', res })
@@ -258,7 +302,6 @@ export default function IssueEntry({
     setSaved(null)
     setIndent(null)
     setSectionId('')
-    setReason('')
     setCateringId('')
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
@@ -520,33 +563,16 @@ export default function IssueEntry({
           </div>
         )}
 
-        {direction === 'back' && (
-          <div className="mt-4">
-            <span className={fieldLabelCls}>Why is it coming back?</span>
-            {returnReasons.length === 0 ? (
-              <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                No return reasons are set up yet — add them in Settings → Lists before recording a return.
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {returnReasons.map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    aria-pressed={reason === r}
-                    onClick={() => setReason(r)}
-                    className={`rounded-full border px-3 py-2 text-sm font-medium ${
-                      reason === r
-                        ? 'border-emerald-700 bg-emerald-700 text-white'
-                        : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
-                    }`}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+        {/* REASON MOVED TO THE LINE — it used to be one chip row here, for the
+            whole trip. A tray of gravy that was never needed and a crate of
+            onions that turned come back together and are two different facts;
+            one shared reason made one of them false. This block is only left
+            to say so when the list is empty and nothing could be picked. */}
+        {direction === 'back' && returnReasons.length === 0 && (
+          <p className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            No return reasons are set up yet — you can still type one on each line, and it will wait for an
+            owner in Settings → Lists.
+          </p>
         )}
         {suggested.length > 0 && (
           <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
@@ -585,6 +611,7 @@ export default function IssueEntry({
                 <th className={`${thNumCls} w-[6.5rem]`}>Qty</th>
                 <th className={`${thCls} w-[5rem]`}>Unit</th>
                 <th className={`${thNumCls} w-[6rem]`}>On hand</th>
+                {direction === 'back' && <th className={`${thCls} w-[9rem]`}>Reason</th>}
                 <th className={thCls}>Note</th>
                 <th className={`${thCls} w-8`}>
                   <span className="sr-only">Remove</span>
@@ -597,8 +624,19 @@ export default function IssueEntry({
                   <td className="border-b border-rule-soft px-1 py-1.5">
                     <IssueItemPicker
                       value={line.item}
-                      onPick={(hit) => patchLine(line.key, { item: hit })}
-                      onClear={() => patchLine(line.key, { item: null })}
+                      suggestions={frequentRows}
+                      suggestLabel={
+                        direction === 'back'
+                          ? `${sectionName} was issued these`
+                          : `${sectionName} usually takes`
+                      }
+                      /* the typical quantity is REMEMBERED, not written: it
+                         renders beside the box below and the box stays the
+                         person's own answer */
+                      onPick={(hit, sug) =>
+                        patchLine(line.key, { item: hit, typical: sug?.typical_qty ?? null })
+                      }
+                      onClear={() => patchLine(line.key, { item: null, typical: null })}
                     />
                   </td>
                   <td className="border-b border-rule-soft px-1 py-1.5">
@@ -610,6 +648,14 @@ export default function IssueEntry({
                       onChange={(e) => patchLine(line.key, { qty: cleanQty(e.target.value) })}
                       className={`${numCls} w-full text-right font-mono tabular-nums`}
                     />
+                    {/* A HINT, never a prefill. The closing form's ruling
+                        applies: a quantity nobody counted looks exactly like
+                        one somebody did, and this one would be an average. */}
+                    {line.typical !== null && line.qty === '' && (
+                      <span className="mt-0.5 block text-right font-mono text-[10px] tabular-nums text-stone-400">
+                        usually {line.typical}
+                      </span>
+                    )}
                   </td>
                   <td className="border-b border-rule-soft px-2 py-1.5 text-sm text-stone-500">
                     {line.item?.unit_name ?? '—'}
@@ -617,6 +663,25 @@ export default function IssueEntry({
                   <td className="border-b border-rule-soft px-2 py-1.5 text-right font-mono text-sm tabular-nums text-stone-500">
                     {line.item?.on_hand_qty ?? '—'}
                   </td>
+                  {direction === 'back' && (
+                    <td className="border-b border-rule-soft px-1 py-1.5">
+                      {/* PER LINE, from the return_reason list — the same shape
+                          the loss forms already use. */}
+                      <select
+                        aria-label={`Reason, line ${i + 1}`}
+                        value={line.reason}
+                        onChange={(e) => patchLine(line.key, { reason: e.target.value })}
+                        className={selectCls}
+                      >
+                        <option value="">—</option>
+                        {returnReasons.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  )}
                   <td className="border-b border-rule-soft px-1 py-1.5">
                     <input
                       placeholder="optional"
