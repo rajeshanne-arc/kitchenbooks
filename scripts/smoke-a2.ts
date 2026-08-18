@@ -362,7 +362,7 @@ async function run() {
     const WRITERS: [file: string, fn: string][] = [
       ['src/server/books-actions.ts', 'recordPayment'],
       ['src/server/cash-actions.ts', 'saveOtherIncome'],
-      ['src/server/cash-actions.ts', 'saveVoucher'],
+      ['src/server/cash-actions.ts', 'saveVouchers'],
       ['src/server/cash-actions.ts', 'closeDay'],
       ['src/server/cashier-actions.ts', 'saveOffBook'],
       ['src/server/cashier-actions.ts', 'saveSettlement'],
@@ -1653,16 +1653,17 @@ async function run() {
     // three-way question; this is the check, because a form is never one.
     const { readFileSync } = await import('node:fs')
     const src = readFileSync('src/server/cash-actions.ts', 'utf8')
-    const start = src.indexOf('export async function saveVoucher(')
+    const start = src.indexOf('export async function saveVouchers(')
     const body = src.slice(start, src.indexOf('export async function ', start + 1))
     assert.match(
       body,
-      /input\.isStockPurchase && input\.isCasualLabour/,
-      'saveVoucher no longer refuses a payment that is both',
+      // per line now: the batch checks each payment, not one input
+      /l\.isStockPurchase && l\.isCasualLabour/,
+      'saveVouchers no longer refuses a payment that is both',
     )
     const form = readFileSync('src/components/cash/VoucherForm.tsx', 'utf8')
     assert.ok(!/setIsStockPurchase/.test(form), 'the independent toggles came back')
-    assert.match(form, /'expense' \| 'stock' \| 'labour'/, 'the three-way question is gone')
+    assert.match(form, /type Kind = 'expense' \| 'stock' \| 'labour'/, 'the three-way question is gone')
   })
 
   await check('the precondition vocabulary exists and ranks correctly', async () => {
@@ -2482,6 +2483,40 @@ async function run() {
 
     // the cost is still frozen per item inside the transaction
     assert.match(body, /assertAdjustableItem\(tx, rid, l\.itemId\)/, 'unit_cost frozen per line, on the tx')
+  })
+
+  await check('N vouchers get N document numbers — a batch is entry, not a document', async () => {
+    // Three payments in one sitting are three payments: different payees,
+    // individually voidable, individually cited by an accountant months
+    // later. One number across three would change meaning the instant one of
+    // them was voided.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/cash-actions.ts', 'utf8')
+    assert.ok(!/export async function saveVoucher\b/.test(src), 'the one-row path is gone, not left beside it')
+    assert.match(src, /export async function saveVouchers/, 'the batch action exists')
+
+    const fn = src.slice(src.indexOf('export async function saveVouchers'))
+    const body = fn.slice(0, fn.indexOf('\n}\n') + 3)
+    // the draw is INSIDE the per-line loop, and on the tx
+    const loopAt = body.indexOf('for (const [i, l] of prepared.entries())')
+    const drawAt = body.indexOf("nextDocNo(tx, rid, 'VCH'")
+    assert.ok(loopAt !== -1 && drawAt > loopAt, 'a number is drawn per line, inside the loop, on the tx')
+    // both flags true is still refused, now per payee
+    assert.match(body, /not both — counting it twice/, 'the one-kind rule survives the batch')
+    // the account is resolved per line, since owner-funded leaves the owner's
+    // own account while a cashier payment leaves the drawer
+    assert.match(body, /accountIds\.push\(await assertAccount/, 'each payment names its own account')
+
+    // and the series really is gapless and per-row, proved by drawing some
+    await txn(async (tx) => {
+      const { nextDocNo } = await import('../src/server/doc-numbers')
+      const a = await nextDocNo(tx, rid, 'VCH', '2020-01-04')
+      const b = await nextDocNo(tx, rid, 'VCH', '2020-01-04')
+      assert.notEqual(a, b, 'two draws in one transaction are two different numbers')
+      throw new Error('ROLLBACK')
+    }).catch((e: Error) => {
+      if (e.message !== 'ROLLBACK') throw e
+    })
   })
 
   console.log(

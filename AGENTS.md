@@ -2803,3 +2803,53 @@ table is how they drift.
 
 **Still one-per-save, deliberately:** `saveContractBill`. One bill is one
 document.
+
+## `created_at` IS THE TRANSACTION TIMESTAMP — rows written together TIE
+
+A standing fact, not an incident. It has now bitten twice:
+
+1. `acceptCount` ordering adjustments made "since this count was frozen"
+2. two corrections of the same item inside one batch save
+
+`now()` — and therefore every `created_at default now()` in this schema — is
+the **transaction** timestamp. It does not advance within a transaction, so N
+rows written by one save all carry the identical instant. They tie.
+
+**Anything that needs to ORDER such rows needs something other than a
+timestamp:** a sequence, an explicit ordinal column, or a refusal to allow the
+ambiguity at all. The adjustments batch chose the refusal — the same item twice
+in one save is rejected — because the alternative was an ordinal column that
+exists only to disambiguate something nobody should be entering twice anyway.
+
+Before writing a batch, ask what reads these rows and whether it needs them in
+order. If it does, a timestamp will not give it one.
+
+## A batch is a convenience of ENTRY, not a document
+
+**One voucher, one number. N vouchers, N numbers.** Three payments made in one
+sitting are three payments: different payees, individually voidable,
+individually cited by an accountant months later. One number across three
+would change meaning the instant one of them was voided — and a document
+number has to mean exactly one thing forever, including when that thing was a
+mistake.
+
+**This is why `saveShorts` differs, and the difference is real rather than a
+convention.** There the header is THE BILL, which is genuinely one document
+that already exists and is already numbered; the shorts hang off it. On a
+voucher or an expense the header is a DATE, which is a keystroke saving and
+nothing more. Ask what the header IS: if it is a document, the batch inherits
+its identity; if it is a convenience, every line keeps its own.
+
+## Reason: per line on losses, per header on corrections
+
+Both rulings are right and they do not contradict each other.
+
+- **Losses take a reason PER LINE.** Two things in one bin on one night are
+  lost for two different reasons, and the reason is the whole value of waste
+  analysis.
+- **Corrections take ONE reason for the batch.** A batch of corrections is one
+  EVENT — a stocktake, an opening balance, a found crate. Two reasons means
+  two events, which means two saves.
+
+**Direction stays per line on corrections**, because a stocktake finds
+surpluses and shortfalls in the same pass.

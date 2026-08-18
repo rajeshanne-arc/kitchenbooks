@@ -26,7 +26,7 @@ const D3 = '2001-02-03'
 
 async function main() {
   const { getRestaurant } = await import('../src/server/queries')
-  const { closeDay, saveOtherIncome, saveVoucher, setFirstOpening } = await import('../src/server/cash-actions')
+  const { closeDay, saveOtherIncome, saveVouchers, setFirstOpening } = await import('../src/server/cash-actions')
   const { getClosePrefill, getLadder, getLadderDay, getOwnerNames, getOwnersOwed } =
     await import('../src/server/cash-queries')
   const { sql } = await import('../src/lib/db')
@@ -56,17 +56,15 @@ async function main() {
   assert.ok(set2.ok && set2.value === '5000', 're-set before any close must be allowed')
 
   // ---- 3. D1: cashier voucher + owner voucher + other income
-  const vCashier = await saveVoucher({
-    date: D1, amount: '300', paidTo: 'Zz Veg Vendor', paidBy: 'cashier', ownerName: '', category: 'general', note: 'zz cash smoke', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
+  const vCashier = await saveVouchers({ date: D1, lines: [{ amount: '300', paidTo: 'Zz Veg Vendor', paidBy: 'cashier', ownerName: '', category: 'general', note: 'zz cash smoke', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT }] })
   assert.ok(vCashier.ok, `cashier voucher failed: ${vCashier.ok === false ? vCashier.error : ''}`)
-  const vOwner = await saveVoucher({
-    date: D1, amount: '1000', paidTo: 'Zz Gas Agency', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'gas', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
+  const vOwner = await saveVouchers({ date: D1, lines: [{ amount: '1000', paidTo: 'Zz Gas Agency', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'gas', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT }] })
   assert.ok(vOwner.ok, `owner voucher failed: ${vOwner.ok === false ? vOwner.error : ''}`)
-  assert.equal(vOwner.voucher.owner_name, 'Zz Asheel')
+  assert.equal(vOwner.vouchers[0].owner_name, 'Zz Asheel')
 
-  const noName = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: '', category: 'general', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
+  const noName = await saveVouchers({ date: D1, lines: [{ amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: '', category: 'general', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT }] })
   assert.ok(!noName.ok && /which owner/i.test(noName.error))
-  const ownerReimb = await saveVoucher({ date: D1, amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
+  const ownerReimb = await saveVouchers({ date: D1, lines: [{ amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT }] })
   assert.ok(!ownerReimb.ok && /cashier/i.test(ownerReimb.error), 'owner-paid reimbursement is nonsense — must refuse')
 
   const oil = await saveOtherIncome({
@@ -141,8 +139,7 @@ async function main() {
   const owed1 = (await getOwnersOwed(rid)).find((o) => o.person === 'Zz Asheel')
   assert.ok(owed1, 'Zz Asheel must appear in owners_owed')
   assert.equal(Number(owed1.balance), 1000)
-  const reimb = await saveVoucher({
-    date: '2001-02-05', amount: '400', paidTo: 'Zz Asheel', paidBy: 'cashier', ownerName: '', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT })
+  const reimb = await saveVouchers({ date: '2001-02-05', lines: [{ amount: '400', paidTo: 'Zz Asheel', paidBy: 'cashier', ownerName: '', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT }] })
   assert.ok(reimb.ok, `reimbursement voucher failed: ${reimb.ok === false ? reimb.error : ''}`)
   const owed2 = (await getOwnersOwed(rid)).find((o) => o.person === 'Zz Asheel')
   assert.ok(owed2)

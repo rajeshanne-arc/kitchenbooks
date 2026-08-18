@@ -27,8 +27,9 @@ import type {
   CloseDayResult,
   SaveOtherIncomeInput,
   SaveOtherIncomeResult,
-  SaveVoucherInput,
-  SaveVoucherResult,
+  SaveVouchersInput,
+  SaveVouchersResult,
+  VoucherRow,
   SetOpeningResult,
 } from '@/lib/types'
 import { businessToday } from '@/server/business-day'
@@ -121,9 +122,8 @@ export async function saveOtherIncome(raw: SaveOtherIncomeInput): Promise<SaveOt
 
 // ---------------------------------------------------------------- voucher
 
-const VoucherSchema = z.object({
+const VoucherLineSchema = z.object({
   accountId: z.string().trim(),
-  date: z.string().regex(DATE_RE),
   amount: moneyStr,
   paidTo: z.string().trim().min(1, 'Who was paid?').max(120),
   paidBy: z.enum(['cashier', 'owner']),
@@ -134,54 +134,102 @@ const VoucherSchema = z.object({
   isCasualLabour: z.boolean(),
 })
 
-export async function saveVoucher(raw: SaveVoucherInput): Promise<SaveVoucherResult> {
+const VouchersSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  lines: z.array(VoucherLineSchema).min(1, 'Nothing to record').max(40),
+})
+
+/**
+ * N vouchers, N DOCUMENT NUMBERS.
+ *
+ * A batch is a convenience of ENTRY, not a document. Three payments made in
+ * one sitting are three payments: different payees, individually voidable,
+ * individually cited by an accountant months later. One number across three
+ * would change meaning the instant one of them was voided — and a document
+ * number has to mean exactly one thing forever, including when that thing was
+ * a mistake.
+ *
+ * `saveShorts` batches under ONE header id and that is not an inconsistency:
+ * there the header is THE BILL, a document that already exists and is already
+ * numbered, and the shorts hang off it. Here the header is a date — a
+ * keystroke saving. Ask what the header IS: a document lends its identity, a
+ * convenience lends nothing.
+ *
+ * The number is drawn on the TRANSACTION handle, so a failed line burns no
+ * number and the series stays gapless. Errors name the PAYEE, because that is
+ * what the cashier sees on the screen and on the slip in their hand.
+ */
+export async function saveVouchers(raw: SaveVouchersInput): Promise<SaveVouchersResult> {
   try {
-    const input = VoucherSchema.parse(raw)
+    const input = VouchersSchema.parse(raw)
     assertRealDate(input.date, 'Voucher date')
-    const amount = parseMoney(input.amount)
-    if (amount === null || amount <= 0) throw new CashError('Amount must be more than zero')
 
-    // A payment is ONE kind of thing. Both flags true would put the same
-    // amount inside cost of goods AND on the labour line — one rupee in two
-    // totals, and nothing on any screen looking wrong. The form asks it as a
-    // single three-way question; this is the check, because a form is never
-    // the check.
-    if (input.isStockPurchase && input.isCasualLabour) {
-      throw new CashError(
-        'A payment is either goods for the kitchen or a day hand\'s wages, not both — counting it twice would inflate food cost and labour together',
-      )
-    }
+    const prepared = input.lines.map((l) => {
+      const who = l.paidTo.trim() === '' ? 'That payment' : l.paidTo.trim()
+      const amount = parseMoney(l.amount)
+      if (amount === null || amount <= 0) throw new CashError(`${who}: amount must be more than zero`)
 
-    const category = (input.category === '' ? 'general' : input.category).toLowerCase().replace(/\s+/g, '_')
-    if (input.paidBy === 'owner' && input.ownerName === '') {
-      throw new CashError('Owner-funded — pick which owner paid, so the debt lands in their ledger')
-    }
-    if (input.paidBy === 'owner' && category === 'owner_reimbursement') {
-      throw new CashError('A reimbursement is paid by the cashier from the drawer — not by an owner')
-    }
+      // A payment is ONE kind of thing. Both flags true would put the same
+      // amount inside cost of goods AND on the labour line — one rupee in two
+      // totals, and nothing on any screen looking wrong. The form asks it as
+      // a single three-way question; this is the check, because a form is
+      // never the check.
+      if (l.isStockPurchase && l.isCasualLabour) {
+        throw new CashError(
+          `${who}: a payment is either goods for the kitchen or a day hand's wages, not both — counting it twice would inflate food cost and labour together`,
+        )
+      }
+
+      const category = (l.category === '' ? 'general' : l.category).toLowerCase().replace(/\s+/g, '_')
+      if (l.paidBy === 'owner' && l.ownerName === '') {
+        throw new CashError(`${who}: owner-funded — pick which owner paid, so the debt lands in their ledger`)
+      }
+      if (l.paidBy === 'owner' && category === 'owner_reimbursement') {
+        throw new CashError(`${who}: a reimbursement is paid by the cashier from the drawer — not by an owner`)
+      }
+      return { ...l, category }
+    })
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await enteredBy()
 
-    const accountId = await assertAccount(rid, input.accountId, 'the account this voucher was paid from')
+    // Per line, because an owner-funded payment leaves the owner's own
+    // account while a cashier payment leaves the drawer. Resolved BEFORE the
+    // transaction so an AccountRefusal reaches the user in its own words.
+    const accountIds: string[] = []
+    for (const l of prepared) {
+      const who = l.paidTo.trim() === '' ? 'That payment' : l.paidTo.trim()
+      accountIds.push(await assertAccount(rid, l.accountId, `the account ${who} was paid from`))
+    }
+
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
-      // The voucher's own date, not today: a voucher written up late still
-      // belongs to the financial year the money moved in.
-      const docNo = await nextDocNo(tx, rid, 'VCH', input.date)
-      const [row] = await tx<{ id: string }[]>`
-        insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by, is_stock_purchase, is_casual_labour, account_id, doc_no)
-        values (${rid}, ${input.date}, ${input.amount}, ${cleanName(input.paidTo)}, ${input.paidBy},
-                ${input.paidBy === 'owner' ? cleanName(input.ownerName) : null}, ${category},
-                ${input.note === '' ? null : input.note}, ${by}, ${input.isStockPurchase}, ${input.isCasualLabour}, ${accountId}, ${docNo})
-        returning id`
-      return { id: row.id }
+      const ids: string[] = []
+      for (const [i, l] of prepared.entries()) {
+        // The voucher's own date, not today: a voucher written up late still
+        // belongs to the financial year the money moved in. One draw per
+        // line, on the tx, so a rollback consumes no number.
+        const docNo = await nextDocNo(tx, rid, 'VCH', input.date)
+        const [row] = await tx<{ id: string }[]>`
+          insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by, is_stock_purchase, is_casual_labour, account_id, doc_no)
+          values (${rid}, ${input.date}, ${l.amount}, ${cleanName(l.paidTo)}, ${l.paidBy},
+                  ${l.paidBy === 'owner' ? cleanName(l.ownerName) : null}, ${l.category},
+                  ${l.note === '' ? null : l.note}, ${by}, ${l.isStockPurchase}, ${l.isCasualLabour}, ${accountIds[i]}, ${docNo})
+          returning id`
+        ids.push(row.id)
+      }
+      return ids
     })
 
-    const voucher = await getVoucher(rid, saved.id)
-    if (!voucher) throw new CashError('Could not verify the save — voucher missing after commit')
-    return { ok: true, voucher }
+    const vouchers: VoucherRow[] = []
+    for (const id of saved) {
+      const v = await getVoucher(rid, id)
+      if (!v) throw new CashError('Could not verify the save — a voucher is missing after commit')
+      vouchers.push(v)
+    }
+    const total = vouchers.reduce((n, v) => n + Number(v.amount), 0).toFixed(2)
+    return { ok: true, vouchers, total }
   } catch (e) {
     return fail(e)
   }

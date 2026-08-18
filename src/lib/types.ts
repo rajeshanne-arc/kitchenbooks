@@ -929,6 +929,46 @@ export type VoucherRow = {
   created_at: string
 }
 
+/** One payment. Everything that identifies a payment is per line — the payee,
+ *  the amount, who funded it, what kind of thing it was. */
+export type VoucherLineInput = {
+  /** PER LINE, not shared. "Paid by" says whose money it was; this says which
+   *  account it actually left, and in one sitting a cashier payment leaves
+   *  the drawer while an owner-funded one leaves the owner's own account. */
+  accountId: string
+  amount: string
+  paidTo: string
+  paidBy: PaidBy
+  ownerName: string
+  category: string
+  note: string
+  isStockPurchase: boolean
+  isCasualLabour: boolean
+}
+
+/**
+ * Header + lines, and the header is ONLY the date. The account is per line:
+ * see VoucherLineInput.
+ *
+ * EVERY LINE TAKES ITS OWN DOCUMENT NUMBER. A batch is a convenience of
+ * ENTRY, not a document. Three payments made in one sitting are three
+ * payments — different payees, individually voidable, individually cited by
+ * an accountant months later — and one number across three would change
+ * meaning the instant one of them was voided.
+ *
+ * This is exactly where it differs from `SaveShortsInput`, and the difference
+ * is real rather than a convention: there the header is THE BILL, a document
+ * that already exists and is already numbered, and the shorts hang off it.
+ * Here the header is a date, which is a keystroke saving and nothing more.
+ */
+export type SaveVouchersInput = {
+  date: string
+  lines: VoucherLineInput[]
+}
+export type SaveVouchersResult =
+  | { ok: true; vouchers: VoucherRow[]; total: string }
+  | { ok: false; error: string }
+
 export type SaveVoucherInput = {
   accountId: string
   date: string
