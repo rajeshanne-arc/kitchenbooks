@@ -26,7 +26,7 @@ const D3 = '2001-02-03'
 
 async function main() {
   const { getRestaurant } = await import('../src/server/queries')
-  const { closeDay, saveOtherIncome, saveVouchers, setFirstOpening } = await import('../src/server/cash-actions')
+  const { closeDay, saveOtherIncomes, saveVouchers, setFirstOpening } = await import('../src/server/cash-actions')
   const { getClosePrefill, getLadder, getLadderDay, getOwnerNames, getOwnersOwed } =
     await import('../src/server/cash-queries')
   const { sql } = await import('../src/lib/db')
@@ -67,15 +67,14 @@ async function main() {
   const ownerReimb = await saveVouchers({ date: D1, lines: [{ amount: '50', paidTo: 'X', paidBy: 'owner', ownerName: 'Zz Asheel', category: 'owner_reimbursement', note: '', isStockPurchase: false, isCasualLabour: false, accountId: ACCOUNT }] })
   assert.ok(!ownerReimb.ok && /cashier/i.test(ownerReimb.error), 'owner-paid reimbursement is nonsense — must refuse')
 
-  const oil = await saveOtherIncome({
-    date: D1, item: 'Used oil', qty: '5', unit: 'litre', amount: '400', buyer: 'Zz Biodiesel Co', receivedBy: 'Zz Cashier', accountId: ACCOUNT })
+  const oil = await saveOtherIncomes({ date: D1, lines: [{ item: 'Used oil', qty: '5', unit: 'litre', amount: '400', buyer: 'Zz Biodiesel Co', receivedBy: 'Zz Cashier', accountId: ACCOUNT }] })
   assert.ok(oil.ok, `other income failed: ${oil.ok === false ? oil.error : ''}`)
-  assert.equal(oil.income.qty, '5')
-  assert.equal(oil.income.unit, 'litre')
+  assert.equal(oil.rows[0].qty, '5')
+  assert.equal(oil.rows[0].unit, 'litre')
 
-  const noUnit = await saveOtherIncome({ date: D1, item: 'Used oil', qty: '5', unit: '', amount: '400', buyer: '', receivedBy: '', accountId: ACCOUNT })
+  const noUnit = await saveOtherIncomes({ date: D1, lines: [{ item: 'Used oil', qty: '5', unit: '', amount: '400', buyer: '', receivedBy: '', accountId: ACCOUNT }] })
   assert.ok(!noUnit.ok && /unit/i.test(noUnit.error), 'qty without unit must refuse — FSSAI reconciliation')
-  const noQty = await saveOtherIncome({ date: D1, item: 'Scrap', qty: '', unit: 'kg', amount: '100', buyer: '', receivedBy: '', accountId: ACCOUNT })
+  const noQty = await saveOtherIncomes({ date: D1, lines: [{ item: 'Scrap', qty: '', unit: 'kg', amount: '100', buyer: '', receivedBy: '', accountId: ACCOUNT }] })
   assert.ok(!noQty.ok && /quantity/i.test(noQty.error))
 
   // ---- 4. the ladder for D1: owner money is NOT in the drawer math

@@ -19,7 +19,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { CasualLabourRow, ContractBillRow, MoneyAccount, Section } from '@/lib/types'
 import {
-  saveCasualLabour,
+  saveCasualLabours,
   saveContractBill,
   voidCasualLabour,
   voidContractBill,
@@ -249,6 +249,27 @@ export function ContractBillsClient({
   )
 }
 
+type CasualLine = {
+  key: number
+  accountId: string
+  sectionId: string
+  persons: string
+  description: string
+  amount: string
+  paidVia: string
+  note: string
+}
+const newCasualLine = (key: number): CasualLine => ({
+  key,
+  accountId: '',
+  sectionId: '',
+  persons: '1',
+  description: '',
+  amount: '',
+  paidVia: '',
+  note: '',
+})
+
 export function CasualLabourClient({
   accounts,
   modes,
@@ -263,37 +284,51 @@ export function CasualLabourClient({
   const businessToday = useBusinessToday()
   const router = useRouter()
   const nonCash = modes.filter((m) => m.toLowerCase() !== 'cash')
-  const [f, setF] = useState({
-    date: businessToday,
-    sectionId: '',
-    persons: '1',
-    description: '',
-    amount: '',
-    paidVia: '',
-    note: '',
-  })
-  const [accountId, setAccountId] = useState('')
+  const [date, setDate] = useState(businessToday)
+  const [lines, setLines] = useState<CasualLine[]>([newCasualLine(1)])
+  const [nextKey, setNextKey] = useState(2)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((s) => ({ ...s, [k]: v }))
 
-  const canSave =
-    !busy &&
-    f.paidVia !== '' &&
-    accountId !== '' &&
-    parseMoney(f.amount.trim()) !== null &&
-    Number(f.persons) > 0
+  const patch = (key: number, p: Partial<CasualLine>) =>
+    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l)))
+  const addLine = () => {
+    setLines((ls) => [...ls, newCasualLine(nextKey)])
+    setNextKey((k) => k + 1)
+  }
+  const removeLine = (key: number) =>
+    setLines((ls) => (ls.length === 1 ? [newCasualLine(nextKey)] : ls.filter((l) => l.key !== key)))
+
+  const lineOk = (l: CasualLine) =>
+    l.paidVia !== '' && l.accountId !== '' && parseMoney(l.amount.trim()) !== null && Number(l.persons) > 0
+  const canSave = !busy && lines.every(lineOk)
+  const runningTotal = lines.reduce((n, l) => n + (Number(l.amount.trim()) || 0), 0).toFixed(2)
 
   async function save() {
     if (!canSave) return
     setBusy(true)
     setError(null)
     try {
-      const res = await saveCasualLabour({ ...f, accountId })
+      const res = await saveCasualLabours({
+        date,
+        lines: lines.map((l) => ({
+          accountId: l.accountId,
+          sectionId: l.sectionId,
+          persons: l.persons,
+          description: l.description,
+          amount: l.amount,
+          paidVia: l.paidVia,
+          note: l.note,
+        })),
+      })
       if (res.ok) {
-        toast(`${formatMoneyString(res.entry.amount)} recorded`)
-        setF((s) => ({ ...s, description: '', amount: '', note: '' }))
-        setAccountId('')
+        toast(
+          res.rows.length === 1
+            ? `${formatMoneyString(res.total)} recorded`
+            : `${res.rows.length} payments · ${formatMoneyString(res.total)} recorded`,
+        )
+        setLines([newCasualLine(nextKey)])
+        setNextKey((k) => k + 1)
         router.refresh()
       } else setError(res.error)
     } catch {
@@ -311,52 +346,133 @@ export function CasualLabourClient({
           Daily hands who are not on the roster — a department may be named so the cost lands where the work
           happened, or left blank when it was for the whole place.
         </p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          <label className="block">
-            <span className={fieldLabelCls}>Date worked</span>
-            <input type="date" value={f.date} onChange={(e) => set('date', e.target.value)} className={`${numCls} w-full`} />
-          </label>
-          <label className="block">
-            <span className={fieldLabelCls}>People</span>
-            <input value={f.persons} onChange={(e) => set('persons', e.target.value.replace(/\D/g, ''))} inputMode="numeric" className={`${numCls} w-full text-right font-mono tabular-nums`} />
-          </label>
-          <label className="block">
-            <span className={fieldLabelCls}>Amount (₹)</span>
-            <input value={f.amount} onChange={(e) => set('amount', clean(e.target.value))} inputMode="decimal" placeholder="0.00" className={`${numCls} w-full text-right font-mono tabular-nums`} />
-          </label>
-          <label className="block">
-            <span className={fieldLabelCls}>Department</span>
-            <select value={f.sectionId} onChange={(e) => set('sectionId', e.target.value)} className={selectCls}>
-              <option value="">— the whole place —</option>
-              {sections.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className={fieldLabelCls}>Paid via</span>
-            <select value={f.paidVia} onChange={(e) => set('paidVia', e.target.value)} className={selectCls}>
-              <option value="">—</option>
-              {nonCash.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
-          {/* same split as the contract form: the mode is how, this is from where. */}
-          <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} label="Paid from" />
-          <label className="block">
-            <span className={fieldLabelCls}>What they did</span>
-            <input value={f.description} onChange={(e) => set('description', e.target.value)} placeholder="unloading, dishwashing…" className={inputCls} maxLength={200} />
-          </label>
-          <label className="block sm:col-span-3">
-            <span className={fieldLabelCls}>Note</span>
-            <input value={f.note} onChange={(e) => set('note', e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
-          </label>
+        <label className="mt-3 block sm:w-44">
+          <span className={fieldLabelCls}>Date worked</span>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${numCls} w-full`} />
+        </label>
+
+        {/* A CARD PER PAYMENT. The DEPARTMENT is per line, argued: a day's
+            hands routinely split across departments — one unloading for the
+            store, one washing up in the kitchen — and blank still means the
+            whole place, which is a real answer rather than a missing one. */}
+        <div className="mt-3 space-y-3">
+          {lines.map((l, idx) => (
+            <div key={l.key} className="rounded-xl border border-rule bg-cell p-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-stone-500">
+                  Payment {idx + 1}
+                </span>
+                {lines.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeLine(l.key)}
+                    className="text-sm text-stone-400 hover:text-red-700"
+                    aria-label={`Remove payment ${idx + 1}`}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className={fieldLabelCls}>People</span>
+                  <input
+                    value={l.persons}
+                    onChange={(e) => patch(l.key, { persons: e.target.value.replace(/\D/g, '') })}
+                    inputMode="numeric"
+                    className={`${numCls} w-full text-right font-mono tabular-nums`}
+                  />
+                </label>
+                <label className="block">
+                  <span className={fieldLabelCls}>Amount (₹)</span>
+                  <input
+                    value={l.amount}
+                    onChange={(e) => patch(l.key, { amount: clean(e.target.value) })}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    className={`${numCls} w-full text-right font-mono tabular-nums`}
+                  />
+                </label>
+                <label className="block">
+                  <span className={fieldLabelCls}>Department</span>
+                  <select
+                    value={l.sectionId}
+                    onChange={(e) => patch(l.key, { sectionId: e.target.value })}
+                    className={selectCls}
+                  >
+                    <option value="">— the whole place —</option>
+                    {sections.map((sec) => (
+                      <option key={sec.id} value={sec.id}>
+                        {sec.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className={fieldLabelCls}>Paid via</span>
+                  <select
+                    value={l.paidVia}
+                    onChange={(e) => patch(l.key, { paidVia: e.target.value })}
+                    className={selectCls}
+                  >
+                    <option value="">—</option>
+                    {nonCash.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="sm:col-span-2">
+                  {/* the mode is how, this is from where */}
+                  <AccountPicker
+                    accounts={accounts}
+                    value={l.accountId}
+                    onChange={(id) => patch(l.key, { accountId: id })}
+                    label="Paid from"
+                  />
+                </div>
+                <label className="block sm:col-span-2">
+                  <span className={fieldLabelCls}>What they did</span>
+                  <input
+                    value={l.description}
+                    onChange={(e) => patch(l.key, { description: e.target.value })}
+                    placeholder="unloading, dishwashing…"
+                    className={inputCls}
+                    maxLength={200}
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className={fieldLabelCls}>Note</span>
+                  <input
+                    value={l.note}
+                    onChange={(e) => patch(l.key, { note: e.target.value })}
+                    placeholder="optional"
+                    className={inputCls}
+                    maxLength={300}
+                  />
+                </label>
+              </div>
+            </div>
+          ))}
         </div>
+
+        <button
+          type="button"
+          onClick={addLine}
+          className="mt-3 rounded-full border border-rule bg-cell px-3.5 py-2 text-sm font-medium text-stone-700 hover:border-stone-400"
+        >
+          ＋ Add another payment
+        </button>
+
+        {lines.length > 1 && (
+          <p className="mt-3 text-sm text-stone-600">
+            {lines.length} payments ·{' '}
+            <span className="font-semibold tabular-nums text-stone-900">{formatMoneyString(runningTotal)}</span>{' '}
+            <span className="text-stone-400">— each gets its own CAS number</span>
+          </p>
+        )}
+
         <DrawerNote />
         {error && (
           <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-sm text-red-800">
@@ -369,7 +485,7 @@ export function CasualLabourClient({
           disabled={!canSave}
           className="mt-3 w-full rounded-xl bg-emerald-700 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:bg-stone-300"
         >
-          {busy ? 'Saving…' : 'Record casual labour'}
+          {busy ? 'Saving…' : lines.length === 1 ? 'Record casual labour' : `Record ${lines.length} payments`}
         </button>
       </section>
 

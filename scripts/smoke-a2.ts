@@ -361,14 +361,14 @@ async function run() {
     const { readFileSync } = await import('node:fs')
     const WRITERS: [file: string, fn: string][] = [
       ['src/server/books-actions.ts', 'recordPayment'],
-      ['src/server/cash-actions.ts', 'saveOtherIncome'],
+      ['src/server/cash-actions.ts', 'saveOtherIncomes'],
       ['src/server/cash-actions.ts', 'saveVouchers'],
       ['src/server/cash-actions.ts', 'closeDay'],
       ['src/server/cashier-actions.ts', 'saveOffBook'],
       ['src/server/cashier-actions.ts', 'saveSettlement'],
-      ['src/server/expenses-actions.ts', 'saveExpense'],
+      ['src/server/expenses-actions.ts', 'saveExpenses'],
       ['src/server/expenses-actions.ts', 'saveContractBill'],
-      ['src/server/expenses-actions.ts', 'saveCasualLabour'],
+      ['src/server/expenses-actions.ts', 'saveCasualLabours'],
     ]
     const missing: string[] = []
     for (const [file, fn] of WRITERS) {
@@ -2517,6 +2517,84 @@ async function run() {
     }).catch((e: Error) => {
       if (e.message !== 'ROLLBACK') throw e
     })
+  })
+
+  await check('seven batch forms, and every singular action is gone', async () => {
+    // Two paths to one table is how they drift, so the one-row-per-save
+    // action is DELETED each time rather than left beside the batch.
+    const { readFileSync } = await import('node:fs')
+    const gone: [string, string][] = [
+      ['src/server/shorts-actions.ts', 'saveShort'],
+      ['src/server/adjustment-actions.ts', 'saveAdjustment'],
+      ['src/server/cash-actions.ts', 'saveVoucher'],
+      ['src/server/expenses-actions.ts', 'saveExpense'],
+      ['src/server/cash-actions.ts', 'saveOtherIncome'],
+      ['src/server/cashier-actions.ts', 'saveNonRevenue'],
+      ['src/server/expenses-actions.ts', 'saveCasualLabour'],
+    ]
+    for (const [file, fn] of gone) {
+      const src = readFileSync(file, 'utf8')
+      assert.ok(
+        !new RegExp(`export async function ${fn}\\b(?!s)`).test(src),
+        `${fn} is still exported beside its batch — two paths to one table`,
+      )
+      assert.match(src, new RegExp(`export async function ${fn}s\\b`), `${fn}s is missing`)
+    }
+
+    // saveContractBill stays singular BY DESIGN: one bill is one document.
+    const cb = readFileSync('src/server/expenses-actions.ts', 'utf8')
+    assert.match(cb, /export async function saveContractBill\b/, 'a contract bill is one document, still one per save')
+  })
+
+  await check('every numbered batch draws a number PER LINE', async () => {
+    // A batch is a convenience of ENTRY, not a document. Contrast saveShorts,
+    // where the header is a BILL that already exists and is already numbered.
+    const { readFileSync } = await import('node:fs')
+    for (const [file, fn, series] of [
+      ['src/server/cash-actions.ts', 'saveVouchers', 'VCH'],
+      ['src/server/expenses-actions.ts', 'saveExpenses', 'EXP'],
+      ['src/server/expenses-actions.ts', 'saveCasualLabours', 'CAS'],
+    ] as const) {
+      const src = readFileSync(file, 'utf8')
+      const fnSrc = src.slice(src.indexOf(`export async function ${fn}`))
+      const body = fnSrc.slice(0, fnSrc.indexOf('\n}\n') + 3)
+      const loopAt = body.search(/for \(const \[?i?,? ?l\]? of /)
+      const drawAt = body.indexOf(`nextDocNo(tx, rid, '${series}'`)
+      assert.ok(drawAt !== -1, `${fn} must still draw a ${series} number`)
+      assert.ok(loopAt !== -1 && drawAt > loopAt, `${fn} draws its ${series} number inside the per-line loop`)
+    }
+    // other_income and non_revenue are NOT numbered series — asserted so a
+    // future change does not quietly add one.
+    const numbered = await tsql<{ doc_type: string }[]>`
+      select distinct doc_type from doc_sequences where restaurant_id = ${rid}`
+    for (const t of numbered) {
+      assert.ok(
+        ['PUR', 'PAY', 'EXP', 'VCH', 'CON', 'CAS', 'ADV', 'RUN'].includes(t.doc_type),
+        `unexpected document series ${t.doc_type}`,
+      )
+    }
+  })
+
+  await check('the header holds only what the lines genuinely share', async () => {
+    // Argued per form rather than inherited, and they came out differently:
+    //   losses      reason PER LINE   (two things, one bin, two reasons)
+    //   adjustments reason PER HEADER (a batch of corrections is ONE event)
+    //   vouchers    account PER LINE  (owner pocket vs drawer, same sitting)
+    //   casual      section PER LINE  (a day's hands split across departments)
+    const { readFileSync } = await import('node:fs')
+    const types = readFileSync('src/lib/types.ts', 'utf8')
+
+    const adj = types.slice(types.indexOf('export type SaveAdjustmentsInput'))
+    assert.match(adj.slice(0, 400), /reason: string/, 'adjustments keep ONE reason for the batch')
+
+    const kl = types.slice(types.indexOf('export type KitchenLossLineInput'))
+    assert.match(kl.slice(0, 500), /reason: string/, 'kitchen loss lines each carry a reason')
+
+    const vl = types.slice(types.indexOf('export type VoucherLineInput'))
+    assert.match(vl.slice(0, 600), /accountId: string/, 'a voucher line names its own account')
+
+    const cl = types.slice(types.indexOf('export type CasualLabourLineInput'))
+    assert.match(cl.slice(0, 400), /sectionId: string/, 'a casual labour line names its own department')
   })
 
   console.log(

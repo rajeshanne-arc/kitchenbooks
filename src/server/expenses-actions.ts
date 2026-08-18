@@ -17,12 +17,14 @@ import { noteListSuggestion } from '@/server/settings-actions'
 import { getCasualLabour, getContractBill, getExpense } from '@/server/expenses-queries'
 import { parseMoney } from '@/lib/money'
 import type {
-  SaveCasualLabourInput,
-  SaveCasualLabourResult,
+  CasualLabourRow,
+  SaveCasualLaboursInput,
+  SaveCasualLaboursResult,
   SaveContractBillInput,
   SaveContractBillResult,
-  SaveExpenseInput,
-  SaveExpenseResult,
+  ExpenseRow,
+  SaveExpensesInput,
+  SaveExpensesResult,
   VoidExpenseResult,
 } from '@/lib/types'
 
@@ -45,65 +47,110 @@ function fail(e: unknown): { ok: false; error: string } {
   return { ok: false, error: `Failed — nothing was written. (${detail})` }
 }
 
-const ExpenseSchema = z.object({
+
+const ExpenseLineSchema = z.object({
   accountId: z.string().trim(),
-  date: z.string().regex(DATE_RE),
-  category: z.string().trim().min(1, 'Pick the category').max(60),
+  category: z.string().trim().min(1, 'A category is required').max(60),
   payee: z.string().trim().max(120),
-  amount: moneyStr,
-  paidVia: z.string().trim().min(1, 'Pick how it was paid').max(30),
+  amount: z.string().trim(),
+  paidVia: z.string().trim().min(1, 'How was it paid?').max(60),
   note: z.string().trim().max(300),
 })
 
-export async function saveExpense(raw: SaveExpenseInput): Promise<SaveExpenseResult> {
+const ExpensesSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  lines: z.array(ExpenseLineSchema).min(1, 'Nothing to record').max(40),
+})
+
+/**
+ * N expenses, N DOCUMENT NUMBERS. A batch is a convenience of ENTRY, not a
+ * document — each receipt is separately voidable and separately cited later.
+ * Contrast `saveShorts`, where the header is a BILL that already exists and is
+ * already numbered; here the header is a date.
+ *
+ * Errors name the PAYEE, because that is what is written on the receipt in
+ * the hand of whoever is typing.
+ */
+export async function saveExpenses(raw: SaveExpensesInput): Promise<SaveExpensesResult> {
   try {
-    const input = ExpenseSchema.parse(raw)
+    const input = ExpensesSchema.parse(raw)
     const d = new Date(`${input.date}T00:00:00Z`)
     if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== input.date) {
       throw new ExpenseError('Expense date is not a real calendar date')
     }
     const year = Number(input.date.slice(0, 4))
     if (year < 2000 || year > 2100) throw new ExpenseError('Expense date is out of range')
-    const amount = parseMoney(input.amount)
-    if (amount === null || amount <= 0) throw new ExpenseError('Amount must be more than zero')
-    if (input.paidVia.toLowerCase() === 'cash') {
-      throw new ExpenseError('Paid from the drawer? That is a Cash Voucher — record it on the Cash page, where it joins the day’s ladder')
+
+    for (const l of input.lines) {
+      const who = l.payee.trim() === '' ? `“${l.category}”` : l.payee.trim()
+      const amount = parseMoney(l.amount)
+      if (amount === null || amount <= 0) throw new ExpenseError(`${who}: amount must be more than zero`)
+      if (l.paidVia.toLowerCase() === 'cash') {
+        throw new ExpenseError(
+          `${who}: paid from the drawer? That is a Cash Voucher — record it on the Cash page, where it joins the day’s ladder`,
+        )
+      }
     }
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    // Accept, then record. The expense_category list was EMPTY in
-    // production, which meant this form refused every entry that reached
-    // it — the rule was protecting the vocabulary by preventing the work.
     const by = await enteredBy()
+
+    // Accept, then record. The expense_category list was EMPTY in production,
+    // which meant this form refused every entry that reached it — the rule was
+    // protecting the vocabulary by preventing the work.
+    //
+    // OUTSIDE the transaction, and once per DISTINCT value: noteListSuggestion
+    // opens its own statement, and a tsql inside a txn() callback holds one
+    // connection while waiting for a second.
     const categories = await getList(rid, 'expense_category')
-    if (!categories.some((c) => c.toLowerCase() === input.category.toLowerCase())) {
-      await noteListSuggestion(rid, 'expense_category', input.category, by)
-    }
     const modes = await getList(rid, 'payment_mode')
-    if (!modes.some((m) => m.toLowerCase() === input.paidVia.toLowerCase())) {
-      await noteListSuggestion(rid, 'payment_mode', input.paidVia, by)
+    for (const c of new Set(input.lines.map((l) => l.category))) {
+      if (!categories.some((k) => k.toLowerCase() === c.toLowerCase())) {
+        await noteListSuggestion(rid, 'expense_category', c, by)
+      }
+    }
+    for (const m of new Set(input.lines.map((l) => l.paidVia))) {
+      if (!modes.some((k) => k.toLowerCase() === m.toLowerCase())) {
+        await noteListSuggestion(rid, 'payment_mode', m, by)
+      }
     }
 
-    const accountId = await assertAccount(rid, input.accountId, 'the account this expense was paid from')
+    // Per line: two receipts in one sitting can be paid from two accounts.
+    const accountIds: string[] = []
+    for (const l of input.lines) {
+      const who = l.payee.trim() === '' ? `“${l.category}”` : l.payee.trim()
+      accountIds.push(await assertAccount(rid, l.accountId, `the account ${who} was paid from`))
+    }
+
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
-      // The expense's own date, not today: a receipt entered a week late
-      // still belongs to the financial year the money left.
-      const docNo = await nextDocNo(tx, rid, 'EXP', input.date)
-      const [row] = await tx<{ id: string }[]>`
-        insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via, note, entered_by, account_id, doc_no)
-        values (${rid}, ${input.date}, ${input.category},
-                ${input.payee === '' ? null : input.payee.replace(/\s+/g, ' ')},
-                ${input.amount}, ${input.paidVia},
-                ${input.note === '' ? null : input.note}, ${by}, ${accountId}, ${docNo})
-        returning id`
-      return { id: row.id }
+      const ids: string[] = []
+      for (const [i, l] of input.lines.entries()) {
+        // The expense's own date, not today: a receipt entered a week late
+        // still belongs to the financial year the money left. One draw per
+        // line, on the tx, so a rollback consumes no number.
+        const docNo = await nextDocNo(tx, rid, 'EXP', input.date)
+        const [row] = await tx<{ id: string }[]>`
+          insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via, note, entered_by, account_id, doc_no)
+          values (${rid}, ${input.date}, ${l.category},
+                  ${l.payee === '' ? null : l.payee.replace(/\s+/g, ' ')},
+                  ${l.amount}, ${l.paidVia},
+                  ${l.note === '' ? null : l.note}, ${by}, ${accountIds[i]}, ${docNo})
+          returning id`
+        ids.push(row.id)
+      }
+      return ids
     })
 
-    const expense = await getExpense(rid, saved.id)
-    if (!expense) throw new ExpenseError('Could not verify the save — expense missing after commit')
-    return { ok: true, expense }
+    const expenses: ExpenseRow[] = []
+    for (const id of saved) {
+      const e = await getExpense(rid, id)
+      if (!e) throw new ExpenseError('Could not verify the save — an expense is missing after commit')
+      expenses.push(e)
+    }
+    const total = expenses.reduce((n, e) => n + Number(e.amount), 0).toFixed(2)
+    return { ok: true, expenses, total }
   } catch (e) {
     return fail(e)
   }
@@ -262,57 +309,89 @@ export async function voidContractBill(id: string): Promise<{ ok: true } | { ok:
   }
 }
 
-const CasualSchema = z.object({
+
+const CasualLineSchema = z.object({
   accountId: z.string().trim(),
-  date: z.string().regex(DATE_RE),
-  sectionId: z.union([z.literal(''), z.string().regex(UUID)]),
-  persons: z.string().regex(/^\d{1,4}$/, 'How many people?'),
+  sectionId: z.string().trim(),
+  persons: z.string().trim(),
   description: z.string().trim().max(200),
-  amount: moneyStr,
-  paidVia: z.string().trim().min(1, 'Pick how it was paid').max(30),
+  amount: z.string().trim(),
+  paidVia: z.string().trim().min(1, 'How was it paid?').max(60),
   note: z.string().trim().max(300),
 })
 
-export async function saveCasualLabour(raw: SaveCasualLabourInput): Promise<SaveCasualLabourResult> {
+const CasualsSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  lines: z.array(CasualLineSchema).min(1, 'Nothing to record').max(40),
+})
+
+/**
+ * The DEPARTMENT is per line, argued: a day's hands routinely split across
+ * departments — one unloading for the store, one washing up in the kitchen —
+ * and blank still means the whole place, which is a real answer for a day's
+ * general labour rather than a missing one.
+ *
+ * N payments, N CAS numbers. Till cash is still refused by name, and still
+ * points at the voucher question that does the same job in one entry.
+ */
+export async function saveCasualLabours(raw: SaveCasualLaboursInput): Promise<SaveCasualLaboursResult> {
   try {
-    const input = CasualSchema.parse(raw)
-    const amount = parseMoney(input.amount)
-    if (amount === null || amount <= 0) throw new ExpenseError('Amount must be more than zero')
-    if (Number(input.persons) <= 0) throw new ExpenseError('At least one person worked')
-    if (input.paidVia.toLowerCase() === 'cash') {
-      throw new ExpenseError(
-        'Paid from the drawer? That is a Cash Voucher — record it on the Cash page, where the day’s ladder can see it',
-      )
+    const input = CasualsSchema.parse(raw)
+
+    for (const [i, l] of input.lines.entries()) {
+      const what = l.description.trim() !== '' ? l.description.trim() : `line ${i + 1}`
+      const amount = parseMoney(l.amount)
+      if (amount === null || amount <= 0) throw new ExpenseError(`${what}: amount must be more than zero`)
+      if (Number(l.persons) <= 0) throw new ExpenseError(`${what}: at least one person worked`)
+      if (l.paidVia.toLowerCase() === 'cash') {
+        throw new ExpenseError(
+          `${what}: paid from the drawer? That is a Cash Voucher — record it on the Cash page, where the day’s ladder can see it`,
+        )
+      }
     }
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await enteredBy()
+
     const modes = await getList(rid, 'payment_mode')
-    if (!modes.some((m) => m.toLowerCase() === input.paidVia.toLowerCase())) {
-      await noteListSuggestion(rid, 'payment_mode', input.paidVia, by)
+    for (const m of new Set(input.lines.map((l) => l.paidVia))) {
+      if (!modes.some((k) => k.toLowerCase() === m.toLowerCase())) {
+        await noteListSuggestion(rid, 'payment_mode', m, by)
+      }
     }
 
-    const accountId = await assertAccount(rid, input.accountId, 'the account these wages were paid from')
+    const accountIds: string[] = []
+    for (const l of input.lines) {
+      accountIds.push(await assertAccount(rid, l.accountId, 'the account these wages were paid from'))
+    }
 
-    // Same reason as the contract bill: the number is allocated on the
-    // transaction so a failed insert does not burn one.
-    const row = await txn(async (tx) => {
-      // The day the work was done, not the day it was typed up.
-      const docNo = await nextDocNo(tx, rid, 'CAS', input.date)
-      const [r] = await tx<{ id: string }[]>`
-        insert into casual_labour (restaurant_id, work_date, section_id, persons, description,
-                                   amount, paid_via, note, entered_by, account_id, doc_no)
-        values (${rid}, ${input.date}, ${input.sectionId === '' ? null : input.sectionId},
-                ${Number(input.persons)}, ${trimmedOrNull(input.description)},
-                ${input.amount}, ${input.paidVia}, ${trimmedOrNull(input.note)}, ${by}, ${accountId}, ${docNo})
-        returning id`
-      return r
+    const saved = await txn(async (tx) => {
+      const ids: string[] = []
+      for (const [i, l] of input.lines.entries()) {
+        // The day the work was done, not the day it was typed up. Allocated
+        // on the transaction so a failed insert does not burn a number.
+        const docNo = await nextDocNo(tx, rid, 'CAS', input.date)
+        const [r] = await tx<{ id: string }[]>`
+          insert into casual_labour (restaurant_id, work_date, section_id, persons, description,
+                                     amount, paid_via, note, entered_by, account_id, doc_no)
+          values (${rid}, ${input.date}, ${l.sectionId === '' ? null : l.sectionId},
+                  ${Number(l.persons)}, ${trimmedOrNull(l.description)},
+                  ${l.amount}, ${l.paidVia}, ${trimmedOrNull(l.note)}, ${by}, ${accountIds[i]}, ${docNo})
+          returning id`
+        ids.push(r.id)
+      }
+      return ids
     })
 
-    const entry = await getCasualLabour(rid, row.id)
-    if (!entry) throw new ExpenseError('Could not verify the save — entry missing after commit')
-    return { ok: true, entry }
+    const rows: CasualLabourRow[] = []
+    for (const id of saved) {
+      const r = await getCasualLabour(rid, id)
+      if (!r) throw new ExpenseError('Could not verify the save — an entry is missing after commit')
+      rows.push(r)
+    }
+    const total = rows.reduce((n, r) => n + Number(r.amount), 0).toFixed(2)
+    return { ok: true, rows, total }
   } catch (e) {
     return fail(e)
   }

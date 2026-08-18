@@ -2853,3 +2853,42 @@ Both rulings are right and they do not contradict each other.
 
 **Direction stays per line on corrections**, because a stocktake finds
 surpluses and shortfalls in the same pass.
+
+## The header holds only what the lines genuinely share — argued each time
+
+Seven forms took the header+lines shape and the split came out DIFFERENTLY on
+almost every one. That is the point: the shape is not inheritable, because the
+question is about the work, not the widget.
+
+| form | header | and why |
+|---|---|---|
+| kitchen / store loss | date (+ section) | reason PER LINE — two things in one bin on one night are lost for two reasons |
+| production, closing | date + department | a department genuinely scopes what was made or held |
+| adjustments | date + REASON | a batch of corrections is ONE event: a stocktake, an opening balance |
+| shorts | THE BILL | a document that already exists and is already numbered |
+| vouchers | date | account PER LINE — owner pocket and drawer in one sitting |
+| expenses | date | account and mode per line — two receipts, two ways paid |
+| other income | date | buyer per line, argued below |
+| casual labour | date | department PER LINE — a day's hands split across departments |
+
+**"One sitting, one X" proved false twice**, and both times it was found while
+building rather than while designing:
+
+- **Vouchers.** The account looked like a header — one sitting, one drawer.
+  It is not: an owner-funded payment leaves the OWNER'S account while a
+  cashier payment leaves the drawer, and the two happen in the same evening.
+- **Other income.** The tempting header was the BUYER — a scrap dealer taking
+  cardboard and oil really is one buyer. But a day's sundries just as often
+  means a dealer, a vending commission and a staff sale. Per line is never
+  wrong, and a name picker makes repetition cheap.
+
+**The test that works:** ask what would be WRONG if this were shared, not what
+would be convenient. A shared field that varies produces a false record; a
+per-line field that repeats produces a little typing. Those are not
+symmetrical costs, so the tie goes to per line.
+
+**CARDS, NOT TABLE ROWS, once a line carries more than about four controls.**
+A voucher line has seven; seven controls across a row is unusable on the phone
+these forms are filled in on, and one-question-at-a-time still rules inside
+each card. Losses, production and adjustments stayed as tables — item, qty,
+unit, reason is exactly the width a row can carry.

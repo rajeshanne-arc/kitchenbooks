@@ -31,8 +31,9 @@ import type { ListKey } from '@/lib/lists'
 import type {
   SaveDueInput,
   SaveDueResult,
-  SaveNonRevenueInput,
-  SaveNonRevenueResult,
+  NonRevenueRow,
+  SaveNonRevenuesInput,
+  SaveNonRevenuesResult,
   SaveOffBookInput,
   SaveOffBookResult,
   SavePartnerInput,
@@ -365,72 +366,105 @@ export async function voidOffBook(id: string): Promise<VoidOffBookResult> {
 
 // ------------------------------------------------------------ non-revenue
 
-const NonRevenueSchema = z.object({
-  date: z.string().regex(DATE_RE),
-  reason: z.string().trim().min(1, 'Pick the reason').max(60),
-  recipeId: z.union([z.literal(''), z.string().regex(UUID)]),
+
+const NonRevenueLineSchema = z.object({
+  reason: z.string().trim().min(1, 'A reason is required').max(60),
+  recipeId: z.string().trim(),
   description: z.string().trim().max(200),
-  qty: z.string().trim().max(12),
-  menuValue: optionalMoney,
+  qty: z.string().trim(),
+  menuValue: z.string().trim(),
   givenTo: z.string().trim().max(120),
   note: z.string().trim().max(300),
 })
 
-export async function saveNonRevenue(raw: SaveNonRevenueInput): Promise<SaveNonRevenueResult> {
+const NonRevenuesSchema = z.object({
+  date: z.string().regex(DATE_RE),
+  lines: z.array(NonRevenueLineSchema).min(1, 'Nothing to record').max(40),
+})
+
+/**
+ * REASON IS PER LINE here, and that is the opposite of the adjustments
+ * ruling — argued, not inherited.
+ *
+ * A batch of stock corrections is ONE event: a stocktake, an opening
+ * balance. A batch of giveaways is not. A staff meal and a dessert comped
+ * for a complaint are two separate events that merely got written down in
+ * the same sitting, and the reason is what the P&L reads to tell them apart.
+ *
+ * cost_value stays FROZEN per line from dish_costs at save — a giveaway
+ * costs something, and that cost must not drift when the recipe changes.
+ */
+export async function saveNonRevenues(raw: SaveNonRevenuesInput): Promise<SaveNonRevenuesResult> {
   try {
-    const input = NonRevenueSchema.parse(raw)
+    const input = NonRevenuesSchema.parse(raw)
     assertRealDate(input.date, 'Date')
-    if (input.recipeId === '' && input.description === '') {
-      throw new CashierError('Pick the dish or describe what went out')
-    }
-    let qty: string | null = null
-    if (input.recipeId !== '') {
-      qty = input.qty === '' ? '1' : input.qty
-      const q = parseQty(qty)
-      if (q === null || q <= 0) throw new CashierError('Quantity must be a plain number more than zero')
-    } else if (input.qty !== '') {
-      throw new CashierError('A quantity needs its dish — use the description for the rest')
-    }
+
+    const prepared = input.lines.map((l, i) => {
+      const what = l.description.trim() !== '' ? l.description.trim() : `line ${i + 1}`
+      if (l.recipeId === '' && l.description === '') {
+        throw new CashierError(`Line ${i + 1}: pick the dish or describe what went out`)
+      }
+      let qty: string | null = null
+      if (l.recipeId !== '') {
+        qty = l.qty === '' ? '1' : l.qty
+        const q = parseQty(qty)
+        if (q === null || q <= 0) throw new CashierError(`${what}: quantity must be a plain number more than zero`)
+      } else if (l.qty !== '') {
+        throw new CashierError(`${what}: a quantity needs its dish — use the description for the rest`)
+      }
+      return { ...l, qty }
+    })
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
-    await acceptListValue(rid, 'non_revenue_reason', input.reason, 'Reason')
+    // Once per DISTINCT reason, and outside the transaction: acceptListValue
+    // opens its own statement.
+    for (const r of new Set(input.lines.map((l) => l.reason))) {
+      await acceptListValue(rid, 'non_revenue_reason', r, 'Reason')
+    }
     const by = await enteredBy()
 
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
-      let costValue = '0'
-      if (input.recipeId !== '') {
-        const [dish] = await tx<{ name: string; kind: string; cost: string | null }[]>`
-          select r.name, r.kind, dc.dish_cost::text as cost
-          from recipes r
-          left join dish_costs dc on dc.recipe_id = r.id
-          where r.id = ${input.recipeId} and r.restaurant_id = ${rid} and r.status = 'active'`
-        if (!dish) throw new CashierError('Dish not found')
-        if (dish.kind !== 'dish') throw new CashierError(`“${dish.name}” is not a dish — giveaways go out as dishes`)
-        if (dish.cost === null) throw new CashierError(`“${dish.name}” cannot be costed yet — its recipe has no lines`)
-        // FROZEN at save: the giveaway finally costs something.
-        const [v] = await tx<{ v: string }[]>`select (${qty}::numeric * ${dish.cost}::numeric)::text as v`
-        costValue = v.v
+      const ids: string[] = []
+      for (const l of prepared) {
+        let costValue = '0'
+        if (l.recipeId !== '') {
+          const [dish] = await tx<{ name: string; kind: string; cost: string | null }[]>`
+            select r.name, r.kind, dc.dish_cost::text as cost
+            from recipes r
+            left join dish_costs dc on dc.recipe_id = r.id
+            where r.id = ${l.recipeId} and r.restaurant_id = ${rid} and r.status = 'active'`
+          if (!dish) throw new CashierError('Dish not found')
+          if (dish.kind !== 'dish') throw new CashierError(`“${dish.name}” is not a dish — giveaways go out as dishes`)
+          if (dish.cost === null) throw new CashierError(`“${dish.name}” cannot be costed yet — its recipe has no lines`)
+          // FROZEN at save: the giveaway finally costs something.
+          const [v] = await tx<{ v: string }[]>`select (${l.qty}::numeric * ${dish.cost}::numeric)::text as v`
+          costValue = v.v
+        }
+        const [row] = await tx<{ id: string }[]>`
+          insert into non_revenue (restaurant_id, nr_date, reason, recipe_id, description, qty,
+                                   menu_value, cost_value, given_to, note, entered_by)
+          values (${rid}, ${input.date}, ${l.reason},
+                  ${l.recipeId === '' ? null : l.recipeId},
+                  ${l.description === '' ? null : l.description},
+                  ${l.qty}, ${l.menuValue === '' ? null : l.menuValue}, ${costValue},
+                  ${l.givenTo === '' ? null : l.givenTo},
+                  ${l.note === '' ? null : l.note}, ${by})
+          returning id`
+        ids.push(row.id)
       }
-      const [row] = await tx<{ id: string }[]>`
-        insert into non_revenue (restaurant_id, nr_date, reason, recipe_id, description, qty,
-                                 menu_value, cost_value, given_to, note, entered_by)
-        values (${rid}, ${input.date}, ${input.reason},
-                ${input.recipeId === '' ? null : input.recipeId},
-                ${input.description === '' ? null : input.description},
-                ${qty},
-                ${input.menuValue === '' ? null : input.menuValue},
-                ${costValue},
-                ${input.givenTo === '' ? null : cleanName(input.givenTo)},
-                ${input.note === '' ? null : input.note}, ${by})
-        returning id`
-      return { id: row.id }
+      return ids
     })
 
-    const entry = await getNonRevenue(rid, saved.id)
-    if (!entry) throw new CashierError('Could not verify the save — entry missing after commit')
-    return { ok: true, entry }
+    const rows: NonRevenueRow[] = []
+    for (const id of saved) {
+      const r = await getNonRevenue(rid, id)
+      if (!r) throw new CashierError('Could not verify the save — an entry is missing after commit')
+      rows.push(r)
+    }
+    const total = rows.reduce((n, r) => n + Number(r.cost_value), 0).toFixed(2)
+    return { ok: true, rows, total }
   } catch (e) {
     return fail(e)
   }

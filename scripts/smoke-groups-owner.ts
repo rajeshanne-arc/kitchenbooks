@@ -27,7 +27,7 @@ const MONTH = '2001-08-01'
 async function main() {
   const { getRestaurant } = await import('../src/server/queries')
   const { createVendor, createItem } = await import('../src/server/books-actions')
-  const { saveExpense, voidExpense } = await import('../src/server/expenses-actions')
+  const { saveExpenses, voidExpense } = await import('../src/server/expenses-actions')
   const { getExpensesByCategory } = await import('../src/server/expenses-queries')
   const { saveOffBook, voidOffBook } = await import('../src/server/cashier-actions')
   const { getPnlMonthly } = await import('../src/server/pnl-queries')
@@ -80,11 +80,11 @@ async function main() {
   assert.equal(item.item.opening_rate, '40')
 
   // ---- 3. expenses: the drawer rule by name, lists enforced
-  const cashRefused = await saveExpense({ date: EXP_DATE, category: 'Rent', payee: '', amount: '100', paidVia: 'Cash', note: '', accountId: ACCOUNT })
+  const cashRefused = await saveExpenses({ date: EXP_DATE, lines: [{ category: 'Rent', payee: '', amount: '100', paidVia: 'Cash', note: '', accountId: ACCOUNT }] })
   assert.ok(!cashRefused.ok && /cash voucher/i.test(cashRefused.error), 'till cash refused, names the Cash Voucher')
-  const badCat = await saveExpense({ date: EXP_DATE, category: 'Zz Whatever', payee: '', amount: '100', paidVia: 'UPI', note: '', accountId: ACCOUNT })
+  const badCat = await saveExpenses({ date: EXP_DATE, lines: [{ category: 'Zz Whatever', payee: '', amount: '100', paidVia: 'UPI', note: '', accountId: ACCOUNT }] })
   assert.ok(!badCat.ok && /list/i.test(badCat.error))
-  const exp = await saveExpense({ date: EXP_DATE, category: 'Rent', payee: 'Zz Landlord', amount: '5000', paidVia: 'UPI', note: 'zz owner smoke', accountId: ACCOUNT })
+  const exp = await saveExpenses({ date: EXP_DATE, lines: [{ category: 'Rent', payee: 'Zz Landlord', amount: '5000', paidVia: 'UPI', note: 'zz owner smoke', accountId: ACCOUNT }] })
   assert.ok(exp.ok, `saveExpense failed: ${exp.ok === false ? exp.error : ''}`)
   const byCat = await getExpensesByCategory(rid, MONTH)
   const rent = byCat.find((c) => c.category === 'Rent')
@@ -141,7 +141,7 @@ async function main() {
   assert.equal(resolveTabs('kitchen', 'not json').length, defaults.length, 'broken settings fall back wholesale')
 
   // ---- 7. undo what nets: void the expense and off-book row
-  const expVoid = await voidExpense(exp.expense.id)
+  const expVoid = await voidExpense(exp.expenses[0].id)
   assert.ok(expVoid.ok)
   const obVoid = await voidOffBook(ob.order.id)
   assert.ok(obVoid.ok)
@@ -156,7 +156,7 @@ async function main() {
       JSON.stringify({
         vendors: [vend.vendor.id],
         items: [item.item.id],
-        expenses: [exp.expense.id, expVoid.ok ? expVoid.reversal.id : null],
+        expenses: [exp.expenses[0].id, expVoid.ok ? expVoid.reversal.id : null],
         off_book: [ob.order.id, obVoid.ok ? obVoid.reversal.id : null],
         list_options: [zzRow.id],
         settings_keys: ['tabs.kitchen'],

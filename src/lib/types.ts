@@ -1006,6 +1006,24 @@ export type OtherIncomeRow = {
   created_at: string
 }
 
+/** One sundry receipt. The BUYER is per line, argued: a scrap dealer taking
+ *  three things is a real shared fact, but a day's sundries just as often
+ *  means a dealer, a vending commission and a staff sale — different buyers
+ *  entirely. Per line is never wrong; the name picker makes repetition cheap. */
+export type OtherIncomeLineInput = {
+  accountId: string
+  item: string
+  qty: string
+  unit: string
+  amount: string
+  buyer: string
+  receivedBy: string
+}
+export type SaveOtherIncomesInput = { date: string; lines: OtherIncomeLineInput[] }
+export type SaveOtherIncomesResult =
+  | { ok: true; rows: OtherIncomeRow[]; total: string }
+  | { ok: false; error: string }
+
 export type SaveOtherIncomeInput = {
   accountId: string
   date: string
@@ -1632,6 +1650,23 @@ export type CasualLabourRow = {
   is_voided: boolean
 }
 
+/** One day hand. The DEPARTMENT is per line: a day's hands routinely split
+ *  across departments — one unloading for the store, one washing up in the
+ *  kitchen — and blank still means the whole place, which is a real answer. */
+export type CasualLabourLineInput = {
+  accountId: string
+  sectionId: string
+  persons: string
+  description: string
+  amount: string
+  paidVia: string
+  note: string
+}
+export type SaveCasualLaboursInput = { date: string; lines: CasualLabourLineInput[] }
+export type SaveCasualLaboursResult =
+  | { ok: true; rows: CasualLabourRow[]; total: string }
+  | { ok: false; error: string }
+
 export type SaveCasualLabourInput = {
   accountId: string
   date: string
@@ -1732,6 +1767,24 @@ export type NonRevenueRow = {
   created_at: string
 }
 
+/** One giveaway. REASON IS PER LINE — argued against the adjustments ruling
+ *  and coming out the other way: a batch of corrections is one event, but a
+ *  staff meal and a dish comped for a complaint are two events that merely
+ *  got written down together. */
+export type NonRevenueLineInput = {
+  reason: string
+  recipeId: string
+  description: string
+  qty: string
+  menuValue: string
+  givenTo: string
+  note: string
+}
+export type SaveNonRevenuesInput = { date: string; lines: NonRevenueLineInput[] }
+export type SaveNonRevenuesResult =
+  | { ok: true; rows: NonRevenueRow[]; total: string }
+  | { ok: false; error: string }
+
 export type SaveNonRevenueInput = {
   date: string
   reason: string
@@ -1801,6 +1854,34 @@ export type ExpenseRow = {
   entered_by: string | null
   created_at: string
 }
+
+/** One receipt. EVERYTHING here is per line — argued, not inherited: two
+ *  bills entered in the same sitting routinely differ in category, payee,
+ *  amount, how they were paid and which account paid them. */
+export type ExpenseLineInput = {
+  accountId: string
+  category: string
+  payee: string
+  amount: string
+  paidVia: string
+  note: string
+}
+
+/**
+ * Header + lines, and the header is ONLY the date.
+ *
+ * Asked of this form specifically rather than copied from vouchers: what does
+ * a sitting genuinely SHARE? Here, nothing but the day somebody sat down with
+ * a stack of receipts. The account differs (one paid by transfer, one by
+ * UPI), the mode differs with it, and category and payee obviously do. A
+ * header holds what the lines actually have in common and nothing else.
+ *
+ * N expenses, N EXP numbers — a batch is entry, not a document.
+ */
+export type SaveExpensesInput = { date: string; lines: ExpenseLineInput[] }
+export type SaveExpensesResult =
+  | { ok: true; expenses: ExpenseRow[]; total: string }
+  | { ok: false; error: string }
 
 export type SaveExpenseInput = {
   accountId: string

@@ -7,8 +7,8 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ExpenseRow, MoneyAccount, RecurringExpenseOffer, SaveExpenseResult } from '@/lib/types'
-import { saveExpense, voidExpense } from '@/server/expenses-actions'
+import type { ExpenseRow, MoneyAccount, RecurringExpenseOffer, SaveExpensesResult } from '@/lib/types'
+import { saveExpenses, voidExpense } from '@/server/expenses-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
@@ -23,6 +23,25 @@ import {
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
 import { useBusinessToday } from '@/components/BusinessDay'
+
+type Line = {
+  key: number
+  accountId: string
+  category: string
+  payee: string
+  amount: string
+  paidVia: string
+  note: string
+}
+const newLine = (key: number): Line => ({
+  key,
+  accountId: '',
+  category: '',
+  payee: '',
+  amount: '',
+  paidVia: '',
+  note: '',
+})
 
 export default function ExpensesClient({
   accounts,
@@ -45,33 +64,52 @@ export default function ExpensesClient({
   const router = useRouter()
   const nonCashModes = modes.filter((m) => m.toLowerCase() !== 'cash')
   const [date, setDate] = useState(businessToday)
-  const [category, setCategory] = useState('')
-  const [payee, setPayee] = useState('')
-  const [amount, setAmount] = useState('')
-  const [paidVia, setPaidVia] = useState('')
-  const [accountId, setAccountId] = useState('')
-  const [note, setNote] = useState('')
+  const [lines, setLines] = useState<Line[]>([newLine(1)])
+  const [nextKey, setNextKey] = useState(2)
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [saved, setSaved] = useState<Extract<SaveExpenseResult, { ok: true }> | null>(null)
+  const [saved, setSaved] = useState<Extract<SaveExpensesResult, { ok: true }> | null>(null)
 
-  const canSave =
-    !saving &&
-    category !== '' &&
-    paidVia !== '' &&
-    accountId !== '' &&
-    parseMoney(amount.trim()) !== null &&
-    Number(amount.trim()) > 0
+  const patch = (key: number, p: Partial<Line>) =>
+    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l)))
+  const addLine = () => {
+    setLines((ls) => [...ls, newLine(nextKey)])
+    setNextKey((k) => k + 1)
+  }
+  const removeLine = (key: number) =>
+    setLines((ls) => (ls.length === 1 ? [newLine(nextKey)] : ls.filter((l) => l.key !== key)))
+
+  const lineOk = (l: Line) =>
+    l.category !== '' &&
+    l.paidVia !== '' &&
+    l.accountId !== '' &&
+    parseMoney(l.amount.trim()) !== null &&
+    Number(l.amount.trim()) > 0
+  const canSave = !saving && lines.every(lineOk)
+  const runningTotal = lines.reduce((n, l) => n + (Number(l.amount.trim()) || 0), 0).toFixed(2)
 
   // Tapping a recurring bill fills the form and stops. The figure is last
   // month's, sitting in an editable field — the manager confirms or corrects
   // it and presses save like any other expense. Nothing is written by the tap.
   function offerRecurring(o: RecurringExpenseOffer) {
-    setCategory(o.category)
-    setAmount(o.last_amount)
-    if (o.payee !== null) setPayee(o.payee)
-    if (o.paid_via !== null && o.paid_via.toLowerCase() !== 'cash') setPaidVia(o.paid_via)
+    // Fills the FIRST empty line, or adds one. The figure is last month's,
+    // sitting in an editable field — the manager confirms or corrects it and
+    // presses save like any other expense. Nothing is written by the tap.
+    const fill: Partial<Line> = {
+      category: o.category,
+      amount: o.last_amount,
+      ...(o.payee !== null ? { payee: o.payee } : {}),
+      ...(o.paid_via !== null && o.paid_via.toLowerCase() !== 'cash' ? { paidVia: o.paid_via } : {}),
+    }
+    setLines((ls) => {
+      const i = ls.findIndex((l) => l.category === '' && l.amount.trim() === '')
+      if (i === -1) return [...ls, { ...newLine(nextKey), ...fill }]
+      const copy = [...ls]
+      copy[i] = { ...copy[i], ...fill }
+      return copy
+    })
+    setNextKey((k) => k + 1)
     setError(null)
   }
 
@@ -82,21 +120,21 @@ export default function ExpensesClient({
     setSaving(true)
     setError(null)
     try {
-      const res = await saveExpense({
+      const res = await saveExpenses({
         date,
-        category,
-        payee: payee.trim(),
-        amount: amount.trim(),
-        paidVia,
-        accountId,
-        note: note.trim(),
+        lines: lines.map((l) => ({
+          accountId: l.accountId,
+          category: l.category,
+          payee: l.payee.trim(),
+          amount: l.amount.trim(),
+          paidVia: l.paidVia,
+          note: l.note.trim(),
+        })),
       })
       if (res.ok) {
         setSaved(res)
-        setAmount('')
-        setPayee('')
-        setAccountId('')
-        setNote('')
+        setLines([newLine(nextKey)])
+        setNextKey((k) => k + 1)
         router.refresh()
       } else {
         setError(res.error)
@@ -172,71 +210,158 @@ export default function ExpensesClient({
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Record an expense</h2>
         {saved !== null && (
-          <p className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-stone-800">
-            {saved.expense.category} · {formatMoneyString(saved.expense.amount)} via {saved.expense.paid_via} recorded
+          <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-stone-800">
+            {saved.expenses.length === 1
+              ? `${saved.expenses[0].category} · ${formatMoneyString(saved.expenses[0].amount)} via ${saved.expenses[0].paid_via} recorded`
+              : `${saved.expenses.length} expenses recorded — ${formatMoneyString(saved.total)}`}
+            {saved.expenses.length > 1 && (
+              <ul className="mt-1.5 space-y-0.5">
+                {saved.expenses.map((e) => (
+                  <li key={e.id} className="text-xs text-stone-600">
+                    {/* each receipt keeps its OWN number — a batch is entry, not a document */}
+                    {e.doc_no !== null && <span className={docNoCls}>{e.doc_no}</span>} {e.category} ·{' '}
+                    {formatMoneyString(e.amount)}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <label className="mt-3 block sm:w-44">
+          <span className={fieldLabelCls}>Date</span>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${numCls} w-full`} />
+        </label>
+
+        {/* A CARD PER RECEIPT, not a table row: six controls across a row is
+            unusable on a phone, and one question at a time still rules inside
+            each card. */}
+        <div className="mt-3 space-y-3">
+          {lines.map((l, i) => (
+            <div key={l.key} className="rounded-xl border border-rule bg-cell p-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-stone-500">
+                  Expense {i + 1}
+                </span>
+                {lines.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeLine(l.key)}
+                    className="text-sm text-stone-400 hover:text-red-700"
+                    aria-label={`Remove expense ${i + 1}`}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-2 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className={fieldLabelCls}>Category</span>
+                    <select
+                      value={l.category}
+                      onChange={(e) => patch(l.key, { category: e.target.value })}
+                      className={selectCls}
+                    >
+                      <option value="">—</option>
+                      {categories.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className={fieldLabelCls}>Amount (₹)</span>
+                    <input
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      value={l.amount}
+                      onChange={(e) => patch(l.key, { amount: e.target.value.replace(/[^\d.]/g, '') })}
+                      className={`${numCls} w-full text-right`}
+                    />
+                  </label>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className={fieldLabelCls}>Paid to</span>
+                    <input
+                      list="kb-expense-payees"
+                      value={l.payee}
+                      onChange={(e) => patch(l.key, { payee: e.target.value })}
+                      placeholder="pick or add"
+                      className={inputCls}
+                      maxLength={120}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={fieldLabelCls}>Paid via</span>
+                    <select
+                      value={l.paidVia}
+                      onChange={(e) => patch(l.key, { paidVia: e.target.value })}
+                      className={selectCls}
+                    >
+                      <option value="">—</option>
+                      {nonCashModes.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="mt-1 block text-xs text-amber-800">
+                      Paid from the drawer? That is a Cash Voucher — record it on the Cash page instead.
+                    </span>
+                  </label>
+                </div>
+                {/* "Paid via" is the instrument, this is the account the money
+                    left. PER LINE, argued rather than inherited: two receipts
+                    entered in one sitting are routinely paid from two
+                    different accounts. Never the drawer — that is a Cash
+                    Voucher, refused server-side. */}
+                <AccountPicker
+                  accounts={accounts}
+                  value={l.accountId}
+                  onChange={(id) => patch(l.key, { accountId: id })}
+                  label="Paid from"
+                />
+                <label className="block">
+                  <span className={fieldLabelCls}>Note</span>
+                  <input
+                    value={l.note}
+                    onChange={(e) => patch(l.key, { note: e.target.value })}
+                    placeholder="optional"
+                    className={inputCls}
+                    maxLength={300}
+                  />
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <datalist id="kb-expense-payees">
+          {payeeNames.map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
+
+        <button
+          type="button"
+          onClick={addLine}
+          className="mt-3 rounded-full border border-rule bg-cell px-3.5 py-2 text-sm font-medium text-stone-700 hover:border-stone-400"
+        >
+          ＋ Add another expense
+        </button>
+
+        {lines.length > 1 && (
+          <p className="mt-3 text-sm text-stone-600">
+            {lines.length} expenses ·{' '}
+            <span className="font-semibold tabular-nums text-stone-900">{formatMoneyString(runningTotal)}</span>{' '}
+            <span className="text-stone-400">— each gets its own expense number</span>
           </p>
         )}
-        <div className="mt-3 space-y-3">
-          <div className="grid grid-cols-3 gap-3">
-            <label className="block">
-              <span className={fieldLabelCls}>Date</span>
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${numCls} w-full`} />
-            </label>
-            <label className="block">
-              <span className={fieldLabelCls}>Category</span>
-              <select value={category} onChange={(e) => setCategory(e.target.value)} className={selectCls}>
-                <option value="">—</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className={fieldLabelCls}>Amount (₹)</span>
-              <input
-                inputMode="decimal"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ''))}
-                className={`${numCls} w-full text-right`}
-              />
-            </label>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className={fieldLabelCls}>Paid to</span>
-              <input list="kb-expense-payees" value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="pick or add" className={inputCls} maxLength={120} />
-              <datalist id="kb-expense-payees">
-                {payeeNames.map((n) => (
-                  <option key={n} value={n} />
-                ))}
-              </datalist>
-            </label>
-            <label className="block">
-              <span className={fieldLabelCls}>Paid via</span>
-              <select value={paidVia} onChange={(e) => setPaidVia(e.target.value)} className={selectCls}>
-                <option value="">—</option>
-                {nonCashModes.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <span className="mt-1 block text-xs text-amber-800">
-                Paid from the drawer? That is a Cash Voucher — record it on the Cash page instead.
-              </span>
-            </label>
-          </div>
-          {/* “Paid via” is the instrument, this is the account the money left.
-              Never the drawer here — that is a Cash Voucher, refused server-side. */}
-          <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} label="Paid from" />
-          <label className="block">
-            <span className={fieldLabelCls}>Note</span>
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
-          </label>
-        </div>
+
         {error && (
           <div role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
             {error}
@@ -248,7 +373,7 @@ export default function ExpensesClient({
           disabled={!canSave}
           className="mt-3 w-full rounded-xl bg-emerald-700 py-2.5 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
         >
-          {saving ? 'Saving…' : 'Record expense'}
+          {saving ? 'Saving…' : lines.length === 1 ? 'Record expense' : `Record ${lines.length} expenses`}
         </button>
       </section>
 

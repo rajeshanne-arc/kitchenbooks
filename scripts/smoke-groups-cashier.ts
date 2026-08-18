@@ -30,7 +30,7 @@ async function main() {
   const { getRestaurant } = await import('../src/server/queries')
   const {
     saveSettlement, voidSettlement, saveOffBook, voidOffBook,
-    saveNonRevenue, voidNonRevenue, saveDue, voidDue,
+    saveNonRevenues, voidNonRevenue, saveDue, voidDue,
   } = await import('../src/server/cashier-actions')
   const {
     getPartnerSummaries, getDuesOutstanding, getGiveawayMonth, listGiveawayDishes,
@@ -148,38 +148,30 @@ async function main() {
   const zzDish = dishes.find((d) => d.id === dishRes.id)
   assert.ok(zzDish && zzDish.has_cost && zzDish.selling_price === '350')
 
-  const badReason = await saveNonRevenue({
-    date: NR_DATE, reason: 'Zz Because', recipeId: dishRes.id, description: '', qty: '1', menuValue: '', givenTo: '', note: '',
-  })
+  const badReason = await saveNonRevenues({ date: NR_DATE, lines: [{ reason: 'Zz Because', recipeId: dishRes.id, description: '', qty: '1', menuValue: '', givenTo: '', note: '' }] })
   assert.ok(!badReason.ok && /list/i.test(badReason.error))
-  const qtyNoDish = await saveNonRevenue({
-    date: NR_DATE, reason: 'Staff meal', recipeId: '', description: 'zz thing', qty: '2', menuValue: '', givenTo: '', note: '',
-  })
+  const qtyNoDish = await saveNonRevenues({ date: NR_DATE, lines: [{ reason: 'Staff meal', recipeId: '', description: 'zz thing', qty: '2', menuValue: '', givenTo: '', note: '' }] })
   assert.ok(!qtyNoDish.ok && /dish/i.test(qtyNoDish.error))
 
   const [{ cost: dishCost }] = await sql<{ cost: string }[]>`
     select dish_cost::text as cost from dish_costs where recipe_id = ${dishRes.id}`
-  const nr1 = await saveNonRevenue({
-    date: NR_DATE, reason: 'Staff meal', recipeId: dishRes.id, description: '', qty: '2',
-    menuValue: '700', givenTo: 'Zz Staff', note: 'zz cashier smoke',
-  })
+  const nr1 = await saveNonRevenues({ date: NR_DATE, lines: [{ reason: 'Staff meal', recipeId: dishRes.id, description: '', qty: '2',
+    menuValue: '700', givenTo: 'Zz Staff', note: 'zz cashier smoke' }] })
   assert.ok(nr1.ok, `non-revenue failed: ${nr1.ok === false ? nr1.error : ''}`)
   const [{ v: nrExpected }] = await sql<{ v: string }[]>`select ('2'::numeric * ${dishCost}::numeric)::text as v`
-  assert.equal(decimalStringToPaise(nr1.entry.cost_value), decimalStringToPaise(nrExpected), 'cost_value FROZEN = qty × dish_cost — the cashier typed no cost')
-  assert.equal(nr1.entry.menu_value, '700')
+  assert.equal(decimalStringToPaise(nr1.rows[0].cost_value), decimalStringToPaise(nrExpected), 'cost_value FROZEN = qty × dish_cost — the cashier typed no cost')
+  assert.equal(nr1.rows[0].menu_value, '700')
 
-  const nr2 = await saveNonRevenue({
-    date: NR_DATE, reason: 'Complaint recovery', recipeId: '', description: 'zz flowers for a complaint', qty: '',
-    menuValue: '', givenTo: '', note: 'zz cashier smoke',
-  })
+  const nr2 = await saveNonRevenues({ date: NR_DATE, lines: [{ reason: 'Complaint recovery', recipeId: '', description: 'zz flowers for a complaint', qty: '',
+    menuValue: '', givenTo: '', note: 'zz cashier smoke' }] })
   assert.ok(nr2.ok)
-  assert.equal(Number(nr2.entry.cost_value), 0, 'no dish → no cost claim')
+  assert.equal(Number(nr2.rows[0].cost_value), 0, 'no dish → no cost claim')
 
   let giveaway = await getGiveawayMonth(rid, '2001-07-01')
   assert.equal(decimalStringToPaise(giveaway.cost_value), decimalStringToPaise(nrExpected))
-  const nrVoid = await voidNonRevenue(nr1.entry.id)
+  const nrVoid = await voidNonRevenue(nr1.rows[0].id)
   assert.ok(nrVoid.ok)
-  assert.equal(decimalStringToPaise(nrVoid.reversal.cost_value), -decimalStringToPaise(nr1.entry.cost_value), 'negative twin copies the frozen cost')
+  assert.equal(decimalStringToPaise(nrVoid.reversal.cost_value), -decimalStringToPaise(nr1.rows[0].cost_value), 'negative twin copies the frozen cost')
   giveaway = await getGiveawayMonth(rid, '2001-07-01')
   assert.equal(decimalStringToPaise(giveaway.cost_value), 0, 'void nets the month')
 
@@ -206,7 +198,7 @@ async function main() {
       JSON.stringify({
         settlements: [s1.settlement.id, s2.settlement.id, sv.ok ? sv.reversal.id : null],
         off_book: [ob1.order.id, ob2.order.id, ob3.order.id, obVoid.ok ? obVoid.reversal.id : null],
-        non_revenue: [nr1.entry.id, nr2.entry.id, nrVoid.ok ? nrVoid.reversal.id : null],
+        non_revenue: [nr1.rows[0].id, nr2.rows[0].id, nrVoid.ok ? nrVoid.reversal.id : null],
         dues: [d1.due.id, d2.due.id, dv1.ok ? dv1.reversal.id : null, dv2.ok ? dv2.reversal.id : null],
         day_close_date: CLOSE_DATE,
         recipes: [dishRes.id],
