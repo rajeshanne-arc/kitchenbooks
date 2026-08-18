@@ -174,6 +174,11 @@ export default function BillEntry({
               index={i}
               categories={categories}
               units={units}
+              /* the vendor is picked before the lines, so it scopes and ranks
+                 the item picker and makes the rate prefill THEIRS. A vendor
+                 being born on this bill has no history — null, no scope. */
+              vendorId={vendor?.kind === 'existing' ? vendor.hit.id : null}
+              vendorName={vendor?.kind === 'existing' ? vendor.hit.name : null}
               patch={(p) => patchLine(line.key, p)}
               remove={() => removeLine(line.key)}
             />
@@ -287,6 +292,8 @@ function LineRow({
   index,
   categories,
   units,
+  vendorId,
+  vendorName,
   patch,
   remove,
 }: {
@@ -294,6 +301,8 @@ function LineRow({
   index: number
   categories: Category[]
   units: Unit[]
+  vendorId: string | null
+  vendorName: string | null
   patch: (p: Partial<Line>) => void
   remove: () => void
 }) {
@@ -314,6 +323,8 @@ function LineRow({
           <ItemPicker
             categories={categories}
             units={units}
+            vendorId={vendorId}
+            vendorName={vendorName}
             value={line.item}
             onPick={(sel, prefill) => patch({ item: sel, prefillRate: prefill, rate: prefill ?? line.rate })}
             onChange={(sel) => patch({ item: sel })}

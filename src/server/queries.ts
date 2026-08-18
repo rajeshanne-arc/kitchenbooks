@@ -76,17 +76,67 @@ export async function searchVendors(restaurantId: string, q: string): Promise<Ve
  * Starter rows whose name is already materialized as an item are excluded,
  * so a suggestion never duplicates something that exists.
  */
-export async function searchItems(restaurantId: string, q: string): Promise<ItemHit[]> {
+export async function searchItems(
+  restaurantId: string,
+  q: string,
+  /** the vendor the bill is being entered for, when one is already picked.
+   *  A vendor born on this same bill has no history, so this is null then. */
+  vendorId: string | null = null,
+): Promise<ItemHit[]> {
   const like = `%${q}%`
   const prefix = `${q}%`
+
+  // WHAT THIS VENDOR HAS SUPPLIED, first. The vendor is picked before the lines
+  // on every bill, so it is context the picker already has and was throwing
+  // away — and the rate is half of why: item_rates.prefill_rate is the last
+  // rate across ALL vendors, so a Sneha Chicken bill was prefilling RR
+  // Chicken's ₹330 against Sneha's ₹300.
+  //
+  // FREQUENCY THEN RECENCY here, unlike a vendor RETURN, which ranks recency
+  // first. Entering a bill, what this vendor usually sends is the better guess;
+  // arguing about a return, the delivery in dispute is the one that just came
+  // through the door.
+  //
+  // A SEPARATE QUERY rather than an ORDER BY on one, so the scoped group can
+  // never crowd the general search out of the limit. Scoping must not exclude.
+  const vendorItems =
+    vendorId === null
+      ? []
+      : await tsql<Omit<ItemHitExisting, 'kind'>[]>`
+          select i.id, i.code, i.name, i.category, c.name as category_name,
+                 i.purchase_unit, u.name as unit_name,
+                 v.last_rate::text as prefill_rate,
+                 'vendor' as rate_source, true as from_vendor
+          from vendor_supplied_items v
+          join items i on i.id = v.item_id
+          join categories c on c.code = i.category
+          join units u on u.code = i.purchase_unit
+          where v.restaurant_id = ${restaurantId}
+            and v.vendor_id = ${vendorId}
+            and i.status = 'active'
+            and (i.name ilike ${like} or i.code ilike ${like})
+          order by v.times_bought desc, v.last_bought desc, i.name asc
+          limit 6`
+  const seen = vendorItems.map((r) => r.id)
+
+  // EVERYTHING ELSE, always reachable — a vendor can send something they have
+  // never sent before, and a new item is born on a bill in the first place.
   const items = await tsql<Omit<ItemHitExisting, 'kind'>[]>`
     select i.id, i.code, i.name, i.category, c.name as category_name,
-           i.purchase_unit, u.name as unit_name, r.prefill_rate::text as prefill_rate
+           i.purchase_unit, u.name as unit_name, r.prefill_rate::text as prefill_rate,
+           case when r.prefill_rate is null then null else 'any' end as rate_source,
+           false as from_vendor
     from items i
     join categories c on c.code = i.category
     join units u on u.code = i.purchase_unit
     left join item_rates r on r.item_id = i.id
-    where i.restaurant_id = ${restaurantId} and i.status = 'active' and i.name ilike ${like}
+    where i.restaurant_id = ${restaurantId} and i.status = 'active'
+      -- BY CODE TOO. The codes are the spine of the product and this dropdown
+      -- prints them, but this was the one picker in the app that matched only
+      -- the name — so typing PLT-001 on a bill found nothing. Caught by an
+      -- assertion that searched by code because that is what the view carries.
+      and (i.name ilike ${like} or i.code ilike ${like})
+      and not (i.id = any(${seen}::uuid[]))
     order by (i.name ilike ${prefix}) desc, i.name asc
     limit 8`
   const starters = await tsql<Omit<ItemHitStarter, 'kind'>[]>`
@@ -102,8 +152,9 @@ export async function searchItems(restaurantId: string, q: string): Promise<Item
         where i.restaurant_id = ${restaurantId} and lower(i.name) = lower(s.name)
       )
     order by (s.name ilike ${prefix}) desc, s.name asc
-    limit ${Math.max(4, 12 - items.length)}`
+    limit ${Math.max(4, 12 - items.length - vendorItems.length)}`
   return [
+    ...vendorItems.map((r) => ({ kind: 'item' as const, ...r })),
     ...items.map((r) => ({ kind: 'item' as const, ...r })),
     ...starters.map((r) => ({ kind: 'starter' as const, ...r })),
   ]

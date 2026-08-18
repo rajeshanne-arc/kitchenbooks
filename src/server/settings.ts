@@ -55,13 +55,28 @@ const HISTORY_SOURCES = {
 
 export type HistoryField = keyof typeof HISTORY_SOURCES
 
+/**
+ * FREQUENCY THEN RECENCY — the same rank as every other picker in the app.
+ *
+ * This was `last_used desc` alone, which is half the rule: one voucher paid to
+ * somebody once, yesterday, outranked the payee who takes money every week. The
+ * regular one is what the finger is reaching for, and the whole point of these
+ * pickers is that "Asheel" and "Asheel Sir" stay one person — a name that is
+ * hard to find gets retyped, and a retyped name is how the second spelling is
+ * born.
+ *
+ * Recency still breaks the tie, so somebody new does not sink under a long tail
+ * of one-offs.
+ */
 export async function getNameHistory(restaurantId: string, field: HistoryField): Promise<string[]> {
   const src = HISTORY_SOURCES[field]
   const rows = await tsql<{ name: string }[]>`
-    select ${sql.unsafe(src.column)} as name, max(${sql.unsafe(src.date)}) as last_used
+    select ${sql.unsafe(src.column)} as name,
+           count(*) as times,
+           max(${sql.unsafe(src.date)}) as last_used
     from ${sql.unsafe(src.table)}
     where restaurant_id = ${restaurantId} and ${sql.unsafe(src.column)} is not null
-    group by 1 order by last_used desc, 1 asc limit 40`
+    group by 1 order by times desc, last_used desc, 1 asc limit 40`
   return rows.map((r) => r.name)
 }
 

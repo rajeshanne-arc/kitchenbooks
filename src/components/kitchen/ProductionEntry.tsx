@@ -24,7 +24,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ProducibleRow, RefillSet, SaveProductionsResult, Section } from '@/lib/types'
+import type { DishUsage, ProducibleRow, RefillSet, SaveProductionsResult, Section } from '@/lib/types'
 import { saveProductions } from '@/server/kitchen-actions'
 import { formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -57,11 +57,16 @@ const cleanQty = (raw: string) => {
 export default function ProductionEntry({
   sections,
   producibles,
+  history,
   lastSets,
 }: {
   sections: Section[]
   /** subs AND dishes — they differ in what a quantity means, see the picker */
   producibles: ProducibleRow[]
+  /** what each department actually makes, keyed by section id in `scope`. The
+   *  department is picked before the lines, so it is context the picker had and
+   *  was throwing away. */
+  history: DishUsage[]
   /** last production per section id, for refill — resolved on the server */
   lastSets?: Record<string, RefillSet>
 }) {
@@ -78,6 +83,20 @@ export default function ProductionEntry({
   const [saved, setSaved] = useState<Extract<SaveProductionsResult, { ok: true }> | null>(null)
 
   const byId = new Map(producibles.map((p) => [p.recipe_id, p]))
+
+  // Ranked for THIS department, frequency then recency, and never filtered: a
+  // batch made here for the first time has no history and must stay pickable.
+  // Nothing is made up when the department is unpicked or has no history — the
+  // list falls back to the order listProducibles gave it, which is the code
+  // order, not a guess.
+  const madeHere = new Map(
+    history.filter((h) => h.scope === sectionId).map((h) => [h.recipe_id, h] as const),
+  )
+  const ranked = (kind: 'sub' | 'dish') =>
+    producibles
+      .filter((p) => p.kind === kind)
+      .map((p) => ({ p, times: madeHere.get(p.recipe_id)?.times ?? 0, last: madeHere.get(p.recipe_id)?.last ?? '' }))
+      .sort((a, b) => b.times - a.times || b.last.localeCompare(a.last))
   const patchLine = (key: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
   const addLine = () => {
@@ -285,27 +304,33 @@ export default function ProductionEntry({
                         <option value="">—</option>
                         {/* KEPT VISIBLY APART. A sub is made in its batch
                             unit, a dish in PORTIONS — conflating them is how
-                            a batch cost silently becomes a portion cost. */}
+                            a batch cost silently becomes a portion cost.
+                            
+                            THE RANK WORKS INSIDE THAT SPLIT, NOT ACROSS IT.
+                            What this department usually makes is ordered first
+                            within each group and marked with its count, rather
+                            than promoted into a single "usually makes" group —
+                            because separating the two kinds is a CORRECTNESS
+                            rule and ranking is only a speed one. When they
+                            conflict, ranking gives way and works underneath. */}
                         <optgroup label="Sub-recipes — made in batches">
-                          {producibles
-                            .filter((p) => p.kind === 'sub')
-                            .map((p) => (
-                              <option key={p.recipe_id} value={p.recipe_id}>
-                                {p.code} · {p.name} ({p.unit_name})
-                              </option>
-                            ))}
+                          {ranked('sub').map(({ p, times }) => (
+                            <option key={p.recipe_id} value={p.recipe_id}>
+                              {p.code} · {p.name} ({p.unit_name})
+                              {times > 0 ? ` · made ${times}×` : ''}
+                            </option>
+                          ))}
                         </optgroup>
                         <optgroup label="Dishes — made in portions">
-                          {producibles
-                            .filter((p) => p.kind === 'dish')
-                            .map((p) => (
-                              <option key={p.recipe_id} value={p.recipe_id}>
-                                {p.code} · {p.name}
-                                {p.portions === null || Number(p.portions) <= 0
-                                  ? ' (no portions set)'
-                                  : ` (${p.portions} portions)`}
-                              </option>
-                            ))}
+                          {ranked('dish').map(({ p, times }) => (
+                            <option key={p.recipe_id} value={p.recipe_id}>
+                              {p.code} · {p.name}
+                              {p.portions === null || Number(p.portions) <= 0
+                                ? ' (no portions set)'
+                                : ` (${p.portions} portions)`}
+                              {times > 0 ? ` · made ${times}×` : ''}
+                            </option>
+                          ))}
                         </optgroup>
                       </select>
                     </td>

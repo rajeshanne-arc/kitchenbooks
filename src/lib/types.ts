@@ -26,8 +26,24 @@ export type ItemHitExisting = {
   category_name: string
   purchase_unit: string
   unit_name: string
-  /** numeric::text from the item_rates view; null when the item has no rate history */
+  /**
+   * numeric::text. VENDOR-SCOPED whenever the bill names an existing vendor.
+   *
+   * `item_rates.prefill_rate` is the last rate for the item ACROSS ALL VENDORS,
+   * and that is wrong on a bill: measured on live data, Chicken Boneless reads
+   * 330 because RR Chicken sold it last, while Sneha Chicken charges 300. A
+   * Sneha bill was prefilling RR's price, 10% out, on a field somebody tabs
+   * straight past. So when the vendor is known this comes from
+   * `vendor_supplied_items.last_rate` — still a named view, never recomputed —
+   * and falls back to item_rates only when that vendor has never sent the item.
+   */
   prefill_rate: string | null
+  /** where prefill_rate came from, so the screen can say. 'vendor' = this
+   *  vendor's own last bill; 'any' = the last bill from anybody, which is a
+   *  weaker claim and is labelled as one; null = no rate history at all. */
+  rate_source: 'vendor' | 'any' | null
+  /** this vendor has supplied it before — what puts it in the scoped group */
+  from_vendor: boolean
 }
 
 export type ItemHitStarter = {
@@ -936,6 +952,24 @@ export type PosMapRow = {
 
 export type DishOption = { id: string; code: string; name: string; section_code: string }
 
+/**
+ * How often a dish has been used in ONE context — the rank for a dish picker.
+ *
+ * `scope` is whatever narrows it: a non-revenue reason, a department. It is ''
+ * when the only ranking available is overall frequency, which is the other half
+ * of the picker rule — a picker WITHOUT context is ranked by frequency, and
+ * alphabetical is the default nobody chose.
+ *
+ * Same shape as `ItemSuggestion` and used the same way: the suggested group
+ * renders on top and every dish stays in the list below it.
+ */
+export type DishUsage = {
+  scope: string
+  recipe_id: string
+  times: number
+  last: string
+}
+
 export type MapItemResult = { ok: true; map: PosMapRow; unmappedLeft: number } | { ok: false; error: string }
 
 export type QtySoldRow = { recipe_id: string; qty_sold: string; sales_value: string }
@@ -1408,6 +1442,10 @@ export type KitchenComponentHit = {
    *  the component named. The authority is still the value frozen at save;
    *  this is the same figure read a moment earlier. */
   unit_cost: string | null
+  /** This DEPARTMENT already handles it — issued to it, or made by it. What
+   *  puts a hit in the scoped group at the top; false for everything else,
+   *  which stays in the list below. */
+  from_section: boolean
 }
 
 export type ClosingLineInput = { kind: 'item' | 'sub' | 'dish'; id: string; qty: string }

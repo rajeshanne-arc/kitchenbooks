@@ -15,9 +15,17 @@ export default function ItemPicker({
   onPick,
   onChange,
   onClear,
+  vendorId = null,
+  vendorName = null,
 }: {
   categories: Category[]
   units: Unit[]
+  /** the bill's vendor, once picked. It SCOPES AND RANKS the list and makes the
+   *  rate prefill that vendor's own — item_rates.prefill_rate is the last rate
+   *  across all vendors, which on a bill is somebody else's price. A vendor
+   *  being born on this same bill has no history, so this stays null. */
+  vendorId?: string | null
+  vendorName?: string | null
   value: ItemSel | null
   /** fresh selection from the dropdown; second arg is item_rates.prefill_rate if known */
   onPick: (sel: ItemSel, prefillRate: string | null) => void
@@ -27,7 +35,11 @@ export default function ItemPicker({
 }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
-  const { results, loading } = useSearch<ItemHit>(open ? `/api/items/search?q=${encodeURIComponent(q)}` : null)
+  const { results, loading } = useSearch<ItemHit>(
+    open
+      ? `/api/items/search?q=${encodeURIComponent(q)}${vendorId !== null ? `&vendor=${vendorId}` : ''}`
+      : null,
+  )
 
   if (value?.kind === 'existing') {
     const hit = value.hit
@@ -168,8 +180,45 @@ export default function ItemPicker({
     )
   }
 
-  const itemHits = (results ?? []).filter((h): h is ItemHitExisting => h.kind === 'item')
+  const allItemHits = (results ?? []).filter((h): h is ItemHitExisting => h.kind === 'item')
+  // The server has already ranked and separated these; grouping here is only
+  // about saying WHICH group a row is in.
+  const vendorHits = allItemHits.filter((h) => h.from_vendor)
+  const itemHits = allItemHits.filter((h) => !h.from_vendor)
   const starterHits = (results ?? []).filter((h) => h.kind === 'starter')
+
+  const existingRow = (hit: ItemHitExisting) => (
+    <button
+      key={hit.id}
+      type="button"
+      onMouseDown={(e) => {
+        e.preventDefault()
+        onPick({ kind: 'existing', hit }, hit.prefill_rate)
+        setOpen(false)
+        setQ('')
+      }}
+      className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left ${
+        hit.from_vendor ? 'hover:bg-emerald-50/60' : 'hover:bg-stone-50'
+      }`}
+    >
+      <span className="min-w-0">
+        <span className="block truncate text-[15px] text-stone-900">{hit.name}</span>
+        <span className="block text-xs text-stone-500">
+          <span className="font-mono">{hit.code}</span> · {hit.category_name} · {hit.unit_name}
+        </span>
+      </span>
+      {hit.prefill_rate !== null && (
+        <span className="shrink-0 text-right text-xs leading-tight text-stone-500">
+          <span className="block font-mono tabular-nums">last {formatMoneyString(hit.prefill_rate)}</span>
+          {/* WHOSE rate it is. "another vendor" is a weaker claim than "theirs"
+              and has to read as one — this is the field somebody tabs past. */}
+          <span className="block text-[10px]">
+            {hit.rate_source === 'vendor' ? 'theirs' : 'another vendor'}
+          </span>
+        </span>
+      )}
+    </button>
+  )
 
   return (
     <div className="relative">
@@ -190,30 +239,18 @@ export default function ItemPicker({
       {open && (
         <div className="absolute z-20 mt-1 max-h-80 w-full overflow-y-auto rounded-xl border border-stone-200 bg-white shadow-lg">
           {loading && results === null && <div className="px-3 py-2.5 text-sm text-stone-400">Searching…</div>}
-          {itemHits.length > 0 && <div className={headingCls}>Your items</div>}
-          {itemHits.map((hit) => (
-            <button
-              key={hit.id}
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault()
-                onPick({ kind: 'existing', hit }, hit.prefill_rate)
-                setOpen(false)
-                setQ('')
-              }}
-              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-stone-50"
-            >
-              <span className="min-w-0">
-                <span className="block truncate text-[15px] text-stone-900">{hit.name}</span>
-                <span className="block text-xs text-stone-500">
-                  <span className="font-mono">{hit.code}</span> · {hit.category_name} · {hit.unit_name}
-                </span>
-              </span>
-              {hit.prefill_rate !== null && (
-                <span className="shrink-0 text-xs text-stone-500">last {formatMoneyString(hit.prefill_rate)}</span>
-              )}
-            </button>
-          ))}
+          {/* SCOPED AND RANKED BY THE VENDOR, and never instead of the rest:
+              "Your items" and the starter library both stay below, because a
+              vendor can send something they have never sent and an item is born
+              on a bill in the first place. */}
+          {vendorHits.length > 0 && (
+            <div className={headingCls}>{vendorName !== null ? `${vendorName} usually sends` : 'From this vendor'}</div>
+          )}
+          {vendorHits.map(existingRow)}
+          {itemHits.length > 0 && (
+            <div className={headingCls}>{vendorHits.length > 0 ? 'Your other items' : 'Your items'}</div>
+          )}
+          {itemHits.map(existingRow)}
           {starterHits.length > 0 && <div className={headingCls}>Starter library</div>}
           {starterHits.map((hit) => (
             <button

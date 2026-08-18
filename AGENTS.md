@@ -3009,6 +3009,56 @@ summary, never the authority. Every reader that cares reads the lines.
 New list key: `vendor_return_reason` (it was seeded in the database and missing
 from `lists.ts`, so the Lists screen could not edit it).
 
+### The five the audit listed, now built
+
+Each one argued rather than inherited, and every one came out differently:
+
+| picker | scope | rank | why |
+|---|---|---|---|
+| bill entry | the VENDOR | frequency then recency | what they usually send is the better guess when entering their bill |
+| non-revenue | the REASON | frequency then recency | the reason is picked BEFORE the dish on every line |
+| off-book | none | frequency | mode, account and a one-off customer name predict nothing |
+| production | the DEPARTMENT | frequency, INSIDE the kind split | see below |
+| kitchen closing / loss | the DEPARTMENT | issued-or-made first | what a department can hold is what it was issued plus what it makes |
+| person fields | none | frequency then recency | `getNameHistory` was `last_used desc` — half the rule |
+
+**THE BILL'S RATE PREFILL WAS SOMEBODY ELSE'S PRICE.**
+`item_rates.prefill_rate` is the last rate for an item **across all vendors**,
+and on a bill that is wrong: measured live, Chicken Boneless reads ₹330 because
+RR Chicken sold it last, while Sneha Chicken charges ₹300. A Sneha bill
+prefilled ₹330 — ten per cent out, on a field somebody tabs straight past.
+`searchItems` now takes the vendor and reads `vendor_supplied_items.last_rate`
+(still a named view, never recomputed), falling back to `item_rates` only when
+that vendor has never sent the item — and the dropdown says which it is,
+"theirs" against "another vendor", because those are different strengths of
+claim.
+
+The scoped group is a **SEPARATE QUERY**, not an `ORDER BY` on one. A vendor
+supplying eight items would otherwise fill an eight-row limit and hide every
+other item and the whole starter library — and an item is BORN on a bill, so
+hiding them breaks the flow the picker exists for.
+
+**RANKING GIVES WAY TO CORRECTNESS.** Production keeps subs and dishes in two
+visibly separate optgroups, because a batch cost read as a portion cost is
+silently wrong; the department's frequency orders rows *within* each group and
+marks them "made 4×" rather than promoting a mixed "usually makes" group above
+both. When a speed rule and a correctness rule collide, the speed rule works
+underneath.
+
+**The kitchen component scope is deliberately NOT past closings.** A closing is
+corrected by RE-FILING, so `kitchen_closings` carries no `reverses_id` and only
+the latest row per (section, date) counts — ranking off it would mean getting
+"latest wins" right in a second place for no gain, since refill-from-last
+already offers a department its previous closing verbatim. What a department can
+hold is what it was **issued** (`section_frequent_items`) plus what it **makes**
+(`productions`), and both already exclude voids.
+
+**Found by an assertion, not by reading: the bill item picker never matched item
+CODES.** Every other picker in the app matches name OR code, and this one
+printed the code in its own dropdown while matching only the name — so typing
+`PLT-001` on a bill found nothing. The test searched by code because that is
+what `vendor_supplied_items` carries, and it failed. Fixed in both halves.
+
 ### What the audit found, and the premise it corrected
 
 **PAYMENT WAS ALREADY RIGHT.** `listVendorsWithDues` is
@@ -3025,15 +3075,12 @@ attendance roster is the computed roster order (dept_group → sort_order →
 grade → name), where a frequency rank would move a person between mornings and
 lose the marker's place.
 
-**Still alphabetical with context sitting unused** — listed rather than built:
-bill-entry items (the VENDOR is picked before the lines, and
-`vendor_supplied_items` is exactly the right scope — the biggest remaining
-gap, and the view already exists), production (`order by kind desc, code asc`
-— the department is known and what it usually makes is not asked),
-kitchen closing and kitchen loss components (department known), giveaway
-dishes on non-revenue and off-book (`order by r.name asc` — staff meals are
-the same three dishes every day), and recipe-line components. The person
-pickers (`getNameHistory`) are `last_used desc` — recency only, half the rule.
+**All six of the pickers the audit listed as unscoped are now built** — see the
+table above. **`searchComponents` on recipe lines is the one left**, and
+deliberately: the context available is the recipe being edited and its
+department, and "ingredients this department's other dishes use" is a much
+weaker signal than "what this vendor sent" or "what this department was issued".
+It is the only one where the scope would be a guess rather than a fact.
 
 ## GREP FOR THE PARENT, NOT THE LINE — the third off-by-one-view
 

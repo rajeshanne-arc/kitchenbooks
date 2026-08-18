@@ -20,16 +20,24 @@ export default function KitchenComponentPicker({
   onPick,
   onClear,
   placeholder = 'Search items, subs and dishes',
+  sectionId = '',
 }: {
   value: KitchenComponentHit | null
   onPick: (hit: KitchenComponentHit) => void
   onClear: () => void
   placeholder?: string
+  /** the department, picked before the lines on both forms. It SCOPES AND RANKS
+   *  the list: what a department can hold is what it was issued plus what it
+   *  makes. Everything else stays reachable below — a first closing of
+   *  something is possible, it is just not the first guess. */
+  sectionId?: string
 }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
   const { results, loading } = useSearch<KitchenComponentHit>(
-    open && q.trim() !== '' ? `/api/kitchen/components?q=${encodeURIComponent(q)}` : null,
+    open && q.trim() !== ''
+      ? `/api/kitchen/components?q=${encodeURIComponent(q)}${sectionId !== '' ? `&section=${sectionId}` : ''}`
+      : null,
   )
 
   if (value !== null) {
@@ -81,11 +89,21 @@ export default function KitchenComponentPicker({
       {open && q.trim() !== '' && (
         <div className="absolute z-20 mt-1 max-h-80 w-full overflow-y-auto rounded-xl border border-stone-200 bg-white shadow-lg">
           {loading && results === null && <div className="px-3 py-2.5 text-sm text-stone-400">Searching…</div>}
-          {results?.map((hit) => {
+          {results?.map((hit, i) => {
             const badge = KIND_BADGE[hit.kind]
+            // The server ranked these; the rule is drawn once, where the group
+            // changes. No header when nothing is scoped — a heading over a
+            // single undifferentiated list says nothing.
+            const firstOther =
+              hit.from_section === false && (results[i - 1]?.from_section ?? false) === true
             return (
+              <div key={`${hit.kind}:${hit.id}`}>
+                {firstOther && (
+                  <div className="border-y border-rule-soft bg-stone-50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-stone-500">
+                    Everything else
+                  </div>
+                )}
               <button
-                key={`${hit.kind}:${hit.id}`}
                 type="button"
                 disabled={!hit.has_cost}
                 onMouseDown={(e) => {
@@ -96,7 +114,11 @@ export default function KitchenComponentPicker({
                   setQ('')
                 }}
                 className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left ${
-                  hit.has_cost ? 'hover:bg-stone-50' : 'cursor-not-allowed opacity-50'
+                  !hit.has_cost
+                    ? 'cursor-not-allowed opacity-50'
+                    : hit.from_section
+                      ? 'hover:bg-emerald-50/60'
+                      : 'hover:bg-stone-50'
                 }`}
               >
                 <span className="min-w-0">
@@ -116,6 +138,7 @@ export default function KitchenComponentPicker({
                   </span>
                 )}
               </button>
+              </div>
             )
           })}
           {results !== null && results.length === 0 && (

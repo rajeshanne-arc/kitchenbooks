@@ -108,6 +108,10 @@ export default function ClosingEntry({
           unit_name: l.unit_name,
           has_cost: true,
           unit_cost: null,
+          // true, and truthfully: this line came off THIS department's own
+          // closing last night, which is the definition of a component it
+          // handles.
+          from_section: true,
         },
         qty: l.qty,
         prefillQty: l.qty,
@@ -135,6 +139,8 @@ export default function ClosingEntry({
       has_cost: true,
       // the batch's own frozen cost — the same figure the closing will freeze
       unit_cost: p.unit_cost,
+      // this batch was made BY this department today
+      from_section: true,
     }
     setLines((ls) => {
       const empty = ls.findIndex((l) => l.component === null && l.qty.trim() === '')
@@ -319,6 +325,7 @@ export default function ClosingEntry({
                 <div className="min-w-0 flex-1">
                   <KitchenComponentPicker
                     value={line.component}
+                    sectionId={sectionId}
                     onPick={(hit) => patchLine(line.key, { component: hit })}
                     onClear={() => patchLine(line.key, { component: null })}
                   />

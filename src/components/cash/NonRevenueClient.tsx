@@ -8,11 +8,12 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { NonRevenueRow, SaveNonRevenuesResult } from '@/lib/types'
+import type { DishUsage, NonRevenueRow, SaveNonRevenuesResult } from '@/lib/types'
 import { saveNonRevenues, voidNonRevenue } from '@/server/cashier-actions'
 import { decimalStringToPaise, formatMoneyString, formatPaise, parseMoney, parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
+import { rankDishes } from '@/components/DishSuggest'
 import { toast } from '@/components/Toasts'
 import { useBusinessToday } from '@/components/BusinessDay'
 
@@ -46,12 +47,18 @@ const newLine = (key: number): Line => ({
 export default function NonRevenueClient({
   reasons,
   dishes,
+  dishUsage,
   rows,
   giveaway,
   givenToNames,
 }: {
   reasons: string[]
   dishes: GiveawayDish[]
+  /** what has been given away before, and for what reason. The REASON is picked
+   *  before the dish on every line, so it is context the picker already has —
+   *  and a sharp one: staff meals are the same three dishes, a complaint comp is
+   *  whatever went wrong that night. */
+  dishUsage: DishUsage[]
   rows: NonRevenueRow[]
   giveaway: { entries: number; cost_value: string; menu_value: string }
   givenToNames: string[]
@@ -247,12 +254,33 @@ export default function NonRevenueClient({
                         className={selectCls}
                       >
                         <option value="">—</option>
-                        {dishes.map((d) => (
-                          <option key={d.id} value={d.id} disabled={!d.has_cost}>
-                            {d.code} · {d.name}
-                            {!d.has_cost ? ' (no recipe lines yet)' : ''}
-                          </option>
-                        ))}
+                        {/* SCOPED AND RANKED BY THE REASON, and never instead of
+                            the full list: the second group holds every dish, so
+                            a first-time comp stays reachable. With no reason
+                            picked yet the rank is overall frequency — the other
+                            half of the same rule, not a fallback to
+                            alphabetical. */}
+                        {(() => {
+                          const { suggested, rest } = rankDishes(dishes, dishUsage, l.reason, (d) => d.id)
+                          const dishOption = (d: GiveawayDish) => (
+                            <option key={d.id} value={d.id} disabled={!d.has_cost}>
+                              {d.code} · {d.name}
+                              {!d.has_cost ? ' (no recipe lines yet)' : ''}
+                            </option>
+                          )
+                          return suggested.length === 0 ? (
+                            dishes.map(dishOption)
+                          ) : (
+                            <>
+                              <optgroup
+                                label={l.reason === '' ? 'Given away most often' : `Usually given for “${l.reason}”`}
+                              >
+                                {suggested.map(dishOption)}
+                              </optgroup>
+                              <optgroup label="Every dish">{rest.map(dishOption)}</optgroup>
+                            </>
+                          )
+                        })()}
                       </select>
                     </label>
                     <label className="block">

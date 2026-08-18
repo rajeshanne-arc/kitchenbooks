@@ -10,6 +10,7 @@ import type {
   ClosingChecklistRow,
   ClosingLineRow,
   ClosingRow,
+  DishUsage,
   FoodCostRow,
   IndentDetail,
   IndentFulfilmentRow,
@@ -283,34 +284,72 @@ export async function getUnclosedDishes(restaurantId: string, date: string): Pro
 
 // ----------------------------------- three-component picker (closing etc.)
 
-/** Search raw items ∪ sub-recipes ∪ dishes for the itemized closing and
- * kitchen wastage pickers. Each hit says whether it can be costed — the
- * save freezes that cost; an uncosted pick is refused with the reason. */
-export async function searchKitchenComponents(restaurantId: string, q: string): Promise<KitchenComponentHit[]> {
+/**
+ * Search raw items ∪ sub-recipes ∪ dishes for the itemized closing and kitchen
+ * wastage pickers. Each hit says whether it can be costed — the save freezes
+ * that cost; an uncosted pick is refused with the reason.
+ *
+ * SCOPED AND RANKED BY THE DEPARTMENT when one is given, and the department is
+ * picked before the lines on both forms.
+ *
+ * WHAT A DEPARTMENT CAN HOLD IS WHAT IT WAS ISSUED PLUS WHAT IT MAKES, and
+ * that is the whole scope — no new history table and no new reversal filter to
+ * get wrong. `section_frequent_items` already answers the item half (30 days,
+ * voids excluded) and `productions` the recipe half. A closing or a loss for
+ * something the department has never received and never cooked is possible and
+ * stays reachable underneath; it is simply not the first guess.
+ *
+ * Deliberately NOT sourced from past closings: a closing is corrected by
+ * RE-FILING, so `kitchen_closings` carries no `reverses_id` and only the latest
+ * row per (section, date) counts. Ranking off it would mean getting that
+ * "latest wins" right in a second place for no gain, since refill-from-last
+ * already offers a department its previous closing verbatim.
+ */
+export async function searchKitchenComponents(
+  restaurantId: string,
+  q: string,
+  sectionId: string | null = null,
+): Promise<KitchenComponentHit[]> {
   const like = `%${q}%`
   const prefix = `${q}%`
   const items = await tsql<Omit<KitchenComponentHit, 'kind'>[]>`
     select i.id, i.code, i.name, u.name as unit_name, (ic.issue_cost is not null) as has_cost,
-           ic.issue_cost::text as unit_cost
+           ic.issue_cost::text as unit_cost,
+           (f.item_id is not null) as from_section
     from items i
     join units u on u.code = i.purchase_unit
     left join item_costs ic on ic.item_id = i.id
+    left join section_frequent_items f
+      on f.item_id = i.id and f.restaurant_id = i.restaurant_id
+     and f.section_id = ${sectionId}::uuid
     where i.restaurant_id = ${restaurantId} and i.status = 'active'
       and (i.name ilike ${like} or i.code ilike ${like})
-    order by (i.name ilike ${prefix}) desc, i.name asc
+    order by (f.item_id is not null) desc, f.times_issued desc nulls last,
+             (i.name ilike ${prefix}) desc, i.name asc
     limit 6`
   const recipes = await tsql<KitchenComponentHit[]>`
     select case when r.kind = 'sub' then 'sub' else 'dish' end as kind,
            r.id, r.code, r.name, u.name as unit_name,
            (case when r.kind = 'sub' then rc.cost_per_output_unit else dc.dish_cost end is not null) as has_cost,
-           (case when r.kind = 'sub' then rc.cost_per_output_unit else dc.dish_cost end)::text as unit_cost
+           (case when r.kind = 'sub' then rc.cost_per_output_unit else dc.dish_cost end)::text as unit_cost,
+           (pr.recipe_id is not null) as from_section
     from recipes r
     join units u on u.code = r.output_unit
     left join recipe_costs rc on rc.recipe_id = r.id
     left join dish_costs dc on dc.recipe_id = r.id
+    left join (
+      select p.recipe_id, count(*) as times
+      from productions p
+      where p.restaurant_id = ${restaurantId}
+        and p.section_id = ${sectionId}::uuid
+        and p.reverses_id is null
+        and not exists (select 1 from productions x where x.reverses_id = p.id)
+      group by p.recipe_id
+    ) pr on pr.recipe_id = r.id
     where r.restaurant_id = ${restaurantId} and r.status = 'active'
       and (r.name ilike ${like} or r.code ilike ${like})
-    order by (r.name ilike ${prefix}) desc, r.name asc
+    order by (pr.recipe_id is not null) desc, pr.times desc nulls last,
+             (r.name ilike ${prefix}) desc, r.name asc
     limit 8`
   return [...items.map((r) => ({ kind: 'item' as const, ...r })), ...recipes]
 }
@@ -450,6 +489,34 @@ export async function getLastIndentFor(
 
    Reversals and voided rows are excluded: a batch that was cancelled is not
    a suggestion for tomorrow. */
+
+/**
+ * What a department actually makes — the rank for the production picker.
+ *
+ * The department is picked before the lines, so this is context the form
+ * already had and was throwing away: `listProducibles` orders
+ * `kind desc, code asc`, which is subs-then-dishes alphabetically. A kitchen
+ * makes broadly the same batches every day.
+ *
+ * FREQUENCY THEN RECENCY. Voided batches are excluded both ways — a cancelled
+ * batch is not evidence of a habit, the same rule the refill offer already
+ * applies.
+ *
+ * `scope` is the section id, so one query answers for every department and the
+ * page does not fan out one read per section.
+ */
+export async function getProductionHistory(restaurantId: string, limit = 200): Promise<DishUsage[]> {
+  return tsql<DishUsage[]>`
+    select p.section_id::text as scope, p.recipe_id, count(*)::int as times,
+           max(p.prod_date)::text as last
+    from productions p
+    where p.restaurant_id = ${restaurantId}
+      and p.reverses_id is null
+      and not exists (select 1 from productions x where x.reverses_id = p.id)
+    group by p.section_id, p.recipe_id
+    order by times desc, last desc
+    limit ${limit}`
+}
 
 /** The most recent day this department recorded production, and what it made. */
 export async function getLastProductionSet(

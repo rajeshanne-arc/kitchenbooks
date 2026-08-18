@@ -2949,6 +2949,204 @@ async function run() {
     assert.equal(await assertSourceLine(rid, line[0].vendor_id, ''), null, 'blank provenance is allowed')
   })
 
+  await check('a BILL prefills the rate THIS vendor charges, not the last one anybody did', async () => {
+    // The fault this fixes, measured on live data: item_rates.prefill_rate is
+    // the last rate for the item across ALL vendors, so Chicken Boneless read
+    // 330 (RR Chicken sold it last) on a Sneha Chicken bill, where the price is
+    // 300. Ten percent out, on a field somebody tabs straight past.
+    const { searchItems } = await import('../src/server/queries')
+    const pairs = await tsql<{ item_code: string; vendor_id: string; vendor_name: string; last_rate: string }[]>`
+      select s.item_code, s.vendor_id, v.name as vendor_name, s.last_rate::text as last_rate
+      from vendor_supplied_items s
+      join vendors v on v.id = s.vendor_id
+      where s.restaurant_id = ${rid} and s.last_rate is not null
+      order by s.item_code, v.name`
+    assert.ok(pairs.length > 0, 'no vendor has billed an item — nothing to scope')
+
+    // Every vendor must see THEIR OWN last rate for an item they have supplied.
+    for (const pair of pairs) {
+      const hits = await searchItems(rid, pair.item_code, pair.vendor_id)
+      const hit = hits.find((h) => h.kind === 'item' && h.code === pair.item_code)
+      assert.ok(hit && hit.kind === 'item', `${pair.item_code} must be findable for ${pair.vendor_name}`)
+      assert.equal(hit.from_vendor, true, `${pair.item_code} is in ${pair.vendor_name}'s scoped group`)
+      assert.equal(hit.rate_source, 'vendor', 'and the rate is labelled as theirs')
+      assert.equal(
+        hit.prefill_rate,
+        pair.last_rate,
+        `${pair.vendor_name} must prefill ${pair.last_rate} for ${pair.item_code}, not somebody else's price`,
+      )
+    }
+
+    // The case that makes it matter: one item, two vendors, two prices.
+    const byItem = new Map<string, Set<string>>()
+    for (const p of pairs) {
+      const set = byItem.get(p.item_code) ?? new Set<string>()
+      set.add(p.last_rate)
+      byItem.set(p.item_code, set)
+    }
+    const split = [...byItem.entries()].filter(([, rates]) => rates.size > 1)
+    if (split.length === 0) {
+      console.log('      UNTESTED: no item is bought from two vendors at two prices right now')
+    } else {
+      for (const [code, rates] of split) console.log(`      ${code}: ${[...rates].join(' vs ')} — scoped per vendor`)
+    }
+
+    // With no vendor picked the old behaviour stands, and is LABELLED as the
+    // weaker claim it is rather than passed off as the vendor's own price.
+    const unscoped = await searchItems(rid, pairs[0].item_code, null)
+    const anyHit = unscoped.find((h) => h.kind === 'item' && h.code === pairs[0].item_code)
+    assert.ok(anyHit && anyHit.kind === 'item')
+    assert.equal(anyHit.from_vendor, false, 'nothing is scoped when no vendor is known')
+    assert.ok(anyHit.rate_source === 'any' || anyHit.rate_source === null, "and the rate is not claimed as a vendor's")
+  })
+
+  await check('scoping a bill picker does not crowd out the rest of the list', async () => {
+    // The scoped group is a SEPARATE query rather than an ORDER BY on one, for
+    // exactly this reason: a vendor supplying eight items would otherwise fill
+    // an eight-row limit and hide every other item and the whole starter
+    // library — and an item is BORN on a bill, so hiding them breaks the flow
+    // this picker exists for.
+    const { searchItems } = await import('../src/server/queries')
+    const [v] = await tsql<{ id: string; name: string }[]>`
+      select v.id, v.name from vendor_supplied_items s join vendors v on v.id = s.vendor_id
+      where s.restaurant_id = ${rid} group by v.id, v.name limit 1`
+    assert.ok(v, 'need a vendor with history')
+    const hits = await searchItems(rid, '', v.id)
+    const scoped = hits.filter((h) => h.kind === 'item' && h.from_vendor)
+    const other = hits.filter((h) => h.kind === 'item' && !h.from_vendor)
+    const starters = hits.filter((h) => h.kind === 'starter')
+    assert.ok(scoped.length > 0, 'the scoped group is populated')
+    assert.ok(other.length > 0, 'and so is the general list — scoping must not exclude')
+    assert.ok(starters.length > 0, 'and the starter library survives too')
+    const ids = hits.filter((h) => h.kind === 'item').map((h) => (h.kind === 'item' ? h.id : ''))
+    assert.equal(new Set(ids).size, ids.length, 'no item appears in both groups')
+    console.log(`      ${v.name}: ${scoped.length} scoped + ${other.length} other + ${starters.length} starter`)
+  })
+
+  await check('dish pickers are ranked by use, and the reason is the scope', async () => {
+    // The non-revenue form picks the REASON before the dish, so the reason is
+    // the scope: staff meals are the same three dishes, a complaint comp is
+    // whatever went wrong that night. Off-book has no such context — its order
+    // knows a payment mode and a one-off customer name, neither of which
+    // predicts the dish — so it takes the plain frequency clause instead.
+    const { getGiveawayHistory, getOffBookDishHistory } = await import('../src/server/cashier-queries')
+    const { rankDishes } = await import('../src/components/DishSuggest')
+    assert.ok(Array.isArray(await getGiveawayHistory(rid)), 'the giveaway history query runs')
+    assert.ok(Array.isArray(await getOffBookDishHistory(rid)), 'and the off-book one')
+
+    // rankDishes is pure, so it is asserted BY VALUE — an empty live table
+    // would make a database-only check pass while proving nothing.
+    const dishes = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+    const usage = [
+      { scope: 'Staff meal', recipe_id: 'c', times: 5, last: '2026-08-01' },
+      { scope: 'Staff meal', recipe_id: 'b', times: 1, last: '2026-08-18' },
+      { scope: 'Tasting', recipe_id: 'a', times: 9, last: '2026-08-17' },
+    ]
+    const staff = rankDishes(dishes, usage, 'Staff meal', (d) => d.id)
+    assert.deepEqual(staff.suggested.map((d) => d.id), ['c', 'b'], 'scoped to the reason, frequency first')
+    assert.deepEqual(staff.rest.map((d) => d.id), ['a'], 'and everything else stays in the list')
+    const none = rankDishes(dishes, usage, '', (d) => d.id)
+    assert.deepEqual(
+      none.suggested.map((d) => d.id),
+      ['a', 'c', 'b'],
+      'with no reason yet the rank is overall frequency — SUMMED across reasons, not the first row found',
+    )
+    // A dish nobody has given away must never vanish.
+    const partial = rankDishes([{ id: 'a' }, { id: 'z' }], usage, '', (d) => d.id)
+    assert.ok(
+      partial.suggested.concat(partial.rest).some((d) => d.id === 'z'),
+      'a dish with no history stays reachable — scoping never excludes',
+    )
+  })
+
+  await check('production ranks inside the kind split, never across it', async () => {
+    // Separating subs from dishes is a CORRECTNESS rule — a batch cost read as
+    // a portion cost is silently wrong. Ranking is only a speed rule. So the
+    // department's frequency orders rows WITHIN each optgroup rather than
+    // promoting a mixed "usually makes" group above both.
+    const { getProductionHistory } = await import('../src/server/kitchen-queries')
+    const rows = await getProductionHistory(rid)
+    assert.ok(Array.isArray(rows), 'the production history query runs')
+    for (let i = 1; i < rows.length; i++) {
+      assert.ok(
+        rows[i - 1].times > rows[i].times ||
+          (rows[i - 1].times === rows[i].times && rows[i - 1].last >= rows[i].last),
+        'ranked frequency then recency',
+      )
+    }
+    const { readFileSync } = await import('node:fs')
+    const form = readFileSync('src/components/kitchen/ProductionEntry.tsx', 'utf8')
+    assert.match(form, /Sub-recipes — made in batches/, 'the kind split survives the ranking')
+    assert.match(form, /Dishes — made in portions/, 'both halves of it')
+    assert.match(form, /ranked\('sub'\)/, 'and the rank runs inside each group')
+    assert.match(form, /ranked\('dish'\)/)
+    // ranked() must never DROP a producible — a batch made here for the first
+    // time has no history and still has to be pickable.
+    assert.match(form, /producibles\s*\n\s*\.filter\(\(p\) => p\.kind === kind\)/, 'it filters by kind only, never by history')
+  })
+
+  await check('a department scopes the closing and loss component picker', async () => {
+    // What a department can HOLD is what it was issued plus what it makes —
+    // section_frequent_items and productions, both already filtered for voids,
+    // so no new reversal rule to get wrong. Deliberately NOT past closings: a
+    // closing is corrected by RE-FILING, so kitchen_closings has no
+    // reverses_id and only the latest row per (section, date) counts.
+    const { searchKitchenComponents } = await import('../src/server/kitchen-queries')
+    const [{ nullable }] = await tsql<{ nullable: number }[]>`
+      select count(*)::int as nullable from information_schema.columns
+      where table_name = 'kitchen_closings' and column_name = 'reverses_id'`
+    assert.equal(nullable, 0, 'if kitchen_closings ever gains reverses_id, revisit the comment that says it has none')
+
+    const [sec] = await tsql<{ id: string; name: string; code: string }[]>`
+      select s.id, s.name, s.code from section_frequent_items f
+      join sections s on s.id = f.section_id
+      where f.restaurant_id = ${rid} group by s.id, s.name, s.code limit 1`
+    if (!sec) {
+      console.log('      UNTESTED: no department has issue history to scope by')
+      return
+    }
+    const scoped = await searchKitchenComponents(rid, '', sec.id)
+    const unscoped = await searchKitchenComponents(rid, '', null)
+    assert.ok(unscoped.every((h) => h.from_section === false), 'nothing is scoped without a department')
+    const marked = scoped.filter((h) => h.from_section)
+    assert.ok(marked.length > 0, `${sec.name} handles components and at least one must be marked`)
+    // ranked first, and nothing dropped
+    const firstOther = scoped.findIndex((h) => !h.from_section && h.kind === 'item')
+    const lastScoped = scoped.map((h) => h.kind === 'item' && h.from_section).lastIndexOf(true)
+    if (firstOther !== -1 && lastScoped !== -1) {
+      assert.ok(lastScoped < firstOther, "a department's own items rank above the rest")
+    }
+    assert.equal(scoped.length, unscoped.length, 'scoping reorders and marks — it must not drop a row')
+    console.log(`      ${sec.name}: ${marked.length} of ${scoped.length} components marked as theirs`)
+  })
+
+  await check('person pickers rank by frequency, then recency', async () => {
+    // Was last_used desc alone, which is half the rule: one payee paid once
+    // yesterday outranked the one paid every week. A name that is hard to find
+    // gets retyped, and a retyped name is how "Asheel Sir" is born beside
+    // "Asheel" — which is the whole reason these pickers exist.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/settings.ts', 'utf8')
+    const fn = src.slice(src.indexOf('export async function getNameHistory'))
+    const body = fn.slice(0, fn.indexOf('\n}\n') + 3)
+    assert.match(body, /count\(\*\) as times/, 'frequency is counted')
+    assert.match(body, /order by times desc, last_used desc/, 'and ranks ahead of recency')
+
+    // and it still runs against every source in the map
+    const { getNameHistory } = await import('../src/server/settings')
+    for (const field of [
+      'handed_to',
+      'voucher_paid_to',
+      'income_buyer',
+      'income_received_by',
+      'due_party',
+      'expense_payee',
+      'non_revenue_given_to',
+    ] as const) {
+      assert.ok(Array.isArray(await getNameHistory(rid, field)), `${field} resolves`)
+    }
+  })
+
   await check('a vendor-return void returns EVERY view to where it started', async () => {
     // This replaces the invariant that held the refusal in place (refusal in
     // force iff the views doubled). That one had a job and it did it: it went

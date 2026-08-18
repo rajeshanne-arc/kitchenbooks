@@ -6,6 +6,7 @@ import 'server-only'
 import { sql, tsql } from '@/lib/db'
 import type {
   DifferenceTrendRow,
+  DishUsage,
   DueOutstandingRow,
   DueRow,
   NonRevenueRow,
@@ -181,6 +182,58 @@ export async function listGiveawayDishes(
     left join dish_costs dc on dc.recipe_id = r.id
     where r.restaurant_id = ${restaurantId} and r.kind = 'dish' and r.status = 'active'
     order by r.name asc`
+}
+
+/**
+ * Which dishes get given away, AND FOR WHAT REASON.
+ *
+ * The reason is picked BEFORE the dish on every non-revenue line, so it is the
+ * context the picker already has — and it is a sharp one: staff meals are the
+ * same three dishes every day, while a dish comped for a complaint is whatever
+ * went wrong that night. Ranking the whole menu alphabetically threw that away.
+ *
+ * Reversed rows are excluded both ways — a voided giveaway is not evidence of a
+ * habit. Rows with no dish carry no claim and are skipped.
+ *
+ * The client also sums these across reasons for the no-reason-yet case, so one
+ * query serves both the scoped rank and the plain frequency rank.
+ */
+export async function getGiveawayHistory(restaurantId: string, limit = 200): Promise<DishUsage[]> {
+  return tsql<DishUsage[]>`
+    select n.reason as scope, n.recipe_id, count(*)::int as times, max(n.nr_date)::text as last
+    from non_revenue n
+    where n.restaurant_id = ${restaurantId}
+      and n.recipe_id is not null
+      and n.reverses_id is null
+      and not exists (select 1 from non_revenue x where x.reverses_id = n.id)
+    group by n.reason, n.recipe_id
+    order by times desc, last desc
+    limit ${limit}`
+}
+
+/**
+ * Which dishes go out off-book, by frequency.
+ *
+ * NO SCOPE, argued rather than skipped: an off-book order knows its payment
+ * mode, where the money landed and sometimes a customer name, and not one of
+ * those predicts the dish — a one-off customer is not a pattern. So this is the
+ * other half of the rule: no context, rank by frequency.
+ *
+ * `off_book_lines` has no reversal of its own; the ORDER carries `reverses_id`,
+ * so the filter is on the parent. That is the rule the schema gate now holds.
+ */
+export async function getOffBookDishHistory(restaurantId: string, limit = 100): Promise<DishUsage[]> {
+  return tsql<DishUsage[]>`
+    select '' as scope, l.recipe_id, count(*)::int as times, max(o.order_date)::text as last
+    from off_book_lines l
+    join off_book_orders o on o.id = l.off_book_id
+    where l.restaurant_id = ${restaurantId}
+      and l.recipe_id is not null
+      and o.reverses_id is null
+      and not exists (select 1 from off_book_orders x where x.reverses_id = o.id)
+    group by l.recipe_id
+    order by times desc, last desc
+    limit ${limit}`
 }
 
 // -------------------------------------------------------------- analytics

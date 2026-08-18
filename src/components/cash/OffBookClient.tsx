@@ -6,23 +6,30 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { MoneyAccount, OffBookRow, SaveOffBookResult } from '@/lib/types'
+import type { DishUsage, MoneyAccount, OffBookRow, SaveOffBookResult } from '@/lib/types'
 import { saveOffBook, voidOffBook } from '@/server/cashier-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
+import { rankDishes } from '@/components/DishSuggest'
 import { toast } from '@/components/Toasts'
 import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function OffBookClient({
   dishes,
+  dishUsage,
   modes,
   accounts,
   rows,
 }: {
   /** the menu, for pricing a line against it */
   dishes: { recipe_id: string; name: string }[]
+  /** which dishes actually go out off-book, by frequency. NO SCOPE, argued
+   *  rather than skipped: an off-book order knows its payment mode, where the
+   *  money landed and sometimes a one-off customer name, and none of those
+   *  predicts the dish. */
+  dishUsage: DishUsage[]
   modes: string[]
   accounts: MoneyAccount[]
   rows: OffBookRow[]
@@ -213,11 +220,24 @@ export default function OffBookClient({
                       aria-label={`Dish, line ${i + 1}`}
                     >
                       <option value="">— not a menu dish —</option>
-                      {dishes.map((d) => (
-                        <option key={d.recipe_id} value={d.recipe_id}>
-                          {d.name}
-                        </option>
-                      ))}
+                      {/* Ranked by what actually goes out off-book, with every
+                          dish still in the list below it. */}
+                      {(() => {
+                        const { suggested, rest } = rankDishes(dishes, dishUsage, '', (d) => d.recipe_id)
+                        const opt = (d: { recipe_id: string; name: string }) => (
+                          <option key={d.recipe_id} value={d.recipe_id}>
+                            {d.name}
+                          </option>
+                        )
+                        return suggested.length === 0 ? (
+                          dishes.map(opt)
+                        ) : (
+                          <>
+                            <optgroup label="Sold off-book most often">{suggested.map(opt)}</optgroup>
+                            <optgroup label="Every dish">{rest.map(opt)}</optgroup>
+                          </>
+                        )
+                      })()}
                     </select>
                     <input
                       value={l.qty}

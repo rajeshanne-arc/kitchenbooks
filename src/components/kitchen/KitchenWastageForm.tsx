@@ -278,6 +278,7 @@ export default function KitchenWastageForm({
                         <>
                           <KitchenComponentPicker
                             value={l.component}
+                            sectionId={sectionId}
                             onPick={(hit) => patchLine(l.key, { component: hit })}
                             onClear={() => patchLine(l.key, { component: null })}
                           />
