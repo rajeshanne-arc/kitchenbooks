@@ -45,6 +45,50 @@ const check = (name: string, fn: () => void | Promise<void>) => {
  * way a background job would. KB_TENANT lives in .env.local; it is a
  * restaurant id, not a secret.
  */
+/**
+ * THE GATES WRITE TO A PROBE TENANT, NEVER TO THE LIVE ONE.
+ *
+ * `attendance` is INSERT-only and kb_app holds no DELETE, so a probe that
+ * proves a write path cannot tidy after itself — for a while that meant one
+ * sentinel row per run accumulating in Thrayam's own attendance table. A
+ * second restaurant fixes it at the root: sentinel rows land there, the live
+ * books stay clean, and because every gate run now exercises two tenants
+ * side by side, isolation is tested continuously rather than once.
+ *
+ * NAMING A TENANT "PROBE" GUARANTEES NOTHING. So this is enforced
+ * empirically: every event table in the LIVE tenant is counted before the
+ * suite runs and again after, and any table that moved fails the suite by
+ * name. That covers the rolled-back probes correctly too — a transaction
+ * that discards leaves the counts where it found them — and it cannot be
+ * fooled by a convention nobody re-reads.
+ */
+const EVENT_TABLES = [
+  'purchases', 'purchase_lines', 'payments', 'issues', 'issue_lines', 'returns', 'return_lines',
+  'wastage', 'attendance', 'stock_counts', 'stock_count_lines', 'stock_adjustments',
+  'productions', 'kitchen_closings', 'kitchen_wastage', 'indents', 'indent_lines',
+  'cash_vouchers', 'other_income', 'day_closes', 'expenses', 'contract_bills', 'casual_labour',
+  'staff_advances', 'payroll_runs', 'payroll_lines', 'vendor_returns', 'vendor_return_lines',
+  'purchase_line_shorts', 'non_revenue', 'off_book_orders', 'due_payments', 'partner_settlements',
+]
+
+async function census(tenant: string): Promise<Record<string, number>> {
+  const { withTenant } = await import('../src/lib/tenant')
+  const { txn } = await import('../src/lib/db')
+  // ONE transaction for all of them: 33 counts as 33 tsql calls is 33 round
+  // trips, and this runs twice per suite. The table names are a literal
+  // constant in this file, never anything a caller supplied.
+  return withTenant(tenant, () =>
+    txn(async (tx) => {
+      const out: Record<string, number> = {}
+      for (const t of EVENT_TABLES) {
+        const rows = await tx.unsafe<{ n: number }[]>(`select count(*)::int as n from ${t}`)
+        out[t] = rows[0].n
+      }
+      return out
+    }),
+  )
+}
+
 async function main() {
   const { withTenant } = await import('../src/lib/tenant')
   const tenant = process.env.KB_TENANT
@@ -53,7 +97,26 @@ async function main() {
     console.log('add KB_TENANT=<restaurant id> to .env.local.\n')
     process.exit(1)
   }
+  if (!process.env.KB_PROBE_TENANT) {
+    console.log('\nKB_PROBE_TENANT is not set. The gates that WRITE need a tenant of their own —')
+    console.log('they must never write to the live books. Add it to .env.local.\n')
+    process.exit(1)
+  }
+  if (process.env.KB_PROBE_TENANT === tenant) {
+    console.log('\nKB_PROBE_TENANT and KB_TENANT are the same restaurant. The whole point is that')
+    console.log('they are not.\n')
+    process.exit(1)
+  }
+  liveBefore = await census(tenant)
   return withTenant(tenant, run)
+}
+
+let liveBefore: Record<string, number> = {}
+
+/** Run `fn` against the probe tenant. Anything that COMMITS uses this. */
+export async function onProbe<T>(fn: () => Promise<T>): Promise<T> {
+  const { withTenant } = await import('../src/lib/tenant')
+  return withTenant(process.env.KB_PROBE_TENANT as string, fn)
 }
 
 async function run() {
@@ -4287,15 +4350,20 @@ async function run() {
     const [ac] = await tsql<{ d: string }[]>`select pg_get_viewdef('attendance_current'::regclass, true) as d`
     assert.ok(/extra_hours/.test(ac.d), 'attendance_current does not carry extra_hours — a named-column view never inherits')
 
-    const staff = await tsql<{ id: string }[]>`
-      select id from staff where employment_type <> 'contract' order by code limit 2`
+    // ON THE PROBE TENANT. It rolls back, so it leaves nothing either way —
+    // but "writes only to the probe tenant" is a rule worth being able to
+    // state without an exception, and the census below enforces it.
+    const staff = await onProbe(
+      () => tsql<{ id: string }[]>`
+      select id from staff where employment_type <> 'contract' order by code limit 2`,
+    )
     assert.ok(
       staff.length === 2,
       'fewer than two non-contract staff — this assertion cannot fail, so it proves nothing',
     )
     let observed: { paid: number; worked: number; hours: number; extra: number } | null = null
     try {
-      await txn(async (tx) => {
+      await onProbe(() => txn(async (tx) => {
         const rid = (await tx<{ id: string }[]>`select id from restaurants limit 1`)[0].id
         const rows = [
           { staff_id: staff[0].id, att_date: '2099-06-01', status: 'present', extra_hours: null },
@@ -4333,7 +4401,7 @@ async function run() {
           extra: sum('extra_hours'),
         }
         throw new Error('ROLLBACK')
-      })
+      }))
     } catch (e) {
       if ((e as Error).message !== 'ROLLBACK') throw e
     }
@@ -4350,7 +4418,7 @@ async function run() {
 
     // The setting is what makes the standard day configurable rather than
     // this country with extra steps, and it must default to 8, not to null.
-    const [std] = await tsql<{ h: string }[]>`select standard_hours_per_day()::text as h`
+    const [std] = await onProbe(() => tsql<{ h: string }[]>`select standard_hours_per_day()::text as h`)
     assert.equal(Number(std.h), 8, 'standard_hours_per_day() no longer answers 8 by default')
 
     // NO RATE IS COMPUTED — checked against what is actually running, not
@@ -4497,6 +4565,10 @@ async function run() {
     const { saveAttendance } = await import('../src/server/labour-actions')
     const { getDaySheet } = await import('../src/server/labour-queries')
     const { getAttendanceDays } = await import('../src/server/staff-profile-queries')
+    // EVERYTHING BELOW RUNS ON THE PROBE TENANT. This is the one probe in the
+    // suite that COMMITS — it must, because a rolled-back write cannot prove
+    // a write path — so it is the one that most needed somewhere else to go.
+    return onProbe(async () => {
     const rid = (await tsql<{ id: string }[]>`select id from restaurants limit 1`)[0].id
     const [who] = await tsql<{ id: string; code: string; section_id: string | null }[]>`
       select id, code, section_id from staff
@@ -4584,6 +4656,7 @@ async function run() {
     console.log(
       `      ${who.code}: ${WANT}h written this run → view says ${h.labour_hours}h · ${n} sentinel row(s) on ${DAY}`,
     )
+    })
   })
 
   await check('the control RENDERS in the state it is meant for', async () => {
@@ -4799,6 +4872,23 @@ async function run() {
     assert.ok(/label="Extra hours"/.test(page), 'extra hours has left the stat row')
     assert.ok(/sm:grid-cols-7/.test(page), 'the stat row is not wide enough to hold it')
     console.log('      tooltip in words · extra hours is the seventh column')
+  })
+
+  await check('NO GATE WROTE TO THE LIVE TENANT', async () => {
+    // The empirical form of the rule, and the reason a probe tenant is not
+    // just a naming convention: every event table in the live restaurant is
+    // counted before and after. A gate that writes there — committed, or
+    // rolled back and then not rolled back — moves a number here.
+    const after = await census(process.env.KB_TENANT as string)
+    const moved = EVENT_TABLES.filter((t) => after[t] !== liveBefore[t]).map(
+      (t) => `${t}: ${liveBefore[t]} → ${after[t]}`,
+    )
+    console.log(`      ${EVENT_TABLES.length} event tables counted before and after; all unchanged`)
+    assert.deepEqual(
+      moved,
+      [],
+      `these gates wrote to the LIVE books — point them at KB_PROBE_TENANT:\n      ${moved.join('\n      ')}`,
+    )
   })
 
   console.log(

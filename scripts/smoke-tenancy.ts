@@ -171,6 +171,62 @@ async function main() {
   )
   ok('no test row survived', strays === 0)
 
+  // ── 6. A REAL SECOND TENANT, NOT A SYNTHETIC ONE ──────────────────────
+  //
+  // Everything above proves isolation against a tenant that DOES NOT EXIST,
+  // which is the easier half: there are no rows to leak. The probe tenant is
+  // real, populated and written to by the gates on every run — so it is the
+  // stronger test, and running it here is what makes "the probe tenant
+  // continuously exercises isolation" a fact rather than a hope.
+  const probe = process.env.KB_PROBE_TENANT
+  if (!probe) {
+    console.log('  · KB_PROBE_TENANT is not set — the real-tenant half of this suite did not run. UNTESTED')
+  } else {
+    const mineSections = await withTenant(RID, () =>
+      tsql<{ n: number }[]>`select count(*)::int as n from sections`,
+    )
+    const theirSections = await withTenant(probe, () =>
+      tsql<{ n: number }[]>`select count(*)::int as n from sections`,
+    )
+    // Both must be non-empty or the comparison proves nothing — the same rule
+    // the read sweep above already applies to itself.
+    ok(
+      'both tenants actually hold departments, so a comparison between them means something',
+      mineSections[0].n > 0 && theirSections[0].n > 0,
+      `${mineSections[0].n} ours · ${theirSections[0].n} theirs`,
+    )
+
+    // The sharpest one: our staff and theirs share the SAME CODES — E001 and
+    // E002 in both restaurants. If tenancy leaked anywhere, this is where it
+    // would show, because the key a human reads is identical on both sides.
+    const ourE001 = await withTenant(RID, () =>
+      tsql<{ name: string }[]>`select name from staff where code = 'E001'`,
+    )
+    const theirE001 = await withTenant(probe, () =>
+      tsql<{ name: string }[]>`select name from staff where code = 'E001'`,
+    )
+    ok(
+      'E001 exists in BOTH restaurants and is a different person in each',
+      ourE001.length === 1 &&
+        theirE001.length === 1 &&
+        ourE001[0].name !== theirE001[0].name,
+      `${ourE001[0]?.name ?? '—'} vs ${theirE001[0]?.name ?? '—'}`,
+    )
+
+    // And the probe tenant cannot reach ours by asking for everything.
+    const all = await withTenant(probe, () =>
+      tsql<{ n: number }[]>`select count(*)::int as n from staff`,
+    )
+    const oursCount = await withTenant(RID, () =>
+      tsql<{ n: number }[]>`select count(*)::int as n from staff`,
+    )
+    ok(
+      'an UNFILTERED staff count from the probe tenant does not include ours',
+      all[0].n === 2 && oursCount[0].n >= 1,
+      `${all[0].n} theirs, ${oursCount[0].n} ours — neither count includes the other`,
+    )
+  }
+
   console.log(
     failures === 0
       ? '\nISOLATION HOLDS — reads, writes and provisioning, as the app role.\n'

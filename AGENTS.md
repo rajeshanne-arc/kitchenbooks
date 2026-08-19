@@ -4200,3 +4200,63 @@ itself in `withTenant(KB_TENANT)`, so they answer for themselves; the
 limit-2 fallback stays underneath for the genuinely unannounced case, and
 still refuses. Request paths are unchanged — the session branch returns
 before either.
+
+## THE PROBE TENANT — and the provisioning specification it wrote
+
+`KB_PROBE_TENANT` is a second restaurant whose only purpose is being written
+to by gates. It exists because `attendance` is INSERT-only and kb_app holds
+no DELETE, so a probe that proves a write path **cannot tidy after itself** —
+which meant one sentinel row per run accumulating in Thrayam's own books.
+
+**Adding a DELETE grant was refused and should stay refused.** Append-only is
+what makes the ledger worth trusting; opening it so a test can tidy trades
+that property for convenience. A second tenant fixes it at the root instead.
+
+**It is not a workaround, it is a second gate.** `smoke:tenancy` now proves
+isolation against a REAL, populated tenant rather than only a synthetic one —
+the easier half, since a tenant that does not exist has no rows to leak. The
+sharpest assertion: **E001 exists in both restaurants and is a different
+person in each** — Arun UV against Probe Cook. The key a human reads is
+identical on both sides, so a leak would be unmissable.
+
+**NAMING A TENANT "PROBE" GUARANTEES NOTHING.** So the rule is enforced
+empirically: `smoke:a2` counts every row in **33 event tables** of the LIVE
+tenant before the suite runs and again after, and fails naming any table that
+moved. It covers the rolled-back probes correctly too — a transaction that
+discards leaves the counts where it found them — and it caught the live write
+on its first run (`attendance: 32 → 33`). Proved able to fail by pointing the
+probe back at the live tenant.
+
+**The precondition, shipped one commit earlier:** `getRestaurant()` refuses
+with no session once more than one restaurant exists — by design, and in
+those words. Creating any second tenant would have taken down every gate that
+calls a server action. It consults `currentTenant()` first now.
+
+### What a tenant needs — most of the provisioning story, written by doing it
+
+The first restaurant created after Thrayam, so what it needed IS what a
+signup will need. **The split is the useful part:**
+
+| Per tenant | Global, shared |
+|---|---|
+| `restaurants` row | `categories` |
+| `sections` — the org units, with `receives_stock` / `codes_dishes` / `dept_kind` | `units` |
+| `list_options` — the whole managed vocabulary | `starter_library` |
+| `course_targets` | |
+| `expense_category_kinds` | |
+| `settings` — timezone, business_day_start, standard_hours_per_day, fy_start_month, input_tax_creditable | |
+
+Seeded here: 16 sections (12 receiving stock, 7 coding dishes, mirroring
+Thrayam's shape), 90 list values, course targets, expense category kinds and
+five settings. **Everything else is earned, not seeded** — vendors, items,
+staff, recipes and every event table start empty, which is the first screen
+this app was designed for and the reason "zero vendors and zero items is the
+normal starting state" has been a rule since phase 1.
+
+**Two things a signup will need that this seed did not:** an owner in
+`app_users` (the probe tenant has none, and does not need one — no session
+ever signs into it), and the `KB_TENANT` deployment variable, which is what
+still makes LOGIN single-tenant. That remains the open item before a second
+restaurant has real users: authentication crosses tenants by definition, and
+the permanent form is a SECURITY DEFINER function resolving a username to its
+tenant.
