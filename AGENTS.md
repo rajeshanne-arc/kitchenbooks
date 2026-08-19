@@ -4043,3 +4043,93 @@ decision, not a calculation this app makes."
 **DRAFT IS NOT MONEY THAT MOVED.** The Paid table carries the run status, and
 a strip counts the runs that are still draft or approved: only a line with a
 `paid_on` date has left an account and reached the wages register.
+
+## A FEATURE REPORTED LIVE WHOSE SURFACE WAS NEVER BUILT
+
+Extra hours were merged, deployed, and unreachable. Not a condition that
+never fired — **there was no write path at all.** `extra_hours` existed only
+on the read side: the profile rendered it, the query selected it, the type
+declared it. `AttendanceSheet` had no control, `MarksSchema` had no field and
+the app's insert did not name the column. The migration was applied, the gate
+went green, and I reported it shipped.
+
+**WHY EVERY GATE STAYED GREEN, and this is the whole lesson:** the hours gate
+wrote its OWN insert —
+
+```
+await tx`insert into attendance ${tx(rows, …, 'extra_hours', 'entered_by')}`
+```
+
+— so it proved the VIEW computes `worked_days × 8 + extra` and proved nothing
+about whether the APP could write that column. This file already records the
+rule, from the RLS phase, in these words: **"A probe that writes its OWN
+insert cannot test the app's column list."** Nine multi-line saves broke
+exactly that way. It happened again because the gate was written to test the
+migration, and the migration was the half that worked.
+
+**So a feature's gate must go through the front door.** `smoke:a2` now calls
+`saveAttendance` itself, and reintroducing the bug — deleting `'extra_hours'`
+from the insert list — fails it by name.
+
+### THE FIRST VERSION OF THAT GATE COULD NOT FAIL EITHER
+
+It converged: it saved 3h, and on every later run `saveAttendance` correctly
+inserted nothing because nothing had moved — so the assertions passed against
+a row an EARLIER RUN had written. Deleting the column from the insert list
+left it **green**. Caught only by trying to break it.
+
+**A gate whose evidence predates the run is not evidence.** It now reads the
+current value and writes the OTHER one: exactly one insert per run, always
+this run's, always checkable. `attendance` is INSERT-only and kb_app holds no
+DELETE — checked in `table_privileges`, where a TABLE privilege actually
+lives — so the probe cannot tidy after itself, and one row per run on a
+sentinel date 74 years out is the honest price of testing a write path on an
+append-only table through its own front door.
+
+### The second half: the BUILD is real and the SURFACE is not
+
+Twice now — the accountant missing from the Users dropdown, and this. So
+there is a gate for the surface too: it asserts the control is offered on a
+present or half row, withheld on off/leave/absent, and that the value is
+actually SENT. **A component that exists is not a surface that appears.**
+
+**EXTRA HOURS ON A DAY NOBODY WORKED IS NOT A THING.** The sheet offers the
+input on present and half only; moving a day to off/leave/absent clears any
+hours on it rather than leaving a value the server would refuse after the
+whole sheet had been keyed in. The server refuses it BY NAME anyway — and
+refuses a 0, because a normal day is the ABSENCE of a value.
+
+**THE HOURS ARE PART OF WHAT CHANGED.** `saveAttendance` compared status
+alone, so typing three hours against an already-saved P inserted nothing and
+reported "nothing changed". The comparator now reads both, and the sheet's
+Save button counts an hours-only edit as a change.
+
+### Four broken regexes, and the one that had been passing blind
+
+The new gates first failed on live-and-correct code. The cause was mine: the
+assertions were generated inside a Python **raw** string, so `\\\\b` reached
+the TypeScript source as four backslashes and every one of those `RegExp`s
+matched nothing. Three were `assert.ok(match)` and failed loudly. **One was
+`assert.ok(!match)` and would have passed forever** — a check for the ABSENCE
+of something, built on a pattern that could never match. They are plain
+`includes()` now.
+
+**The general form: an assertion that something is ABSENT must be shown to
+fire when it is present.** A positive assertion announces its own breakage;
+a negative one is silent, and silence is what it reports either way.
+
+## Emergency contact is manager-visible; Aadhaar and address are not
+
+Five columns, and the split is the design. **The person who needs an
+emergency number at eleven at night is the one running the shift** — so
+`emergency_name` / `emergency_phone` / `emergency_relation` sit on `StaffRow`,
+which is what makes them manager-visible, and the profile says so when there
+is nobody to call: that is the one field whose absence is only ever
+discovered at the worst possible moment.
+
+`aadhaar` and `address` join the identity block: owner and accountant only,
+**gated on the READ**. The guard is not "do not render them" — it is that
+they must not be SELECTED by any query whose result reaches a manager, and
+`StaffRow` does. A gate asserts they appear in the identity read and in
+neither roster query, and it was proved by adding `st.aadhaar` to
+`STAFF_SELECT` and watching it name the file.

@@ -39,7 +39,8 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
 
   const blank = {
     designation: '', sectionId: '', grade: '', baseSalary: '', payMode: '',
-    joined: '', leftDate: '', reportsTo: '', phone: '', status: 'active' as const,
+    joined: '', leftDate: '', reportsTo: '', phone: '',
+    emergencyName: '', emergencyPhone: '', emergencyRelation: '', status: 'active' as const,
   }
 
   // ---- cook & steward
@@ -64,8 +65,8 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   const marks = await saveAttendance({
     date: today,
     marks: [
-      { staffId: cook.staff.id, status: 'present' },
-      { staffId: steward.staff.id, status: 'off' },
+      { staffId: cook.staff.id, status: 'present', extraHours: '' },
+      { staffId: steward.staff.id, status: 'off', extraHours: '' },
     ],
   })
   assert.ok(marks.ok, `saveAttendance failed: ${marks.ok === false ? marks.error : ''}`)
@@ -76,7 +77,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   near(costs.find((c) => c.section_code === 'SV')!.labour, 16000 / daysInMonth, 'SV labour (off is PAID)')
 
   // ---- re-mark the steward absent: new row wins, history keeps both
-  const remark = await saveAttendance({ date: today, marks: [{ staffId: steward.staff.id, status: 'absent' }] })
+  const remark = await saveAttendance({ date: today, marks: [{ staffId: steward.staff.id, status: 'absent', extraHours: '' }] })
   assert.ok(remark.ok && remark.inserted === 1, 're-mark must insert exactly one new row')
   const sheet = await getDaySheet(rid, today)
   const stewardRow = sheet.find((r) => r.staff_id === steward.staff.id)!
@@ -89,7 +90,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   assert.equal(Number(costs.find((c) => c.section_code === 'SV')!.labour), 0, 'SV drops to 0 after absent')
 
   // idempotent save: same status inserts nothing
-  const again = await saveAttendance({ date: today, marks: [{ staffId: steward.staff.id, status: 'absent' }] })
+  const again = await saveAttendance({ date: today, marks: [{ staffId: steward.staff.id, status: 'absent', extraHours: '' }] })
   assert.ok(again.ok && again.inserted === 0, 're-saving the same status must not add rows')
 
   // ---- contract valet: attendance allowed, labour unchanged
@@ -99,7 +100,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   })
   assert.ok(valet.ok, `create valet failed: ${valet.ok === false ? valet.error : ''}`)
   assert.equal(valet.staff.code, 'E003')
-  const vmark = await saveAttendance({ date: today, marks: [{ staffId: valet.staff.id, status: 'present' }] })
+  const vmark = await saveAttendance({ date: today, marks: [{ staffId: valet.staff.id, status: 'present', extraHours: '' }] })
   assert.ok(vmark.ok)
   costs = await getSectionCosts(rid, monthStart)
   assert.equal(Number(costs.find((c) => c.section_code === 'VL')!.labour), 0, 'contract stays out of labour cost')
@@ -109,7 +110,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
     ...blank, name: 'Zz Helper', employmentType: 'full_time',
   })
   assert.ok(helper.ok, 'create helper failed')
-  const hmark = await saveAttendance({ date: today, marks: [{ staffId: helper.staff.id, status: 'present' }] })
+  const hmark = await saveAttendance({ date: today, marks: [{ staffId: helper.staff.id, status: 'present', extraHours: '' }] })
   assert.ok(hmark.ok)
   costs = await getSectionCosts(rid, monthStart)
   const unassignedRow = costs.find((c) => c.section_code === '—')

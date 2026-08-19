@@ -17,7 +17,8 @@ const STAFF_SELECT = `
          st.base_salary::text as base_salary, st.pay_mode,
          st.joined::text as joined, st.left_date::text as left_date,
          st.reports_to, mgr.name as reports_to_name,
-         st.phone, st.status, st.created_at::text as created_at
+         st.phone, st.emergency_name, st.emergency_phone, st.emergency_relation,
+         st.status, st.created_at::text as created_at
   from staff st
   left join sections s on s.id = st.section_id
   left join staff mgr on mgr.id = st.reports_to`
@@ -63,6 +64,7 @@ export async function getDaySheet(restaurantId: string, date: string): Promise<D
     select st.id as staff_id, st.code, st.name, st.designation,
            s.name as section_name, s.dept_group, st.employment_type,
            ac.status as effective,
+           ac.extra_hours::text as extra_hours,
            coalesce(
              (select json_agg(json_build_object('status', a.status, 'created_at', a.created_at::text)
                      order by a.created_at desc)

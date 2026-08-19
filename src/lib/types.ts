@@ -855,6 +855,14 @@ export type StaffRow = {
   reports_to: string | null
   reports_to_name: string | null
   phone: string | null
+  /** EMERGENCY CONTACT IS MANAGER-VISIBLE, and deliberately on StaffRow
+   *  rather than in the identity block: the person who needs it in an
+   *  emergency is the one on shift, and a detail only the owner can read is
+   *  no use at 11pm. Aadhaar and address are NOT here — StaffRow crosses the
+   *  wire to a manager. */
+  emergency_name: string | null
+  emergency_phone: string | null
+  emergency_relation: string | null
   status: 'active' | 'inactive'
   created_at: string
 }
@@ -872,6 +880,9 @@ export type StaffInput = {
   leftDate: string
   reportsTo: string
   phone: string
+  emergencyName: string
+  emergencyPhone: string
+  emergencyRelation: string
   status: 'active' | 'inactive'
   /** Bank, statutory, personal — OWNER AND ACCOUNTANT ONLY, refused by name
    *  for anyone else. Optional because a manager's form does not render the
@@ -942,6 +953,9 @@ export type DaySheetRow = {
   dept_group: DeptGroup | null
   employment_type: EmploymentType
   effective: AttendanceStatus | null
+  /** hours worked BEYOND the normal day on the winning row. null is the
+   *  ordinary case — a normal day is the ABSENCE of a value, not a zero. */
+  extra_hours: string | null
   history: AttendanceHistoryRow[]
 }
 
@@ -2644,6 +2658,11 @@ export type StaffIdentity = {
   esic_number: string | null
   dob: string | null
   gender: string | null
+  /** OWNER AND ACCOUNTANT ONLY, like the rest of this block. An address and a
+   *  government id are the two most sensitive things here and neither is any
+   *  use to a shift manager. */
+  aadhaar: string | null
+  address: string | null
 }
 
 /** What they owe AFTER this advance — read back from getOutstandingAdvances,
@@ -2664,6 +2683,8 @@ export type UpdateStaffIdentityInput = {
   dob: string
   gender: string
   payMode: string
+  aadhaar: string
+  address: string
 }
 
 // ---------- Migration 0016: reconciliation ----------

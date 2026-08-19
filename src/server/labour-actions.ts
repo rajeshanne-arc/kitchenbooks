@@ -53,6 +53,10 @@ const StaffSchema = z.object({
   leftDate: z.union([z.literal(''), z.string().regex(DATE_RE)]),
   reportsTo: z.union([z.literal(''), z.string().regex(UUID)]),
   phone: z.string().trim().max(20),
+  // Manager-visible: the person who needs this in an emergency is on shift.
+  emergencyName: z.string().trim().max(120),
+  emergencyPhone: z.string().trim().max(20),
+  emergencyRelation: z.string().trim().max(40),
   status: z.enum(['active', 'inactive']),
   /** THE IDENTIFIER BLOCK, OPTIONAL AND ROLE-GATED.
    *
@@ -135,7 +139,8 @@ export async function createStaff(raw: StaffInput): Promise<StaffMutationResult>
       const code = `E${String(next).padStart(3, '0')}`
       const [row] = await tx<{ id: string }[]>`
         insert into staff (restaurant_id, code, name, designation, section_id, grade, employment_type,
-                           base_salary, pay_mode, joined, reports_to, phone, status)
+                           base_salary, pay_mode, joined, reports_to, phone,
+                           emergency_name, emergency_phone, emergency_relation, status)
         values (${rid}, ${code}, ${input.name}, ${input.designation === '' ? null : input.designation},
                 ${input.sectionId === '' ? null : input.sectionId},
                 ${input.grade === '' ? null : input.grade},
@@ -145,6 +150,9 @@ export async function createStaff(raw: StaffInput): Promise<StaffMutationResult>
                 ${input.joined === '' ? null : input.joined}::date,
                 ${input.reportsTo === '' ? null : input.reportsTo},
                 ${input.phone === '' ? null : input.phone},
+                ${input.emergencyName === '' ? null : input.emergencyName},
+                ${input.emergencyPhone === '' ? null : input.emergencyPhone},
+                ${input.emergencyRelation === '' ? null : input.emergencyRelation},
                 ${input.status})
         returning id`
       // A FIELD NOBODY FILLS ON THE WAY PAST IS A FIELD NOBODY EVER FILLS —
@@ -189,6 +197,9 @@ export async function updateStaff(id: string, raw: StaffInput): Promise<StaffMut
         left_date = ${input.leftDate === '' ? null : input.leftDate}::date,
         reports_to = ${input.reportsTo === '' ? null : input.reportsTo},
         phone = ${input.phone === '' ? null : input.phone},
+        emergency_name = ${input.emergencyName === '' ? null : input.emergencyName},
+        emergency_phone = ${input.emergencyPhone === '' ? null : input.emergencyPhone},
+        emergency_relation = ${input.emergencyRelation === '' ? null : input.emergencyRelation},
         status = ${input.status}
       where id = ${id} and restaurant_id = ${rid}
       returning id`
@@ -216,6 +227,9 @@ const MarksSchema = z.object({
       z.object({
         staffId: z.string().regex(UUID),
         status: z.enum(['present', 'half', 'off', 'leave', 'absent']),
+        /** '' means none. Never 0: a normal day is the absence of a value,
+         *  and the CHECK on the column refuses a zero anyway. */
+        extraHours: z.union([z.literal(''), z.string().regex(/^\d{1,2}(\.\d{1,2})?$/)]),
       }),
     )
     .min(1)
@@ -224,7 +238,7 @@ const MarksSchema = z.object({
 
 export async function saveAttendance(raw: {
   date: string
-  marks: { staffId: string; status: AttendanceStatus }[]
+  marks: { staffId: string; status: AttendanceStatus; extraHours: string }[]
 }): Promise<SaveAttendanceResult> {
   try {
     const input = MarksSchema.parse(raw)
@@ -236,6 +250,24 @@ export async function saveAttendance(raw: {
     const inserted = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
+      // EXTRA HOURS ON A DAY NOBODY WORKED IS NOT A THING. The sheet only
+      // offers the control on a present or half row, but a picker is never
+      // the check — a form can always be posted to directly.
+      for (const m of input.marks) {
+        if (m.extraHours === '') continue
+        if (m.status !== 'present' && m.status !== 'half') {
+          throw new LabourError(
+            `Extra hours cannot be recorded on a ${m.status} day — nobody worked it`,
+          )
+        }
+        if (!(Number(m.extraHours) > 0)) {
+          throw new LabourError('Extra hours must be more than zero — a normal day is left blank, never a 0')
+        }
+        if (Number(m.extraHours) > 16) {
+          throw new LabourError('Extra hours cannot exceed 16 — that is a second day, not a late night')
+        }
+      }
+
       const staffIds = [...new Set(input.marks.map((m) => m.staffId))]
       if (staffIds.length !== input.marks.length) throw new LabourError('Duplicate staff in one save')
       const known = await tx<{ id: string }[]>`
@@ -244,11 +276,19 @@ export async function saveAttendance(raw: {
 
       // A row is only worth inserting when it changes the effective status —
       // that keeps "corrected" meaning corrected, not re-saved.
-      const current = await tx<{ staff_id: string; status: AttendanceStatus }[]>`
-        select staff_id, status from attendance_current
+      const current = await tx<{ staff_id: string; status: AttendanceStatus; extra_hours: string | null }[]>`
+        select staff_id, status, extra_hours::text as extra_hours from attendance_current
         where restaurant_id = ${rid} and att_date = ${input.date}::date and staff_id = any(${staffIds})`
-      const effective = new Map(current.map((c) => [c.staff_id, c.status]))
-      const toInsert = input.marks.filter((m) => effective.get(m.staffId) !== m.status)
+      const effective = new Map(current.map((c) => [c.staff_id, c]))
+      // THE HOURS ARE PART OF WHAT CHANGED. Comparing status alone meant an
+      // hours-only edit — the same P, now with three hours on it — inserted
+      // nothing and reported "nothing changed".
+      const same = (a: string | null, b: string) =>
+        (a === null ? '' : String(Number(a))) === (b === '' ? '' : String(Number(b)))
+      const toInsert = input.marks.filter((m) => {
+        const cur = effective.get(m.staffId)
+        return cur === undefined || cur.status !== m.status || !same(cur.extra_hours, m.extraHours)
+      })
       if (toInsert.length === 0) return 0
 
       const rows = toInsert.map((m) => ({
@@ -256,9 +296,18 @@ export async function saveAttendance(raw: {
         att_date: input.date,
         staff_id: m.staffId,
         status: m.status,
+        extra_hours: m.extraHours === '' ? null : m.extraHours,
         entered_by: by,
       }))
-      await tx`insert into attendance ${tx(rows, 'restaurant_id', 'att_date', 'staff_id', 'status', 'entered_by')}`
+      await tx`insert into attendance ${tx(
+        rows,
+        'restaurant_id',
+        'att_date',
+        'staff_id',
+        'status',
+        'extra_hours',
+        'entered_by',
+      )}`
       return rows.length
     })
 

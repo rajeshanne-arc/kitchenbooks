@@ -201,7 +201,7 @@ export async function getStaffIdentity(restaurantId: string, staffId: string): P
            s.base_salary::text as base_salary,
            s.bank_name, s.account_no, s.ifsc, s.upi_id,
            s.pan, s.uan, s.pf_number, s.esic_number,
-           s.dob::text as dob, s.gender
+           s.dob::text as dob, s.gender, s.aadhaar, s.address
     from staff s
     left join sections sec on sec.id = s.section_id
     where s.restaurant_id = ${restaurantId} and s.id = ${staffId}`
@@ -215,7 +215,7 @@ export async function listStaffIdentities(restaurantId: string): Promise<StaffId
            s.base_salary::text as base_salary,
            s.bank_name, s.account_no, s.ifsc, s.upi_id,
            s.pan, s.uan, s.pf_number, s.esic_number,
-           s.dob::text as dob, s.gender
+           s.dob::text as dob, s.gender, s.aadhaar, s.address
     from staff s
     left join sections sec on sec.id = s.section_id
     where s.restaurant_id = ${restaurantId} and s.status = 'active'

@@ -37,7 +37,8 @@ export async function getStaffByRef(restaurantId: string, ref: string): Promise<
            sec.dept_group, sec.sort_order as section_sort,
            s.grade, s.employment_type, s.base_salary::text as base_salary,
            s.pay_mode, s.joined::text as joined, s.left_date::text as left_date,
-           s.reports_to, m.name as reports_to_name, s.phone, s.status,
+           s.reports_to, m.name as reports_to_name, s.phone,
+           s.emergency_name, s.emergency_phone, s.emergency_relation, s.status,
            s.created_at::text as created_at
     from staff s
     left join sections sec on sec.id = s.section_id

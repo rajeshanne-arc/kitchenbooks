@@ -26,6 +26,9 @@ const STATUSES: { value: AttendanceStatus; label: string; on: string }[] = [
 export default function AttendanceSheet({ date, initialSheet }: { date: string; initialSheet: DaySheetRow[] }) {
   const [sheet, setSheet] = useState(initialSheet)
   const [picks, setPicks] = useState<Record<string, AttendanceStatus>>({})
+  /** Extra hours per person, as typed. '' means none — a normal day is the
+   *  ABSENCE of a value, never a 0. */
+  const [hours, setHours] = useState<Record<string, string>>({})
   const [openHistory, setOpenHistory] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -39,9 +42,26 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
    *  forgetfulness — so the count is on screen before the save, not only
    *  after it. */
   const unmarked = sheet.filter((r) => selectionFor(r) === null)
+  const hoursFor = (row: DaySheetRow): string => hours[row.staff_id] ?? row.extra_hours ?? ''
+  /** EXTRA HOURS ONLY EXIST ON A DAY SOMEBODY WORKED. Off is paid but worked
+   *  by nobody, and leave and absent are not worked either — so the control
+   *  is offered on present and half and nowhere else. The server refuses the
+   *  rest by name: a picker is never the check. */
+  const worksToday = (row: DaySheetRow) => {
+    const sel = selectionFor(row)
+    return sel === 'present' || sel === 'half'
+  }
+  const norm = (v: string | null) => (v === null || v === '' ? '' : String(Number(v)))
   const changes = sheet.filter((r) => {
     const pick = picks[r.staff_id]
-    return pick !== undefined && pick !== r.effective
+    const status = pick ?? r.effective
+    if (status === null) return false
+    // A row counts as changed when the STATUS moved or the HOURS did. Testing
+    // the status alone meant typing three hours against an already-saved P
+    // left the Save button dead.
+    const statusMoved = pick !== undefined && pick !== r.effective
+    const hoursMoved = norm(hoursFor(r)) !== norm(r.extra_hours)
+    return statusMoved || hoursMoved
   })
 
   /** MARK BY EXCEPTION. Sixty-five people marked one at a time is a job
@@ -65,11 +85,17 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
     try {
       const res = await saveAttendance({
         date,
-        marks: changes.map((r) => ({ staffId: r.staff_id, status: picks[r.staff_id] })),
+        marks: changes.map((r) => ({
+          staffId: r.staff_id,
+          // an hours-only edit keeps the status it already had
+          status: picks[r.staff_id] ?? (r.effective as AttendanceStatus),
+          extraHours: hoursFor(r),
+        })),
       })
       if (res.ok) {
         setSheet(res.sheet)
         setPicks({})
+        setHours({})
         setSaved({ inserted: res.inserted, marked: res.sheet.filter((r) => r.effective !== null).length })
         router.refresh()
       } else {
@@ -207,7 +233,7 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
                         {r.employment_type === 'contract' && <span className="text-stone-400"> · contract</span>}
                       </div>
                     </div>
-                    <div className="flex gap-1.5">
+                    <div className="flex items-center gap-1.5">
                       {STATUSES.map((s) => (
                         <button
                           key={s.value}
@@ -215,6 +241,13 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
                           onClick={() => {
                             setSaved(null)
                             setPicks((p) => ({ ...p, [r.staff_id]: s.value }))
+                            // Moving a day to off/leave/absent drops any hours
+                            // on it rather than leaving a value the server
+                            // would refuse — the refusal would arrive after
+                            // the whole sheet had been keyed in.
+                            if (s.value !== 'present' && s.value !== 'half') {
+                              setHours((h) => ({ ...h, [r.staff_id]: '' }))
+                            }
                           }}
                           aria-label={`${r.name}: ${s.value}`}
                           className={`min-w-9 rounded-lg border px-2 py-1.5 text-sm font-semibold ${
@@ -224,6 +257,33 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
                           {s.label}
                         </button>
                       ))}
+                      {/* THE EXTRA-HOURS CONTROL. Present or half only. It is
+                          a real input rather than a button that opens one: on
+                          a sheet of sixty-five rows an affordance you have to
+                          discover is an affordance nobody uses, and this one
+                          was invisible for a whole release. */}
+                      {worksToday(r) ? (
+                        <label className="flex items-center" title={`${r.name}: hours beyond the normal day`}>
+                          <span className="sr-only">{r.name}: extra hours</span>
+                          <input
+                            inputMode="decimal"
+                            placeholder="+h"
+                            value={hoursFor(r)}
+                            onChange={(e) => {
+                              setSaved(null)
+                              const v = e.target.value.replace(/[^\d.]/g, '').slice(0, 5)
+                              setHours((h) => ({ ...h, [r.staff_id]: v }))
+                            }}
+                            className={`h-9 w-12 rounded-lg border bg-field px-1 text-center text-sm tabular-nums outline-none placeholder:text-stone-400 focus-visible:border-emerald-600 ${
+                              hoursFor(r) === '' ? 'border-stone-200' : 'border-violet-400 font-semibold text-violet-800'
+                            }`}
+                          />
+                        </label>
+                      ) : (
+                        // a fixed gap so the status chips stay in one column
+                        // whatever anybody picked
+                        <span aria-hidden className="h-9 w-12" />
+                      )}
                     </div>
                   </div>
                   {openHistory === r.staff_id && (

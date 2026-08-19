@@ -50,6 +50,9 @@ export default function StaffForm({
   const [leftDate, setLeftDate] = useState(existing?.left_date ?? '')
   const [reportsTo, setReportsTo] = useState(existing?.reports_to ?? '')
   const [phone, setPhone] = useState(existing?.phone ?? '')
+  const [emName, setEmName] = useState(existing?.emergency_name ?? '')
+  const [emPhone, setEmPhone] = useState(existing?.emergency_phone ?? '')
+  const [emRelation, setEmRelation] = useState(existing?.emergency_relation ?? '')
   const [status, setStatus] = useState<'active' | 'inactive'>(existing?.status ?? 'active')
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState<StaffRow | null>(null)
@@ -78,6 +81,9 @@ export default function StaffForm({
     leftDate,
     reportsTo,
     phone: phone.trim(),
+    emergencyName: emName.trim(),
+    emergencyPhone: emPhone.trim(),
+    emergencyRelation: emRelation.trim(),
     status,
     ...(canEditIdentity ? { identity: idf } : {}),
   }
@@ -97,6 +103,9 @@ export default function StaffForm({
     setJoined('')
     setReportsTo('')
     setPhone('')
+    setEmName('')
+    setEmPhone('')
+    setEmRelation('')
     setIdf(seedIdentity(null))
   }
 
@@ -308,11 +317,53 @@ export default function StaffForm({
               then: the form must not ask for what the app cannot protect.
               Migration 0014 added all ten columns once real auth existed and
               nobody came back for the sentence. */}
+          {/* EMERGENCY CONTACT IS MANAGER-VISIBLE, on purpose. The person who
+              needs it at eleven at night is the one on shift, and a detail
+              only an owner can read is no use then. Aadhaar and address are a
+              different matter and live in the block below. */}
+          <div className="rounded-xl border border-rule bg-cell p-3">
+            <h4 className={sectionHeadCls}>In an emergency</h4>
+            <p className="mt-1 text-xs text-stone-500">
+              Visible to whoever is running the shift — that is the point of it.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className={fieldLabelCls}>Name</span>
+                <input
+                  value={emName}
+                  onChange={(e) => { setEmName(e.target.value); setSaved(null) }}
+                  maxLength={120}
+                  className={inputCls}
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelCls}>Phone</span>
+                <input
+                  inputMode="tel"
+                  value={emPhone}
+                  onChange={(e) => { setEmPhone(e.target.value); setSaved(null) }}
+                  maxLength={20}
+                  className={inputCls}
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelCls}>Relation</span>
+                <input
+                  value={emRelation}
+                  onChange={(e) => { setEmRelation(e.target.value); setSaved(null) }}
+                  placeholder="wife, brother, friend"
+                  maxLength={40}
+                  className={inputCls}
+                />
+              </label>
+            </div>
+          </div>
+
           {canEditIdentity ? (
             <IdentityBlock f={idf} set={setId} />
           ) : (
             <p className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-500">
-              Bank, PAN and date of birth are held by the owner and the accountant, on{' '}
+              Bank, PAN, Aadhaar, address and date of birth are held by the owner and the accountant, on{' '}
               <span className="font-medium">Accounts → Payroll → People</span>. Nothing here asks for them, and this
               screen never loads them.
             </p>
@@ -371,6 +422,8 @@ const seedIdentity = (i: StaffIdentity | null): UpdateStaffIdentityInput => ({
   dob: i?.dob ?? '',
   gender: i?.gender ?? '',
   payMode: i?.pay_mode ?? '',
+  aadhaar: i?.aadhaar ?? '',
+  address: i?.address ?? '',
 })
 
 /**
@@ -445,6 +498,18 @@ function IdentityBlock({
           <input type="date" value={f.dob} onChange={(e) => set('dob')(e.target.value)} className={inputCls} />
         </label>
         {field('Gender', 'gender', 20)}
+        {field('Aadhaar', 'aadhaar', 20)}
+        <label className="block sm:col-span-2">
+          <span className={fieldLabelCls}>Address</span>
+          <textarea
+            value={f.address}
+            onChange={(e) => set('address')(e.target.value)}
+            maxLength={300}
+            rows={2}
+            autoComplete="off"
+            className={`${inputCls} resize-y`}
+          />
+        </label>
       </div>
     </div>
   )

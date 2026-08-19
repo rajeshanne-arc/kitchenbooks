@@ -66,6 +66,7 @@ const seed = (p: StaffIdentity): string =>
   [
     p.bank_name, p.account_no, p.ifsc, p.upi_id, p.pan, p.uan,
     p.pf_number, p.esic_number, p.dob, p.gender, p.pay_mode,
+    p.aadhaar, p.address,
   ].join('|')
 
 function IdentityEditor({ person, onDone }: { person: StaffIdentity; onDone: () => void }) {
@@ -82,6 +83,8 @@ function IdentityEditor({ person, onDone }: { person: StaffIdentity; onDone: () 
     dob: txt(person.dob),
     gender: txt(person.gender),
     payMode: txt(person.pay_mode),
+    aadhaar: txt(person.aadhaar),
+    address: txt(person.address),
   }
   const [f, setF] = useState<UpdateStaffIdentityInput>(initial)
   const [busy, setBusy] = useState(false)

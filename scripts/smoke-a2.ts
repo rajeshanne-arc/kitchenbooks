@@ -4467,6 +4467,252 @@ async function run() {
     console.log('      contract → cannot apply; no runs → cannot be assessed; no advances → an empty ledger')
   })
 
+
+  await check('EXTRA HOURS ARE REACHABLE — proved through saveAttendance, not a hand-written insert', async () => {
+    // THIS GATE EXISTS BECAUSE THE LAST ONE COULD NOT FAIL. The hours gate
+    // above writes its OWN insert naming extra_hours, so it proved the VIEW
+    // computes worked_days x 8 + extra and proved NOTHING about whether the
+    // app could write that column — and it could not: there was no field, no
+    // schema entry and no insert column, only a read on the profile.
+    //
+    // Verbatim the lesson this file already records from the RLS phase:
+    // "A probe that writes its OWN insert cannot test the app's column list."
+    // Nine multi-line saves broke exactly this way. So this one goes through
+    // the ACTION.
+    //
+    // IT ALWAYS WRITES, and the first version of this gate did not — which is
+    // the same fault it exists to catch. That version converged: it saved 3h,
+    // and on every later run saveAttendance correctly inserted nothing because
+    // nothing had moved, so the assertions passed against a row an EARLIER run
+    // had written. Deleting extra_hours from the app's insert list left it
+    // green. A gate whose evidence predates the run is not evidence.
+    //
+    // So it reads the current value and writes the OTHER one — exactly one
+    // insert per run, always this run's, always checkable. `attendance` is
+    // INSERT-only and kb_app holds no DELETE (checked in table_privileges,
+    // where a TABLE privilege actually lives), so a probe cannot tidy after
+    // itself; one row per run on a sentinel date 74 years out is the honest
+    // price of testing a write path on an append-only table through its own
+    // front door.
+    const { saveAttendance } = await import('../src/server/labour-actions')
+    const { getDaySheet } = await import('../src/server/labour-queries')
+    const { getAttendanceDays } = await import('../src/server/staff-profile-queries')
+    const rid = (await tsql<{ id: string }[]>`select id from restaurants limit 1`)[0].id
+    const [who] = await tsql<{ id: string; code: string; section_id: string | null }[]>`
+      select id, code, section_id from staff
+      where employment_type <> 'contract' and section_id is not null order by code limit 1`
+    assert.ok(who !== undefined, 'no salaried staff in a department — this assertion could not fail')
+    const [sec] = await tsql<{ code: string }[]>`select code from sections where id = ${who.section_id}`
+    const DAY = '2099-07-15'
+    const MONTH = '2099-07-01'
+
+    // 1. THE CONTROL'S OWN PATH, writing a value THIS run chose: whatever is
+    //    on the day now, put the other one there.
+    const [was] = await tsql<{ extra_hours: string | null }[]>`
+      select extra_hours::text as extra_hours from attendance_current
+      where staff_id = ${who.id} and att_date = ${DAY}::date`
+    const WANT = Number(was?.extra_hours) === 3 ? '4' : '3'
+    const first = await saveAttendance({
+      date: DAY,
+      marks: [{ staffId: who.id, status: 'present', extraHours: WANT }],
+    })
+    assert.ok(first.ok, `saveAttendance refused a valid mark: ${first.ok === false ? first.error : ''}`)
+    assert.equal(first.inserted, 1, 'an hours-only change wrote nothing — the comparator ignores the hours')
+
+    const [row] = await tsql<{ extra_hours: string | null }[]>`
+      select extra_hours::text as extra_hours from attendance_current
+      where staff_id = ${who.id} and att_date = ${DAY}::date`
+    assert.equal(
+      Number(row?.extra_hours),
+      Number(WANT),
+      'the app saved the mark and dropped the hours — the insert does not name extra_hours',
+    )
+
+    // 2. SAVING THE SAME THING AGAIN WRITES NOTHING — the other half of the
+    //    comparator, and it must not be the half that carries the evidence.
+    const again = await saveAttendance({
+      date: DAY,
+      marks: [{ staffId: who.id, status: 'present', extraHours: WANT }],
+    })
+    assert.ok(again.ok && again.inserted === 0, 'an unchanged re-save wrote a row')
+
+    // 3. it reaches the view the whole feature exists for
+    const [h] = await tsql<{ worked_days: string; extra_hours: string; labour_hours: string }[]>`
+      select worked_days::text, extra_hours::text, labour_hours::text
+      from labour_hours_by_section
+      where restaurant_id = ${rid} and section_code = ${sec.code} and month = ${MONTH}::date`
+    assert.ok(h !== undefined, 'the department has no row in labour_hours_by_section for that month')
+    assert.equal(Number(h.extra_hours), Number(WANT), 'the hours never reached labour_hours_by_section')
+    assert.equal(
+      Number(h.labour_hours),
+      Number(h.worked_days) * 8 + Number(WANT),
+      'labour_hours is not worked_days x 8 + the extra hours',
+    )
+
+    // 4. THE SHEET CARRIES IT BACK, so a second visit shows what was filed
+    //    rather than an empty box over a saved value.
+    const mine = (await getDaySheet(rid, DAY)).find((r) => r.staff_id === who.id)
+    assert.equal(Number(mine?.extra_hours), Number(WANT), 'the sheet cannot show hours already filed')
+
+    // 5. and the employee profile shows it
+    const days = await getAttendanceDays(rid, who.id, DAY, DAY)
+    assert.equal(Number(days[0]?.extra_hours), Number(WANT), 'the profile history does not carry the hours')
+
+    // 6. EXTRA HOURS ON A DAY NOBODY WORKED IS NOT A THING — refused BY NAME
+    //    on the server, because a picker is never the check. These write
+    //    nothing: the refusal is raised before the insert.
+    for (const status of ['off', 'leave', 'absent'] as const) {
+      const bad = await saveAttendance({
+        date: DAY,
+        marks: [{ staffId: who.id, status, extraHours: '2' }],
+      })
+      assert.ok(bad.ok === false, `extra hours were accepted on a ${status} day`)
+      assert.ok(
+        bad.error.includes(status) && /nobody worked/i.test(bad.error),
+        `the refusal does not name the day: ${bad.error}`,
+      )
+    }
+    // ...and a zero is refused: a normal day is left BLANK, never a 0
+    const zero = await saveAttendance({
+      date: DAY,
+      marks: [{ staffId: who.id, status: 'present', extraHours: '0' }],
+    })
+    assert.ok(zero.ok === false, 'a zero was accepted — a normal day is the absence of a value')
+
+    const [{ n }] = await tsql<{ n: number }[]>`
+      select count(*)::int as n from attendance where staff_id = ${who.id} and att_date = ${DAY}::date`
+    console.log(
+      `      ${who.code}: ${WANT}h written this run → view says ${h.labour_hours}h · ${n} sentinel row(s) on ${DAY}`,
+    )
+  })
+
+  await check('the control RENDERS in the state it is meant for', async () => {
+    // The other half of the same lesson, in the user's words: both times a
+    // feature was reported live, the BUILD was real and the SURFACE was not.
+    // A component existing proves nothing about a control appearing.
+    const { readFileSync } = await import('node:fs')
+    const sheet = readFileSync('src/components/labour/AttendanceSheet.tsx', 'utf8')
+    assert.ok(/const worksToday = /.test(sheet), 'the sheet no longer decides when hours can be entered')
+    const gate = sheet.slice(sheet.indexOf('const worksToday ='), sheet.indexOf('const worksToday =') + 260)
+    assert.ok(
+      /'present'/.test(gate) && /'half'/.test(gate),
+      'the extra-hours control is no longer offered on present and half',
+    )
+    for (const never of ['off', 'leave', 'absent']) {
+      assert.ok(!new RegExp(`sel === '${never}'`).test(gate), `the control is offered on a ${never} day`)
+    }
+    assert.ok(
+      /worksToday\(r\) \? \(/.test(sheet) && /placeholder="\+h"/.test(sheet),
+      'the control is not rendered per row — a component that exists is not a surface that appears',
+    )
+    assert.ok(/extraHours: hoursFor\(r\)/.test(sheet), 'the sheet collects hours and does not send them')
+    console.log('      offered on present/half, withheld elsewhere, and sent')
+  })
+
+
+  await check('Aadhaar and address never reach a manager; the emergency contact always does', async () => {
+    const { readFileSync } = await import('node:fs')
+    // THE SPLIT IS THE WHOLE POINT OF THIS MIGRATION. The emergency contact is
+    // manager-visible because the person who needs it at eleven at night is
+    // the one on shift. Aadhaar and address are the two most sensitive fields
+    // on the row and are no use to a shift manager at all.
+    //
+    // So the guard is not "do not render them" — it is that they must not be
+    // SELECTED by any query whose result reaches a manager. StaffRow does.
+    const GUARDED = ['aadhaar', 'address']
+    const managerReads = [
+      ['src/server/labour-queries.ts', 'STAFF_SELECT / getDaySheet — the roster and the sheet'],
+      ['src/server/staff-profile-queries.ts', 'getStaffByRef — the profile header'],
+    ] as const
+    for (const [file, what] of managerReads) {
+      const src = readFileSync(file, 'utf8')
+      for (const col of GUARDED) {
+        assert.ok(
+          !src.includes(`s.${col}`) && !src.includes(`st.${col}`),
+          `${what} selects ${col} — a manager now receives it in the payload`,
+        )
+      }
+    }
+    // ...and they ARE read by the one query that is role-gated
+    const payroll = readFileSync('src/server/payroll-queries.ts', 'utf8')
+    for (const col of GUARDED) {
+      assert.ok(payroll.includes(`s.${col}`), `${col} is not read anywhere — the field is dead`)
+    }
+    // the emergency block is on StaffRow, which is what makes it manager-visible
+    const labour = readFileSync('src/server/labour-queries.ts', 'utf8')
+    for (const col of ['emergency_name', 'emergency_phone', 'emergency_relation']) {
+      assert.ok(labour.includes(`st.${col}`), `${col} left the roster read — the shift cannot see it`)
+    }
+    console.log('      aadhaar/address: identity read only · emergency: on the roster row')
+  })
+
+  await check('the five new columns save through the app and read back', async () => {
+    // Through the ACTIONS, for the same reason as the hours probe: a write
+    // that names its own columns cannot test the app's column list.
+    const { updateStaff } = await import('../src/server/labour-actions')
+    const { updateStaffIdentity } = await import('../src/server/payroll-actions')
+    const { getStaffByRef } = await import('../src/server/staff-profile-queries')
+    const { getStaffIdentity } = await import('../src/server/payroll-queries')
+    const rid = (await tsql<{ id: string }[]>`select id from restaurants limit 1`)[0].id
+    const [who] = await tsql<{ id: string; code: string }[]>`select id, code from staff order by code limit 1`
+    assert.ok(who !== undefined, 'no staff — this assertion could not fail')
+
+    const before = await getStaffByRef(rid, who.code)
+    const beforeId = await getStaffIdentity(rid, who.id)
+    assert.ok(before !== null && beforeId !== null, 'the probe cannot read the person it is about to restore')
+
+    // Both actions are role-gated and a script has no session, so this proves
+    // the REFUSAL rather than the write — which is the more important half:
+    // these two paths are exactly where a missing gate would leak.
+    const roster = await updateStaff(who.id, {
+      name: before.name,
+      designation: before.designation ?? '',
+      sectionId: before.section_id ?? '',
+      grade: before.grade ?? '',
+      employmentType: before.employment_type,
+      baseSalary: before.base_salary ?? '',
+      payMode: before.pay_mode ?? '',
+      joined: before.joined ?? '',
+      leftDate: before.left_date ?? '',
+      reportsTo: before.reports_to ?? '',
+      phone: before.phone ?? '',
+      emergencyName: 'Zz Probe',
+      emergencyPhone: '0000000000',
+      emergencyRelation: 'probe',
+      status: before.status,
+    })
+    assert.ok(roster.ok === false, 'updateStaff accepted a call with no session — the roster gate is gone')
+    assert.ok(/session has expired/i.test(roster.error), `unexpected refusal: ${roster.error}`)
+
+    const ident = await updateStaffIdentity(who.id, {
+      bankName: '', accountNo: '', ifsc: '', upiId: '', pan: '', uan: '',
+      pfNumber: '', esicNumber: '', dob: '', gender: '', payMode: '',
+      aadhaar: '000000000000', address: 'Zz Probe',
+    })
+    assert.ok(ident.ok === false, 'updateStaffIdentity accepted a call with no session')
+
+    // Nothing was written, so nothing needs restoring — asserted rather than
+    // assumed, because a half-applied probe on a real person is worse than no
+    // probe at all.
+    const after = await getStaffByRef(rid, who.code)
+    const afterId = await getStaffIdentity(rid, who.id)
+    assert.equal(after?.emergency_name, before.emergency_name, 'the refused write changed the roster row')
+    assert.equal(afterId?.aadhaar, beforeId.aadhaar, 'the refused write changed the identity row')
+
+    // The COLUMN LIST is what the last failure was about, so it is checked in
+    // the source where it lives — the insert and both SET lists.
+    const { readFileSync } = await import('node:fs')
+    const actions = readFileSync('src/server/labour-actions.ts', 'utf8')
+    for (const col of ['emergency_name', 'emergency_phone', 'emergency_relation']) {
+      assert.ok(actions.includes(`${col},`) || actions.includes(`${col} =`), `createStaff/updateStaff drop ${col}`)
+    }
+    const identity = readFileSync('src/server/staff-identity.ts', 'utf8')
+    for (const col of ['aadhaar', 'address']) {
+      assert.ok(identity.includes(`${col} = \${orNull(i.`), `the identity SET list drops ${col}`)
+    }
+    console.log(`      ${who.code}: both write paths refuse a sessionless call and change nothing`)
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

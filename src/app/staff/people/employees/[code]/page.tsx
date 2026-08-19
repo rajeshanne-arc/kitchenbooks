@@ -301,6 +301,8 @@ export default async function StaffProfilePage({
       identity.esic_number,
       identity.dob,
       identity.gender,
+      identity.aadhaar,
+      identity.address,
     ].some((v) => v !== null && v !== '')
 
   return (
@@ -355,16 +357,23 @@ export default async function StaffProfilePage({
         </Card>
 
         <Card title="Contact" source="staff">
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
             <Field label="Phone" value={or(staff.phone, 'none on file')} />
+            {/* MANAGER-VISIBLE, deliberately. The person who needs this at
+                eleven at night is the one running the shift, so it sits here
+                rather than in the owner-only block below. */}
+            <Field label="In an emergency" value={or(staff.emergency_name)} />
+            <Field label="Their phone" value={or(staff.emergency_phone)} />
+            <Field label="Relation" value={or(staff.emergency_relation)} />
           </dl>
-          {/* THE BRIEF ASKED FOR AN EMERGENCY CONTACT AND THERE IS NO COLUMN.
-              Said rather than invented: the schema is theirs, and a field the
-              database refuses is a field the form must not collect. */}
-          <p className="mt-3 text-[13px] leading-snug text-stone-500">
-            There is no emergency-contact column on <span className="font-mono">staff</span>, so this app does not
-            hold one. Adding it is a migration, not a form field.
-          </p>
+          {staff.emergency_phone === null && (
+            <div className="mt-3">
+              <Honesty verdict="no emergency number" compact>
+                There is nobody to call for {staff.name}. This is the one field on the page whose absence is only ever
+                discovered at the worst possible moment.
+              </Honesty>
+            </div>
+          )}
         </Card>
 
         {mayHoldIdentity && (
@@ -385,7 +394,13 @@ export default async function StaffProfilePage({
                     value={identity?.dob === null || identity?.dob === undefined ? '—' : fmtDate(identity.dob)}
                   />
                   <Field label="Gender" value={or(identity?.gender ?? null)} />
+                  <Field label="Aadhaar" value={or(identity?.aadhaar ?? null)} />
                 </dl>
+                {identity?.address !== null && identity?.address !== undefined && (
+                  <div className="mt-3">
+                    <Field label="Address" value={<span className="whitespace-pre-line">{identity.address}</span>} />
+                  </div>
+                )}
                 <p className="mt-3 text-[11px] text-stone-400">
                   Recorded as typed — nothing here is validated, masked or checked against a format, because a
                   checksum would bake one country into a field.

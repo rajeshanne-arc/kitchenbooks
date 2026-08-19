@@ -35,6 +35,8 @@ export const IdentitySchema = z.object({
   dob: z.union([z.literal(''), z.string().regex(DATE_RE)]),
   gender: z.string().trim().max(20),
   payMode: z.union([z.literal(''), z.enum(['account', 'cash'])]),
+  aadhaar: z.string().trim().max(20),
+  address: z.string().trim().max(300),
 })
 
 export type Identity = z.infer<typeof IdentitySchema>
@@ -51,6 +53,8 @@ export const BLANK_IDENTITY: UpdateStaffIdentityInput = {
   dob: '',
   gender: '',
   payMode: '',
+  aadhaar: '',
+  address: '',
 }
 
 /** Every field blank. A manager's form submits this and nothing is written,
@@ -78,7 +82,9 @@ export async function writeIdentity(tx: postgres.TransactionSql, staffId: string
       esic_number = ${orNull(i.esicNumber)},
       dob = ${i.dob === '' ? null : i.dob}::date,
       gender = ${orNull(i.gender)},
-      pay_mode = ${orNull(i.payMode)}
+      pay_mode = ${orNull(i.payMode)},
+      aadhaar = ${orNull(i.aadhaar)},
+      address = ${orNull(i.address)}
     where id = ${staffId} and restaurant_id = ${rid}
     returning id`
   return rows.length > 0
