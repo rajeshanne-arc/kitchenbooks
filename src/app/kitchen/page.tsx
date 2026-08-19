@@ -166,12 +166,11 @@ export default async function KitchenDashboardPage() {
               <div className="mt-2">
                 <Unassessed needs={closings.needs} />
               </div>
-              <Link
-                href="/kitchen/departments"
-                className="mt-2 inline-block text-xs font-medium text-emerald-700 hover:underline"
-              >
-                departments →
-              </Link>
+              {/* The "departments →" link that used to sit here has moved onto
+                  the rows below. It was inside THIS branch — the one that
+                  renders when there are no departments — so the only door to
+                  Departments on this card appeared exactly when there was
+                  nothing to visit, and was invisible on real data. */}
             </>
           ) : (
             <>
@@ -185,7 +184,15 @@ export default async function KitchenDashboardPage() {
               <ul className="divide-y divide-rule-soft">
                 {closings.data.map((d) => (
                   <li key={d.section_id} className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_4.5rem_4.5rem] items-center gap-1 py-2 text-right">
-                    <span className="truncate text-left text-sm text-stone-900">{d.section_name}</span>
+                    {/* The row is a DOOR now. It was five plain spans. */}
+                    <span className="truncate text-left text-sm">
+                      <Link
+                        href={`/kitchen/departments/${d.section_code}`}
+                        className="text-stone-900 hover:text-emerald-700 hover:underline"
+                      >
+                        {d.section_name}
+                      </Link>
+                    </span>
                     <span className="tabular-nums text-sm text-stone-700">{formatMoneyString(d.issued)}</span>
                     <span className="tabular-nums text-sm text-stone-700">{formatMoneyString(d.produced)}</span>
                     <span className={`tabular-nums text-sm ${decimalStringToPaise(d.wasted) > 0 ? 'text-red-700' : 'text-stone-400'}`}>

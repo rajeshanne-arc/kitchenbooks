@@ -3170,3 +3170,221 @@ money alone. Watching one half is exactly how the fault survived 0022.
 
 Better than the earlier form of the same trick (a gate "written to FAIL once
 the view was fixed"), which is green only by being wrong.
+
+## The department page — a drill-down, and the preconditions ARE the feature
+
+`/kitchen/departments/<code>` — CH, TD, SI. Every figure on it already existed
+in a named view; what was missing was a place to read them together for ONE
+department. **Nothing here computes a total the database does not already
+publish, and nothing here caches one.**
+
+**TWO KEYS, and choosing wrong is a 42703 on a live page.** The relations split
+cleanly and unhelpfully: `section_costs`, `section_food_cost`,
+`labour_cost_by_section`, `section_consumption_daily`, `indent_fulfilment`,
+`issue_frequency` and `dish_costs` key on **`section_code` TEXT**;
+`productions`, `kitchen_wastage`, `kitchen_closing_current`, `issues`, `indents`
+and `staff` key on **`section_id` UUID** and carry no code at all.
+`getDepartment` resolves code → id ONCE and every other function takes whichever
+key its relation actually publishes; the parameter names say which.
+
+### THE SAME ABSENCE READS AS 0 IN ONE VIEW AND NULL IN ANOTHER
+
+This is the fault the page was most likely to ship, and it is worth stating as a
+general hazard rather than an incident. For South Indian, August 2026, measured:
+
+| | sales | labour | margin | consumed |
+|---|---|---|---|---|
+| `section_costs` | **0** | **0** | **−7498.33** | 7498.33 |
+| `section_food_cost` | **NULL** | — | — | **NULL** |
+
+Same department, same month, same missing data. `section_costs` COALESCEs every
+leg to 0 and publishes **no honesty column at all**, so its own row cannot tell
+"₹0 of sales" from "no POS day has ever been fetched". On a page titled after a
+department, rendering that margin is not a wrong number — it is **an accusation
+about a named team**.
+
+So each leg is assessed against **its own source**, never against
+`section_costs`: sales against `pos_orders`, labour against `attendance`,
+consumption against `section_consumption_daily`. **Margin is stated only when
+all three are real**, because otherwise it is arithmetic over an absence. This
+is the "South Indian costs more than it earns" card that
+`src/lib/precondition.ts` was written for, arriving a second time by a different
+route.
+
+### A STRUCTURAL IMPOSSIBILITY IS NOT MISSING DATA
+
+Two different sentences, two different components — `<Unassessed>` for data that
+has not arrived, plain prose for a thing that can never apply:
+
+- `codes_dishes = false` → "**No dish can be coded to** Staff Food" — not "no
+  dishes yet". True for all seven operational units **and for SF and KS**, which
+  are `dept_kind = 'kitchen'` and still cannot code a dish.
+- `receives_stock = false` (ST, AC, VL, SC) → "does not receive stock", not an
+  empty indent table.
+- `dept_group` not in (Kitchen, Bar) → "food cost is a kitchen question". An
+  empty `section_food_cost` result rendered as "pending closing" would tell a
+  department **it owes a closing it can never file**.
+
+**The switch is the capability columns, not `dept_kind`.** The brief said the
+thinner page keys on `dept_kind = 'operational'` and that is nearly right — but
+SF and KS are kitchen-kind and cannot code dishes, so reading `dept_kind` alone
+shows Staff Food an empty dish list that reads as "nobody has entered these
+yet". Each card asks the column that actually governs it.
+
+### The order is FIXED, and deliberately not sorted by urgency
+
+The owner dashboard ranks its cards because it is **triage across many
+subjects**. This page is a **story about one subject**, read in the order
+somebody asks: is it earning, what does it cost, what did it make, what did it
+lose, did it get what it asked for. Reshuffling per load means the page is a
+different shape every time and nobody learns where anything is. The ranking is
+served instead by a strip at the TOP that counts what cannot be assessed before
+any card claims anything.
+
+### Found while building it
+
+- **The only door from the kitchen dashboard to Departments rendered when there
+  were no departments to visit.** The `<Link href="/kitchen/departments">` sat
+  inside the `!closings.assessable` branch, so it was invisible on real data,
+  and the nine rows beside it were five plain `<span>`s. The rows are the door
+  now. *A link inside an unassessable branch is a link nobody sees once the data
+  arrives.*
+- **`issue_frequency` had never been read by a line of code.** It exists, is
+  SELECT-granted, and this page is its first reader — so nothing had ever proved
+  it works, and `smoke:a2` now executes it. It filters `reverses_id is null`
+  **only**, so `issue_count` means "issues FILED", including a voided original;
+  the screen says so rather than assuming the view already handled it.
+- **`labour_cost_by_section.unassigned_marks` is structurally always 0 on a real
+  department's row.** It is `count(*) filter (where st.section_id is null)`
+  grouped under `coalesce(s.code, '—')`, so those staff are in a separate `'—'`
+  row. Surfacing it from a department would be a **permanent all-clear against
+  an honesty column that can never fire** — the same shape as the four dashboard
+  cards that congratulated over missing data. `unsalaried_marks` is the one that
+  can fire, and it is read.
+- **The no-coalesce gate was name-scoped and would have missed the second
+  reader.** `smoke:a2` asserted `getIndentFulfilment` does not coalesce
+  `qty_given`/`gap` by slicing that function out of one file by name. The
+  department page is a SECOND reader of the same view and would have sailed
+  past. The assertion now walks every block reading `indent_fulfilment` in both
+  files. *A gate scoped to the place the first fault happened cannot find the
+  second one* — the same lesson as gates that only walked `src/server`.
+
+### What the adversarial pass found — four cards were breaking the page's own law
+
+The page was built precondition-first and an adversarial review still found
+**four cards reporting a structural impossibility as missing data**, which is
+the exact fault the page exists to prevent. Writing the doctrine into a file
+header does not enforce it card by card.
+
+- **The food-cost card demanded a closing that could not help.** It printed
+  "Issued is ₹0.00; the closing is the other half" for a department that has
+  never been issued anything — and `getFoodCost` publishes **`has_activity`**
+  for precisely that distinction, which the card ignored. Worse than a wrong
+  figure: `section_food_cost` is driven from `section_consumption`, which ends
+  `where coalesce(iss.v,0) <> 0 or coalesce(ret.v,0) <> 0`, so a department with
+  no issue can **never** acquire a row — **filing the closing the card asked for
+  would not have changed the answer.** The card named an unachievable errand.
+  Both other readers of the same query gate on `has_activity` first.
+- **"Is it earning?" had no structural branch at all**, so the Store was told
+  nothing had moved "from the store to Store" *yet* — inviting an entry
+  `saveIssue` refuses by name — while the card two inches below said "Store does
+  not receive stock". The page contradicted itself on one screen.
+- **The loss card was not gated** though `saveKitchenWastage` calls
+  `assertKitchenSection`, and **the indent card gated on `receives_stock`
+  alone** though `saveIndent` asserts *both* that and Kitchen/Bar — so
+  Housekeeping was told it "has not raised an indent", implying it could.
+
+**The measure of the fix:** the Store went from six false "cannot be assessed"
+to **one**. Everything else on its page now says why it can never apply.
+
+### THE FIRST FETCHED POS DAY WOULD HAVE ACCUSED EVERY DEPARTMENT AT ONCE
+
+The sales precondition asked *"has any POS day been fetched?"*. Revenue reaches a
+department only through `pos_item_map → recipes → section`, so the day the POS
+is switched on that leg flips true for **all sixteen departments simultaneously**
+— each then reporting a confident `sales ₹0` and, with labour also present, a
+red negative margin. The page would have started lying on the day the data
+arrived, and no amount of live testing beforehand could have shown it.
+
+It now rests on **attributable** revenue: at least one mapped dish carrying this
+section's code with revenue in the period. Where orders exist and nothing is
+mapped, the strip says so — that is a fact about the mapping queue, not about
+the team.
+
+**The general form: a precondition must ask about the thing the figure actually
+depends on, not about a proxy that correlates with it today.**
+
+### An unfilled indent was called SHORT, in red — in both readers
+
+`indent_fulfilment` computes `coalesce(qty_given, 0) − qty_requested`, so an
+**open** request of 5 kg that the store has not touched arrives as `−5` and
+rendered as **"Short 5 kg"** — an accusation against the store for a request
+nobody had been given the chance to fill. `/kitchen/indent/[id]` had it too, and
+said "None yet — the store has not issued against it" three inches above the
+red word. **Live data has no open indent, so nothing on this database could ever
+have caught it.** The rule now lives in `GapCell` itself, which takes `status`,
+and a gate asserts every caller passes it.
+
+### Two more, both the same shape as faults this file already records
+
+- **`order by 3 desc` pointed at a `::text` cast**, so `9.00` sorted above
+  `100.00` and the biggest loss was not at the top — the entire point of that
+  card. Ordering is on the numeric now, and a `having` drops a day or a reason
+  whose every row was voided, which otherwise printed a ₹0.00 line *and*
+  suppressed the empty state that should have fired.
+- **The labour evidence counted marks the view excludes.**
+  `labour_cost_by_section` carries `where st.employment_type <> 'contract'`, so
+  counting contract attendance called the leg assessable and then read ₹0.00 off
+  a view that had deliberately left those people out — **a measurement made of
+  an exclusion**, which would also have unlocked the margin. The evidence
+  mirrors the view now, `attendance_current` included, and contract staff get
+  their own sentence: billed by their vendor.
+
+**And a gate that encoded the fault.** The first version of the sales assertion
+asserted `ev.sales === (posDays > 0)` — it would have *held the wrong behaviour
+in place*. A gate written from the implementation rather than from the
+requirement is a gate that ratifies the bug.
+
+### Premises corrected
+
+The period control has **three** presets — `this-month · last-month ·
+last-3-months` — not "Today · This week · This month · Last month · Custom
+range", and it does **not** persist across pages: it is a per-page `?period=`
+URL param, deliberately, so a link survives a bookmark and a WhatsApp paste. The
+page therefore mounts the existing `PeriodControl` unchanged, which is what the
+brief's own rule ("do NOT build a second date picker") actually requires —
+adding presets here would have changed `resolvePeriod`, which is asserted by
+value including the January year-roll, and changed every dashboard with it. The
+page states the resolved range in words ("This month · 1–19 Aug 2026") because a
+preset alone leaves the reader guessing whether it ends today or at month end.
+
+No store surface has ever linked to departments or sections, so there was no
+dead end to route — and store is denied `/kitchen` anyway (only
+`/kitchen/indent` is carved out above it). Adding a store→department link would
+need a new matrix entry above `['/kitchen', …]`, which is why it was not done
+casually.
+
+### `SectionsView` is NOT duplicated by this page — it is its index
+
+One live mount, and `smoke:a2` asserts exactly one. The overlap is four figures
+from one view at one grain; `SectionsView` renders sixteen departments plus the
+synthetic `'—'` row with a totals footer, which a per-department page cannot.
+Its rows now link INTO the detail page, **skipping `'—'`** — that row is a
+bucket for staff posted nowhere, has no `sections` row behind it, and
+`/kitchen/departments/—` would 404 for a reason nobody could guess.
+
+### NOT BUILT, AND NOT TO BE DESIGNED AWAY: the section head
+
+**If departments have pages, a section head becomes a plausible scoped user** —
+a CDP who runs Chinese, seeing only `/kitchen/departments/CH` and only their own
+department's indents, losses, production and people. **That role does not
+exist**, and `src/lib/roles.ts` has no vocabulary for it: every rule is
+path-prefix → role list, with no notion of a role scoped to a ROW.
+
+It is recorded here so nobody quietly removes the possibility. Three things it
+would need, none of them small: a `sections`-scoped claim on the session; a
+matrix that can express "this path, but only for your own department"; and a
+decision about what a section head sees on a shared screen like the kitchen
+dashboard. Do not add a `section_id` to `app_users` as a shortcut — a person can
+plausibly run two departments, and a column would make that unrepresentable the
+day it matters.

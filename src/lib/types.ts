@@ -702,6 +702,23 @@ export type DishCostRow = {
   food_cost_pct: string | null
   uncosted_lines: number
   status: 'active' | 'inactive'
+  /** the course this dish belongs to, which is what its TARGET is set against.
+   *  Null when nobody has said, and a null target makes the flag comparison
+   *  null — see `flag`. */
+  course: string | null
+  /** NULLABLE with no default: a dish nobody has told how many it makes has
+   *  no per-portion answer at all, and the card says so rather than dividing. */
+  portions: string | null
+  cost_per_portion: string | null
+  /** `course_targets` for this dish's course, falling back to DEFAULT */
+  target_pct: string | null
+  /** 'OK' | 'HIGH' | 'CHECK'. CHECK is NEITHER of the other two — it fires
+   *  when the dish costs zero, has no selling price or has no portions, and it
+   *  is a repair job, never a cheap dish. Note the degenerate case: a NULL
+   *  target_pct makes the comparison NULL and the view's CASE falls through to
+   *  'OK', so an unassessable dish can read OK — the card must not trust the
+   *  flag alone when target_pct is null. */
+  flag: string
 }
 
 /** recipe_costs view row for subs (+ status from recipes) */
@@ -963,6 +980,100 @@ export type DishOption = { id: string; code: string; name: string; section_code:
  * Same shape as `ItemSuggestion` and used the same way: the suggested group
  * renders on top and every dish stays in the list below it.
  */
+/* ── the department drill-down (/kitchen/departments/[code]) ─────────────── */
+
+/** The one `sections` read the whole page hangs off. It carries BOTH keys
+ *  because the relations are split on which one they publish: `section_costs`,
+ *  `section_food_cost`, `labour_cost_by_section`, `section_consumption_daily`,
+ *  `indent_fulfilment`, `issue_frequency` and `dish_costs` key on
+ *  `section_code` TEXT, while `productions`, `kitchen_wastage`,
+ *  `kitchen_closing_current`, `issues`, `indents` and `staff` key on
+ *  `section_id` UUID and carry no code at all. Picking the wrong one is a
+ *  42703 on a live page, so the resolution happens once, here. */
+export type DepartmentDetail = {
+  id: string
+  code: string
+  name: string
+  dept_group: string
+  /** 'kitchen' | 'operational' — the switch for the thinner page. NOT
+   *  dept_group: Service and Management are both operational. */
+  dept_kind: string
+  /** false for SF and KS as well as every operational unit — a dish CANNOT be
+   *  coded here, which is a different sentence from "no dishes yet" */
+  codes_dishes: boolean
+  /** false for Store, Accounts, Valet, Security — they consume nothing the
+   *  store holds, so an empty issue history is structural, not missing */
+  receives_stock: boolean
+  status: string
+  dishes: number
+  staff: number
+}
+
+/** `section_costs` for one department, ONE ROW PER MONTH and deliberately not
+ *  summed in SQL — every figure is COALESCEd to 0 inside the view, so a month
+ *  with no row must stay absent rather than arriving as a confident zero. */
+export type SectionCostMonthRow = {
+  month: string
+  consumption: string
+  labour: string
+  total_cost: string
+  sales: string
+  margin: string
+}
+
+/** `labour_cost_by_section` for one department.
+ *
+ *  `unassigned_marks` is DELIBERATELY ABSENT. The view is grouped by
+ *  `coalesce(s.code, '—')` and the column is
+ *  `count(*) filter (where st.section_id is null)`, so on a real department's
+ *  row it is structurally always 0 — a permanent all-clear against an honesty
+ *  column that can never fire. `unsalaried_marks` is the one that can. */
+export type SectionLabourMonthRow = {
+  month: string
+  labour_cost: string
+  unsalaried_marks: number
+}
+
+/** One day of "made and held" for a department. `closed` is NULL when no
+ *  closing was filed that day — never 0, which is a real closing. */
+export type SectionShiftDayRow = {
+  day: string
+  produced: string
+  batches: number
+  closed: string | null
+}
+
+/** Kitchen loss for one department, grouped by the reason the chef stated.
+ *  Grouped on the TEXT: inline list additions mean a reason can legitimately
+ *  be a word `list_options` has never seen. */
+export type SectionLossReasonRow = {
+  reason: string
+  events: number
+  value: string
+}
+
+/** `issue_frequency`, verbatim. `issue_count` counts issues FILED — the view
+ *  filters `reverses_id is null` and nothing else, so a voided issue's original
+ *  is still in it. `sessions` is a comma-joined string, not an array. */
+export type IssueFrequencyRow = {
+  issue_date: string
+  issue_count: number
+  sessions: string
+  extra_count: number
+}
+
+/** Who is posted to a department. A NARROWED select on purpose: `STAFF_SELECT`
+ *  carries `base_salary` and `phone`, and everything in an RSC payload is
+ *  shipped to the browser — a chef has no reason to hold a cook's salary. */
+export type SectionStaffRow = {
+  id: string
+  code: string
+  name: string
+  designation: string | null
+  grade: string | null
+  employment_type: string
+}
+
 export type DishUsage = {
   scope: string
   recipe_id: string

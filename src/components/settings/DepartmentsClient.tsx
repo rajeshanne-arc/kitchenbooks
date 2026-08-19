@@ -1,5 +1,7 @@
 'use client'
 
+import Link from 'next/link'
+
 // The departments editor.
 //
 // THE NAME IS EDITABLE, THE CODE IS NOT, and the reason is on screen: dish
@@ -316,7 +318,18 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
                   </tr>
                 ) : (
                   <tr key={r.id} className={`${trCls} ${r.status === 'inactive' ? 'opacity-60' : ''}`}>
-                    <td className={`${tdCls} font-medium`}>{r.name}</td>
+                    {/* THE ROW IS THE DOOR. This screen is the master — rename,
+                        retire, receives-stock — and everything ALREADY KNOWN
+                        about a department lives one level down, scattered across
+                        seven views until now. */}
+                    <td className={`${tdCls} font-medium`}>
+                      <Link
+                        href={`/kitchen/departments/${r.code}`}
+                        className="text-emerald-700 hover:underline"
+                      >
+                        {r.name}
+                      </Link>
+                    </td>
                     <td className={tdCodeCls}>{r.code}</td>
                     <td className={`${tdCls} text-stone-500`}>{r.dept_group}</td>
                     <td className={`${tdCls} text-center text-xs`}>

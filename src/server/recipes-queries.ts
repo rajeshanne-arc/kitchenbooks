@@ -22,7 +22,16 @@ export async function listDishCosts(restaurantId: string): Promise<DishCostRow[]
            dc.selling_price::text as selling_price,
            dc.food_cost_pct::text as food_cost_pct,
            dc.uncosted_lines::int as uncosted_lines,
-           dc.status
+           dc.status,
+           -- WIDENED rather than cloned. The department page needs the course,
+           -- the portions and the target the flag is set against; adding five
+           -- columns here is smaller than a second reader of the same view,
+           -- and the repo punishes duplicate readers.
+           dc.course,
+           dc.portions::text as portions,
+           dc.cost_per_portion::text as cost_per_portion,
+           dc.target_pct::text as target_pct,
+           dc.flag
     from dish_costs dc
     join sections s on s.restaurant_id = dc.restaurant_id and s.code = dc.section_code
     where dc.restaurant_id = ${restaurantId}

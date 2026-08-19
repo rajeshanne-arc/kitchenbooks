@@ -208,7 +208,7 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
                         {f.qty_given ?? 'cancelled'}
                       </td>
                       <td className={`${tdCls} text-right`}>
-                        <GapCell gap={f.gap} unit={f.purchase_unit} />
+                        <GapCell gap={f.gap} unit={f.purchase_unit} status={indent.status} />
                       </td>
                       <td className={`${tdNumCls} ${returned > 0 ? 'text-stone-900' : 'text-stone-400'}`}>
                         {returned > 0 ? returned : '—'}

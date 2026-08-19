@@ -1257,6 +1257,24 @@ async function run() {
     assert.ok(!/coalesce\(qty_given/.test(body), 'qty_given is coalesced — cancelled would read as zero')
     assert.ok(!/coalesce\(gap/.test(body), 'gap is coalesced — cancelled would read as no shortage')
 
+    // EVERY reader of the view, not just the one this assertion was written
+    // for. It was name-scoped to getIndentFulfilment, so a second reader —
+    // the department page's getDepartmentByCode — would have slipped straight
+    // past it. A gate scoped to the place the first fault happened cannot find
+    // the second one.
+    const dept = readFileSync('src/server/department-queries.ts', 'utf8')
+    for (const [file, text] of [
+      ['kitchen-queries.ts', src],
+      ['department-queries.ts', dept],
+    ] as const) {
+      const reads = text.split(/\n\s*\n/).filter((b) => /from indent_fulfilment/.test(b))
+      assert.ok(reads.length > 0, `${file} should read indent_fulfilment`)
+      for (const block of reads) {
+        assert.ok(!/coalesce\(\s*qty_given/i.test(block), `${file}: qty_given coalesced`)
+        assert.ok(!/coalesce\(\s*gap/i.test(block), `${file}: gap coalesced`)
+      }
+    }
+
     const def = await tsql<{ d: string }[]>`
       select pg_get_viewdef('indent_fulfilment'::regclass, true) as d`
     assert.match(def[0].d, /'cancelled'::text THEN NULL/, 'the view stopped nulling cancelled rows')
@@ -3145,6 +3163,297 @@ async function run() {
     ] as const) {
       assert.ok(Array.isArray(await getNameHistory(rid, field)), `${field} resolves`)
     }
+  })
+
+  /* ── THE DEPARTMENT DRILL-DOWN ────────────────────────────────────────
+     A page whose whole design problem is preconditions. Against live data
+     almost every card is unassessable, so the assertions that matter are the
+     ones that would catch a confident zero — not the ones that check a query
+     returns rows. */
+
+  await check('every department resolves, and a bogus code does not', async () => {
+    const { getDepartment, DEPT_CODE } = await import('../src/server/department-queries')
+    const codes = await tsql<{ code: string }[]>`
+      select code from sections where restaurant_id = ${rid} order by code`
+    assert.ok(codes.length > 0, 'no departments — nothing to drill into')
+    for (const { code } of codes) {
+      const d = await getDepartment(rid, code)
+      assert.ok(d !== null, `${code} must resolve`)
+      assert.equal(d.code, code)
+      // BOTH KEYS, resolved once. Seven views key on the text code and six
+      // relations key on the uuid; a page holding only one of them is a 42703
+      // waiting for whichever card reaches for the other.
+      assert.match(d.id, /^[0-9a-f-]{36}$/, `${code} must carry its uuid`)
+      // a lowercase code in a URL must find the same department, not 404
+      const lower = await getDepartment(rid, code.toLowerCase())
+      assert.equal(lower?.id, d.id, `${code.toLowerCase()} must resolve to the same department`)
+    }
+    assert.equal(await getDepartment(rid, 'ZZ'), null, 'an unknown code is not found')
+    assert.equal(await getDepartment(rid, 'not-a-code'), null, 'a malformed code never reaches Postgres')
+    assert.equal(DEPT_CODE.test('CH'), true)
+    // the guard is letters only, so nothing punctuated ever reaches the query
+    assert.equal(DEPT_CODE.test('CH%20OR%201'), false, 'the guard refuses anything but letters')
+    assert.equal(DEPT_CODE.test('TOOLONG'), false, 'and refuses anything longer than a code')
+  })
+
+  await check('every department read runs against the real database', async () => {
+    // The rule the schema gate cannot enforce: a query that typechecks can
+    // still name a column that does not exist. issue_frequency in particular
+    // has NEVER been read by this repository before, so nothing has ever
+    // proved it works.
+    const { getDepartment, getDepartmentByCode, getDepartmentById, getDepartmentEvidence } = await import(
+      '../src/server/department-queries'
+    )
+    const period = resolvePeriod('last-3-months', new Date().toISOString().slice(0, 10))
+    const codes = await tsql<{ code: string }[]>`
+      select code from sections where restaurant_id = ${rid} order by code`
+    let rhythmRows = 0
+    let indentRows = 0
+    for (const { code } of codes) {
+      const d = await getDepartment(rid, code)
+      assert.ok(d)
+      const byCode = await getDepartmentByCode(rid, d.code, period.months, period.from, period.to)
+      const byId = await getDepartmentById(rid, d.id, period.from, period.to)
+      const ev = await getDepartmentEvidence(rid, d.code, d.id, period.from, period.to)
+      rhythmRows += byCode.rhythm.length
+      indentRows += byCode.indents.length
+      assert.equal(typeof ev.sales, 'boolean')
+      for (const r of byId.shift) {
+        assert.ok(r.closed === null || Number(r.closed) >= 0, 'a closing is null or a figure, never NaN')
+      }
+    }
+    assert.ok(rhythmRows > 0, 'issue_frequency returned nothing for any department — its first reader is untested')
+    assert.ok(indentRows > 0, 'indent_fulfilment returned nothing — the richest card is untested')
+    console.log(`      ${codes.length} departments · ${indentRows} indent lines · ${rhythmRows} issue days`)
+  })
+
+  await check('margin is refused while sales or labour rest on nothing', async () => {
+    // THE FAULT THIS PAGE IS MOST LIKELY TO SHIP. section_costs COALESCEs every
+    // figure to 0 and publishes no honesty column, so South Indian reads
+    // sales 0, labour 0, margin -7498 — and on a page titled after a department
+    // that is an accusation about a named team, not a measurement.
+    const { getDepartment, getDepartmentEvidence } = await import('../src/server/department-queries')
+    const period = resolvePeriod('this-month', new Date().toISOString().slice(0, 10))
+
+    const [{ n: marks }] = await tsql<{ n: number }[]>`
+      select count(*)::int as n from attendance
+      where restaurant_id = ${rid} and att_date between ${period.from}::date and ${period.to}::date`
+
+    const codes = await tsql<{ code: string }[]>`
+      select code from sections where restaurant_id = ${rid} order by code`
+    for (const { code } of codes) {
+      const d = await getDepartment(rid, code)
+      assert.ok(d)
+      const ev = await getDepartmentEvidence(rid, d.code, d.id, period.from, period.to)
+      // SALES MUST REST ON ATTRIBUTABLE REVENUE, not on "was any POS day
+      // fetched". This assertion originally asserted the latter — it encoded
+      // the very behaviour that would hand all sixteen departments a confident
+      // 0 and a red negative margin the day the POS is switched on, because
+      // revenue reaches a department only through pos_item_map → recipes.
+      const [{ n: mine }] = await tsql<{ n: number }[]>`
+        select count(*)::int as n
+        from pos_lines pl
+        join pos_orders o on o.id = pl.order_id
+        join pos_item_map m on m.restaurant_id = pl.restaurant_id and m.pos_item_id = pl.pos_item_id
+        join recipes r on r.id = m.recipe_id
+        where pl.restaurant_id = ${rid} and r.section_id = ${d.id}
+          and o.business_date between ${period.from}::date and ${period.to}::date`
+      assert.equal(ev.sales, mine > 0, `${code}: sales evidence must follow MAPPED revenue for this section`)
+      if (marks === 0) assert.equal(ev.labour, false, `${code}: no attendance anywhere means no labour figure`)
+    }
+
+    const withCost = await tsql<{ section_code: string; margin: string }[]>`
+      select section_code, margin::text as margin from section_costs
+      where restaurant_id = ${rid} and month = any(${period.months}::date[])`
+    for (const row of withCost) {
+      const d = await getDepartment(rid, row.section_code)
+      if (!d) continue
+      const ev = await getDepartmentEvidence(rid, d.code, d.id, period.from, period.to)
+      if (!ev.sales || !ev.labour) {
+        assert.ok(
+          Number(row.margin) !== 0,
+          `${row.section_code}: section_costs publishes margin ${row.margin} the page must NOT show`,
+        )
+        console.log(
+          `      ${row.section_code}: view says margin ${row.margin}; page refuses it (sales=${ev.sales} labour=${ev.labour})`,
+        )
+      }
+    }
+  })
+
+  await check('a structural impossibility never renders as missing data', async () => {
+    // SF and KS are dept_kind='kitchen' and CANNOT code dishes; ST/AC/VL/SC
+    // cannot receive stock. Rendering an empty list for either sends a chef
+    // looking for data that can never exist — and an empty food-cost card on an
+    // operational department would tell it it owes a closing it can never file.
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/kitchen/departments/[code]/page.tsx', 'utf8')
+    assert.match(page, /No dish can be coded to/, 'the dish card must state the structural reason')
+    assert.match(page, /!dept\.codes_dishes/, 'and gate it on codes_dishes, not on an empty list')
+    assert.match(page, /!dept\.receives_stock/, 'the indent and rhythm cards gate on receives_stock')
+    assert.match(page, /Food cost is a kitchen question/, 'a non-cooking department is told why, not shown nothing')
+    assert.match(page, /function NotApplicable/, 'and it is a different component from "cannot be assessed"')
+
+    const rows = await tsql<{ code: string; dept_kind: string; codes_dishes: boolean; receives_stock: boolean }[]>`
+      select code, dept_kind, codes_dishes, receives_stock from sections where restaurant_id = ${rid}`
+    const kitchenNoDishes = rows.filter((r) => r.dept_kind === 'kitchen' && !r.codes_dishes).map((r) => r.code)
+    assert.ok(
+      kitchenNoDishes.length > 0,
+      'no kitchen department lacks codes_dishes — so dept_kind alone would look sufficient and this cannot fail',
+    )
+    console.log(`      kitchen but cannot code dishes: ${kitchenNoDishes.join(' ')}`)
+    console.log(`      cannot receive stock: ${rows.filter((r) => !r.receives_stock).map((r) => r.code).join(' ')}`)
+  })
+
+  await check('a card that CANNOT apply never says "cannot be assessed"', async () => {
+    // The doctrine, checked per card per department rather than asserted once.
+    // An adversarial pass found four cards that reported a structural
+    // impossibility as missing data — the Store was told nothing had moved
+    // "from the store to Store" yet, which invites an entry saveIssue refuses.
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/kitchen/departments/[code]/page.tsx', 'utf8')
+
+    // every card that CAN be structurally impossible must branch on the column
+    // that governs it, before it reaches its data branch
+    for (const [card, guard] of [
+      ['Lost, by reason', '!cooks'],
+      ['Did it get what it asked for?', '!indents'],
+      ['Daily rhythm', '!dept.receives_stock'],
+      ['Dishes', '!dept.codes_dishes'],
+      ['Made and held', '!cooks'],
+      ['Food cost', '!cooks'],
+    ] as const) {
+      const i = page.indexOf(`title="${card}"`)
+      assert.ok(i > 0, `${card} card is missing`)
+      const body = page.slice(i, i + 900)
+      assert.ok(body.includes(guard), `${card} must gate on ${guard} before reporting missing data`)
+    }
+    // an indent needs BOTH — saveIndent asserts kitchen/bar AND receives_stock
+    assert.match(page, /const indents = cooks && dept\.receives_stock/, 'the indent gate lost one of its two halves')
+    // and a retired department is not owed a closing
+    assert.match(page, /dept\.status === 'active' &&/, 'cooks must exclude a retired department')
+  })
+
+  await check('the food-cost card does not demand a closing that cannot help', async () => {
+    // section_food_cost is driven FROM section_consumption, which ends
+    //   where coalesce(iss.v,0) <> 0 or coalesce(ret.v,0) <> 0
+    // so a department with no issue and no return can NEVER acquire a row —
+    // filing the closing the card used to ask for would not change the answer.
+    const [{ d }] = await tsql<{ d: string }[]>`
+      select pg_get_viewdef('section_consumption'::regclass, true) as d`
+    assert.match(
+      d,
+      /COALESCE\(iss\.v, 0::numeric\) <> 0::numeric OR COALESCE\(ret\.v, 0::numeric\) <> 0::numeric/,
+      'section_consumption stopped requiring movement — the has_activity branch may no longer be needed',
+    )
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/kitchen/departments/[code]/page.tsx', 'utf8')
+    assert.match(page, /!fc\.has_activity/, 'the card must read has_activity, which is published for exactly this')
+    assert.match(page, /nothing issued this month/, 'and say so instead of "pending closing"')
+    // and the issued figure must live ONLY in the branch where it is a measurement
+    const i = page.indexOf('needs="nothing issued this month"')
+    const j = page.indexOf('needs="pending closing"')
+    assert.ok(i > 0 && j > i, 'the no-activity branch must come BEFORE the pending-closing branch')
+    assert.ok(
+      !page.slice(i, j).includes('money(fc'),
+      'a coalesced 0.00 must not be printed as an issued figure where nothing was issued',
+    )
+  })
+
+  await check('an unfilled indent is not called short', async () => {
+    // indent_fulfilment computes coalesce(qty_given, 0) − qty_requested, so an
+    // OPEN request the store has not touched arrives as −5 and read as
+    // "Short 5 kg" IN RED — an accusation for a request nobody has been given
+    // the chance to fill. BOTH readers of GapCell had it; live data has no open
+    // indent, so nothing on this database could ever have caught it.
+    const [{ d }] = await tsql<{ d: string }[]>`
+      select pg_get_viewdef('indent_fulfilment'::regclass, true) as d`
+    assert.match(d, /ELSE COALESCE\(g\.qty_given, 0::numeric\) - l\.qty_requested/, 'the gap stopped coalescing an unfilled indent to 0')
+
+    const { readFileSync } = await import('node:fs')
+    const cell = readFileSync('src/components/kitchen/GapCell.tsx', 'utf8')
+    assert.match(cell, /status === 'open'/, 'GapCell must know an open indent is not short')
+    assert.match(cell, /not issued yet/, 'and say so')
+    // EVERY caller passes it, or the component cannot apply the rule
+    for (const f of [
+      'src/app/kitchen/departments/[code]/page.tsx',
+      'src/app/kitchen/indent/[id]/page.tsx',
+    ]) {
+      const src = readFileSync(f, 'utf8')
+      const uses = src.match(/<GapCell[^>]*\/>/gs) ?? []
+      assert.ok(uses.length > 0, `${f} should render GapCell`)
+      for (const u of uses) assert.match(u, /status=/, `${f}: GapCell without a status would call an open indent short`)
+    }
+  })
+
+  await check('the biggest loss is at the top, and a voided one is not a row', async () => {
+    // `order by 3 desc` pointed at a ::text cast, so 9.00 sorted above 100.00
+    // and the worst reason was not first — which is the whole point of the card.
+    const { readFileSync } = await import('node:fs')
+    const q = readFileSync('src/server/department-queries.ts', 'utf8')
+    assert.match(q, /order by coalesce\(sum\(w\.value\), 0\) desc/, 'the loss table is ordered by text again')
+    // STRIP COMMENTS FIRST. The fix's own comment quotes the old bad clause to
+    // explain it, and a naive grep matched that and failed — the same blind
+    // spot audit:schema had until it learned to strip SQL comments.
+    const code = q.replace(/--[^\n]*/g, '')
+    assert.ok(!/order by 3 desc/.test(code), 'an ordinal into a ::text column sorts lexically')
+    // and a fully-voided day or reason must vanish rather than print 0.00
+    assert.equal((q.match(/having count\(\*\) filter/g) ?? []).length, 2, 'both groups must drop when every row is voided')
+
+    // proof that the ordering actually differed
+    const [row] = await tsql<{ lex: string; num: string }[]>`
+      select (array_agg(v order by v::text desc))[1] as lex,
+             (array_agg(v order by v desc))[1] as num
+      from (values (9.00), (100.00), (10.00)) as x(v)`
+    assert.equal(row.lex, '9.00', 'text ordering puts 9 first')
+    assert.equal(row.num, '100.00', 'numeric ordering puts 100 first')
+  })
+
+  await check('the labour evidence mirrors the view it certifies', async () => {
+    // labour_cost_by_section carries `where st.employment_type <> 'contract'`,
+    // so counting contract marks as evidence would call the leg assessable and
+    // then read 0.00 off a view that deliberately excluded those people — a
+    // measurement made of an exclusion, and it would unlock the margin too.
+    const [{ d }] = await tsql<{ d: string }[]>`
+      select pg_get_viewdef('labour_cost_by_section'::regclass, true) as d`
+    assert.match(d, /WHERE st\.employment_type <> 'contract'::text/, 'the view stopped excluding contract staff')
+    const { readFileSync } = await import('node:fs')
+    const q = readFileSync('src/server/department-queries.ts', 'utf8')
+    assert.match(q, /st\.employment_type <> 'contract'/, 'the evidence must exclude them too')
+    assert.match(q, /from attendance_current a/, 'and read the same corrected marks the view reads')
+  })
+
+  await check('a dish with uncosted ingredients does not show a confident cost', async () => {
+    // dish_costs prices an ingredient with no bill behind it at 0 and publishes
+    // uncosted_lines to say so. Printing the batch total without that turns a
+    // half-priced recipe into a cheap dish, and the flag can come out green.
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/kitchen/departments/[code]/page.tsx', 'utf8')
+    assert.match(page, /d\.uncosted_lines > 0 \?/, 'uncosted_lines must change what the cost cell shows')
+    assert.match(page, /costs understated/, 'and the card must say so once, with a count')
+    const { listDishCosts } = await import('../src/server/recipes-queries')
+    const dishes = await listDishCosts(rid)
+    for (const d of dishes) {
+      assert.equal(typeof d.uncosted_lines, 'number', `${d.code}: uncosted_lines must arrive as a number`)
+      assert.ok(d.flag === 'OK' || d.flag === 'HIGH' || d.flag === 'CHECK', `${d.code}: unknown flag ${d.flag}`)
+    }
+  })
+
+  await check('the department page never reads unassigned_marks', async () => {
+    // It is count(*) filter (where st.section_id is null), grouped under
+    // coalesce(s.code, '—'). On a REAL department's row it is therefore
+    // structurally always 0 — a permanent all-clear against an honesty column
+    // that can never fire, the exact shape of the four dashboard cards that
+    // reported clean bills of health over missing data.
+    const { readFileSync } = await import('node:fs')
+    const q = readFileSync('src/server/department-queries.ts', 'utf8')
+    assert.ok(!/select[\s\S]{0,400}unassigned_marks/.test(q), 'unassigned_marks is back in the department reads')
+
+    const def = await tsql<{ d: string }[]>`
+      select pg_get_viewdef('labour_cost_by_section'::regclass, true) as d`
+    assert.match(def[0].d, /FILTER \(WHERE st\.section_id IS NULL\)/, 'unassigned_marks stopped being a null-section count')
+    assert.match(def[0].d, /COALESCE\(s\.code, '—'::text\)/, 'the unassigned bucket stopped being its own row')
+    assert.match(q, /unsalaried_marks/, 'the honesty column that CAN fire must still be read')
   })
 
   await check('a vendor-return void returns EVERY view to where it started', async () => {

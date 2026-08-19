@@ -15,3 +15,21 @@ export const fmtDateTime = (ts: string): string =>
     minute: '2-digit',
     timeZone: 'Asia/Kolkata',
   })
+
+/** '2026-08-01','2026-08-17' -> '1–17 Aug 2026'; collapses the parts the two
+ *  ends share, so a period reads as a phrase rather than two dates.
+ *  A period control that names only its preset ("This month") leaves the
+ *  reader guessing whether "this month" ends today or at month end. */
+export function fmtRange(from: string, to: string): string {
+  if (from === to) return fmtDate(from)
+  const a = new Date(`${from}T00:00:00`)
+  const b = new Date(`${to}T00:00:00`)
+  const day = (d: Date) => d.toLocaleDateString('en-IN', { day: 'numeric' })
+  const monYear = (d: Date) => d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+  const mon = (d: Date) => d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+  if (a.getFullYear() === b.getFullYear()) {
+    if (a.getMonth() === b.getMonth()) return `${day(a)}–${day(b)} ${monYear(b)}`
+    return `${mon(a)} – ${mon(b)} ${b.getFullYear()}`
+  }
+  return `${fmtDate(from)} – ${fmtDate(to)}`
+}

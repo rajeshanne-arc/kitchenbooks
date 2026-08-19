@@ -21,11 +21,23 @@ const nf = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 3 })
 export default function GapCell({
   gap,
   unit,
+  status,
 }: {
   /** given − requested, as a numeric string; null when cancelled */
   gap: string | null
   unit: string
+  /** the INDENT's status. An OPEN indent is not short — nobody has answered it
+   *  yet, and the view cannot say so on its own: it computes
+   *  `coalesce(qty_given, 0) − qty_requested`, so an untouched request of 5 kg
+   *  arrives here as −5 and read as "Short 5 kg" in red. That is an accusation
+   *  against the store for a request they have not been given the chance to
+   *  fill. Both readers of this component had that bug; the fix lives here so
+   *  neither can have it again. */
+  status?: string
 }) {
+  if (status === 'open') {
+    return <span className="text-[13px] text-stone-400">not issued yet</span>
+  }
   if (gap === null) {
     return <span className="text-[13px] text-stone-400">cancelled</span>
   }

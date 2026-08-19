@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getSectionCosts } from '@/server/labour-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
@@ -25,11 +26,30 @@ function Row({ r, loud }: { r: SectionCostRow; loud?: boolean }) {
   return (
     <li className={`py-2.5 ${loud ? 'rounded-lg border border-red-200 bg-red-50 px-2.5' : ''}`}>
       <div className={`grid items-center gap-2 ${GRID}`}>
+        {/* THE INDEX LINKS TO ITS DETAIL. This screen compares sixteen
+            departments; the per-department page answers about one, and the four
+            figures here are the only overlap — read from the SAME section_costs
+            view, so nothing is computed twice.
+
+            The '—' row is skipped deliberately: it is a synthetic bucket for
+            staff posted nowhere, has no `sections` row behind it, and routing to
+            /kitchen/departments/— would 404 for a reason nobody could guess. */}
         <span className="flex min-w-0 items-center gap-2">
           <span className="font-mono text-[11px] text-stone-400">{r.section_code}</span>
-          <span className={`truncate text-[15px] ${loud ? 'font-medium text-red-800' : 'text-stone-900'}`}>
-            {r.section_name}
-          </span>
+          {r.section_code === '—' ? (
+            <span className={`truncate text-[15px] ${loud ? 'font-medium text-red-800' : 'text-stone-900'}`}>
+              {r.section_name}
+            </span>
+          ) : (
+            <Link
+              href={`/kitchen/departments/${r.section_code}`}
+              className={`truncate text-[15px] hover:underline ${
+                loud ? 'font-medium text-red-800' : 'text-stone-900'
+              }`}
+            >
+              {r.section_name}
+            </Link>
+          )}
         </span>
         <Money v={r.consumption} cls="hidden text-stone-600 sm:block" />
         <Money v={r.labour} cls="hidden text-stone-600 sm:block" />
