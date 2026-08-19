@@ -73,29 +73,31 @@ export async function txn<T>(fn: (tx: postgres.TransactionSql) => Promise<T>): P
     const { getSessionUser } = await import('@/server/current-user')
     tenant = await resolvingSession.run(true, async () => (await getSessionUser())?.restaurantId ?? null)
   }
-  // THE SESSIONLESS PATHS, and the outage they caused.
+  // THE SESSIONLESS PATHS.
   //
   // Login runs BEFORE there is a session: it looks a username up in order to
-  // discover which restaurant the person belongs to. Under RLS that read has
+  // discover which restaurant that person belongs to. Under RLS that read has
   // no tenant to announce, so the policy casts an empty setting to uuid and
   // raises 22P02 — and `restaurants` is RLS'd too, so there is nothing left
-  // to discover the tenant FROM. The morning RLS went on, /login returned
-  // 500 for everyone and the whole app was unreachable.
+  // to discover the tenant FROM. The morning RLS went on, /login returned 500
+  // for everyone and the whole app was unreachable.
   //
-  // KB_TENANT names the restaurant THIS DEPLOYMENT serves. It is a
-  // deployment fact, not a user's answer, so it is a legitimate default in a
-  // way `issues.session` defaulting to 'Morning' never was — it is not
-  // standing in for a question anybody was asked.
+  // KB_TENANT patched that by naming the restaurant a deployment served, and
+  // it is GONE. It was a crutch that became a liability the moment a second
+  // restaurant existed: a deployment still naming one would silently override
+  // a correct username lookup and check the password against the wrong
+  // tenant's users — which is precisely the fault Phase 1.5 was written to
+  // remove, reintroduced through the environment.
   //
-  // BUT IT MAKES LOGIN SINGLE-TENANT, and that is the limitation to remove
-  // before a second restaurant signs in: a second tenant's users would not
-  // be found by this lookup at all. The permanent fix is a SECURITY DEFINER
-  // function that resolves a username to its tenant across the pool —
-  // authentication crosses tenants BY DEFINITION, so it is the one read that
-  // has to, and a definer function is the narrow hole to do it through
-  // rather than loosening a policy. Everything after login stays scoped by
-  // the session, which is why this hole is one lookup wide.
-  if (tenant === null) tenant = process.env.KB_TENANT ?? null
+  // The permanent answer is `tenant_for_username`, a SECURITY DEFINER
+  // function that resolves a username to its tenant across the pool.
+  // Authentication crosses tenants BY DEFINITION — it is the one read that
+  // has to — so it goes through one narrow, tightly-granted hole rather than
+  // a loosened policy or a global default. See verifyCredentials.
+  //
+  // So a null here announces NOTHING, which is correct: an unannounced read
+  // of a tenant table returns nothing under RLS, loudly and safely, instead
+  // of quietly returning somebody else's rows.
   const guc = tenantGuc(tenant)
   return sql.begin(async (tx) => {
     if (guc !== null) await tx.unsafe(guc)

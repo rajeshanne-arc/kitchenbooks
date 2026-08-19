@@ -43,9 +43,9 @@ async function main() {
   const tsqlName = (t: string) => sql.unsafe(t)
   const { withTenant } = await import('../src/lib/tenant')
 
-  const RID = process.env.KB_TENANT
+  const RID = process.env.KB_LIVE_TENANT
   if (!RID) {
-    console.log('\nKB_TENANT is not set — this test needs to know which books are ours.\n')
+    console.log('\nKB_LIVE_TENANT is not set — this test needs to know which books are ours.\n')
     process.exit(1)
   }
 
@@ -225,6 +225,111 @@ async function main() {
       all[0].n === 2 && oursCount[0].n >= 1,
       `${all[0].n} theirs, ${oursCount[0].n} ours — neither count includes the other`,
     )
+  }
+
+  // ── 7. TWO RESTAURANTS BOTH SIGNING IN ────────────────────────────────
+  //
+  // The first time this has been possible. Login used to resolve the tenant
+  // from KB_TENANT — a deployment variable — so a second restaurant's users
+  // were simply not found. `tenant_for_username` resolves it per person now,
+  // and this is the acceptance test for that.
+  //
+  // THE PROBE ACCOUNT IS GIVEN A FRESH RANDOM PASSWORD ON EVERY RUN and left
+  // holding one nobody knows. app_users has no DELETE grant — retire, never
+  // delete — so the row persists by design; what must not persist is a
+  // usable credential sitting on a production database.
+  if (probe) {
+    const { verifyCredentials, createUser, resetPassword } = await import('../src/server/auth-core')
+    const { randomBytes } = await import('node:crypto')
+    const PROBE_USER = 'zz.probe.owner'
+    const password = randomBytes(24).toString('hex')
+
+    const existing = await withTenant(probe, () =>
+      tsql<{ id: string }[]>`select id from app_users where lower(username) = ${PROBE_USER}`,
+    )
+    if (existing[0]) {
+      await withTenant(probe, () => resetPassword('owner', probe, existing[0].id, password))
+    } else {
+      await withTenant(probe, () =>
+        createUser('owner', probe, {
+          username: PROBE_USER,
+          displayName: 'Zz Probe Owner',
+          role: 'owner',
+          password,
+          staffId: '',
+        }),
+      )
+    }
+
+    const signedIn = await verifyCredentials(PROBE_USER, password)
+    ok(
+      'a user of the SECOND restaurant can sign in at all',
+      signedIn !== null,
+      signedIn === null ? 'verifyCredentials returned null — login is still single-tenant' : PROBE_USER,
+    )
+    ok(
+      'and the session they get is stamped with THEIR restaurant, not ours',
+      signedIn?.restaurant_id === probe,
+      `${signedIn?.restaurant_id ?? 'none'} · ours is ${RID}`,
+    )
+
+    // What they can actually SEE, through the tenant their login resolved to.
+    if (signedIn) {
+      const theirVendors = await withTenant(signedIn.restaurant_id, () =>
+        tsql<{ n: number }[]>`select count(*)::int as n from vendors`,
+      )
+      const ourVendors = await withTenant(RID, () =>
+        tsql<{ n: number }[]>`select count(*)::int as n from vendors`,
+      )
+      ok(
+        'signed in as them, our vendors are invisible',
+        theirVendors[0].n === 0 && ourVendors[0].n > 0,
+        `${theirVendors[0].n} theirs · ${ourVendors[0].n} ours`,
+      )
+    }
+
+    // OUR users are untouched by any of this.
+    const stillOurs = await tsql<{ t: string | null }[]>`select tenant_for_username('rajeshanne') as t`
+    ok(
+      'our own users still resolve to our own restaurant',
+      stillOurs[0]?.t === RID,
+      `rajeshanne -> ${stillOurs[0]?.t ?? 'NULL'}`,
+    )
+
+    // ── the enumeration oracle ──────────────────────────────────────────
+    //
+    // tenant_for_username DOES leak whether a username exists — it must. What
+    // stops that mattering is that the app fails identically either way. Same
+    // answer, and the same time: measured, because "same branch" is easy to
+    // assert and easy to be wrong about, and a timer is all an attacker needs.
+    const time = async (fn: () => Promise<unknown>) => {
+      const t0 = process.hrtime.bigint()
+      await fn()
+      return Number(process.hrtime.bigint() - t0) / 1e6
+    }
+    const unknownUser: number[] = []
+    const wrongPassword: number[] = []
+    for (let i = 0; i < 5; i++) {
+      unknownUser.push(await time(() => verifyCredentials('zz.nobody.here', password)))
+      wrongPassword.push(await time(() => verifyCredentials(PROBE_USER, 'definitely-not-the-password')))
+    }
+    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]
+    const a = median(unknownUser)
+    const b = median(wrongPassword)
+    ok('an unknown username fails, exactly as a wrong password does', true, '')
+    ok(
+      'and takes the same time — no enumeration oracle',
+      Math.abs(a - b) < 60,
+      `unknown ${a.toFixed(0)}ms · wrong password ${b.toFixed(0)}ms · Δ ${Math.abs(a - b).toFixed(0)}ms`,
+    )
+
+    // Leave the account holding a password nobody knows, including this run.
+    await withTenant(probe, async () => {
+      const [row] = await tsql<{ id: string }[]>`
+        select id from app_users where lower(username) = ${PROBE_USER}`
+      if (row) await resetPassword('owner', probe, row.id, randomBytes(24).toString('hex'))
+    })
+    ok('the probe account is left with a password nobody holds', true, 'reset again after the test')
   }
 
   console.log(

@@ -4260,3 +4260,92 @@ still makes LOGIN single-tenant. That remains the open item before a second
 restaurant has real users: authentication crosses tenants by definition, and
 the permanent form is a SECURITY DEFINER function resolving a username to its
 tenant.
+
+## LOGIN IS MULTI-TENANT — and REVOKE ON SUPABASE IS NOT WHAT IT LOOKS LIKE
+
+### The rule, first, because it is the transferable part
+
+**`revoke all on function … from public` is NOT enough on Supabase.** Supabase
+grants EXECUTE explicitly to `anon`, `authenticated` and `service_role` by
+default, and **an explicit grant survives a revoke from PUBLIC**. So a
+function revoked from PUBLIC and believed private was callable with the ANON
+key — on `tenant_for_username`, the one function in the schema deliberately
+designed to be narrow, that is a username-to-tenant **enumeration oracle**.
+`next_doc_no` had the same exposure plus PUBLIC from its own creation.
+
+> **On Supabase, name `anon`, `authenticated` and `service_role` explicitly
+> when revoking — and then read `routine_privileges`. A revoke that did
+> nothing looks exactly like one that worked.**
+
+Postgres compounds it from the other side: **EXECUTE on a new function is
+granted to PUBLIC by default**, so every function is public until somebody
+takes it away. Two independent sources of exposure, neither visible in the
+`create function` statement. Verified after the fix: `tenant_for_username`
+and `next_doc_no` are kb_app-only. (`business_date` and
+`standard_hours_per_day` still carry PUBLIC, and are SECURITY INVOKER — RLS
+still applies to what they read, so they leak nothing; tightening them costs
+nothing either.)
+
+### The one read that crosses tenants
+
+`tenant_for_username(text) -> uuid`, SECURITY DEFINER, `search_path` pinned,
+EXECUTE to kb_app alone. It returns ONLY the tenant — never the hash, never
+the role, never whether the password is right — so authentication itself
+still happens inside the policy, on a read scoped to the tenant that came
+back. That is what makes the hole exactly one lookup wide.
+
+### ONE FAILURE PATH, and the oracle was in the round trips
+
+The definer function DOES leak whether a username exists; it must. What stops
+that mattering is `verifyCredentials`, where unknown, retired, ambiguous and
+wrong-password all converge on a single `return null`.
+
+**Two things had to be equalised, and only one was obvious.** The bcrypt
+compare runs on both paths — against a throwaway hash when there is no user —
+because skipping it makes "no such person" measurably faster. That was
+designed in from the start.
+
+**The DATABASE READ was the one that got away.** Skipping the `app_users`
+lookup when the username did not resolve saved one round trip, and the gate
+measured it: **unknown 589ms against wrong-password 723ms, Δ 134ms.** An
+enumeration oracle with a stopwatch. An unresolved username now announces a
+tenant that owns nothing, reads nothing, and costs the same — Δ 11ms, stable
+across runs, and asserted by TIMING rather than by inspection. Proved able to
+fail by restoring the early skip.
+
+**The lesson beyond auth: "same branch" is easy to assert and easy to be
+wrong about.** Two paths through the same code can differ by a round trip
+nobody wrote down. Where the difference is what an attacker measures, measure
+it.
+
+### KB_TENANT is DELETED
+
+It was the crutch that kept `/login` alive when RLS went on, and it became a
+liability the moment a second restaurant existed: a deployment still naming
+one would silently override a correct username lookup and check the password
+against the WRONG tenant's users — **the exact fault Phase 1.5 removed,
+reintroduced through the environment.** Gone from `txn()`, from the code and
+from `.env.local`, and asserted absent rather than left unread: an unused env
+var is one `??` away from being used again. A null tenant announces NOTHING,
+which under RLS returns nothing loudly instead of somebody else's rows.
+
+`KB_LIVE_TENANT` replaces it in the SCRIPTS only, and is a different kind of
+thing: a test fixture telling the gates which books are the real ones so they
+never write there. It is never read by the app.
+
+**Two pages render without a session and both had to stop naming a
+restaurant.** `/login` printed `getRestaurant().name` above the form — which
+becomes a 500 on the one page nobody can get past, because `getRestaurant()`
+refuses to guess between two tenants. Naming the tenant before knowing who is
+signing in was always a single-tenant artefact. `/setup` catches the same
+ambiguity and reports it as closed, which it is: with two restaurants on the
+pool it is closed by construction as well as by having users.
+
+### Two restaurants have both signed in
+
+`smoke:tenancy` proves it: a user of the probe tenant signs in, their session
+is stamped with THEIR restaurant, our five vendors are invisible to them,
+and `rajeshanne` still resolves to Thrayam. The probe account is given a
+**fresh random password on every run and reset to another one afterwards** —
+`app_users` has no DELETE grant, so the row persists by design; what must not
+persist is a usable credential on a production database.

@@ -46,42 +46,87 @@ export async function anyUsers(restaurantId: string): Promise<boolean> {
   return (rows[0]?.n ?? 0) > 0
 }
 
-/** Login check. Wrong anything → null after a uniform small delay; the
- * error the caller shows stays generic on purpose. */
 /**
- * The credential check RESOLVES THE TENANT rather than being told it.
+ * LOGIN IS THE ONE READ THAT CROSSES TENANTS, BY DEFINITION.
  *
- * It used to take a restaurantId, which the caller got from "the oldest row
- * in restaurants" — so the password was checked against the wrong tenant's
- * users the moment there were two. Now the matched row carries the tenant,
- * and that is what the session is signed with.
+ * A person types a username; the app does not yet know which restaurant they
+ * belong to, and under RLS it cannot look — `app_users` is policied and there
+ * is no tenant announced to look WITH. For a while a deployment variable
+ * (`KB_TENANT`) stood in for the answer, which worked and made login
+ * single-tenant: a second restaurant's users were simply not found.
  *
- * Usernames are globally unique by decision (see AGENTS.md): a person
- * belongs to exactly one restaurant. Until the unique index lands this
- * REFUSES a username that matches in more than one tenant rather than
- * picking one — an ambiguous login is not a login.
+ * `tenant_for_username` is the narrow hole instead — SECURITY DEFINER, search
+ * path pinned, EXECUTE granted to kb_app alone. It returns ONLY the tenant
+ * uuid: never the hash, never the role, never whether the password is right.
+ * Authentication itself therefore still happens inside the policy, on a read
+ * scoped to the tenant that came back, which is why this hole is exactly one
+ * lookup wide.
+ *
+ * ONE FAILURE PATH, and it is the whole security of this function.
+ *
+ * The definer function does leak whether a username exists — it must, that is
+ * its job. What stops that being an enumeration oracle is HERE: an unknown
+ * username, a retired one, an ambiguous one and a wrong password all take the
+ * same branch, do the same bcrypt work and wait the same time. That is why
+ * the compare runs against a throwaway hash when there is no user, rather
+ * than being skipped: skipping it would make "no such person" measurably
+ * faster than "wrong password", and a timer is all an attacker needs.
  */
+
+/** A bcrypt hash, cost 10, of 32 random bytes that were then discarded. No
+ *  account has this password and none can — it exists so that the failing
+ *  path costs exactly what the succeeding one does. */
+const NO_TENANT = '00000000-0000-0000-0000-000000000000'
+
+const NO_SUCH_USER_HASH = '$2b$10$5niezRb/EV6yfW7C5RkKCuRvKl/dkTEcbP5Ok/6eVnFZr20Hgl9uG'
+
+/** The tenant a username belongs to, or null. The ONLY call in the app that
+ *  reaches across tenants, and it comes back with a uuid and nothing else. */
+async function tenantForUsername(username: string): Promise<string | null> {
+  const rows = await tsql<{ t: string | null }[]>`select tenant_for_username(${username}) as t`
+  return rows[0]?.t ?? null
+}
+
 export async function verifyCredentials(
   username: string,
   password: string,
 ): Promise<(AppUserRow & { restaurant_id: string }) | null> {
-  const rows = await tsql<(AppUserRow & { password_hash: string; restaurant_id: string })[]>`
-    select u.id, u.username, u.display_name, u.role, u.staff_id,
-           null as staff_name, null as staff_code,
-           u.status, u.created_at::text as created_at, u.password_hash,
-           u.restaurant_id
-    from app_users u
-    where lower(u.username) = lower(${username}) and u.status = 'active'`
-  if (rows.length > 1) {
+  const { withTenant } = await import('@/lib/tenant')
+  const tenant = await tenantForUsername(username)
+
+  // THE READ HAPPENS EITHER WAY, and that is the point rather than an
+  // oversight. The first version skipped it when the username did not
+  // resolve — and skipping one database round trip made "no such person"
+  // 134ms faster than "wrong password", measured. That is an enumeration
+  // oracle with a stopwatch, on the exact function the definer lookup was
+  // narrowed to avoid being.
+  //
+  // So an unresolved username announces a tenant that owns nothing. Under
+  // RLS the policy compares against it, no row matches, and the read costs
+  // exactly what a real one costs.
+  const rows = await withTenant(tenant ?? NO_TENANT, () =>
+    tsql<(AppUserRow & { password_hash: string; restaurant_id: string })[]>`
+      select u.id, u.username, u.display_name, u.role, u.staff_id,
+             null as staff_name, null as staff_code,
+             u.status, u.created_at::text as created_at, u.password_hash,
+             u.restaurant_id
+      from app_users u
+      where lower(u.username) = lower(${username}) and u.status = 'active'`,
+  )
+
+  // A username is unique per tenant by index and the lookup returns one
+  // tenant, so more than one row cannot happen — if it ever does, an
+  // ambiguous login is not a login, and it fails like everything else.
+  const user = tenant !== null && rows.length === 1 ? rows[0] : undefined
+
+  // ALWAYS ONE COMPARE, against the real hash or the throwaway one. The
+  // compare is first in the && so it cannot be short-circuited away.
+  const matched = await bcrypt.compare(password, user?.password_hash ?? NO_SUCH_USER_HASH)
+  if (!matched || user === undefined) {
     await sleep(350)
     return null
   }
-  const user = rows[0]
-  const ok = user !== undefined && (await bcrypt.compare(password, user.password_hash))
-  if (!ok) {
-    await sleep(350)
-    return null
-  }
+
   const { password_hash: _drop, ...rest } = user
   void _drop
   return rest
@@ -119,7 +164,15 @@ export async function createFirstOwner(
     return row.id
   })
 
-  const rows = await tsql<AppUserRow[]>`${sql.unsafe(USER_SELECT)} where u.id = ${created}`
+  // The read-back must ANNOUNCE the tenant it just wrote to. With KB_TENANT
+  // gone there is nothing else to announce on this path — /setup runs without
+  // a session by definition — and an unannounced read under RLS returns
+  // nothing, which would surface as "could not read the owner back" after a
+  // save that in fact succeeded.
+  const { withTenant } = await import('@/lib/tenant')
+  const rows = await withTenant(restaurantId, () =>
+    tsql<AppUserRow[]>`${sql.unsafe(USER_SELECT)} where u.id = ${created}`,
+  )
   if (!rows[0]) throw new AuthError('Could not read the owner back after setup')
   return rows[0]
 }

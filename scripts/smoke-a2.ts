@@ -42,7 +42,7 @@ const check = (name: string, fn: () => void | Promise<void>) => {
  * A SCRIPT HAS NO SESSION, and under RLS an unannounced read sees nothing —
  * every tenant table raises 22P02, because the policy casts an empty
  * current_setting to uuid. So the suite announces its tenant explicitly, the
- * way a background job would. KB_TENANT lives in .env.local; it is a
+ * way a background job would. KB_LIVE_TENANT lives in .env.local; it is a
  * restaurant id, not a secret.
  */
 /**
@@ -91,10 +91,10 @@ async function census(tenant: string): Promise<Record<string, number>> {
 
 async function main() {
   const { withTenant } = await import('../src/lib/tenant')
-  const tenant = process.env.KB_TENANT
+  const tenant = process.env.KB_LIVE_TENANT
   if (!tenant) {
-    console.log('\nKB_TENANT is not set. Under RLS a script must name the tenant it is testing —')
-    console.log('add KB_TENANT=<restaurant id> to .env.local.\n')
+    console.log('\nKB_LIVE_TENANT is not set. Under RLS a script must name the tenant it is testing —')
+    console.log('add KB_LIVE_TENANT=<restaurant id> to .env.local.\n')
     process.exit(1)
   }
   if (!process.env.KB_PROBE_TENANT) {
@@ -103,7 +103,7 @@ async function main() {
     process.exit(1)
   }
   if (process.env.KB_PROBE_TENANT === tenant) {
-    console.log('\nKB_PROBE_TENANT and KB_TENANT are the same restaurant. The whole point is that')
+    console.log('\nKB_PROBE_TENANT and KB_LIVE_TENANT are the same restaurant. The whole point is that')
     console.log('they are not.\n')
     process.exit(1)
   }
@@ -1832,7 +1832,16 @@ async function run() {
     const start = core.indexOf('export async function verifyCredentials(')
     const body = core.slice(start, core.indexOf('\nexport ', start + 1))
     assert.ok(!/restaurantId: string/.test(body), 'verifyCredentials is told the tenant again')
-    assert.match(body, /rows\.length > 1/, 'an ambiguous login would pick a tenant')
+    // AN AMBIGUOUS MATCH MUST NOT RESOLVE TO A TENANT. This used to be spelled
+    // `rows.length > 1` — a guard against one username existing in two
+    // restaurants, back when the read swept every tenant it could see. The
+    // tenant now comes from tenant_for_username, which returns ONE uuid, and
+    // the read is scoped to it; within a tenant the unique index on
+    // lower(username) makes a second row impossible. So the property is
+    // stated as `rows.length === 1`, which is the same guarantee and also
+    // routes the zero-row case through the single failure path.
+    assert.match(body, /rows\.length === 1 \? rows\[0\] : undefined/, 'an ambiguous login would pick a tenant')
+    assert.match(body, /tenantForUsername\(username\)/, 'login no longer resolves the tenant from the username')
   })
 
   await check('the no-session fallback answers only while it cannot be wrong', async () => {
@@ -4879,7 +4888,7 @@ async function run() {
     // just a naming convention: every event table in the live restaurant is
     // counted before and after. A gate that writes there — committed, or
     // rolled back and then not rolled back — moves a number here.
-    const after = await census(process.env.KB_TENANT as string)
+    const after = await census(process.env.KB_LIVE_TENANT as string)
     const moved = EVENT_TABLES.filter((t) => after[t] !== liveBefore[t]).map(
       (t) => `${t}: ${liveBefore[t]} → ${after[t]}`,
     )
@@ -4889,6 +4898,71 @@ async function run() {
       [],
       `these gates wrote to the LIVE books — point them at KB_PROBE_TENANT:\n      ${moved.join('\n      ')}`,
     )
+  })
+
+
+  await check('KB_TENANT is GONE from the app, not merely unused', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    // IT WAS THE CRUTCH AND IT BECAME A LIABILITY. A deployment still naming
+    // one restaurant would silently override a correct username lookup and
+    // check the password against the WRONG tenant's users — which is exactly
+    // the fault Phase 1.5 removed, reintroduced through the environment.
+    //
+    // Asserted as absent from the code rather than left unread: an unused
+    // env var is one `??` away from being used again.
+    const offenders: string[] = []
+    for (const file of walk('src')) {
+      const src = readFileSync(file, 'utf8')
+      for (const m of src.matchAll(/process\.env\.KB_TENANT/g)) {
+        void m
+        offenders.push(file.replace('src/', ''))
+      }
+    }
+    assert.deepEqual(
+      offenders,
+      [],
+      `KB_TENANT is being read again — a deployment default would override the username lookup:\n      ${offenders.join('\n      ')}`,
+    )
+    // ...and the fallback it lived in is gone from txn() specifically
+    const db = readFileSync('src/lib/db.ts', 'utf8')
+    assert.ok(
+      !/tenant = process\.env/.test(db),
+      'txn() has an environment fallback again — a null tenant must announce NOTHING',
+    )
+    console.log('      no env fallback in txn(); no reader anywhere in src')
+  })
+
+  await check('login has exactly ONE failure path, and it does the same work', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/auth-core.ts', 'utf8')
+    const fn = src.slice(src.indexOf('export async function verifyCredentials'), src.indexOf('/** The bootstrap'))
+    // ONE `return null`. Unknown username, retired user, ambiguous match and
+    // wrong password must converge — separate early returns are how two
+    // branches come to take different amounts of time.
+    const returns = [...fn.matchAll(/return null/g)].length
+    assert.equal(returns, 1, `verifyCredentials has ${returns} failure returns — they must converge on one`)
+    // the compare runs on BOTH paths, against a throwaway hash when there is
+    // no user, so "no such person" costs what "wrong password" costs
+    assert.ok(
+      /bcrypt\.compare\(password, user\?\.password_hash \?\? NO_SUCH_USER_HASH\)/.test(fn),
+      'the bcrypt compare is no longer unconditional — an unknown username now returns faster',
+    )
+    // and the READ runs on both paths too: skipping it cost one round trip,
+    // measured at 134ms, which smoke:tenancy now times
+    assert.ok(
+      /withTenant\(tenant \?\? NO_TENANT/.test(fn),
+      'the app_users read is skipped when the username does not resolve — that is an enumeration oracle',
+    )
+    assert.ok(!/tenant === null\s*\?\s*\[\]/.test(fn), 'the early-skip is back')
+    console.log('      one return null · compare and read both unconditional')
   })
 
   console.log(
