@@ -18,8 +18,7 @@
 // The one assumption this page cannot avoid (is supplier tax a credit or a
 // cost?) is therefore a SETTING, read here and stated on screen either way.
 import { getRestaurant } from '@/server/queries'
-import { listMoneyAccounts } from '@/server/accounts-queries'
-import { getGstDays, getInputTax, listWithholdings } from '@/server/register-queries'
+import { getGstDays, getInputTax } from '@/server/register-queries'
 import { getSettingValue } from '@/server/settings'
 import { periodParamValue, readPeriodParam, resolvePeriod } from '@/lib/period'
 import { decimalStringToPaise } from '@/lib/money'
@@ -27,7 +26,6 @@ import { fmtDate } from '@/lib/format'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import OutputTax from '@/components/accountant/OutputTax'
 import InputTaxPanel from '@/components/accountant/InputTaxPanel'
-import WithholdingsPanel from '@/components/accountant/WithholdingsPanel'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
 import { businessToday } from '@/server/business-day'
 
@@ -48,12 +46,10 @@ export default async function TaxPage({
 
   const restaurant = await getRestaurant()
   // one fan-out, not four awaits — the pool is shared with the group layout
-  const [days, input, creditableSetting, withholdings, accounts] = await Promise.all([
+  const [days, input, creditableSetting] = await Promise.all([
     getGstDays(restaurant.id, period.from, period.to),
     getInputTax(restaurant.id, period.from, period.to),
     getSettingValue(restaurant.id, 'input_tax_creditable'),
-    listWithholdings(restaurant.id),
-    listMoneyAccounts(restaurant.id),
   ])
 
   // The only arithmetic on this page: adding up columns it was handed. The
@@ -98,7 +94,10 @@ export default async function TaxPage({
           periodValue={periodParamValue(periodReq.param)}
         />
 
-        <WithholdingsPanel rows={withholdings} today={today} accounts={accounts} />
+        {/* Withholdings moved to Payments → Tax deposit. Marking a challan
+            deposited names an account and moves real money today, which makes
+            it a payment; a register is for reading. Mounting the panel here as
+            well would be the second mount of one component. */}
       </div>
 
       <p className="mt-3 text-center text-xs text-stone-400">

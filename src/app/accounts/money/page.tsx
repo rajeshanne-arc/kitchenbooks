@@ -14,11 +14,8 @@
 // nothing here has been checked against a statement.
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import { countUnaccountedMovements, getAccountBalances, listMoneyAccounts } from '@/server/accounts-queries'
-import { listVendorsWithDues } from '@/server/books-queries'
-import { getList } from '@/server/settings'
+import { countUnaccountedMovements, getAccountBalances } from '@/server/accounts-queries'
 import BalancesTable from '@/components/accountant/BalancesTable'
-import BankPayment from '@/components/accountant/BankPayment'
 import Honesty from '@/components/Honesty'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 
@@ -29,18 +26,15 @@ const masterLinkCls =
 
 export default async function MoneyPage() {
   const restaurant = await getRestaurant()
-  const [balances, unaccounted, accounts, vendors, modes] = await Promise.all([
+  const [balances, unaccounted] = await Promise.all([
     getAccountBalances(restaurant.id),
     countUnaccountedMovements(restaurant.id),
-    listMoneyAccounts(restaurant.id),
-    listVendorsWithDues(restaurant.id),
-    getList(restaurant.id, 'payment_mode'),
   ])
 
   return (
     <>
       <header className="pb-4">
-        <h1 className={pageTitleCls}>Money</h1>
+        <h1 className={pageTitleCls}>Cash &amp; bank</h1>
         <p className={pageSubCls}>
           {restaurant.name} — where the money sits, account by account, and how it got there.
         </p>
@@ -88,8 +82,9 @@ export default async function MoneyPage() {
           </section>
         )}
 
-        <BankPayment vendors={vendors} accounts={accounts} modes={modes} />
-
+        {/* The payment FORM moved to Payments → Pay a vendor. This screen is
+            for READING — where the money sits and what has not been checked
+            against a statement — and the strip is now split on exactly that. */}
         {unaccounted > 0 && (
           <Honesty verdict="account unnamed">
             {unaccounted} money {unaccounted === 1 ? 'movement names' : 'movements name'} no account

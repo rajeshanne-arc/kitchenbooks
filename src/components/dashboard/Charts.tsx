@@ -43,6 +43,24 @@ const RED = 'var(--color-red-600)'
 const GOLD = 'var(--color-amber-400)'
 const SURFACE = 'var(--color-cell)'
 
+// THREE CATEGORICAL HUES, chosen by the validator rather than by eye.
+//
+// wages / contract / casual are IDENTITIES, not states, so none of them may
+// wear a status colour — red would read as "wrong" and gold as "doubt".
+// Measured on this palette (emerald-700 · sky-300 · violet-700): CVD
+// separation ΔE 25.3 protan, 25.5 tritan; normal vision ΔE 27.1. Both well
+// clear of the 8 and 15 floors.
+//
+// TWO CHECKS THIS PALETTE CANNOT PASS, and they are structural rather than a
+// bad pick: every hue in Rajesh's sheet is deliberately muted, so all three
+// fail the validator's chroma floor ("reads gray") — no combination of the
+// app's tokens passes it, and the palette is the sheet and does not change.
+// And sky-300 sits at 2.32:1 against the surface, below 3:1, which OBLIGATES
+// visible labels. So every slice is DIRECT-LABELLED and the figures are
+// repeated as a table beside the ring: the colour is the last thing carrying
+// identity here, never the only one.
+const CAT = ['var(--color-emerald-700)', 'var(--color-sky-300)', 'var(--color-violet-700)']
+
 const axisTick = { fill: INK, fontSize: 11 }
 
 /** Rupee axis ticks: compact so they never collide, full precision in tooltips. */
@@ -347,6 +365,86 @@ export function TwoSeriesLegend() {
         <span className="h-2.5 w-2.5 rounded-sm" style={{ background: GOLD }} aria-hidden />
         they claim
       </span>
+    </div>
+  )
+}
+
+/* ────────────────────────── the labour split ────────────────────────────
+   PART TO WHOLE, three slices — the one shape a ring is genuinely good at,
+   and the reason there is no generic <Chart type="pie"> to reach for.
+
+   A RING, not a pie: the hole holds the total, which is the figure a manager
+   actually reads first, and it stops the eye trying to compare slice areas.
+   Segments are separated by a surface-coloured gap, so the boundary survives
+   even if the colours do not. */
+
+export function LabourSplit({
+  parts,
+}: {
+  parts: { label: string; value: number }[]
+}) {
+  const total = parts.reduce((n, p) => n + p.value, 0)
+  if (total <= 0) return null
+  const R = 54
+  const C = 2 * Math.PI * R
+  // A PREFIX SUM, not a counter mutated inside map — the offset of a segment
+  // is the sum of every fraction before it, which is a property of the data
+  // rather than of the order the renderer happens to walk it in.
+  const arcs = parts.map((p, i) => {
+    const frac = p.value / total
+    const before = parts.slice(0, i).reduce((n, q) => n + q.value, 0) / total
+    return { ...p, frac, colour: CAT[i % CAT.length], dash: frac * C, offset: before * C }
+  })
+  return (
+    <div className="flex flex-wrap items-center gap-5">
+      <svg viewBox="0 0 140 140" className="h-[140px] w-[140px] shrink-0" role="img" aria-label="Labour split">
+        <g transform="rotate(-90 70 70)">
+          {arcs.map((a) => (
+            <circle
+              key={a.label}
+              cx="70"
+              cy="70"
+              r={R}
+              fill="none"
+              stroke={a.colour}
+              strokeWidth="18"
+              /* a 2px surface gap between segments — the separator that does
+                 not depend on telling two muted hues apart */
+              strokeDasharray={`${Math.max(a.dash - 2, 0)} ${C - Math.max(a.dash - 2, 0)}`}
+              strokeDashoffset={-a.offset}
+            />
+          ))}
+        </g>
+        <text x="70" y="66" textAnchor="middle" className="fill-stone-500 text-[9px] uppercase tracking-wide">
+          total
+        </text>
+        <text x="70" y="82" textAnchor="middle" className="fill-stone-900 text-[13px] font-semibold tabular-nums">
+          {rupees(total)}
+        </text>
+      </svg>
+      {/* THE TABLE IS NOT DECORATION. sky-300 falls below 3:1 against the
+          surface, and the validator's contrast warning obligates visible
+          labels or a table view — it is not dismissable. */}
+      <ul className="min-w-[11rem] flex-1 space-y-1.5">
+        {arcs.map((a) => (
+          <li key={a.label} className="flex items-baseline justify-between gap-3 text-sm">
+            <span className="flex min-w-0 items-center gap-2">
+              <span
+                aria-hidden
+                className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                style={{ background: a.colour }}
+              />
+              <span className="truncate text-stone-700">{a.label}</span>
+            </span>
+            <span className="shrink-0 text-right">
+              <span className="font-mono tabular-nums text-stone-900">{rupees(a.value)}</span>
+              <span className="ml-1.5 font-mono text-[11px] tabular-nums text-stone-500">
+                {Math.round(a.frac * 100)}%
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

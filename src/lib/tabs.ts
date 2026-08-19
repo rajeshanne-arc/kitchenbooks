@@ -113,16 +113,29 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     // the daily table is still in Books. Record stays its own door because
     // it is WRITING, and the cashier's nightly task must not sit behind a
     // dashboard.
-    { key: 'dashboard', href: '/sales', label: 'Day' },
+    { key: 'dashboard', href: '/sales', label: 'Dashboard' },
     {
-      // DAY CLOSE LIVES HERE NOW. It is a daily money event like the rest of
-      // them, and giving it its own tab implied it was a different KIND of
-      // thing. It is first because it is the one done every night.
+      // DAY CLOSE COMES BACK OUT, and the earlier merge was wrong. It is the
+      // cashier's nightly ritual with a hard chain — no day closes before the
+      // one before it — and it was sitting as one of six chips beside a ₹200
+      // voucher. THE DECIDING ARGUMENT IS THE BADGE: a tab can carry
+      // "3 days unclosed" and a chip cannot, which is the same reasoning that
+      // moved the reorder badge onto Stock.
+      //
+      // It also fixes a live oddity: /sales/record renders Voucher while the
+      // chip row marked the FIRST chip active, so the parent URL showed
+      // Voucher with "Day close" highlighted.
+      key: 'close',
+      href: '/sales/close',
+      label: 'Day close',
+    },
+    {
+      // What is left is what the sentence "things the POS does not know about"
+      // actually covers — which is why they belong together.
       key: 'record',
       href: '/sales/record',
       label: 'Record',
       chips: [
-        { key: 'close', label: 'Day close' },
         { key: 'voucher', label: 'Voucher' },
         { key: 'income', label: 'Other income' },
         { key: 'offbook', label: 'Off-book' },
@@ -137,22 +150,25 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     { key: 'catering', href: '/sales/catering', label: 'Catering' },
     { key: 'books', href: '/sales/books', label: 'Books' },
   ],
+  // A GROUP IS A SUBJECT, NOT A PERSON. Staff was "the manager's stuff", which
+  // is how Expenses came to sit beside Attendance — and once one thing lands by
+  // ROLE instead of by SUBJECT, the group's name stops describing its contents.
+  //
+  // The subject here is PEOPLE. Contract bills and casual labour stay: they are
+  // people you pay who are not on payroll, and pnl_monthly already counts all
+  // three as labour — wages, contract_vendors, casual_labour. Rent, electricity
+  // and licences are overheads on a different P&L line, so EXPENSES LEAVES.
   staff: [
-    {
-      key: 'people',
-      href: '/staff/people',
-      label: 'People',
-      chips: [
-        { key: 'employees', label: 'Employees' },
-        { key: 'attendance', label: 'Attendance' },
-      ],
-    },
+    { key: 'dashboard', href: '/staff', label: 'Dashboard' },
+    // Employees and Attendance were chips of a "People" tab inside a group
+    // already called Staff. One level of "people" was enough.
+    { key: 'employees', href: '/staff/people/employees', label: 'Employees' },
+    { key: 'attendance', href: '/staff/people/attendance', label: 'Attendance' },
     {
       key: 'moneyout',
       href: '/staff/money-out',
-      label: 'Money out',
+      label: 'Contract & casual',
       chips: [
-        { key: 'expense', label: 'Expense' },
         { key: 'contract', label: 'Contract bill' },
         { key: 'casual', label: 'Casual labour' },
       ],
@@ -174,8 +190,26 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
   // screen is a QUEUE, not a form — what is incomplete, what needs asking
   // about, what is ready to close. The remaining tabs (registers, parties,
   // tax, money, export) land with the rest of the accountant phase.
+  // THE SPLIT IS LEGIBLE NOW: Registers, Parties and Cash & bank are for
+  // READING; Payments, Payroll and Close are for WRITING.
   accounts: [
     { key: 'review', href: '/accounts', label: 'Review' },
+    {
+      // PAYMENTS is where money LEAVES on the accountant's say-so, and it is
+      // where Expenses lands — beside bank payments and tax deposits rather
+      // than beside Attendance. Coherent rather than a dumping ground: the
+      // accountant already owns every non-drawer money movement, and the
+      // drawer law already says till cash is a voucher, so a cash repair was
+      // never the manager's to record anyway.
+      key: 'payments',
+      href: '/accounts/payments',
+      label: 'Payments',
+      chips: [
+        { key: 'expense', label: 'Expense' },
+        { key: 'pay', label: 'Pay a vendor' },
+        { key: 'deposit', label: 'Tax deposit' },
+      ],
+    },
     {
       key: 'registers',
       href: '/accounts/registers',
@@ -197,8 +231,10 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       ],
     },
     { key: 'parties', href: '/accounts/parties', label: 'Parties' },
-    { key: 'money', href: '/accounts/money', label: 'Money' },
-    // PAYROLL sits between Money and Close because that is its moment: the
+    // "Money" beside "Payments" told nobody which was which. This one is
+    // where the money SITS; the other is where it goes.
+    { key: 'money', href: '/accounts/money', label: 'Cash & bank' },
+    // PAYROLL sits between Cash & bank and Close because that is its moment: the
     // month's wages are worked out after the money is reconciled and before
     // the period is shut.
     {

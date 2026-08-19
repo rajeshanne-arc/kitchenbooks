@@ -3648,3 +3648,128 @@ raising.
 **The third edge fault is not a code fix and was not treated as one.**
 `pos_orders.business_date` carries Petpooja's cutover; no view can correct that,
 and the warning now lives where the cutover is set.
+
+## A GROUP IS A SUBJECT, NOT A PERSON
+
+The rule that explains all three regroupings, and the one to apply to the next
+tab somebody wants to add:
+
+> **Once one thing lands in a group by ROLE instead of by SUBJECT, the group's
+> name stops describing its contents.**
+
+Staff had become "the manager's stuff", which is how Expenses ended up beside
+Attendance. Rent, electricity, marketing and licences are OVERHEADS — a
+different P&L line and a different subject. Contract bills and casual labour
+STAY, because they are people you pay who are not on payroll and `pnl_monthly`
+already counts all three as labour: `wages`, `contract_vendors`,
+`casual_labour`.
+
+    staff      Dashboard · Employees · Attendance · Contract & casual
+    accounts   Review · Payments · Registers · Parties · Cash & bank · Payroll · Close
+    sales      Dashboard · Day close · Record · Partners · Catering · Books
+
+**Employees and Attendance were CHIPS of a "People" tab inside a group already
+called Staff.** One level of "people" was enough.
+
+**PAYMENTS is where Expenses lands**, beside bank payments and tax deposits —
+coherent rather than a dumping ground, because the accountant already owns every
+non-drawer money movement and the drawer law already says till cash is a
+voucher, so a cash repair was never the manager's to record. **"Money" became
+"Cash & bank"**: Money beside Payments told nobody which was which. **The split
+is legible now — Registers, Parties and Cash & bank are for READING; Payments,
+Payroll and Close are for WRITING** — and that split is what decided two moves
+nobody asked for: `BankPayment` came off Cash & bank and `WithholdingsPanel`
+came off the Tax register, because each is a form that moves money and a
+register is for reading. Mounting either in both places would have been the
+second mount of one component, which this repo already treats as duplication by
+definition. A gate now asserts all three payment forms are mounted exactly once
+and live under Payments.
+
+**A REAL PERMISSION CHANGE, stated rather than slipped in:** `/accounts` is
+accountant and owner, so **a manager can no longer record an expense**. A
+manager following an old `/staff/money-out/expense` bookmark now lands on
+`/denied`, which names who to ask — correct rather than unfortunate, and better
+than the 404 a deleted route would have given them.
+
+### Day close comes back OUT of Record, and the badge is the argument
+
+The earlier merge was wrong. It is the cashier's nightly ritual, it has a hard
+chain — no day closes before the one before it — and it was sitting as one of
+six chips beside a ₹200 voucher. **The deciding argument is the BADGE: a tab can
+carry "3 days unclosed" and a chip cannot**, which is exactly the reasoning that
+moved the reorder badge onto Stock. `missing_closes` already answers it, so
+nothing is recomputed; silent at zero like every other badge.
+
+### The bug that fell out of it, and the gate that now holds it
+
+`/sales/record` re-exported **Voucher** while its first chip was **"Day close"**
+— and `ChipRow` marks the FIRST chip active at the parent URL, so that screen
+showed one form with a different one highlighted. Nothing checked it.
+
+**`smoke:a2` now asserts every chip parent renders its own first chip**, across
+all six groups (9 parents). One documented exception is allowed and checked
+rather than waved through: `/accounts/registers`' child is a DYNAMIC route, so
+it cannot bare re-export — it calls the child with an explicit key, and the gate
+asserts that key IS the first chip. Proved able to fail by pointing a parent at
+its second chip and watching it name the file.
+
+**And a retired URL whose target lived UNDER it.** `/staff/people` →
+`/staff/people/employees` looked obvious and is impossible: `legacyTarget`
+rewrites a prefix by APPENDING the remainder, so the live
+`/staff/people/employees` would have been sent to
+`/staff/people/employees/employees`. It stays a real route rendering Employees
+instead. **Before retiring a URL, check the target is not underneath it.**
+
+## The staff dashboard — seven cards, six of them unassessable on day one
+
+`/staff` was a re-export of the employees list. It is the group's dashboard now,
+reading four views the `staff_analytics_views` migration publishes.
+
+**THE RATIO CARD IS THE ONE THAT WOULD HAVE LIED.** Labour as a share of sales
+is the metric that matters and a restaurant runs roughly 25–35% — but with no
+POS day fetched the COSTS ARE REAL AND THE DENOMINATOR IS MISSING, and "0%"
+would tell a manager their wage bill is free. It says exactly that instead. The
+spend card refuses the same way: "no wage bill to report — not a wage bill of
+zero."
+
+**All three kinds of labour, in one figure**, because `pnl_monthly` already
+treats them as one line. A dashboard showing only payroll would understate the
+wage bill by however much of it walks in without a contract.
+
+**`no_salary_set` is the honesty column that changes every figure above it**: a
+person with no salary contributes nothing to labour cost, so each one silently
+understates the total. Same for `unsalaried_marks`. And **a person posted
+nowhere cannot be filled into attendance and would be paid nothing** — the
+completeness card's sharpest row.
+
+**A headcount is a fact about NOW, not about the period**, and the card says so
+rather than letting the table look like it moves with the dates.
+
+Absence is **ranked by `absent_pct`, never by name** — a roster sorted
+alphabetically hides the one fact that card exists to surface. Advances are
+largest first. Attendance leads with whether TODAY is marked, because that is
+the only half a manager can still act on before the day ends.
+
+Staff was the last group with no period control; it has the shared one now.
+
+### The donut was validated, not eyeballed — and the palette has a hard limit
+
+Three slices, part-to-whole, is the one shape a ring is genuinely good at. The
+colours were computed with the palette validator rather than chosen:
+
+| | result |
+|---|---|
+| emerald-700 · sky-300 · violet-700 | **CVD ΔE 25.3** (protan), 25.5 (tritan) · **normal vision ΔE 27.1** — both well clear of the 8 and 15 floors |
+| chroma floor | **FAILS, and cannot pass.** Every hue in Rajesh's sheet is deliberately muted, so all three "read gray". No combination of the app's tokens passes it, and the palette is the sheet and does not change. |
+| sky-300 vs surface | 2.32:1, below 3:1 — **obligates visible labels**, which is not dismissable |
+
+So every slice is direct-labelled with its name, its amount and its share, and
+the figures are repeated as a table beside the ring: **colour is the last thing
+carrying identity here, never the only one.** The first triple tried
+(emerald/sky-500/violet-700) failed the NORMAL-VISION floor at ΔE 9.3 — two
+hues a full-colour reader could not reliably tell apart — which is exactly the
+kind of thing that gets shipped when the check is a judgement instead of a
+script.
+
+**Status hues stay reserved.** Wages, contract and casual are IDENTITIES: red
+would read as "wrong" and gold as "doubt". A gate asserts no category wears one.

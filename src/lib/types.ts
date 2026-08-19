@@ -980,6 +980,83 @@ export type DishOption = { id: string; code: string; name: string; section_code:
  * Same shape as `ItemSuggestion` and used the same way: the suggested group
  * renders on top and every dish stays in the list below it.
  */
+/* ── the staff dashboard (migration staff_analytics_views) ───────────────── */
+
+/** `labour_summary`, verbatim. ALL THREE KINDS OF LABOUR, because pnl_monthly
+ *  already treats them as one line: salaried wages, contract vendors and casual
+ *  day hands. A dashboard that showed only payroll would understate the wage
+ *  bill by however much of it walks in without a contract. */
+export type LabourSummaryRow = {
+  month: string
+  wages: string
+  contract: string
+  casual: string
+  total_labour: string
+  /** NULL when no sales day has been fetched — the denominator, not a zero */
+  revenue: string | null
+  /** NULL for the same reason. Restaurants run roughly 25–35%. */
+  labour_pct_of_sales: string | null
+  active_heads: number
+  cost_per_head: string | null
+}
+
+/** `attendance_summary` — one row per person per month. `off_days` and
+ *  `leave_days` are named around the SQL keywords `off` and `leave`. */
+export type AttendanceSummaryRow = {
+  staff_id: string
+  code: string
+  name: string
+  section_code: string | null
+  section_name: string | null
+  month: string
+  days_marked: number
+  present: number
+  half: number
+  off_days: number
+  leave_days: number
+  absent: number
+  absent_pct: string | null
+}
+
+/** `labour_cost_by_section` for one month — the wage cost per department plus
+ *  its two honesty columns. Its OWN type: reusing SectionCostRow meant faking
+ *  consumption, sales and margin as '0' to satisfy the shape, and a type
+ *  padded with lies is a comment rather than a contract. */
+export type SectionLabourRow = {
+  section_code: string
+  section_name: string
+  labour: string
+  /** marks belonging to staff with no department — these land on the
+   *  synthetic '—' row, so on a real department's row this is always 0 */
+  unassigned_marks: number
+  /** marks counted as paid for somebody with no salary on file */
+  unsalaried_marks: number
+}
+
+/** `advances_outstanding` — money out of the business that nobody is chasing. */
+export type AdvanceOutstandingRow = {
+  staff_id: string
+  code: string
+  name: string
+  given: string
+  recovered: string
+  outstanding: string
+  last_advance: string | null
+}
+
+/** `headcount_by_section`. `no_salary_set` is the honesty column: a person with
+ *  no salary contributes NOTHING to labour cost, so every one of them silently
+ *  understates the wage bill. */
+export type HeadcountRow = {
+  section_code: string | null
+  section_name: string | null
+  dept_group: string | null
+  employment_type: string
+  heads: number
+  no_salary_set: number
+  monthly_salary_bill: string
+}
+
 /* ── the department drill-down (/kitchen/departments/[code]) ─────────────── */
 
 /** The one `sections` read the whole page hangs off. It carries BOTH keys

@@ -1725,7 +1725,10 @@ async function run() {
 
   await check('the tab strips shrank as agreed, and nothing lost its route', async () => {
     const { TAB_DEFAULTS } = await import('../src/lib/tabs')
-    assert.equal(TAB_DEFAULTS.accounts.length, 6, 'accounts should be six tabs')
+    // Seven now: Payments joined, and the count is asserted BY NAME in
+    // 'the three strips regrouped by subject' — a count cannot see a rename or
+    // a reorder, which is the whole reason PERIOD_KEYS.length was replaced too.
+    assert.equal(TAB_DEFAULTS.accounts.length, 7, 'accounts should be seven tabs')
     const acc = TAB_DEFAULTS.accounts.map((t) => t.key)
     assert.ok(!acc.includes('tax') && !acc.includes('export'), 'tax and export folded into registers')
     const regs = TAB_DEFAULTS.accounts.find((t) => t.key === 'registers')
@@ -3470,6 +3473,180 @@ async function run() {
     assert.ok(seen >= 10, `only ${seen} basePath props found — the matcher stopped matching`)
     assert.deepEqual(bad, [], 'these mount the period control on a path with no page behind it')
     console.log(`      ${seen} basePath props, all resolving`)
+  })
+
+  /* ── REGROUPING: a group is a SUBJECT, not a person ───────────────────── */
+
+  await check('the three strips regrouped by subject, by value', async () => {
+    const { TAB_DEFAULTS } = await import('../src/lib/tabs')
+    const keys = (g: 'staff' | 'accounts' | 'sales') => TAB_DEFAULTS[g].map((t) => t.key)
+
+    assert.deepEqual(keys('staff'), ['dashboard', 'employees', 'attendance', 'moneyout'])
+    assert.deepEqual(keys('accounts'), [
+      'review', 'payments', 'registers', 'parties', 'money', 'payroll', 'close',
+    ])
+    assert.deepEqual(keys('sales'), ['dashboard', 'close', 'record', 'partners', 'catering', 'books'])
+
+    // EXPENSES LEFT. Rent and power are overheads on a different P&L line from
+    // wages, and a group that keeps them stops being about people.
+    const staffChips = TAB_DEFAULTS.staff.flatMap((t) => t.chips?.map((c) => c.key) ?? [])
+    assert.ok(!staffChips.includes('expense'), 'expense is back in the staff group')
+    const payments = TAB_DEFAULTS.accounts.find((t) => t.key === 'payments')
+    assert.deepEqual(payments?.chips?.map((c) => c.key), ['expense', 'pay', 'deposit'])
+
+    // CONTRACT AND CASUAL STAY: they are people you pay who are not on
+    // payroll, and pnl_monthly already counts all three kinds as labour.
+    const moneyout = TAB_DEFAULTS.staff.find((t) => t.key === 'moneyout')
+    assert.deepEqual(moneyout?.chips?.map((c) => c.key), ['contract', 'casual'])
+    assert.equal(moneyout?.label, 'Contract & casual')
+
+    // DAY CLOSE IS A TAB, not a chip — the whole argument was the badge.
+    assert.ok(
+      !TAB_DEFAULTS.sales.some((t) => t.chips?.some((c) => c.key === 'close')),
+      'day close is back inside Record, where it cannot carry a count',
+    )
+    assert.equal(TAB_DEFAULTS.sales.find((t) => t.key === 'close')?.href, '/sales/close')
+    assert.equal(TAB_DEFAULTS.accounts.find((t) => t.key === 'money')?.label, 'Cash & bank')
+  })
+
+  await check('the day-close badge counts what the tab exists for', async () => {
+    const { countMissingCloses } = await import('../src/server/cashier-queries')
+    const n = await countMissingCloses(rid)
+    assert.equal(typeof n, 'number')
+    const [{ m }] = await tsql<{ m: number }[]>`
+      select count(*)::int as m from missing_closes where restaurant_id = ${rid}`
+    assert.equal(n, m, 'the badge must read missing_closes, not recompute it')
+
+    // and it must be WIRED, or the tab is just a tab again
+    const { readFileSync } = await import('node:fs')
+    const g = readFileSync('src/components/GroupTabs.tsx', 'utf8')
+    assert.match(g, /group === 'sales'/, 'the sales group must compute a badge')
+    assert.match(g, /countMissingCloses/, 'and it must be this one')
+    console.log(`      ${n} unclosed day(s) — silent at zero`)
+  })
+
+  await check('every chip parent renders its OWN first chip', async () => {
+    // THE BUG THIS WAS WRITTEN FROM. /sales/record re-exported Voucher while
+    // its first chip was "Day close", so the parent URL showed one screen with
+    // another highlighted. ChipRow marks the first chip active at the parent
+    // URL, so parent and first chip must be the same thing — and nothing
+    // checked that until now.
+    const { readFileSync, existsSync } = await import('node:fs')
+    const { TAB_DEFAULTS, TAB_GROUPS } = await import('../src/lib/tabs')
+    const offenders: string[] = []
+    let checked = 0
+    for (const g of TAB_GROUPS) {
+      for (const tab of TAB_DEFAULTS[g]) {
+        const first = tab.chips?.[0]
+        if (first === undefined) continue
+        const parent = `src/app${tab.href}/page.tsx`
+        if (!existsSync(parent)) {
+          offenders.push(`${tab.href} has chips but no parent page`)
+          continue
+        }
+        checked++
+        const src = readFileSync(parent, 'utf8')
+        // a chip parent re-exports its first chip; anything else is a page of
+        // its own and must not claim to be the chip row's first entry
+        const m = src.match(/export \{ default \} from '\.\/([^']+)\/page'/)
+        if (m !== null) {
+          if (m[1] !== first.key) {
+            offenders.push(`${tab.href} renders "${m[1]}" but marks "${first.key}" active`)
+          }
+          continue
+        }
+        // ONE DOCUMENTED EXCEPTION: a parent whose child is a DYNAMIC route
+        // cannot bare re-export it — the child would arrive with no param and
+        // notFound() — so it calls the child with the first chip's key. That
+        // still has to BE the first chip's key, which is what is checked.
+        const dyn = src.match(/params: Promise\.resolve\(\{ \w+: '([^']+)' \}\)/)
+        if (dyn === null) offenders.push(`${tab.href} neither re-exports a chip nor supplies one`)
+        else if (dyn[1] !== first.key) {
+          offenders.push(`${tab.href} supplies "${dyn[1]}" but marks "${first.key}" active`)
+        }
+      }
+    }
+    assert.deepEqual(offenders, [], 'these parents show one screen and highlight another')
+    assert.ok(checked >= 8, `only ${checked} chip parents checked — the matcher stopped matching`)
+    console.log(`      ${checked} chip parents render their own first chip`)
+  })
+
+  await check('a writing surface is mounted once, not beside its reading twin', async () => {
+    // Payments is for WRITING and Registers / Cash & bank are for READING, and
+    // the split is only legible if each form lives on exactly one of them.
+    // Mounting a component in both is duplication by definition — the rule
+    // SectionsView is already held to.
+    const { readdirSync, statSync, readFileSync } = await import('node:fs')
+    const walkA = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir)) {
+        const q = `${dir}/${e}`
+        if (statSync(q).isDirectory()) walkA(q, out)
+        else if (/page\.tsx$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const pages = walkA('src/app')
+    for (const cmp of ['BankPayment', 'WithholdingsPanel', 'ExpensesClient']) {
+      const mounts = pages.filter((f) => new RegExp(`<${cmp}[\\s/>]`).test(readFileSync(f, 'utf8')))
+      assert.equal(mounts.length, 1, `${cmp} is mounted ${mounts.length}× : ${mounts.join(', ')}`)
+      assert.match(mounts[0], /accounts\/payments\//, `${cmp} should live under Payments`)
+    }
+  })
+
+  await check('the staff dashboard runs, and refuses a ratio with no denominator', async () => {
+    // THE CARD MOST LIKELY TO LIE. Labour cost is real and revenue is absent,
+    // so a percentage would divide by nothing — and "0%" would tell a manager
+    // their wage bill is free.
+    const { getStaffDashboard, attendanceTakenOn } = await import('../src/server/staff-queries')
+    const period = resolvePeriod('this-month', new Date().toISOString().slice(0, 10))
+    const d = await getStaffDashboard(rid, period.months, period.reportMonth)
+    assert.ok(Array.isArray(d.labour) && Array.isArray(d.attendance))
+    assert.ok(Array.isArray(d.advances) && Array.isArray(d.headcount))
+    assert.ok(Array.isArray(d.bySection) && Array.isArray(d.unposted))
+    const taken = await attendanceTakenOn(rid, period.to)
+    assert.equal(typeof taken.marked, 'number')
+    assert.equal(typeof taken.active, 'number')
+
+    // absence is ranked by absent_pct, never by name
+    for (let i = 1; i < d.attendance.length; i++) {
+      const a = Number(d.attendance[i - 1].absent_pct ?? -1)
+      const b = Number(d.attendance[i].absent_pct ?? -1)
+      assert.ok(a >= b, 'the absence table is not ranked worst first')
+    }
+
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/staff/page.tsx', 'utf8')
+    assert.match(page, /the denominator is missing/i, 'the ratio card must name what is absent')
+    assert.match(page, /not a wage bill of zero/, 'and the spend card must refuse a confident zero')
+    assert.match(page, /<PeriodControl/, 'staff was the only group with no period control')
+
+    // no_salary_set is the honesty column that changes every figure above it
+    const noSalary = d.headcount.reduce((n, r) => n + r.no_salary_set, 0)
+    console.log(
+      `      ${d.headcount.reduce((n, r) => n + r.heads, 0)} head(s), ${noSalary} with no salary, ` +
+        `${d.labour.length} month(s) of labour, ${d.attendance.length} attendance row(s)`,
+    )
+  })
+
+  await check('the labour donut is validated, not eyeballed', async () => {
+    // Measured with the palette validator on this palette: emerald-700 ·
+    // sky-300 · violet-700 separate by ΔE 25.3 under protanopia and 27.1 under
+    // normal vision — well clear of the 8 and 15 floors. sky-300 sits at
+    // 2.32:1 against the surface, BELOW 3:1, which obligates visible labels;
+    // that is why every slice is direct-labelled and repeated as a table.
+    const { readFileSync } = await import('node:fs')
+    const charts = readFileSync('src/components/dashboard/Charts.tsx', 'utf8')
+    assert.match(charts, /const CAT = \[/, 'the categorical triple must be named once')
+    for (const token of ['--color-emerald-700', '--color-sky-300', '--color-violet-700']) {
+      assert.ok(charts.includes(token), `the validated triple lost ${token}`)
+    }
+    // status hues are RESERVED — a category wearing red reads as "wrong"
+    const cat = charts.slice(charts.indexOf('const CAT = ['), charts.indexOf(']', charts.indexOf('const CAT = [')))
+    assert.ok(!/red|amber/.test(cat), 'a category is wearing a status colour')
+    // and identity is never carried by colour alone
+    const split = charts.slice(charts.indexOf('export function LabourSplit'))
+    assert.match(split, /\{a\.label\}/, 'every slice must be labelled in words')
+    assert.match(split, /Math\.round\(a\.frac \* 100\)/, 'and carry its share as a number')
   })
 
   await check('every department resolves, and a bogus code does not', async () => {

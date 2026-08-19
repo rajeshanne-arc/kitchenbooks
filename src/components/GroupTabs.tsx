@@ -7,6 +7,7 @@ import { getRestaurant } from '@/server/queries'
 import { tabsFor } from '@/server/settings'
 import { countOpenIndents, getStockBadge, stockBadgeHref } from '@/server/store-queries'
 import { listOpenQueries } from '@/server/accountant-queries'
+import { countMissingCloses } from '@/server/cashier-queries'
 import type { TabBadges, TabGroup, TabHrefs } from '@/lib/tabs'
 import TabStrip from '@/components/TabStrip'
 
@@ -23,6 +24,13 @@ async function badgesFor(
     // has not read yet is still a question standing between them and a
     // closed month.
     return { badges: { review: (await listOpenQueries(restaurantId)).length }, hrefs: {} }
+  }
+  if (group === 'sales') {
+    // THE BADGE THAT BROUGHT THE TAB BACK. A day with sales and no close is
+    // the cashier's one outstanding job, and the chain is hard — no day closes
+    // before the one before it — so three unclosed days is three nights of
+    // work, not three reminders. A chip could never have said so.
+    return { badges: { close: await countMissingCloses(restaurantId) }, hrefs: {} }
   }
   if (group !== 'store') return { badges: {}, hrefs: {} }
 

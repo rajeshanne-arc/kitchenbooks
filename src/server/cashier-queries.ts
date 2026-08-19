@@ -71,6 +71,24 @@ export async function getPartnerSummaries(
     order by partner asc`
 }
 
+/**
+ * Days that sold food and have no cash close — the Day close tab's badge.
+ *
+ * THE BADGE IS WHY THIS TAB EXISTS AGAIN. Day close was folded into Record as
+ * one of six chips, and a chip cannot carry a count: "3 days unclosed" is the
+ * whole reason a cashier opens the screen, and it has to be visible from
+ * anywhere in the group. Same reasoning that moved the reorder badge onto
+ * Stock.
+ *
+ * `missing_closes` already answers it — days with sales and no filing — so
+ * nothing is recomputed here. Silent at zero, like every other badge.
+ */
+export async function countMissingCloses(restaurantId: string): Promise<number> {
+  const [row] = await tsql<{ n: number }[]>`
+    select count(*)::int as n from missing_closes where restaurant_id = ${restaurantId}`
+  return row?.n ?? 0
+}
+
 // -------------------------------------------------------- off-book orders
 
 const OFFBOOK_SELECT = `

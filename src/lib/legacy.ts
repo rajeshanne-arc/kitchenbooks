@@ -36,7 +36,10 @@ const FIXED: [from: string, to: string][] = [
   ['/kitchen/wastage', '/kitchen/shift/loss'],
   ['/kitchen/loss', '/kitchen/shift/loss'],
   ['/attendance', '/staff/people/attendance'],
-  ['/expenses', '/staff/money-out/expense'],
+  // Expenses left the staff group for Accounts → Payments: rent and power are
+  // overheads, a different P&L line from wages. Retargeted rather than left to
+  // chain — a retired URL must land on a LIVE route, never on a second redirect.
+  ['/expenses', '/accounts/payments/expense'],
   ['/dashboard', '/owner'],
   ['/settings', '/owner/settings'],
   ['/pnl', '/owner/pnl'],
@@ -44,7 +47,17 @@ const FIXED: [from: string, to: string][] = [
   ['/issue', '/store/issue'],
   ['/wastage', '/store/stock/loss'],
   // /cash WAS the day close, and the day close now lives inside Record.
-  ['/cash', '/sales/record/close'],
+  ['/cash', '/sales/close'],
+  // REGROUPING: a group is a SUBJECT, not a person. Two moves, two bookmarks
+  // that still land somewhere true.
+  //
+  // /staff/people is NOT here, and must not be. Its target would live UNDER
+  // it, and this matcher rewrites a prefix by APPENDING the remainder — so
+  // /staff/people → /staff/people/employees would send the live
+  // /staff/people/employees to /staff/people/employees/employees. It stays a
+  // real route instead, rendering Employees the way it always did.
+  ['/staff/money-out/expense', '/accounts/payments/expense'],
+  ['/sales/record/close', '/sales/close'],
   // Simplification pass: two tabs folded and two duplicate mounts dropped.
   // Phones have these bookmarked, so they still land somewhere true.
   ['/accounts/tax', '/accounts/registers/tax'],
@@ -87,4 +100,4 @@ export function legacyTarget(pathname: string, role: Role): string | null {
   return null
 }
 
-export const LEGACY_PREFIXES = ['/store/reorder', '/store/count', '/store/loss', '/store/books/stock', '/books', '/bill', '/issue', '/wastage', '/cash', '/attendance', '/expenses', '/dashboard', '/pnl', '/settings', '/store/payment']
+export const LEGACY_PREFIXES = ['/staff/money-out/expense', '/sales/record/close', '/store/reorder', '/store/count', '/store/loss', '/store/books/stock', '/books', '/bill', '/issue', '/wastage', '/cash', '/attendance', '/expenses', '/dashboard', '/pnl', '/settings', '/store/payment']
