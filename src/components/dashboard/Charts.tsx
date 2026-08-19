@@ -154,6 +154,60 @@ export function SalesLine({ points }: { points: { date: string; revenue: string;
   )
 }
 
+/* ────────────────────────── the trading day ─────────────────────────────
+   Revenue by hour of the BUSINESS day, which is why the axis runs from the
+   cutover rather than from midnight. Two services show up as two humps and
+   that shape is the point — a restaurant with one peak and a restaurant with
+   two are run differently. */
+
+export function HourlyLine({ points }: { points: { hour: number; revenue: string; orders: number }[] }) {
+  const data = points.map((p) => ({ hour: p.hour, revenue: Number(p.revenue), orders: p.orders }))
+  const hourLabel = (h: number) => (h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`)
+  return (
+    <div className="h-44 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+          <CartesianGrid stroke={RULE} strokeWidth={1} vertical={false} />
+          <XAxis
+            dataKey="hour"
+            tick={axisTick}
+            tickLine={false}
+            axisLine={{ stroke: RULE }}
+            tickFormatter={hourLabel}
+            minTickGap={10}
+          />
+          <YAxis tick={axisTick} tickLine={false} axisLine={false} width={52} tickFormatter={rupeeTick} />
+          <Tooltip
+            cursor={{ stroke: RULE, strokeWidth: 1 }}
+            content={({ active, payload }) => {
+              if (!active || !payload?.length) return null
+              const p = payload[0].payload as { hour: number; revenue: number; orders: number }
+              return (
+                <TipBox
+                  title={`${hourLabel(p.hour)}–${hourLabel((p.hour + 1) % 24)}`}
+                  rows={[
+                    { label: 'revenue', value: rupees(p.revenue) },
+                    { label: 'orders', value: String(p.orders) },
+                  ]}
+                />
+              )
+            }}
+          />
+          <Line
+            type="monotone"
+            dataKey="revenue"
+            stroke={GREEN}
+            strokeWidth={2}
+            dot={{ r: 2.5, fill: GREEN, stroke: SURFACE, strokeWidth: 1.5 }}
+            activeDot={{ r: 5, fill: GREEN, stroke: SURFACE, strokeWidth: 2 }}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 /* ────────────────────────── diverging bars ──────────────────────────────
    Above/below a baseline — margin per section, gap per partner. The zero
    line is drawn solid and darker than the grid because it is the thing the

@@ -1030,9 +1030,44 @@ export type PosMapRow = {
   pos_item_id: string
   item_name: string | null
   recipe_id: string | null
+  /** A DIRECT department, for anything that will never have a recipe —
+   *  bottled water is bought and resold. recipe_id WINS when both are set. */
+  section_id: string | null
   recipe_code: string | null
   recipe_name: string | null
   section_code: string | null
+  section_name: string | null
+}
+
+/** `mapping_coverage`. COVERAGE IS THE HEADLINE, NOT A COUNT.
+ *
+ *  `revenue_mapped` is NULL, not 0, when nothing is mapped — a sum over no
+ *  rows. `items_costed` is the second number: an item mapped to a department
+ *  only is attributed but not costed, which is most of the value and not all
+ *  of it. */
+export type MappingCoverage = {
+  items_seen: number
+  items_mapped: number
+  items_costed: number
+  revenue_seen: string
+  revenue_mapped: string | null
+  pct_attributed: string
+}
+
+export type SalesHourRow = {
+  hour: number
+  orders: number
+  covers: number
+  revenue: string
+  /** NULL where covers is zero — the view refuses that division rather than
+   *  reporting an infinite spend per head. */
+  per_cover: string | null
+}
+
+export type PaymentSplitRow = {
+  payment_mode: string
+  orders: number
+  revenue: string
 }
 
 export type DishOption = { id: string; code: string; name: string; section_code: string }
@@ -1226,7 +1261,9 @@ export type DishUsage = {
   last: string
 }
 
-export type MapItemResult = { ok: true; map: PosMapRow; unmappedLeft: number } | { ok: false; error: string }
+export type MapItemResult =
+  | { ok: true; map: PosMapRow; unmappedLeft: number; coverage: MappingCoverage | null }
+  | { ok: false; error: string }
 
 export type QtySoldRow = { recipe_id: string; qty_sold: string; sales_value: string }
 

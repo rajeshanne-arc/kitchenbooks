@@ -4349,3 +4349,102 @@ and `rajeshanne` still resolves to Thrayam. The probe account is given a
 **fresh random password on every run and reset to another one afterwards** —
 `app_users` has no DELETE grant, so the row persists by design; what must not
 persist is a usable credential on a production database.
+
+## Phase D — sales: the mapping queue is the whole game
+
+213 orders, 1,002 lines, ₹3,93,717 over three days and **zero mapped POS
+items** — 94% of revenue belonging to no department. `sales_by_section`,
+`section_food_cost`, margin, the department pages and dish quantities sold
+were all built and all dark, fed by one empty table.
+
+**A POS ITEM MAY POINT AT A DEPARTMENT, NOT ONLY A DISH**
+(`pos_item_map.section_id`). Bottled water sold 88 units and will never have
+a recipe; without this its revenue sat outside every department permanently.
+A dish gives the department AND the cost; a department alone gives the
+department — most of the value, and the honest answer for anything bought and
+resold. **`recipe_id` WINS when both are set** and `saveMapping` clears the
+direct section rather than storing both: the dish's own section is the truth,
+and a second answer to one question is not a fallback.
+
+**COVERAGE IS THE HEADLINE, NOT A COUNT.** "218 unmapped" reads as an
+impossible chore; "51% of revenue attributed" reads as progress — and it is
+the honest metric, because mapping a water bottle and mapping the biryani are
+not the same act. `mapping_coverage.revenue_mapped` comes back **NULL, not 0**
+when nothing is mapped (a sum over no rows), and the screen keeps that apart
+from a real zero. `items_costed` is the second number: attributed-but-not-
+costed is a state, and the strip says so.
+
+**"The next 7 rows carry another 10%"** is what turns an endless queue into a
+morning — it says where the money stops being worth chasing. Computed from a
+running prefix over what is still unmapped, so it shrinks as work is done.
+
+Coverage is an **action card** on the Sales dashboard and the 218-row queue
+lives behind it — the same shape as Reorder inside Stock: a long list must not
+dominate a page nobody opened for it.
+
+**THE CHEF IS ADMITTED** (`/sales/books/sales/mapping`, the one sales path
+they may open). The cashier is in Sales daily, but the chef knows which POS
+name is which dish. `audit:matrix` immediately caught the back-link — the chef
+can open the queue and not the sales books around it — so it gates on
+`canAccess`.
+
+**MAPPING KEYS ON PETPOOJA'S INTERNAL ITEM ID, NEVER ITS `itemcode`.** The
+sheets work established that itemcode has no uniqueness check: five codes
+shared across two or three items, one truncated at 20 characters. The code is
+for humans, the id is for machines.
+
+### The payment split is bars, not a donut, and the palette is why
+
+`CAT` holds exactly three hues cleared by the validator (CVD ΔE 25.3), and
+`LabourSplit` cycles them with `CAT[i % CAT.length]` — correct for three
+categories, and it would repeat colours across seven payment modes. So the
+split is direct-labelled magnitude bars, where identity is carried by the axis
+label and no hue is asked to do work it cannot. That is also the sharper
+contrast with the POS's own dashboard, which reports three quarters of a day
+as "Other" precisely because it cannot tell the modes apart.
+
+### The trading day, and the anomaly that is not smoothed
+
+`sales_by_hour` on the dashboard: two services show as two humps, and that
+shape says more than the total — a place with one peak and a place with two
+are run differently. `per_cover` is NULL where covers is zero; the view
+already refuses that division.
+
+**Noon reads ₹2,048 per cover against ₹771 at 2pm.** Almost certainly covers
+under-counted at opening rather than spend being three times higher — so the
+card NAMES it as a Petpooja data-entry question rather than charting past it.
+Any hour more than 2.5× the period's median per-cover is called out.
+
+### A refresh button, not a live view
+
+Polling, websockets and auto-refresh would be infrastructure competing with
+Petpooja's own dashboard, **which is itself not live** — its terminal syncs
+periodically. So: one button that fetches TODAY on demand, one API call, and
+the re-fetch semantics already exist.
+
+Two rules ride with it. **STATE THE FRESHNESS, ALWAYS** — "41 orders ·
+₹52,300 · as of 9:42 pm", and how old when it is old. What we can honestly
+state is when WE fetched; the caption says Petpooja's own sync may be older
+rather than implying our fetch time is the POS's. And **TODAY IS A PARTIAL
+DAY**: it never enters the day-close chain, and every figure from it is
+captioned "the day so far", or somebody compares half a day against
+yesterday's whole one.
+
+### A range is N calls, and it loops in the client
+
+Get Orders returns two days per call (D and D-1) and is keyed on one business
+date, so a range is N round trips, not one. It loops the existing per-day
+`fetchDay` rather than growing a bulk endpoint — which leaves the per-day
+dedupe and latest-fetch-wins untouched by construction, and gives per-day
+progress for free. A spinner over five days would just look hung.
+
+### The gate that had to be sharpened rather than silenced
+
+`sales_current` now SELECTS `order_time` — `sales_by_hour` reads it from
+there. The order_time gate forbade the view MENTIONING it and fired. But
+selecting a column is not keying on one: what must never happen is order_time
+appearing in the JOIN, a WHERE, a DISTINCT ON or an ORDER BY, because that is
+where "which fetch wins" and "which duplicate is skipped" are decided. The
+check is narrowed BY STRUCTURE — everything from `FROM` onwards — and proved
+still to fire on a real join. Blinding it to the name would have been the easy
+fix and the wrong one.

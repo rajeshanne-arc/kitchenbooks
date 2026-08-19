@@ -1,28 +1,53 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import { listDishOptions, listMappings, listUnmapped } from '@/server/sales-queries'
+import { getSessionUser } from '@/server/current-user'
+import { canAccess } from '@/lib/roles'
+import { getMappingCoverage, listDishOptions, listMappings, listUnmapped } from '@/server/sales-queries'
+import { getDishCodingSections } from '@/server/kitchen-queries'
 import MappingTable from '@/components/sales/MappingTable'
 
 export const dynamic = 'force-dynamic'
 
 export default async function MappingPage() {
   const restaurant = await getRestaurant()
-  const [unmapped, mapped, dishes] = await Promise.all([
+  const user = await getSessionUser()
+  // LAW 1. The chef may open this queue and NOT the sales books it sits in,
+  // so the way back is theirs only if they can walk it. One source: the
+  // matrix, never a role comparison written out here.
+  const canGoBack = user !== null && canAccess(user.role, '/sales/books/sales')
+  const [unmapped, mapped, dishes, sections, coverage] = await Promise.all([
     listUnmapped(restaurant.id),
     listMappings(restaurant.id),
     listDishOptions(restaurant.id),
+    // THE DEPARTMENTS THAT SELL. Same list a dish can be coded to — the seven
+    // that carry a code — because a POS item lands where a dish would. A
+    // department that codes no dishes sells nothing and would be a wrong
+    // answer offered as a right one.
+    getDishCodingSections(restaurant.id),
+    getMappingCoverage(restaurant.id),
   ])
 
   return (
     <div className="mt-4">
-      <Link href="/sales/books/sales" className="inline-block text-sm font-medium text-stone-500 hover:text-stone-800">
-        ← Sales
-      </Link>
+      {canGoBack && (
+        <Link
+          href="/sales/books/sales"
+          className="inline-block text-sm font-medium text-stone-500 hover:text-stone-800"
+        >
+          ← Sales
+        </Link>
+      )}
       <p className="mt-3 text-sm text-stone-600">
-        Unmapped items are ordered by revenue — <span className="font-semibold">the top rows are half the money</span>;
-        map those first and the sections page is already mostly true. Picking a dish saves immediately.
+        Every department view in this app is fed from here — sales by department, food cost, margin, the department
+        pages, dish quantities sold. Map the biggest rows first: a handful of them is most of the money.
       </p>
-      <MappingTable unmapped={unmapped} mapped={mapped} dishes={dishes} />
+      <MappingTable
+        unmapped={unmapped}
+        mapped={mapped}
+        dishes={dishes}
+        sections={sections}
+        coverage={coverage}
+      />
     </div>
   )
 }

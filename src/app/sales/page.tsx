@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getSalesSeries, getYesterday, getUnmappedSummary, getMissingCloses } from '@/server/dashboard-queries'
-import { getSalesDays } from '@/server/sales-queries'
+import { getMappingCoverage, getPaymentSplit, getSalesByHour, getSalesDay, getSalesDays } from '@/server/sales-queries'
 import { getGstServiceByDay } from '@/server/reports-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -11,7 +11,8 @@ import {
   cardCls, heroNumCls, pageSubCls, pageTitleCls, sectionHeadCls,
 } from '@/components/ui'
 import PeriodControl from '@/components/dashboard/PeriodControl'
-import { SalesLine } from '@/components/dashboard/Charts'
+import { HourlyLine, MagnitudeBars, SalesLine } from '@/components/dashboard/Charts'
+import RefreshToday from '@/components/sales/RefreshToday'
 import Honesty from '@/components/Honesty'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
@@ -49,7 +50,8 @@ export default async function SalesDashboard({
   const period = resolvePeriod(periodReq.param, periodToday)
   const restaurant = await getRestaurant()
 
-  const [series, yesterday, unmapped, missing, gst, everFetched] = await Promise.all([
+  const [series, yesterday, unmapped, missing, gst, everFetched, coverage, hours, split, todayRow] =
+    await Promise.all([
     getSalesSeries(restaurant.id, period.from, period.to),
     getYesterday(restaurant.id),
     getUnmappedSummary(restaurant.id, period.from, period.to),
@@ -58,7 +60,25 @@ export default async function SalesDashboard({
     // one row is all this asks: has a POS day EVER been fetched. The mapping
     // queue is all-time, so its precondition has to be too.
     getSalesDays(restaurant.id, 1),
+    getMappingCoverage(restaurant.id),
+    getSalesByHour(restaurant.id, period.from, period.to),
+    getPaymentSplit(restaurant.id, period.from, period.to),
+    // TODAY IS A PARTIAL DAY and is read on its own, never folded into the
+    // period figures above — otherwise half a day sits beside whole ones.
+    getSalesDay(restaurant.id, periodToday),
   ])
+
+  // THE ANOMALY IS SURFACED, NOT SMOOTHED. Noon reading three times the
+  // spend per head of the lunch peak is almost certainly covers under-counted
+  // at opening, not a table spending three times more — which is a Petpooja
+  // data-entry question worth naming rather than charting past.
+  const percovers = hours.filter((h) => h.per_cover !== null).map((h) => Number(h.per_cover))
+  const medianPerCover =
+    percovers.length === 0 ? null : [...percovers].sort((a, b) => a - b)[Math.floor(percovers.length / 2)]
+  const oddHours =
+    medianPerCover === null || medianPerCover <= 0
+      ? []
+      : hours.filter((h) => h.per_cover !== null && Number(h.per_cover) > medianPerCover * 2.5)
 
   const total = series.reduce((n, p) => n + decimalStringToPaise(p.revenue), 0)
   const diff = yesterday.difference === null ? null : decimalStringToPaise(yesterday.difference)
@@ -110,6 +130,43 @@ export default async function SalesDashboard({
         <h1 className={pageTitleCls}>Sales</h1>
         <p className={pageSubCls}>{restaurant.name} — {period.label}</p>
       </header>
+
+      {/* TODAY, AND HOW STALE IT IS. Period-independent and above everything
+          the period scopes: it is the one figure a cashier looks at mid-shift,
+          and it must never be mistaken for a closed day. */}
+      <section className={`${cardCls} mb-4`}>
+        <RefreshToday
+          today={periodToday}
+          orders={todayRow?.orders ?? 0}
+          revenue={todayRow === null ? null : todayRow.revenue}
+          lastFetchedAt={todayRow?.last_fetched_at ?? null}
+        />
+      </section>
+
+      {/* THE MAPPING QUEUE AS AN ACTION CARD. Every department view in the app
+          is fed by it, and with nothing mapped they are all dark — so coverage
+          belongs on the dashboard and the 218-row queue belongs behind it.
+          Same shape as Reorder inside Stock: a long list should not dominate a
+          page nobody opened for it. */}
+      {coverage !== null && coverage.items_seen > 0 && Number(coverage.pct_attributed) < 100 && (
+        <Link
+          href="/sales/books/sales/mapping"
+          className={`${cardCls} mb-4 block border-red-200 bg-red-50/60 hover:border-red-400`}
+        >
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>Revenue with no department</h2>
+            <span className="font-mono text-[11px] text-stone-400">mapping_coverage</span>
+          </div>
+          <p className={`mt-1.5 ${heroNumCls} text-3xl text-red-700`}>
+            {(100 - Number(coverage.pct_attributed)).toFixed(1)}%
+          </p>
+          <p className="mt-1 text-sm text-stone-700">
+            {coverage.items_seen - coverage.items_mapped} of {coverage.items_seen} POS items are not attributed to a
+            department. Sales by department, food cost, margin and the department pages all read this — and all stay
+            dark until it is done. Map the biggest rows first →
+          </p>
+        </Link>
+      )}
 
       {/* What the accountant is asking THIS role, on the screen they already
           open every morning. Renders nothing when nothing is asked. */}
@@ -173,6 +230,78 @@ export default async function SalesDashboard({
                   <SalesLine points={revenue.data} />
                 </div>
               )}
+            </>
+          )}
+        </section>
+
+        {/* THE TRADING DAY. Two services show up as two humps, and that shape
+            is worth more than the total — a place with one peak and a place
+            with two are run differently. */}
+        <section className={cardCls}>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>By hour</h2>
+            <span className="font-mono text-[11px] text-stone-400">sales_by_hour</span>
+          </div>
+          {hours.length === 0 ? (
+            <div className="mt-2">
+              <Unassessed needs="no hour has any sales">
+                Nothing fetched for this period carries an order time, so the trading day cannot be drawn.
+              </Unassessed>
+            </div>
+          ) : (
+            <>
+              <div className="mt-2">
+                <HourlyLine points={hours} />
+              </div>
+              {/* SURFACED, NOT SMOOTHED. A cover count three times out of line
+                  is a data-entry question, and charting past it would hide the
+                  one thing worth asking Petpooja about. */}
+              {oddHours.length > 0 && medianPerCover !== null && (
+                <div className="mt-3">
+                  <Honesty verdict="covers look wrong" compact>
+                    {oddHours
+                      .map((h) => `${h.hour}:00 reads ${formatMoneyString(h.per_cover as string)} per cover`)
+                      .join(', ')}{' '}
+                    against {formatPaise(Math.round(medianPerCover * 100))} across the rest of the day. Almost
+                    certainly covers under-counted at that hour rather than spend being three times higher — a
+                    Petpooja data-entry question, not a finding about the business.
+                  </Honesty>
+                </div>
+              )}
+            </>
+          )}
+        </section>
+
+        {/* OUR SPLIT IS BETTER THAN THE POS'S — Petpooja lumps three quarters
+            of a day into "Other"; we hold every mode separately.
+            BARS, NOT A DONUT, and the reason is the palette: only three
+            categorical hues are validated for this app (CVD ΔE 25.3), and
+            seven modes through a three-hue donut would repeat colours. Named
+            bars need no hue at all to tell the modes apart, which is exactly
+            the contrast being drawn with a POS screen that cannot. */}
+        <section className={cardCls}>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>How they paid</h2>
+            <span className="font-mono text-[11px] text-stone-400">sales_current</span>
+          </div>
+          {split.length === 0 ? (
+            <div className="mt-2">
+              <Unassessed needs="no day fetched">
+                No orders in this period, so there is no split to show.
+              </Unassessed>
+            </div>
+          ) : (
+            <>
+              <div className="mt-2">
+                <MagnitudeBars
+                  rows={split.map((r) => ({ label: r.payment_mode, value: Number(r.revenue) }))}
+                  height={Math.max(140, split.length * 30)}
+                />
+              </div>
+              <p className="mt-1 text-xs text-stone-400">
+                {split.length} modes held separately — the POS&rsquo;s own dashboard reports most of this as
+                &ldquo;Other&rdquo;.
+              </p>
             </>
           )}
         </section>

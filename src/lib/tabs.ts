@@ -134,7 +134,7 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       // actually covers — which is why they belong together.
       key: 'record',
       href: '/sales/record',
-      label: 'Record',
+      label: 'Other entries',
       chips: [
         { key: 'voucher', label: 'Voucher' },
         { key: 'income', label: 'Other income' },
@@ -146,7 +146,7 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     // PARTNERS is the section and settlements live INSIDE it, because a
     // settlement is something a partner does. They were sibling tabs, which
     // put the master and the thing it governs in two places.
-    { key: 'partners', href: '/sales/partners', label: 'Partners' },
+    { key: 'partners', href: '/sales/partners', label: 'Delivery partners' },
     { key: 'catering', href: '/sales/catering', label: 'Catering' },
     { key: 'books', href: '/sales/books', label: 'Books' },
   ],

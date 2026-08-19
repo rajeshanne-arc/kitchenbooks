@@ -12,32 +12,79 @@ import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, numCls } from '@/components/ui'
 
-export default function FetchDay({ defaultDate }: { defaultDate: string }) {
+type DayProgress = { date: string; state: 'waiting' | 'fetching' | 'done' | 'failed'; detail: string }
+
+/** Every business date from `from` to `to`, inclusive. */
+function daysBetween(from: string, to: string): string[] {
+  const out: string[] = []
+  for (let t = new Date(`${from}T00:00:00Z`); t <= new Date(`${to}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + 1)) {
+    out.push(t.toISOString().slice(0, 10))
+    if (out.length > 62) break
+  }
+  return out
+}
+
+export default function FetchDay({ defaultDate, today }: { defaultDate: string; today: string }) {
   const router = useRouter()
   const [date, setDate] = useState(defaultDate)
+  const [to, setTo] = useState('')
   const [fetching, setFetching] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<Extract<FetchDayResult, { ok: true }> | null>(null)
+  const [progress, setProgress] = useState<DayProgress[]>([])
 
-  async function onFetch() {
-    if (fetching) return
+  /**
+   * A RANGE IS N CALLS, NOT ONE — Get Orders returns two days per call
+   * (D and D-1) and is keyed on one business date, so a range loops the same
+   * per-day fetch rather than growing a bulk endpoint. That keeps the per-day
+   * dedupe and latest-fetch-wins exactly as they are, and it is why progress
+   * is shown per day: a five-day catch-up is five round trips to Petpooja,
+   * and a spinner over all of them would just look hung.
+   */
+  async function run(dates: string[]) {
+    if (fetching || dates.length === 0) return
     setFetching(true)
     setError(null)
     setResult(null)
-    try {
-      const res = await fetchDay({ date })
-      if (res.ok) {
-        setResult(res)
-        router.refresh()
-      } else {
-        setError(res.error)
+    setProgress(dates.map((d) => ({ date: d, state: 'waiting', detail: '' })))
+    let last: Extract<FetchDayResult, { ok: true }> | null = null
+    for (const d of dates) {
+      setProgress((p) => p.map((x) => (x.date === d ? { ...x, state: 'fetching' } : x)))
+      try {
+        const res = await fetchDay({ date: d })
+        if (res.ok) {
+          last = res
+          setProgress((p) =>
+            p.map((x) =>
+              x.date === d
+                ? {
+                    ...x,
+                    state: 'done',
+                    detail: `${res.insertedOrders} order${res.insertedOrders === 1 ? '' : 's'}${
+                      res.day !== null ? ` · ${formatMoneyString(res.day.revenue)}` : ''
+                    }`,
+                  }
+                : x,
+            ),
+          )
+        } else {
+          setProgress((p) => p.map((x) => (x.date === d ? { ...x, state: 'failed', detail: res.error } : x)))
+        }
+      } catch {
+        setProgress((p) =>
+          p.map((x) => (x.date === d ? { ...x, state: 'failed', detail: 'could not reach the server' } : x)),
+        )
       }
-    } catch {
-      setError('Could not reach the server — nothing was fetched. Please retry.')
-    } finally {
-      setFetching(false)
     }
+    // The reveal shows the LAST day fetched; the per-day list above it is
+    // what says how the others went. A range that half-failed must not look
+    // like a range that succeeded.
+    if (last !== null) setResult(last)
+    router.refresh()
+    setFetching(false)
   }
+
+  const onFetch = () => void run(to === '' ? [date] : daysBetween(date, to))
 
   return (
     <section className={cardCls}>
@@ -46,18 +93,68 @@ export default function FetchDay({ defaultDate }: { defaultDate: string }) {
           <span className={fieldLabelCls}>Business date</span>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${numCls}`} />
         </label>
+        <label className="block">
+          <span className={fieldLabelCls}>to (optional)</span>
+          <input
+            type="date"
+            value={to}
+            min={date}
+            max={today}
+            onChange={(e) => setTo(e.target.value)}
+            className={`${numCls}`}
+          />
+        </label>
         <button
           type="button"
           onClick={onFetch}
-          disabled={fetching || date === ''}
+          disabled={fetching || date === '' || (to !== '' && to < date)}
           className="rounded-xl bg-emerald-700 px-5 py-2.5 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
         >
-          {fetching ? 'Fetching from Petpooja…' : 'Fetch day'}
+          {fetching
+            ? 'Fetching from Petpooja…'
+            : to === ''
+              ? 'Fetch day'
+              : `Fetch ${daysBetween(date, to).length} days`}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setTo('')
+            setDate(today)
+            void run([today])
+          }}
+          disabled={fetching}
+          className="rounded-xl border border-stone-300 px-4 py-2.5 text-sm font-semibold text-stone-700 hover:border-emerald-400 disabled:opacity-50"
+        >
+          Fetch today
         </button>
         <p className="basis-full text-xs text-stone-400">
           Re-fetching a date records a new fetch that wins — nothing is edited, the old fetch stays in history.
         </p>
       </div>
+
+      {progress.length > 1 && (
+        <ul className="mt-3 divide-y divide-rule-soft rounded-xl border border-rule">
+          {progress.map((d) => (
+            <li key={d.date} className="flex items-center justify-between gap-3 px-3 py-1.5 text-sm">
+              <span className="tabular-nums text-stone-700">{fmtDate(d.date)}</span>
+              <span
+                className={
+                  d.state === 'failed'
+                    ? 'text-red-700'
+                    : d.state === 'done'
+                      ? 'text-stone-600'
+                      : 'text-stone-400'
+                }
+              >
+                {d.state === 'waiting' && 'waiting'}
+                {d.state === 'fetching' && 'fetching…'}
+                {d.state !== 'waiting' && d.state !== 'fetching' && d.detail}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {error && (
         <div role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">

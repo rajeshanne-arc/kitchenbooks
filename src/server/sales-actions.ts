@@ -10,7 +10,7 @@ import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { fetchPetpoojaOrders, PetpoojaError } from '@/server/petpooja'
 import { normalizePayload, persistFetch, SalesIngestError } from '@/server/sales-ingest'
-import { countUnmapped, getSalesDay, listUnknownOrders } from '@/server/sales-queries'
+import { countUnmapped, getMappingCoverage, getSalesDay, listUnknownOrders } from '@/server/sales-queries'
 import type { FetchDayResult, MapItemResult, PosMapRow } from '@/lib/types'
 import { businessToday } from '@/server/business-day'
 
@@ -80,16 +80,27 @@ export async function fetchDay(raw: { date: string }): Promise<FetchDayResult> {
 
 // ---------------------------------------------------------------- map item
 
-const MapSchema = z.object({
-  posItemId: z.string().trim().min(1).max(40),
-  itemName: z.string().trim().max(200),
-  recipeId: z.string().regex(UUID),
-})
+const MapSchema = z
+  .object({
+    posItemId: z.string().trim().min(1).max(40),
+    itemName: z.string().trim().max(200),
+    /** A DISH gives the department AND the cost. */
+    recipeId: z.union([z.literal(''), z.string().regex(UUID)]),
+    /** A DEPARTMENT alone gives the department — most of the value, and the
+     *  honest answer for anything bought and resold. Bottled water sold 88
+     *  units and will never have a recipe; without this its revenue sits
+     *  outside every department permanently. */
+    sectionId: z.union([z.literal(''), z.string().regex(UUID)]),
+  })
+  .refine((v) => v.recipeId !== '' || v.sectionId !== '', {
+    message: 'Pick a dish or a department — a POS item has to land somewhere',
+  })
 
 export async function mapPosItem(raw: {
   posItemId: string
   itemName: string
   recipeId: string
+  sectionId: string
 }): Promise<MapItemResult> {
   try {
     const input = MapSchema.parse(raw)
@@ -98,29 +109,49 @@ export async function mapPosItem(raw: {
 
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
-      const dish = await tx<{ id: string }[]>`
-        select id from recipes
-        where id = ${input.recipeId} and restaurant_id = ${rid} and kind = 'dish' and status = 'active'`
-      if (!dish[0]) throw new SalesError('Pick a dish — POS items map to dishes, and the dish carries the section')
+      if (input.recipeId !== '') {
+        const dish = await tx<{ id: string }[]>`
+          select id from recipes
+          where id = ${input.recipeId} and restaurant_id = ${rid} and kind = 'dish' and status = 'active'`
+        if (!dish[0]) throw new SalesError('That dish no longer exists — pick another')
+      }
+      if (input.sectionId !== '') {
+        const sec = await tx<{ id: string }[]>`
+          select id from sections
+          where id = ${input.sectionId} and restaurant_id = ${rid} and status = 'active'`
+        if (!sec[0]) throw new SalesError('That department no longer exists — pick another')
+      }
+      // RECIPE WINS. Writing both would leave two answers to one question, so
+      // a dish clears any direct department rather than sitting beside it.
+      const recipeId = input.recipeId === '' ? null : input.recipeId
+      const sectionId = recipeId !== null ? null : input.sectionId === '' ? null : input.sectionId
       const [row] = await tx<{ id: string }[]>`
-        insert into pos_item_map (restaurant_id, pos_item_id, item_name, recipe_id)
-        values (${rid}, ${input.posItemId}, ${input.itemName === '' ? null : input.itemName}, ${input.recipeId})
+        insert into pos_item_map (restaurant_id, pos_item_id, item_name, recipe_id, section_id)
+        values (${rid}, ${input.posItemId}, ${input.itemName === '' ? null : input.itemName},
+                ${recipeId}, ${sectionId})
         on conflict (restaurant_id, pos_item_id)
-        do update set recipe_id = excluded.recipe_id, item_name = excluded.item_name
+        do update set recipe_id = excluded.recipe_id, section_id = excluded.section_id,
+                      item_name = excluded.item_name
         returning id`
       return { mapId: row.id }
     })
 
     const [map] = await tsql<PosMapRow[]>`
-      select m.id, m.pos_item_id, m.item_name, m.recipe_id,
-             r.code as recipe_code, r.name as recipe_name, s.code as section_code
+      select m.id, m.pos_item_id, m.item_name, m.recipe_id, m.section_id,
+             r.code as recipe_code, r.name as recipe_name,
+             coalesce(rs.code, ds.code) as section_code,
+             coalesce(rs.name, ds.name) as section_name
       from pos_item_map m
       left join recipes r on r.id = m.recipe_id
-      left join sections s on s.id = r.section_id
+      left join sections rs on rs.id = r.section_id
+      left join sections ds on ds.id = m.section_id
       where m.id = ${saved.mapId}`
-    if (!map || map.recipe_id === null) throw new SalesError('Could not verify the mapping after save')
+    if (!map || (map.recipe_id === null && map.section_id === null)) {
+      throw new SalesError('Could not verify the mapping after save')
+    }
     const unmappedLeft = await countUnmapped(rid)
-    return { ok: true, map, unmappedLeft }
+    const coverage = await getMappingCoverage(rid)
+    return { ok: true, map, unmappedLeft, coverage }
   } catch (e) {
     return fail(e)
   }

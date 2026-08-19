@@ -6,7 +6,7 @@ import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import Honesty from '@/components/Honesty'
-import { businessYesterday } from '@/server/business-day'
+import { businessToday, businessYesterday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,7 +20,7 @@ export default async function SalesPage() {
 
   return (
     <section className="mt-4 space-y-4">
-      <FetchDay defaultDate={await businessYesterday()} />
+      <FetchDay defaultDate={await businessYesterday()} today={await businessToday()} />
 
       <Link
         href="/sales/books/sales/mapping"

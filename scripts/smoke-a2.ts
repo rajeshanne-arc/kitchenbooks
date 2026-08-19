@@ -2210,7 +2210,22 @@ async function run() {
     const def = await tsql<{ d: string }[]>`select pg_get_viewdef('latest_fetches'::regclass, true) as d`
     assert.ok(!/order_time/.test(def[0].d), 'latest_fetches must not read order_time')
     const cur = await tsql<{ d: string }[]>`select pg_get_viewdef('sales_current'::regclass, true) as d`
-    assert.ok(!/order_time/.test(cur[0].d), 'sales_current must not filter on order_time')
+    // SELECTING A COLUMN IS NOT KEYING ON ONE, and the difference is the whole
+    // assertion. sales_current now carries order_time in its select list —
+    // sales_by_hour reads it from there — which is additive and changes
+    // nothing about which rows come back. What must never happen is
+    // order_time appearing in the JOIN, a WHERE, a DISTINCT ON or an ORDER
+    // BY, because that is where "which fetch wins" and "which duplicate is
+    // skipped" are decided.
+    //
+    // So the check is narrowed BY STRUCTURE rather than dropped: everything
+    // from FROM onwards must not mention it. Blinding the gate to the name
+    // would have been the easy fix and the wrong one.
+    const fromOnwards = cur[0].d.slice(cur[0].d.search(/\bFROM\b/i))
+    assert.ok(
+      !/order_time/i.test(fromOnwards),
+      'sales_current joins, filters or orders on order_time — that decides which rows win',
+    )
 
     const { normalizePayload } = await import('../src/server/sales-ingest')
     const entry = (id: string, at: string | null) => ({
@@ -4963,6 +4978,70 @@ async function run() {
     )
     assert.ok(!/tenant === null\s*\?\s*\[\]/.test(fn), 'the early-skip is back')
     console.log('      one return null · compare and read both unconditional')
+  })
+
+
+  // ── sales: mapping coverage, the trading day, the payment split ───────
+
+  await check('every new sales read runs against the real database', async () => {
+    const { getMappingCoverage, getSalesByHour, getPaymentSplit } = await import('../src/server/sales-queries')
+    const rid = (await tsql<{ id: string }[]>`select id from restaurants limit 1`)[0].id
+    const cov = await getMappingCoverage(rid)
+    const hours = await getSalesByHour(rid, '2026-08-01', '2026-08-31')
+    const split = await getPaymentSplit(rid, '2026-08-01', '2026-08-31')
+    assert.ok(cov !== null, 'mapping_coverage has no row for the live tenant')
+    // REVENUE_MAPPED IS NULL, NOT 0, when nothing is mapped — a sum over no
+    // rows. The screen keeps that apart from "mapped, and it came to zero",
+    // so the query must not coalesce it away.
+    assert.ok(
+      cov.revenue_mapped === null || Number(cov.revenue_mapped) >= 0,
+      'revenue_mapped is neither null nor a number',
+    )
+    // per_cover must be NULL where covers is zero, never Infinity
+    for (const h of hours) {
+      if (h.covers === 0) assert.equal(h.per_cover, null, `hour ${h.hour} divided by zero covers`)
+    }
+    console.log(
+      `      coverage ${cov.pct_attributed}% of ${cov.revenue_seen} · ${hours.length} hours · ${split.length} payment modes`,
+    )
+  })
+
+  await check('a POS item can be attributed to a DEPARTMENT, and a dish still wins', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/sales-actions.ts', 'utf8')
+    // A dish gives department AND cost; a department alone gives the
+    // department — the honest answer for anything bought and resold. Bottled
+    // water will never have a recipe, and without this its revenue sits
+    // outside every department permanently.
+    assert.ok(/sectionId: z\.union/.test(src), 'mapPosItem no longer accepts a department')
+    assert.ok(/\.refine\(/.test(src), 'a mapping with neither target is accepted')
+    // RECIPE WINS. Writing both would leave two answers to one question.
+    assert.ok(
+      /const sectionId = recipeId !== null \? null :/.test(src),
+      'a dish no longer clears the direct department — two answers to one question',
+    )
+    // and the DB agrees the column is there
+    const col = await tsql<{ n: number }[]>`
+      select count(*)::int as n from information_schema.columns
+      where table_schema = 'public' and table_name = 'pos_item_map' and column_name = 'section_id'`
+    assert.equal(col[0].n, 1, 'pos_item_map.section_id is gone')
+    console.log('      both targets accepted; recipe wins; neither is refused')
+  })
+
+  await check('the payment split does not cycle a three-hue palette across seven modes', async () => {
+    const { readFileSync } = await import('node:fs')
+    const charts = readFileSync('src/components/dashboard/Charts.tsx', 'utf8')
+    const page = readFileSync('src/app/sales/page.tsx', 'utf8')
+    // CAT holds exactly the three hues the validator cleared (CVD ΔE 25.3).
+    // LabourSplit cycles them with CAT[i % CAT.length], which is correct for
+    // three categories and repeats colours for seven — so the payment split
+    // uses named bars, where identity is carried by the axis label and no hue
+    // is asked to do work it cannot.
+    const cat = charts.slice(charts.indexOf('const CAT ='), charts.indexOf('const CAT =') + 200)
+    assert.equal((cat.match(/var\(--color-/g) ?? []).length, 3, 'CAT is no longer three validated hues')
+    assert.ok(!/LabourSplit/.test(page), 'the sales dashboard is cycling categorical hues across payment modes')
+    assert.ok(/MagnitudeBars/.test(page), 'the payment split lost its chart')
+    console.log('      3 validated hues; the 7-mode split is direct-labelled bars')
   })
 
   console.log(

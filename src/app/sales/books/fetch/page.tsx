@@ -5,7 +5,7 @@ import FetchDay from '@/components/sales/FetchDay'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
-import { businessYesterday } from '@/server/business-day'
+import { businessToday, businessYesterday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +21,7 @@ export default async function CashFetchPage() {
       </header>
 
       <div className="space-y-4">
-        <FetchDay defaultDate={await businessYesterday()} />
+        <FetchDay defaultDate={await businessYesterday()} today={await businessToday()} />
 
         <section className={cardCls}>
           <div className="flex items-baseline justify-between gap-3">

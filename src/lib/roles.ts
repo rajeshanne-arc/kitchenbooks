@@ -56,6 +56,12 @@ const RULES: [prefix: string, roles: Role[]][] = [
   ['/store', ['store', 'manager', 'owner']],
 
   // --- sales group (cashier) -------------------------------------------
+  // THE MAPPING QUEUE ADMITS THE CHEF. It is the one sales path they may
+  // open, and it is the right one: the cashier is in Sales every day, but the
+  // chef is who knows which POS name is which dish. Every department view in
+  // the app is fed from this screen, so widening the door to the person who
+  // can actually answer is worth one rule.
+  ['/sales/books/sales/mapping', ['cashier', 'chef', 'manager', 'owner']],
   ['/sales', ['cashier', 'manager', 'owner']],
 
   // --- staff group (manager) -------------------------------------------
