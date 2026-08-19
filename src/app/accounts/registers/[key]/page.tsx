@@ -49,7 +49,7 @@ export default async function RegisterPage({
       </header>
 
       <div className="pb-4">
-        <PeriodControl period={period} error={periodReq.error} basePath={`/accounts/registers/${key}`} />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath={`/accounts/registers/${key}`} />
       </div>
 
       <section className={cardCls}>

@@ -283,6 +283,7 @@ export default async function DepartmentPage({
               this one */}
           <PeriodControl
             period={period}
+            today={periodToday}
             error={periodReq.error}
             basePath={`/kitchen/departments/${dept.code}`}
           />

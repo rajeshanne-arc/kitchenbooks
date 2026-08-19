@@ -113,7 +113,7 @@ export default async function VendorStatementPage({
       </header>
 
       <div className="flex flex-wrap items-center gap-2 pb-4 print:hidden">
-        <PeriodControl period={period} error={periodReq.error} basePath={`/accounts/parties/${id}`} />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath={`/accounts/parties/${id}`} />
         <PrintButton label="Print statement" />
       </div>
 

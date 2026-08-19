@@ -85,7 +85,7 @@ export default async function ActivityPage({
       </header>
 
       <div className="space-y-3 pb-4">
-        <PeriodControl period={period} error={periodReq.error} basePath="/owner/activity" />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/owner/activity" />
 
         {facets.people.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">

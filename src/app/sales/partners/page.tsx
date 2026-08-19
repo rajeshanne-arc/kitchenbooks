@@ -1,4 +1,7 @@
 import { getRestaurant } from '@/server/queries'
+import { businessToday } from '@/server/business-day'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
+import PeriodControl from '@/components/dashboard/PeriodControl'
 import {
   getPartnerPanel,
   getPartnerSummaries,
@@ -22,13 +25,21 @@ export const dynamic = 'force-dynamic'
 // Order on the page follows the question being asked: where does each
 // partner stand, then file a new settlement, then edit the master.
 
-export default async function PartnersPage() {
+export default async function PartnersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>
+}) {
+  const { period: periodParam } = await searchParams
   const restaurant = await getRestaurant()
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
   const [panel, partners, rows, summaries, deductionTypes, accounts] = await Promise.all([
-    getPartnerPanel(restaurant.id),
+    getPartnerPanel(restaurant.id, period.from, period.to),
     listPartners(restaurant.id, true),
     listSettlements(restaurant.id, 15),
-    getPartnerSummaries(restaurant.id),
+    getPartnerSummaries(restaurant.id, period.from, period.to),
     getList(restaurant.id, 'settlement_deduction'),
     listMoneyAccounts(restaurant.id),
   ])
@@ -41,6 +52,15 @@ export default async function PartnersPage() {
           {restaurant.name} — who sells on your behalf, what they agreed to take, and what they actually did
         </p>
       </header>
+
+      <div className="pb-4">
+        <PeriodControl
+          period={period}
+          today={periodToday}
+          error={periodReq.error}
+          basePath="/sales/partners"
+        />
+      </div>
 
       <div className="space-y-4">
         <PartnerPanel rows={panel} />

@@ -20,18 +20,31 @@ import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import Honesty from '@/components/Honesty'
+import PeriodControl from '@/components/dashboard/PeriodControl'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
-import { businessMonthStart, businessToday } from '@/server/business-day'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
-export default async function KitchenDashboardPage() {
+export default async function KitchenDashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>
+}) {
+  const { period: periodParam } = await searchParams
   const restaurant = await getRestaurant()
   const today = await businessToday()
-  const month = await businessMonthStart()
+  // THE SHARPEST OF THE UNSCOPED SURFACES. /store and /sales both carried the
+  // period control and this one was pinned to the current month, so the three
+  // group dashboards answered over different scopes depending on which one you
+  // happened to be standing in.
+  const periodReq = readPeriodParam(periodParam, today)
+  const period = resolvePeriod(periodReq.param, today)
+  const month = period.reportMonth
   const [day, wasteByReason, qtySold, dishCosts, consumption, unclosedDishes] = await Promise.all([
     getKitchenDay(restaurant.id, today),
     getWasteByReason(restaurant.id, month),
@@ -39,7 +52,7 @@ export default async function KitchenDashboardPage() {
     listDishCosts(restaurant.id),
     // the chef is accountable for what their departments consumed, so the
     // VALUE lives here — after the asking, never on the indent form
-    getSectionConsumptionDaily(restaurant.id, month, today),
+    getSectionConsumptionDaily(restaurant.id, period.from, period.to),
     // THE READ THAT MAKES PRODUCED DISHES EARN THEIR PLACE. A dish is cooked
     // ahead and portioned out later, so the portions must be HELD AND COUNTED
     // at closing. Produced and never closed means the record has no reader.
@@ -71,14 +84,14 @@ export default async function KitchenDashboardPage() {
     qtySold.length > 0,
     perf,
     'nothing mapped',
-    'No POS sale this month has been mapped to a dish, so no dish can be measured. Days are fetched and items are mapped on the Sales side.',
+    `No POS sale in ${fmtDate(month)}'s month has been mapped to a dish, so no dish can be measured. Days are fetched and items are mapped on the Sales side.`,
   )
 
   const waste = requires(
     wasteByReason.length > 0,
     wasteByReason,
     'nothing recorded',
-    'No loss has been recorded this month. An empty log cannot tell a month with no waste from a month nobody wrote down — so this card will not call it a clean one.',
+    'No loss has been recorded in the reporting month. An empty log cannot tell a month with no waste from a month nobody wrote down — so this card will not call it a clean one.',
   )
 
   return (
@@ -92,6 +105,10 @@ export default async function KitchenDashboardPage() {
 
       {/* What the accountant is asking THIS role, on the screen they already
           open every morning. Renders nothing when nothing is asked. */}
+      <div className="pb-4">
+        <PeriodControl period={period} today={today} error={periodReq.error} basePath="/kitchen" />
+      </div>
+
       <div className="pb-4">
         <MyQueriesPanel />
       </div>
@@ -108,7 +125,7 @@ export default async function KitchenDashboardPage() {
       <div className="pb-4">
         <ConsumptionByDept
           rows={consumption}
-          caption={`${fmtDate(month)} — ${fmtDate(today)}, this month so far`}
+          caption={`${fmtDate(period.from)} — ${fmtDate(period.to)}`}
         />
       </div>
 

@@ -13,7 +13,13 @@ import { fmtRange } from '@/lib/format'
 // and summed. The two must never disagree, which is why one function
 // produces both.
 
-export type PeriodKey = 'this-month' | 'last-month' | 'last-3-months'
+export type PeriodKey =
+  | 'today'
+  | 'yesterday'
+  | 'last-7-days'
+  | 'this-month'
+  | 'last-month'
+  | 'last-3-months'
 
 /**
  * An arbitrary range, and a SIBLING of PeriodKey rather than a widening of it.
@@ -61,9 +67,22 @@ export type Period = {
   reportMonth: string
 }
 
-export const PERIOD_KEYS: PeriodKey[] = ['this-month', 'last-month', 'last-3-months']
+// Shortest first — a store manager asking about TODAY was the obvious gap and
+// could not do it at all. ADDITIVE: the three month presets keep their exact
+// resolutions, proved by a golden table captured before they had company.
+export const PERIOD_KEYS: PeriodKey[] = [
+  'today',
+  'yesterday',
+  'last-7-days',
+  'this-month',
+  'last-month',
+  'last-3-months',
+]
 
-const PERIOD_LABELS: Record<PeriodKey, string> = {
+export const PERIOD_LABELS: Record<PeriodKey, string> = {
+  today: 'Today',
+  yesterday: 'Yesterday',
+  'last-7-days': 'Last 7 days',
   'this-month': 'This month',
   'last-month': 'Last month',
   'last-3-months': 'Last 3 months',
@@ -96,6 +115,14 @@ const iso = (d: Date) => d.toISOString().slice(0, 10)
 function monthStart(date: string, back = 0): string {
   const d = utc(date)
   return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - back, 1)))
+}
+
+/** `n` days before `date`, as YYYY-MM-DD. Pure UTC arithmetic on a date string,
+ *  so it cannot drift with a timezone — the ANCHOR carries the business day,
+ *  and shifting it by whole days keeps it a business day. */
+function daysBefore(date: string, n: number): string {
+  const d = utc(date)
+  return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - n)))
 }
 
 /** Last day of the month containing `date`. */
@@ -172,6 +199,31 @@ export function resolvePeriod(key: PeriodParam, today: string): Period {
   }
 
   const label = PERIOD_LABELS[key]
+
+  // THE DAY PRESETS. `today` is the BUSINESS day the caller handed in — at
+  // 00:30 that is still yesterday's calendar date, which is the whole reason
+  // every call site anchors on businessToday() rather than a clock.
+  if (key === 'today') {
+    return { key, label, from: today, to: today, months: [monthStart(today)], reportMonth: monthStart(today) }
+  }
+  if (key === 'yesterday') {
+    const d = daysBefore(today, 1)
+    return { key, label, from: d, to: d, months: [monthStart(d)], reportMonth: monthStart(d) }
+  }
+  if (key === 'last-7-days') {
+    // seven days INCLUSIVE of today, so six back — "last 7 days" that returned
+    // eight would be off by one every time somebody counted.
+    const from = daysBefore(today, 6)
+    return {
+      key,
+      label,
+      from,
+      to: today,
+      months: monthsBetween(from, today),
+      reportMonth: monthStart(today),
+    }
+  }
+
   if (key === 'last-month') {
     const from = monthStart(today, 1)
     return { key, label, from, to: monthEnd(from), months: [from], reportMonth: from }

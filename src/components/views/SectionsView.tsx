@@ -5,7 +5,6 @@ import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import { HonestyPill } from '@/components/Honesty'
 import type { SectionCostRow } from '@/lib/types'
-import { businessMonthStart } from '@/server/business-day'
 
 const monthLabel = (monthStart: string) =>
   new Date(`${monthStart}T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
@@ -76,9 +75,11 @@ function Row({ r, loud }: { r: SectionCostRow; loud?: boolean }) {
   )
 }
 
-export default async function SectionsView() {
+export default async function SectionsView({ monthStart }: { monthStart: string }) {
   const restaurant = await getRestaurant()
-  const monthStart = await businessMonthStart()
+  // section_costs is a join of WHOLE-MONTH aggregates, so this reports the
+  // period's last month and the page names it. There is no part-month form of
+  // these four figures — the same rule the owner dashboard already follows.
   const rows = await getSectionCosts(restaurant.id, monthStart)
   const unassigned = rows.filter((r) => r.section_code === '—')
   const regular = rows.filter((r) => r.section_code !== '—')

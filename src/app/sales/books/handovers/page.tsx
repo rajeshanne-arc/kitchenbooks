@@ -45,7 +45,7 @@ export default async function HandoversPage({
       </header>
 
       <div className="pb-4">
-        <PeriodControl period={period} error={periodReq.error} basePath="/sales/books/handovers" />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/sales/books/handovers" />
       </div>
 
       {rows.length === 0 ? (

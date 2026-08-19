@@ -137,7 +137,7 @@ export default async function SalesDashboard({
       </div>
 
       <div className="pb-4">
-        <PeriodControl period={period} error={periodReq.error} basePath="/sales" />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/sales" />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">

@@ -102,10 +102,15 @@ async function run() {
   })
 
   await check('an unknown period string is refused', () => {
-    assert.equal(isPeriodKey('this-month'), true)
+    // EVERY preset, named. This asserted `PERIOD_KEYS.length === 3`, which
+    // cannot see a reorder and cannot see a rename — it only noticed that
+    // three presets had become six. The golden table deep-equals the array;
+    // this one proves the predicate agrees with it.
+    for (const k of PERIOD_KEYS) assert.equal(isPeriodKey(k), true, `${k} must be recognised`)
     assert.equal(isPeriodKey('all-time'), false)
     assert.equal(isPeriodKey(undefined), false)
-    assert.equal(PERIOD_KEYS.length, 3)
+    assert.equal(isPeriodKey('2026-08-01..2026-08-17'), false, 'a range is not a preset')
+    assert.equal(PERIOD_KEYS.length, new Set(PERIOD_KEYS).size, 'a preset appears twice')
   })
 
   /* ── 2. every new query runs against the real database ────────────── */
@@ -3202,10 +3207,88 @@ async function run() {
     }
     assert.deepEqual(
       PERIOD_KEYS,
-      ['this-month', 'last-month', 'last-3-months'],
+      ['today', 'yesterday', 'last-7-days', 'this-month', 'last-month', 'last-3-months'],
       'PERIOD_KEYS changed — the old check only counted them, so a reorder shipped green',
     )
+
+    // THE SECOND FIXTURE covers all six. The first is the historical proof that
+    // adding three presets did not move the original three, and is never
+    // regenerated; this one is the going-forward table.
+    const all = JSON.parse(readFileSync('scripts/fixtures/period-all.json', 'utf8')) as Record<
+      string,
+      Record<string, unknown>
+    >
+    for (const k of Object.keys(all)) {
+      const at = k.lastIndexOf('@')
+      assert.deepEqual(resolvePeriod(k.slice(0, at) as PeriodKey, k.slice(at + 1)), all[k], `${k} changed`)
+    }
+    console.log(`      ${Object.keys(all).length} resolutions across all ${PERIOD_KEYS.length} presets`)
     console.log(`      ${compared} preset resolutions identical across ${new Set(keys.map((k) => k.slice(k.lastIndexOf('@') + 1))).size} anchors`)
+  })
+
+  await check('the day presets are business days, and roll the year correctly', async () => {
+    // "Today" MUST mean businessToday(), so at 00:30 it is still yesterday's
+    // calendar date. resolvePeriod is pure and takes the anchor, so the whole
+    // guarantee is that every call site hands it a business day — asserted
+    // separately below — and that these branches do not re-derive one.
+    assert.deepEqual(resolvePeriod('today', '2026-08-19'), {
+      key: 'today',
+      label: 'Today',
+      from: '2026-08-19',
+      to: '2026-08-19',
+      months: ['2026-08-01'],
+      reportMonth: '2026-08-01',
+    })
+    // year-roll, leap day and non-leap February, by value
+    assert.equal(resolvePeriod('yesterday', '2026-01-01').from, '2025-12-31', 'yesterday must cross the year')
+    assert.equal(resolvePeriod('yesterday', '2024-03-01').from, '2024-02-29', 'and the leap day')
+    assert.equal(resolvePeriod('yesterday', '2026-03-01').from, '2026-02-28', 'and February in a normal year')
+    assert.deepEqual(resolvePeriod('last-7-days', '2026-01-01').months, ['2025-12-01', '2026-01-01'])
+
+    // SEVEN days inclusive of today, not eight — off by one every time somebody
+    // counts is the sort of thing nobody reports and everybody distrusts.
+    const w = resolvePeriod('last-7-days', '2026-08-19')
+    const days = (Date.parse(`${w.to}T00:00:00Z`) - Date.parse(`${w.from}T00:00:00Z`)) / 86400000 + 1
+    assert.equal(days, 7, `last-7-days spans ${days} days`)
+
+    // and a single-day preset is a real period, not an empty one
+    for (const k of ['today', 'yesterday'] as const) {
+      const p = resolvePeriod(k, '2026-08-19')
+      assert.equal(p.from, p.to, `${k} is one day`)
+      assert.ok(p.to <= '2026-08-19', `${k} never reports a day that has not happened`)
+    }
+  })
+
+  await check('the period anchor is the BUSINESS day at every call site', async () => {
+    // The presets are pure; the guarantee lives in what they are handed. A
+    // clock read anywhere on this path would say "tomorrow" at 00:30, which is
+    // the exact fault the business day exists to prevent.
+    const { readdirSync, statSync, readFileSync } = await import('node:fs')
+    const walkP = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir)) {
+        const q = `${dir}/${e}`
+        if (statSync(q).isDirectory()) walkP(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const offenders: string[] = []
+    let anchored = 0
+    for (const f of [...walkP('src/app'), ...walkP('src/components')]) {
+      const src = readFileSync(f, 'utf8')
+      if (!/resolvePeriod\(|readPeriodParam\(/.test(src)) continue
+      // the control is a client component and is HANDED the day as a prop
+      if (f.endsWith('PeriodControl.tsx')) {
+        assert.match(src, /today: string/, 'the control must take the business day, never read a clock')
+        assert.ok(!/new Date\(\)/.test(src), 'the control must not read the browser clock')
+        continue
+      }
+      if (/businessToday\(\)/.test(src)) anchored++
+      else offenders.push(f)
+    }
+    assert.deepEqual(offenders, [], 'these resolve a period without anchoring on the business day')
+    assert.ok(anchored >= 14, `only ${anchored} surfaces anchor on businessToday()`)
+    console.log(`      ${anchored} surfaces anchor the period on the business day`)
   })
 
   await check('the front door cannot re-route a preset into the custom branch', async () => {

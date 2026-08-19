@@ -49,7 +49,11 @@ export async function listSettlements(restaurantId: string, limit = 40): Promise
 /** Per-partner totals over every settlement (reversals net out in the
  * sums). outstanding = gross − commission − deductions − received: what
  * the partner still owes for the periods filed. */
-export async function getPartnerSummaries(restaurantId: string): Promise<PartnerSummaryRow[]> {
+export async function getPartnerSummaries(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<PartnerSummaryRow[]> {
   return tsql<PartnerSummaryRow[]>`
     select partner,
            count(*) filter (where reverses_id is null)::int as settlements,
@@ -61,6 +65,8 @@ export async function getPartnerSummaries(restaurantId: string): Promise<Partner
             - coalesce(sum(other_deductions), 0) - coalesce(sum(amount_received), 0))::text as outstanding
     from partner_settlements
     where restaurant_id = ${restaurantId}
+      and period_start <= ${to}::date
+      and period_end >= ${from}::date
     group by partner
     order by partner asc`
 }
@@ -311,7 +317,15 @@ export async function getSettlementDeductions(settlementId: string): Promise<Set
  * period can hide a rate that drifted, and a large gap can be one disputed
  * invoice charged at exactly the agreed rate.
  */
-export async function getPartnerPanel(restaurantId: string): Promise<PartnerPanelRow[]> {
+export async function getPartnerPanel(
+  restaurantId: string,
+  /** the period the panel answers for. It was a LIFETIME sum — effective_pct in
+   *  particular was commission ÷ gross blended across all time, while the owner
+   *  dashboard read the same data period-scoped, so the two screens disagreed
+   *  about the same partner and neither said why. */
+  from: string,
+  to: string,
+): Promise<PartnerPanelRow[]> {
   return tsql<PartnerPanelRow[]>`
     select p.name as partner,
            p.kind,
@@ -333,6 +347,12 @@ export async function getPartnerPanel(restaurantId: string): Promise<PartnerPane
     left join partner_settlements ps
       on ps.restaurant_id = p.restaurant_id
      and lower(trim(ps.partner)) = lower(trim(p.name))
+     -- OVERLAP, NOT CONTAINMENT, and it belongs in the JOIN rather than the
+     -- WHERE: a partner with no settlement in this period must still appear.
+     -- "We have never reconciled Zomato" is a finding, and an absent row
+     -- cannot say it.
+     and ps.period_start <= ${to}::date
+     and ps.period_end >= ${from}::date
     where p.restaurant_id = ${restaurantId} and p.status = 'active'
     group by p.name, p.kind, p.agreed_commission_pct
     order by coalesce(sum(ps.gap), 0) desc, p.name asc`

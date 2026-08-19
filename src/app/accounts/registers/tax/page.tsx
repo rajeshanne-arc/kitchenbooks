@@ -82,7 +82,7 @@ export default async function TaxPage({
       </p>
 
       <div className="pb-4">
-        <PeriodControl period={period} error={periodReq.error} basePath="/accounts/registers/tax" />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/accounts/registers/tax" />
       </div>
 
       <div className="space-y-4">

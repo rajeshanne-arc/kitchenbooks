@@ -159,7 +159,7 @@ export default async function StoreHome({
       </div>
 
       <div className="pb-4">
-        <PeriodControl period={period} error={periodReq.error} basePath="/store" />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/store" />
       </div>
 
       {/* what needs doing right now, above everything measured */}

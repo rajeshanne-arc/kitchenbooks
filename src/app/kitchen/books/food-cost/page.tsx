@@ -1,4 +1,6 @@
 import { getRestaurant } from '@/server/queries'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
+import PeriodControl from '@/components/dashboard/PeriodControl'
 import { getFoodCost } from '@/server/kitchen-queries'
 import { getSectionConsumptionDaily } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
@@ -6,7 +8,7 @@ import { cardCls, sectionHeadCls } from '@/components/ui'
 import Honesty, { HonestyPill } from '@/components/Honesty'
 import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import type { FoodCostRow } from '@/lib/types'
-import { businessMonthStart, businessToday } from '@/server/business-day'
+import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -60,20 +62,37 @@ function Row({ r }: { r: FoodCostRow }) {
   )
 }
 
-export default async function FoodCostPage() {
+export default async function FoodCostPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>
+}) {
+  const { period: periodParam } = await searchParams
   const restaurant = await getRestaurant()
-  const monthStart = await businessMonthStart()
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
+  // section_food_cost is MONTHLY — there is no part-month form of it — so this
+  // reports the period's last month, named on screen, exactly as the owner
+  // dashboard does. The daily consumption beside it takes the real range.
+  const monthStart = period.reportMonth
   const [rows, consumption] = await Promise.all([
     getFoodCost(restaurant.id, monthStart),
     // the same movement counted in money, day by day — this is the page
     // where a chef is answerable for it
-    getSectionConsumptionDaily(restaurant.id, monthStart, await businessToday()),
+    getSectionConsumptionDaily(restaurant.id, period.from, period.to),
   ])
   const live = rows.filter((r) => r.has_activity)
   const closed = live.filter((r) => r.consumed_total !== null).length
 
   return (
     <div className="mt-4 space-y-4">
+    <PeriodControl
+      period={period}
+      today={periodToday}
+      error={periodReq.error}
+      basePath="/kitchen/books/food-cost"
+    />
     <section className={cardCls}>
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>{monthLabel(monthStart)}</h2>

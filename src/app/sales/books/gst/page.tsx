@@ -66,7 +66,7 @@ export default async function GstPage({
       </header>
 
       <div className="pb-4">
-        <PeriodControl period={period} error={periodReq.error} basePath="/sales/books/gst" />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/sales/books/gst" />
       </div>
 
       <p className="mb-4 rounded-xl border border-rule bg-stone-50 px-3 py-2 text-sm text-stone-700">

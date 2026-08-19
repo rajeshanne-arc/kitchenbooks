@@ -881,7 +881,7 @@ export default async function DashboardPage({
       </div>
 
       <div className="pb-4">
-        <PeriodControl period={period} error={periodReq.error} />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} />
       </div>
 
       <div className="mb-4">

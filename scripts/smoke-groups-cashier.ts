@@ -85,7 +85,7 @@ async function main() {
     billedByUs: '', claimedByThem: '', reference: '', deductions: [], accountId: ACCOUNT })
   assert.ok(s2.ok)
 
-  let summaries = await getPartnerSummaries(rid)
+  let summaries = await getPartnerSummaries(rid, '2000-01-01', '2100-01-01')
   const swiggy = summaries.find((s) => s.partner === 'Swiggy')
   const zomato = summaries.find((s) => s.partner === 'Zomato')
   assert.ok(swiggy && zomato)
@@ -94,7 +94,7 @@ async function main() {
 
   const sv = await voidSettlement(s2.settlement.id)
   assert.ok(sv.ok)
-  summaries = await getPartnerSummaries(rid)
+  summaries = await getPartnerSummaries(rid, '2000-01-01', '2100-01-01')
   const zomato2 = summaries.find((s) => s.partner === 'Zomato')
   assert.ok(zomato2)
   assert.equal(decimalStringToPaise(zomato2.outstanding), 0, 'void nets the partner summary')

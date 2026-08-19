@@ -3529,3 +3529,122 @@ Surfaces with a period that is **not** on the shared control:
 | the `/sales/record/*` entry screens | fixed month or 20-row cap | legitimately different — the month is context beside a form |
 
 None of these was given a picker in this change.
+
+## One date control, six presets, and the two settings that decide what a day is
+
+**THE CONTROL IS ONE THING NOW**, not a chip strip beside two bare inputs: a
+trigger showing the current selection compactly ("19 Aug 2026 · Today",
+"15 Jul – 17 Aug 2026") and a popover holding the presets down the left rail
+beside the calendar itself. The shape is the one Rajesh already uses daily in
+Petpooja, so it costs him nothing to learn.
+
+**The two halves are ONE CONTROL.** Tapping a preset HIGHLIGHTS its range on the
+calendar and does not close — so a person can see what "Last 7 days" actually
+means and then nudge an edge of it. **APPLY IS WHAT COMMITS**: nothing navigates
+on the first click of a range, because a half-picked range is not a period and
+firing a query on it shows a day's figures under a heading somebody is halfway
+through changing.
+
+**A PRESET COMMITS AS ITSELF**, `?period=last-7-days`, which stays RELATIVE —
+a link shared tonight still means the last seven days tomorrow. A hand-picked
+range commits as `?period=2026-08-01..2026-08-17`, absolute, because that is
+what was asked for. Both survive a paste.
+
+**Mobile is ONE month**, with the second grid hidden below `sm` and the paging
+arrows doing the whole job. 380px cannot hold two grids and the store, the chef
+and the cashier are all on phones.
+
+**`today` is passed as a PROP, never read from a hook or a clock.**
+`useBusinessDay()` throws outside a provider and this control mounts on fifteen
+pages across five groups; a `new Date()` here would say "tomorrow" at 00:30,
+which is the exact fault the business day exists to prevent. A gate asserts the
+control takes `today: string` and contains no `new Date()`.
+
+### Three presets added, and the equality proof re-run
+
+`today · yesterday · last-7-days`, shortest first. **A store manager could not
+ask about today at all**, which was the obvious gap.
+
+**ADDITIVE, AND PROVED SO.** The 435-resolution golden table captured before the
+custom range was compared again after adding three keys: **0 differ**.
+`last-7-days` is seven days INCLUSIVE — off by one every time somebody counts is
+the sort of thing nobody reports and everybody quietly distrusts. Year-rolls
+asserted by value: `yesterday` on 1 Jan → 31 Dec, on 1 Mar 2024 → 29 Feb, on
+1 Mar 2026 → 28 Feb; `last-7-days` on 1 Jan spans two months.
+
+A second fixture now covers all six (1,452 resolutions), and the first is kept
+as the historical proof and **never regenerated**.
+
+**And a weak assertion was replaced rather than merely updated.**
+`PERIOD_KEYS.length === 3` broke when three presets became six — but the reason
+it broke is that counting is all it could ever do: it could not see a reorder or
+a rename. It names every key now.
+
+### The timezone and the business day are settings at last
+
+Both had lived in the database with no UI since the business-day migration, so a
+restaurant that closes at 2am had no way to say so and one outside India had no
+way to say where it is. Owner only — the action checks the role itself, because
+a server action is a public endpoint and this one decides what every date in the
+books means.
+
+**The timezone is validated against `pg_timezone_names`, not against a list in
+the app.** The function that uses it runs `at time zone <value>` in SQL, so the
+database's own catalogue is the only authority; a zone Node accepts and Postgres
+does not would raise on every read afterwards. The field offers sixteen common
+zones as suggestions and accepts any IANA name — the list is the common ones,
+not the limit. **`Asia/Kolkata` is the new-tenant default and is written in
+exactly one place.**
+
+**TWO WARNINGS, both before the save:**
+
+1. **The cutover MUST match Petpooja's.** Orders arrive already stamped with
+   THEIR business date; everything else is stamped with ours, and
+   `day_close_ladder` joins the two definitions directly. If ours cuts at 05:00
+   and theirs at 04:00, every order in that hour is filed on a different day in
+   the two systems and the drawer fails to reconcile on exactly the late nights
+   that matter.
+2. **Changing either moves no stored date** — it changes what `business_date()`
+   returns from now on and what `business_day_disagreements` computes for orders
+   already stored. Said in the confirm step, because afterwards nothing on
+   screen would look different.
+
+### The four rogue surfaces, given the control
+
+`/kitchen` (the sharpest — `/store` and `/sales` both had it, so the three group
+dashboards answered over different scopes depending which one you stood in),
+`/kitchen/books/food-cost`, `SectionsView` and `/sales/partners`.
+
+**`SectionsView` now takes its month as a prop** and the PAGE resolves the
+period, so the component stays a pure renderer with one caller deciding its
+scope. Both it and the food-cost page report the period's **last month**, named
+in their own heading, because `section_costs` is a join of whole-month
+aggregates and `section_food_cost` has no part-month form.
+
+**`/sales/partners` was reading LIFETIME sums** — `effective_pct` was commission
+÷ gross blended across all time while the owner dashboard read the same data
+period-scoped, so the two screens disagreed about the same partner and neither
+said why. Both partner reads are period-scoped now, and the settlement join uses
+**overlap, not containment**, in the JOIN rather than the WHERE — a partner with
+no settlement in the period must still appear, because "we have never reconciled
+Zomato" is a finding and an absent row cannot say it.
+
+### The two CURRENT_DATE views: migration written, NOT applied
+
+`migrations/business_day_in_thirty_day_windows.sql` replaces `CURRENT_DATE` with
+`business_date(now())` in `slow_moving_stock` (twice) and
+`section_frequent_items` (once). **It is not applied**, and the reason is not
+caution: `kb_app` holds SELECT and INSERT and cannot replace a view, every
+migration in this project has been authored, named and applied by Rajesh, and
+`create or replace view` demands the column list match exactly — a near miss
+means dropping and recreating, which cascades to dependents.
+
+Worth knowing before applying it: the replacement makes both views depend on a
+`settings` read, so they can only be queried inside a tenant-announcing
+transaction. Every reader in the app already goes through `tsql`/`txn`, so that
+holds today — but a script that reached for them on the bare pool would start
+raising.
+
+**The third edge fault is not a code fix and was not treated as one.**
+`pos_orders.business_date` carries Petpooja's cutover; no view can correct that,
+and the warning now lives where the cutover is set.

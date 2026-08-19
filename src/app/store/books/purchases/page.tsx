@@ -43,7 +43,7 @@ export default async function DailyPurchasesPage({
       </header>
 
       <div className="pb-4">
-        <PeriodControl period={period} error={periodReq.error} basePath="/store/books/purchases" />
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/store/books/purchases" />
       </div>
 
       {rows.length === 0 ? (
