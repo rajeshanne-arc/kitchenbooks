@@ -42,6 +42,7 @@ export default async function ClosingPage() {
       <div className="space-y-4">
         <ClosingEntry
           sections={sections}
+          checklist={checklist}
           todaysProductions={todaysProductions}
           lastSets={lastSets}
         />

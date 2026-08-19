@@ -4127,6 +4127,252 @@ async function run() {
     )
   })
 
+
+  // ── the save acknowledgement ───────────────────────────────────────────
+  //
+  // Three rules, and each of these gates one of them structurally rather than
+  // by naming the files that were fixed. A gate scoped to where the first
+  // fault happened cannot find the second one — the same lesson as the audits
+  // that only walked src/server.
+
+  await check('no entry form throws itself away after a save', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    // Navigating away after a save is what made entering a second bill a trip
+    // back. It is not banned — sometimes the next screen genuinely IS the next
+    // step — but every case must be written down, so a new one fails this gate
+    // until somebody says why.
+    const ALLOWED: Record<string, string> = {
+      'src/components/recipes/CreateRecipe.tsx':
+        'a recipe with no lines is useless — adding ingredients IS the next act, not a detour',
+      'src/components/accountant/PrepareRun.tsx':
+        'a payroll run is one per period and the run page is where it is approved',
+      'src/components/accountant/StatementImport.tsx':
+        'importing a statement exists in order to match it; the reconcile board is the next act',
+      'src/components/auth/SetupForm.tsx': 'signing in is the point of creating the first owner',
+      'src/components/auth/LoginForm.tsx': 'signing in navigates by definition',
+      'src/components/TopNav.tsx': 'signing out',
+      'src/components/dashboard/PeriodControl.tsx': 'the period IS the URL',
+      'src/components/books/FilterInput.tsx': 'the filter IS the URL',
+      'src/components/labour/AttendanceSheet.tsx': 'the day IS the URL',
+    }
+    const offenders: string[] = []
+    let forms = 0
+    for (const file of walk('src/components')) {
+      const src = readFileSync(file, 'utf8')
+      const callsAnAction = /from '@\/server\/[a-z-]*(actions|save-bill)'/.test(src)
+      const navigates = /router\.(push|replace)\(/.test(src)
+      if (!callsAnAction) continue
+      forms++
+      if (navigates && ALLOWED[file] === undefined) offenders.push(file)
+    }
+    assert.ok(forms > 20, `only ${forms} forms found — this sweep is not reading the tree`)
+    console.log(`      ${forms} forms call a server action; ${Object.keys(ALLOWED).length} may navigate, with reasons`)
+    assert.deepEqual(
+      offenders,
+      [],
+      `these navigate away after a save with no stated reason — show the reveal IN PLACE and reset the form beneath it:\n      ${offenders.join('\n      ')}`,
+    )
+  })
+
+  await check('the acknowledgement says numbers, never “saved successfully”', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    // A count is proof; a checkmark is a claim. This catches the exact strings
+    // that mean nothing — as a headline, as a toast, or as the "Saved ✓" that
+    // two master forms used to carry.
+    const EMPTY = /(['"`])\s*(saved|saved successfully|success|done|ok|saved ✓|recorded|updated)\s*\1/i
+    const offenders: string[] = []
+    let acks = 0
+    for (const file of walk('src/components')) {
+      const src = readFileSync(file, 'utf8')
+      acks += (src.match(/<SaveAck\b/g) ?? []).length
+      for (const m of src.matchAll(/\btoast\(\s*(['"][^'"]*['"])/g)) {
+        if (EMPTY.test(m[1])) offenders.push(`${file}: toast(${m[1]})`)
+      }
+      for (const m of src.matchAll(/headline=\{?\s*(['"][^'"]*['"])/g)) {
+        if (EMPTY.test(m[1])) offenders.push(`${file}: headline=${m[1]}`)
+      }
+    }
+    assert.ok(acks >= 15, `only ${acks} <SaveAck> mounts — the pattern is not applied`)
+    console.log(`      ${acks} <SaveAck> mounts`)
+    assert.deepEqual(
+      offenders,
+      [],
+      `these acknowledge a save without saying anything:\n      ${offenders.join('\n      ')}`,
+    )
+  })
+
+  await check('the identifier block has exactly ONE write path', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    // Two screens write these eleven columns — the accountant's People list
+    // and the owner's half of the staff form. Two SET lists is exactly how
+    // they drift, so the list lives in staff-identity.ts and nothing else may
+    // name these columns in an UPDATE.
+    //
+    // SCOPED TO `update staff set`, and that is not fussiness: vendors carry
+    // bank_name / account_no / ifsc / upi_id too, and a name-only sweep
+    // reported books-actions.ts — which sets a VENDOR's bank details — as a
+    // second staff identity path. A gate that cries wolf is a gate people
+    // start ignoring, so it was made precise rather than blunted.
+    const COLS = ['bank_name', 'account_no', 'ifsc', 'upi_id', 'pan', 'uan', 'pf_number', 'esic_number']
+    const offenders: string[] = []
+    let statements = 0
+    for (const file of [...walk('src/server'), ...walk('src/app')]) {
+      if (file.endsWith('staff-identity.ts')) continue
+      const src = readFileSync(file, 'utf8')
+      for (const m of src.matchAll(/update\s+staff\s+set\b([\s\S]*?)(?:returning|where)\b/gi)) {
+        statements++
+        for (const col of COLS) {
+          if (new RegExp(`\\b${col}\\s*=`).test(m[1])) offenders.push(`${file} sets staff.${col}`)
+        }
+      }
+    }
+    assert.ok(statements > 0, 'no `update staff set` found anywhere — this sweep is reading nothing')
+    assert.deepEqual(offenders, [], `a second identity SET list has appeared:\n      ${offenders.join('\n      ')}`)
+
+    // ...and both staff actions re-check the role, because a hidden field is
+    // not a check: a manager can post to the action directly.
+    const labour = readFileSync('src/server/labour-actions.ts', 'utf8')
+    for (const fn of ['createStaff', 'updateStaff']) {
+      const body = labour.slice(labour.indexOf(`export async function ${fn}(`))
+      assert.ok(
+        body.slice(0, 900).includes('assertIdentityActor'),
+        `${fn} does not re-check who may record an identifier`,
+      )
+    }
+    const guard = labour.slice(labour.indexOf('async function assertIdentityActor'))
+    assert.ok(/'owner'/.test(guard.slice(0, 700)) && /'accountant'/.test(guard.slice(0, 700)),
+      'the identity guard no longer names owner and accountant')
+    console.log('      one SET list, and both staff actions re-check the role')
+  })
+
+  // ── attendance hours ──────────────────────────────────────────────────
+
+  await check('worked is not paid, and the hours arithmetic holds by value', async () => {
+    // The PENDING branch this replaces existed only to bridge the window
+    // between writing the migration and Rajesh applying it. It is applied, so
+    // the bridge is gone: from here a missing column is a failure, not a note.
+    const col = await tsql<{ n: number }[]>`
+      select count(*)::int as n from information_schema.columns
+      where table_schema = 'public' and table_name = 'attendance' and column_name = 'extra_hours'`
+    assert.equal(col[0].n, 1, 'attendance.extra_hours has gone — the hours views cannot work without it')
+
+    // A VIEW BUILT ON EXPLICIT COLUMNS NEVER INHERITS. attendance_current
+    // selects named columns, so adding extra_hours to the table did NOT reach
+    // it and it had to be replaced. Asserted rather than remembered: the next
+    // column added to attendance will be invisible the same way.
+    const [ac] = await tsql<{ d: string }[]>`select pg_get_viewdef('attendance_current'::regclass, true) as d`
+    assert.ok(/extra_hours/.test(ac.d), 'attendance_current does not carry extra_hours — a named-column view never inherits')
+
+    const staff = await tsql<{ id: string }[]>`
+      select id from staff where employment_type <> 'contract' order by code limit 2`
+    assert.ok(
+      staff.length === 2,
+      'fewer than two non-contract staff — this assertion cannot fail, so it proves nothing',
+    )
+    let observed: { paid: number; worked: number; hours: number; extra: number } | null = null
+    try {
+      await txn(async (tx) => {
+        const rid = (await tx<{ id: string }[]>`select id from restaurants limit 1`)[0].id
+        const rows = [
+          { staff_id: staff[0].id, att_date: '2099-06-01', status: 'present', extra_hours: null },
+          { staff_id: staff[0].id, att_date: '2099-06-02', status: 'half', extra_hours: null },
+          { staff_id: staff[0].id, att_date: '2099-06-03', status: 'off', extra_hours: null },
+          { staff_id: staff[0].id, att_date: '2099-06-04', status: 'leave', extra_hours: null },
+          { staff_id: staff[0].id, att_date: '2099-06-05', status: 'absent', extra_hours: null },
+          // one late night, so the extra-hours leg is exercised rather than
+          // sitting at zero and agreeing with a broken sum
+          { staff_id: staff[1].id, att_date: '2099-06-01', status: 'present', extra_hours: '3' },
+        ].map((r) => ({ ...r, restaurant_id: rid, entered_by: 'zz-gate' }))
+        await tx`insert into attendance ${tx(
+          rows,
+          'restaurant_id',
+          'att_date',
+          'staff_id',
+          'status',
+          'extra_hours',
+          'entered_by',
+        )}`
+        const got = await tx<{
+          paid_days: string
+          worked_days: string
+          labour_hours: string
+          extra_hours: string
+        }[]>`
+          select paid_days::text, worked_days::text, labour_hours::text, extra_hours::text
+          from labour_hours_by_section where month = date '2099-06-01'`
+        const sum = (k: 'paid_days' | 'worked_days' | 'labour_hours' | 'extra_hours') =>
+          got.reduce((n, r) => n + Number(r[k]), 0)
+        observed = {
+          paid: sum('paid_days'),
+          worked: sum('worked_days'),
+          hours: sum('labour_hours'),
+          extra: sum('extra_hours'),
+        }
+        throw new Error('ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'ROLLBACK') throw e
+    }
+    assert.ok(observed !== null, 'the probe never ran')
+    const o = observed as unknown as { paid: number; worked: number; hours: number; extra: number }
+    // present 1 + half .5 + off 1 + the second person's present 1
+    assert.equal(o.paid, 3.5, 'paid_days no longer applies the pay law')
+    // WORKED IS NOT PAID: off is paid and worked by nobody
+    assert.equal(o.worked, 2.5, 'worked_days is counting a day nobody worked')
+    assert.equal(o.paid - o.worked, 1, 'the off day has stopped being the difference')
+    assert.equal(o.extra, 3, 'the extra hour never reached the view')
+    // 2.5 worked days x 8 + 3 late hours
+    assert.equal(o.hours, 23, 'labour_hours is not worked_days x the standard day plus the extra hours')
+
+    // The setting is what makes the standard day configurable rather than
+    // this country with extra steps, and it must default to 8, not to null.
+    const [std] = await tsql<{ h: string }[]>`select standard_hours_per_day()::text as h`
+    assert.equal(Number(std.h), 8, 'standard_hours_per_day() no longer answers 8 by default')
+
+    // NO RATE IS COMPUTED — checked against what is actually running, not
+    // against a file that could be deleted.
+    const [fn] = await tsql<{ d: string }[]>`
+      select pg_get_functiondef('standard_hours_per_day()'::regprocedure) as d`
+    const [hv] = await tsql<{ d: string }[]>`select pg_get_viewdef('labour_hours_by_section'::regclass, true) as d`
+    for (const [what, def] of [['standard_hours_per_day()', fn.d], ['labour_hours_by_section', hv.d]] as const) {
+      assert.ok(!/1\.5|overtime/i.test(def), `${what} has grown an overtime multiplier — record what happened, never price it`)
+    }
+
+    // ...and a department with hours and NO mapped sales must not be handed a
+    // confident ₹0.00 per hour. There is no honest zero here: sales_by_section
+    // has no row for a department that sold nothing.
+    const [sph] = await tsql<{ d: string }[]>`select pg_get_viewdef('sales_per_labour_hour'::regclass, true) as d`
+    assert.ok(
+      /sales_value IS NOT NULL/i.test(sph.d),
+      'sales_per_labour_hour divides into a coalesced zero again — that reports an absence as a rate',
+    )
+    console.log(`      paid ${o.paid}d · worked ${o.worked}d · ${o.extra}h late · ${o.hours}h total — and no rate is computed`)
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

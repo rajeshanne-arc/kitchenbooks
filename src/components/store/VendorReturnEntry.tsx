@@ -38,12 +38,13 @@ import type {
   ItemSuggestion,
   ReturnableBillRow,
   VendorReturnInput,
+  VendorReturnResult,
   VendorSel,
 } from '@/lib/types'
 import { saveVendorReturn } from '@/server/vendor-return-actions'
+import SaveAck from '@/components/SaveAck'
 import { formatMicro, formatMoneyString, lineValueMicro, parseMoney, parseQty, sumMicro } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { toast } from '@/components/Toasts'
 import VendorPicker from '@/components/VendorPicker'
 import IssueItemPicker from '@/components/store/IssueItemPicker'
 import { useBusinessToday } from '@/components/BusinessDay'
@@ -117,6 +118,7 @@ export default function VendorReturnEntry({
   const [lines, setLines] = useState<Line[]>([newLine(1)])
   const [nextKey, setNextKey] = useState(2)
   const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState<Extract<VendorReturnResult, { ok: true }> | null>(null)
   const [error, setError] = useState<string | null>(null)
   /** the bill this return was opened from, when it was */
   const [fromBill, setFromBill] = useState<BillReturnPrefill | null>(null)
@@ -257,7 +259,7 @@ export default function VendorReturnEntry({
     try {
       const res = await saveVendorReturn(payload)
       if (res.ok) {
-        toast('Return recorded — it is now waiting on a credit note')
+        setSaved(res)
         setVendor(null)
         setNewVendorName(null)
         setCreditNoteRef('')
@@ -265,7 +267,7 @@ export default function VendorReturnEntry({
         setFromBill(null)
         setLines([newLine(nextKey)])
         setNextKey((k) => k + 1)
-        setReturnDate(businessToday)
+        // the DATE stays: a van at the door means several crates on one day
         router.refresh()
       } else {
         setError(res.error)
@@ -279,6 +281,37 @@ export default function VendorReturnEntry({
 
   return (
     <div className="space-y-4">
+      {saved !== null && (
+        <SaveAck
+          onDismiss={() => setSaved(null)}
+          headline={
+            <>
+              {saved.ret.line_count} {saved.ret.line_count === 1 ? 'item' : 'items'} back to{' '}
+              {saved.ret.vendor_name} — <span className="tabular-nums">{formatMoneyString(saved.ret.total)}</span>{' '}
+              claimed
+            </>
+          }
+          sub={
+            <>
+              {fmtDate(saved.ret.return_date)}
+              {saved.ret.reason !== null && ` · ${saved.ret.reason}`} · {saved.ret.vendor_name} is now owed{' '}
+              <span className="font-semibold tabular-nums">{formatMoneyString(saved.dues.balance)}</span>
+              <span className="ml-1 text-xs">· read live from vendor_dues</span>
+            </>
+          }
+          missing={
+            saved.ret.credit_note_ref === null
+              ? [
+                  {
+                    verdict: 'no credit note',
+                    text: 'The goods have gone and the money has not come back. This sits on the awaiting-credit-note list until they issue one — the claim is only as good as the note behind it when it is disputed.',
+                  },
+                ]
+              : undefined
+          }
+          actions={[{ href: `/store/masters/vendors/${saved.ret.vendor_id}`, label: 'Vendor account' }]}
+        />
+      )}
       {/* START FROM THE BILL. Offered first because it is the better route: the
           receiver is holding the bill, and picking it answers the vendor, the
           items and the rates at once. The blank form stays right below for a

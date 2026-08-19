@@ -6,11 +6,11 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { Category } from '@/lib/types'
+import type { Category, VendorDetail } from '@/lib/types'
 import { createVendor } from '@/server/books-actions'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
 import { FormGroup, Wide } from '@/components/books/FormGroup'
-import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 export default function VendorNew({ categories }: { categories: Category[] }) {
   const router = useRouter()
@@ -36,6 +36,7 @@ export default function VendorNew({ categories }: { categories: Category[] }) {
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState<VendorDetail | null>(null)
 
   const canSave = !saving && name.trim() !== '' && category !== ''
 
@@ -46,8 +47,29 @@ export default function VendorNew({ categories }: { categories: Category[] }) {
     try {
       const res = await createVendor({ name: name.trim(), category, gstin, phone, paymentTerms, ...x })
       if (res.ok) {
-        toast(`${res.vendor.code} — ${res.vendor.name} created`)
-        router.push(`/store/masters/vendors/${res.vendor.id}`)
+        // Stay here. Setting up a new supply line usually means two or three
+        // vendors in one sitting, and the vendor page is a place to read, not
+        // the next thing to do.
+        setSaved(res.vendor)
+        setName('')
+        setGstin('')
+        setPhone('')
+        setPaymentTerms('')
+        setX({
+          contactPerson: '',
+          altPhone: '',
+          email: '',
+          address: '',
+          bankName: '',
+          accountNo: '',
+          ifsc: '',
+          upiId: '',
+          natureOfSupply: '',
+          openingBalance: '',
+          supplies: '',
+          notes: '',
+        })
+        setMore(false)
         router.refresh()
       } else {
         setError(res.error)
@@ -60,7 +82,30 @@ export default function VendorNew({ categories }: { categories: Category[] }) {
   }
 
   return (
-    <section className={cardCls}>
+    <div className="space-y-4">
+      {saved !== null && (
+        <SaveAck
+          onDismiss={() => setSaved(null)}
+          headline={
+            <>
+              <span className="font-mono">{saved.code}</span> · {saved.name}
+            </>
+          }
+          sub="the code and the category are locked from here on"
+          missing={
+            saved.account_no === null && saved.upi_id === null
+              ? [
+                  {
+                    verdict: 'no way to pay them',
+                    text: 'No account number and no UPI id, so when this vendor is owed money there is nothing to pay it into and somebody has to go and ask. The banking block on their page is copyable field by field, which is what it is for.',
+                  },
+                ]
+              : undefined
+          }
+          actions={[{ href: `/store/masters/vendors/${saved.id}`, label: 'Open the vendor' }]}
+        />
+      )}
+      <section className={cardCls}>
       <div className="space-y-3">
         <label className="block">
           <span className={fieldLabelCls}>Name</span>
@@ -191,5 +236,6 @@ export default function VendorNew({ categories }: { categories: Category[] }) {
         The code assigns itself in the same series bills use — V-CAT-NN, no forks.
       </p>
     </section>
+    </div>
   )
 }

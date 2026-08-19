@@ -15,6 +15,7 @@ import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
 import { rankDishes } from '@/components/DishSuggest'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 import { useBusinessToday } from '@/components/BusinessDay'
 
 export type GiveawayDish = { id: string; code: string; name: string; selling_price: string | null; has_cost: boolean }
@@ -160,17 +161,50 @@ export default function NonRevenueClient({
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Record a giveaway</h2>
         {saved !== null && (
-          <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-stone-800">
-            {saved.rows.length === 1 ? 'Recorded' : `${saved.rows.length} giveaways recorded`} — cost{' '}
-            <span className="font-semibold tabular-nums">{formatMoneyString(saved.total)}</span>
-            <ul className="mt-1 space-y-0.5">
-              {saved.rows.map((r) => (
-                <li key={r.id} className="text-xs text-stone-600">
-                  {r.recipe_name ?? r.description} · {r.reason}
-                  {Number(r.cost_value) === 0 && ' — no dish picked, no cost claim'}
-                </li>
-              ))}
-            </ul>
+          <div className="mt-2">
+            <SaveAck
+              onDismiss={() => setSaved(null)}
+              headline={
+                <>
+                  {saved.rows.length === 1 ? '1 giveaway' : `${saved.rows.length} giveaways`} recorded — cost{' '}
+                  <span className="tabular-nums">{formatMoneyString(saved.total)}</span>
+                </>
+              }
+              sub="cost frozen from dish_costs at save — a giveaway consumed real food and that figure must not drift when the recipe changes"
+              missing={
+                saved.rows.filter((r) => Number(r.cost_value) === 0).length > 0
+                  ? [
+                      {
+                        verdict: 'no cost claim',
+                        text: `${saved.rows
+                          .filter((r) => Number(r.cost_value) === 0)
+                          .map((r) => r.description ?? 'one entry')
+                          .join(', ')} — described but no dish picked, so ${
+                          saved.rows.filter((r) => Number(r.cost_value) === 0).length === 1 ? 'it costs' : 'they cost'
+                        } zero on the books. The food was real; the figure is not, and the P&L cannot see it.`,
+                      },
+                    ]
+                  : undefined
+              }
+            >
+              <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+                {saved.rows.map((r) => (
+                  <li key={r.id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+                    <span className="min-w-0">
+                      <span className="block truncate text-stone-900">{r.recipe_name ?? r.description}</span>
+                      <span className="block text-xs text-stone-500">{r.reason}</span>
+                    </span>
+                    <span
+                      className={`shrink-0 font-semibold tabular-nums ${
+                        Number(r.cost_value) === 0 ? 'text-amber-800' : 'text-stone-900'
+                      }`}
+                    >
+                      {formatMoneyString(r.cost_value)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </SaveAck>
           </div>
         )}
         <label className="mt-3 block sm:w-44">

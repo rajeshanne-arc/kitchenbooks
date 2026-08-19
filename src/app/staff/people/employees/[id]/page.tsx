@@ -4,6 +4,8 @@ import StaffForm from '@/components/labour/StaffForm'
 import { getRestaurant } from '@/server/queries'
 import { getAllSections } from '@/server/store-queries'
 import { getStaffDetail, listActiveStaff } from '@/server/labour-queries'
+import { getStaffIdentity } from '@/server/payroll-queries'
+import { getSessionUser } from '@/server/current-user'
 import { RetiredBadge } from '@/components/books/Badges'
 
 export const dynamic = 'force-dynamic'
@@ -17,7 +19,16 @@ export default async function StaffDetailPage({ params }: { params: Promise<{ id
   const staff = await getStaffDetail(restaurant.id, id)
   if (!staff) notFound()
 
-  const [sections, people] = await Promise.all([getAllSections(restaurant.id), listActiveStaff(restaurant.id)])
+  const [user, sections, people] = await Promise.all([
+    getSessionUser(),
+    getAllSections(restaurant.id),
+    listActiveStaff(restaurant.id),
+  ])
+  // OWNER (and accountant) ONLY, and the READ is gated as well as the render:
+  // StaffRow crosses the wire to a manager on this same screen, so a bank
+  // account number must not be in the payload at all.
+  const canEditIdentity = user?.role === 'owner' || user?.role === 'accountant'
+  const identity = canEditIdentity ? await getStaffIdentity(restaurant.id, id) : null
 
   return (
     <div className="mt-4">
@@ -32,7 +43,13 @@ export default async function StaffDetailPage({ params }: { params: Promise<{ id
           <span className="text-xs text-stone-400">reports to {staff.reports_to_name}</span>
         )}
       </div>
-      <StaffForm existing={staff} sections={sections} people={people} />
+      <StaffForm
+        existing={staff}
+        identity={identity}
+        canEditIdentity={canEditIdentity}
+        sections={sections}
+        people={people}
+      />
     </div>
   )
 }

@@ -15,10 +15,10 @@
 // belongs to the reveal — waste has a cost and the screen says so plainly.
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { IssuableItemHit, SaveStoreLossesResult } from '@/lib/types'
 import { saveStoreLosses } from '@/server/store-actions'
+import SaveAck from '@/components/SaveAck'
 import { parseQty, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import {
@@ -91,6 +91,7 @@ export default function WastageEntry({ reasons }: { reasons: string[] }) {
       })
       if (res.ok) {
         setSaved(res)
+        resetForNext()
         router.refresh()
       } else {
         setError(res.error)
@@ -102,59 +103,18 @@ export default function WastageEntry({ reasons }: { reasons: string[] }) {
     }
   }
 
-  function startAnother() {
-    setSaved(null)
+  /** Reset for the next entry, keeping what carries: the DATE stays (a day's
+   *  losses are written up together), the lines and the note clear. */
+  function resetForNext() {
     setNote('')
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
   }
 
-  if (saved !== null) {
-    return (
-      <section className={cardCls}>
-        <h2 className="text-lg font-bold text-stone-900">
-          {saved.rows.length} {saved.rows.length === 1 ? 'loss' : 'losses'} recorded —{' '}
-          {formatMoneyString(saved.total)}
-        </h2>
-        <p className="text-sm text-stone-500">{fmtDate(saved.rows[0].waste_date)}</p>
-        <ul className="mt-3 divide-y divide-rule-soft border-t border-stone-100">
-          {saved.rows.map((r) => (
-            <li key={r.id} className="flex items-center justify-between gap-3 py-2">
-              <span className="min-w-0">
-                <span className="block truncate text-[15px] text-stone-900">{r.item_name}</span>
-                <span className="block text-xs text-stone-500">
-                  {r.qty} {r.purchase_unit} · {r.reason}
-                </span>
-              </span>
-              <span className="shrink-0 tabular-nums text-sm font-semibold text-stone-900">
-                {formatMoneyString(r.value)}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 text-xs text-stone-400">cost frozen at save from the purchase history</p>
-        <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            onClick={startAnother}
-            className="flex-1 rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
-          >
-            Record another
-          </button>
-          <Link
-            href="/store/books/log"
-            className="flex-1 rounded-xl border border-rule bg-cell py-3 text-center text-[15px] font-medium text-stone-700 hover:border-stone-400"
-          >
-            Store log
-          </Link>
-        </div>
-      </section>
-    )
-  }
-
   return (
     <div className="space-y-4">
+      {saved !== null && <LossAck saved={saved} onDismiss={() => setSaved(null)} />}
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>{label('wastage_title')}</h2>
@@ -291,5 +251,61 @@ export default function WastageEntry({ reasons }: { reasons: string[] }) {
         </button>
       </section>
     </div>
+  )
+}
+
+/**
+ * Numbers, then the form again. `stock` comes back from the same save, so
+ * the one thing worth saying beyond the total is a shelf that has gone
+ * negative — the loss did not cause it, but this is the moment somebody is
+ * looking at that item.
+ */
+function LossAck({
+  saved,
+  onDismiss,
+}: {
+  saved: Extract<SaveStoreLossesResult, { ok: true }>
+  onDismiss: () => void
+}) {
+  const short = saved.stock.filter((s) => Number(s.on_hand_qty) < 0)
+  return (
+    <SaveAck
+      onDismiss={onDismiss}
+      headline={
+        <>
+          {saved.rows.length} {saved.rows.length === 1 ? 'loss' : 'losses'} recorded —{' '}
+          <span className="tabular-nums">{formatMoneyString(saved.total)}</span>
+        </>
+      }
+      sub={`${fmtDate(saved.rows[0].waste_date)} · cost frozen at save from the purchase history`}
+      missing={
+        short.length > 0
+          ? [
+              {
+                level: 'alarm' as const,
+                verdict: 'negative stock',
+                text: `${short
+                  .map((s) => `${s.name} is at ${s.on_hand_qty} ${s.purchase_unit}`)
+                  .join(', ')} — more has left the store than the book says was ever bought. A bill is probably missing.`,
+              },
+            ]
+          : undefined
+      }
+      actions={[{ href: '/store/books/log', label: 'Store log' }]}
+    >
+      <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+        {saved.rows.map((r) => (
+          <li key={r.id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+            <span className="min-w-0">
+              <span className="block truncate text-stone-900">{r.item_name}</span>
+              <span className="block text-xs text-stone-500">
+                {r.qty} {r.purchase_unit} · {r.reason}
+              </span>
+            </span>
+            <span className="shrink-0 font-semibold tabular-nums text-stone-900">{formatMoneyString(r.value)}</span>
+          </li>
+        ))}
+      </ul>
+    </SaveAck>
   )
 }

@@ -17,7 +17,13 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { CasualLabourRow, ContractBillRow, MoneyAccount, Section } from '@/lib/types'
+import type {
+  CasualLabourRow,
+  ContractBillRow,
+  MoneyAccount,
+  SaveCasualLaboursResult,
+  Section,
+} from '@/lib/types'
 import {
   saveCasualLabours,
   saveContractBill,
@@ -30,6 +36,7 @@ import AccountPicker from '@/components/accounts/AccountPicker'
 import {
   cardCls,
   dataTableCls,
+  docNoCls,
   fieldLabelCls,
   inputCls,
   numCls,
@@ -42,6 +49,7 @@ import {
   thNumCls,
   trCls,
 } from '@/components/ui'
+import SaveAck from '@/components/SaveAck'
 import { toast } from '@/components/Toasts'
 import { useBusinessToday } from '@/components/BusinessDay'
 
@@ -69,6 +77,7 @@ export function ContractBillsClient({
   const businessToday = useBusinessToday()
   const router = useRouter()
   const nonCash = modes.filter((m) => m.toLowerCase() !== 'cash')
+  const [savedBill, setSavedBill] = useState<ContractBillRow | null>(null)
   const [f, setF] = useState({
     date: businessToday,
     vendorName: '',
@@ -99,7 +108,7 @@ export function ContractBillsClient({
     try {
       const res = await saveContractBill({ ...f, accountId })
       if (res.ok) {
-        toast(`${res.bill.vendor_name} — ${formatMoneyString(res.bill.amount)} recorded`)
+        setSavedBill(res.bill)
         setF((s) => ({ ...s, vendorName: '', service: '', headcount: '', amount: '', note: '' }))
         setAccountId('')
         router.refresh()
@@ -113,6 +122,28 @@ export function ContractBillsClient({
 
   return (
     <div className="space-y-4">
+      {savedBill !== null && (
+        <SaveAck
+          onDismiss={() => setSavedBill(null)}
+          headline={
+            <>
+              {savedBill.vendor_name} — <span className="tabular-nums">{formatMoneyString(savedBill.amount)}</span>
+            </>
+          }
+          sub={
+            <>
+              {fmtDate(savedBill.bill_date)}
+              {savedBill.doc_no !== null && (
+                <>
+                  {' · '}
+                  <span className={docNoCls}>{savedBill.doc_no}</span>
+                </>
+              )}{' '}
+              · it lands on the P&amp;L&apos;s LABOUR line, not expenses — people you pay who are not on payroll
+            </>
+          }
+        />
+      )}
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Record a contract bill</h2>
         <p className="mt-0.5 text-xs text-stone-500">
@@ -288,6 +319,7 @@ export function CasualLabourClient({
   const [lines, setLines] = useState<CasualLine[]>([newCasualLine(1)])
   const [nextKey, setNextKey] = useState(2)
   const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState<Extract<SaveCasualLaboursResult, { ok: true }> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const patch = (key: number, p: Partial<CasualLine>) =>
@@ -322,11 +354,7 @@ export function CasualLabourClient({
         })),
       })
       if (res.ok) {
-        toast(
-          res.rows.length === 1
-            ? `${formatMoneyString(res.total)} recorded`
-            : `${res.rows.length} payments · ${formatMoneyString(res.total)} recorded`,
-        )
+        setSaved(res)
         setLines([newCasualLine(nextKey)])
         setNextKey((k) => k + 1)
         router.refresh()
@@ -340,6 +368,30 @@ export function CasualLabourClient({
 
   return (
     <div className="space-y-4">
+      {saved !== null && (
+        <SaveAck
+          onDismiss={() => setSaved(null)}
+          headline={
+            <>
+              {saved.rows.length === 1 ? '1 day hand' : `${saved.rows.length} day hands`} paid —{' '}
+              <span className="tabular-nums">{formatMoneyString(saved.total)}</span>
+            </>
+          }
+          sub="on the P&amp;L's LABOUR line · never from till cash — that is one Cash Voucher ticked “a day hand”, so the drawer reconciles against ONE record of ONE payment"
+          missing={
+            saved.rows.filter((r) => r.section_name === null).length > 0
+              ? [
+                  {
+                    verdict: 'no department',
+                    text: `${
+                      saved.rows.filter((r) => r.section_name === null).length
+                    } of these name no department, so the cost lands against the whole place rather than where the work happened. That is a real answer for a day's unloading — it is only a gap if somebody knew.`,
+                  },
+                ]
+              : undefined
+          }
+        />
+      )}
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Record casual labour</h2>
         <p className="mt-0.5 text-xs text-stone-500">

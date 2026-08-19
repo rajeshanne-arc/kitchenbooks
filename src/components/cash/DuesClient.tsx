@@ -13,6 +13,7 @@ import { decimalStringToPaise, formatMoneyString, parseMoney } from '@/lib/money
 import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function DuesClient({
@@ -78,7 +79,7 @@ export default function DuesClient({
     try {
       const res = await voidDue(id)
       if (res.ok) {
-        toast('Due entry voided')
+        toast(`Due entry voided — ${res.original.party} ${formatMoneyString(res.original.amount)} reversed`)
         router.refresh()
       } else {
         toast(res.error, 'error')
@@ -95,16 +96,30 @@ export default function DuesClient({
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Record credit / repayment</h2>
         {saved !== null && (
-          <p className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-stone-800">
-            {saved.due.party}: {formatMoneyString(saved.due.amount)} recorded — their balance now{' '}
-            <span className="font-semibold tabular-nums">
-              {formatMoneyString(
-                saved.outstanding.find((o) => o.party.toLowerCase().trim() === saved.due.party.toLowerCase().trim())
-                  ?.balance ?? '0',
-              )}
-            </span>
-            <span className="ml-1 text-xs text-stone-500">· read from dues_outstanding</span>
-          </p>
+          <div className="mt-2">
+            <SaveAck
+              onDismiss={() => setSaved(null)}
+              headline={
+                <>
+                  {saved.due.party} · <span className="tabular-nums">{formatMoneyString(saved.due.amount)}</span>{' '}
+                  {Number(saved.due.amount) < 0 ? 'received back' : 'given on credit'}
+                </>
+              }
+              sub={
+                <>
+                  their balance is now{' '}
+                  <span className="font-semibold tabular-nums">
+                    {formatMoneyString(
+                      saved.outstanding.find(
+                        (o) => o.party.toLowerCase().trim() === saved.due.party.toLowerCase().trim(),
+                      )?.balance ?? '0',
+                    )}
+                  </span>{' '}
+                  · read from dues_outstanding, netted on the name
+                </>
+              }
+            />
+          </div>
         )}
         <div className="mt-3 space-y-3">
           <div className="grid grid-cols-2 gap-3">

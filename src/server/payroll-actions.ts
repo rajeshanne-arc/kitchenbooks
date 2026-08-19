@@ -23,12 +23,14 @@ import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
 import { assertAccount, AccountRefusal } from '@/server/accounts-queries'
-import { getPayrollRun } from '@/server/payroll-queries'
+import { getOutstandingAdvances, getPayrollRun } from '@/server/payroll-queries'
+import { IdentitySchema, writeIdentity } from '@/server/staff-identity'
 import type {
   MarkPaidInput,
   PayrollResult,
   PreparePayrollInput,
   SaveAdvanceInput,
+  SaveAdvanceResult,
   UpdateStaffIdentityInput,
 } from '@/lib/types'
 import type { Role } from '@/lib/roles'
@@ -283,7 +285,7 @@ const AdvanceSchema = z.object({
  *  and takes an ADV number like every other payment. It comes back as
  *  `advance_recovered` on a later run, offered by the draft and editable
  *  until that run is prepared. */
-export async function saveAdvance(raw: SaveAdvanceInput): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function saveAdvance(raw: SaveAdvanceInput): Promise<SaveAdvanceResult> {
   try {
     const input = AdvanceSchema.parse(raw)
     const by = await actor(['accountant', 'owner'], 'Recording an advance')
@@ -300,27 +302,17 @@ export async function saveAdvance(raw: SaveAdvanceInput): Promise<{ ok: true } |
         values (${rid}, ${input.date}, ${input.staffId}, ${input.amount}::numeric,
                 ${accountId}, ${docNo}, ${input.note === '' ? null : input.note}, ${by})`
     })
-    return { ok: true }
+    // What they now owe, read back from the same query the payroll draft
+    // offers as recovery — never echoed from the amount just typed, because
+    // this is rarely their first advance.
+    const owed = (await getOutstandingAdvances(rid)).find((a) => a.staff_id === input.staffId) ?? null
+    return { ok: true, outstanding: owed?.outstanding ?? input.amount, staffName: owed?.staff_name ?? null }
   } catch (e) {
     return fail(e)
   }
 }
 
 /* ── the identifier block ──────────────────────────────────────────────── */
-
-const IdentitySchema = z.object({
-  bankName: z.string().trim().max(80),
-  accountNo: z.string().trim().max(40),
-  ifsc: z.string().trim().max(20),
-  upiId: z.string().trim().max(80),
-  pan: z.string().trim().max(20),
-  uan: z.string().trim().max(20),
-  pfNumber: z.string().trim().max(40),
-  esicNumber: z.string().trim().max(40),
-  dob: z.union([z.literal(''), z.string().regex(DATE_RE)]),
-  gender: z.string().trim().max(20),
-  payMode: z.union([z.literal(''), z.enum(['account', 'cash'])]),
-})
 
 /**
  * OWNER AND ACCOUNTANT ONLY — never the manager. The manager marks
@@ -344,23 +336,9 @@ export async function updateStaffIdentity(
     await actor(['accountant', 'owner'], 'Editing a staff identifier')
     const restaurant = await getRestaurant()
 
-    const orNull = (s: string) => (s === '' ? null : s)
-    const [row] = await tsql<{ id: string }[]>`
-      update staff set
-        bank_name = ${orNull(input.bankName)},
-        account_no = ${orNull(input.accountNo)},
-        ifsc = ${orNull(input.ifsc)},
-        upi_id = ${orNull(input.upiId)},
-        pan = ${orNull(input.pan)},
-        uan = ${orNull(input.uan)},
-        pf_number = ${orNull(input.pfNumber)},
-        esic_number = ${orNull(input.esicNumber)},
-        dob = ${input.dob === '' ? null : input.dob}::date,
-        gender = ${orNull(input.gender)},
-        pay_mode = ${orNull(input.payMode)}
-      where id = ${staffId} and restaurant_id = ${restaurant.id}
-      returning id`
-    if (!row) throw new PayrollError('That staff member no longer exists')
+    // one SET list, shared with the owner's half of the staff form
+    const ok = await txn((tx) => writeIdentity(tx, staffId, restaurant.id, input))
+    if (!ok) throw new PayrollError('That staff member no longer exists')
     return { ok: true }
   } catch (e) {
     return fail(e)

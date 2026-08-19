@@ -9,8 +9,9 @@
 import { z } from 'zod'
 import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
-import { enteredBy } from '@/server/current-user'
+import { enteredBy, getSessionUser } from '@/server/current-user'
 import { getDaySheet, getStaffDetail } from '@/server/labour-queries'
+import { IdentitySchema, identityIsEmpty, writeIdentity, type Identity } from '@/server/staff-identity'
 import type {
   AttendanceStatus,
   SaveAttendanceResult,
@@ -53,7 +54,34 @@ const StaffSchema = z.object({
   reportsTo: z.union([z.literal(''), z.string().regex(UUID)]),
   phone: z.string().trim().max(20),
   status: z.enum(['active', 'inactive']),
+  /** THE IDENTIFIER BLOCK, OPTIONAL AND ROLE-GATED.
+   *
+   *  On the form it renders for the OWNER only, because the manager marks
+   *  attendance and has no reason to hold anybody's bank account number or
+   *  date of birth. A picker is never the check, so a block with anything in
+   *  it re-checks the role here; an all-blank block — which is what a
+   *  manager's form posts — writes nothing and needs no permission. */
+  identity: IdentitySchema.optional(),
 })
+
+/**
+ * OWNER AND ACCOUNTANT ONLY — never the manager. "No reason to hold it" is
+ * the whole of data protection in one sentence, and the manager has no reason
+ * to hold a date of birth or an account number.
+ *
+ * The accountant cannot in fact reach /staff at all (the matrix gives them
+ * only /accounts), so on this form the block is the OWNER's; they are named
+ * here because the rule belongs to the DATA rather than to the screen, and
+ * the accountant's own copy of it is /accounts/payroll/people.
+ */
+async function assertIdentityActor(identity: Identity | undefined) {
+  if (identity === undefined || identityIsEmpty(identity)) return
+  const user = await getSessionUser()
+  if (!user) throw new LabourError('Sign in again — the session has expired')
+  if (user.role !== 'owner' && user.role !== 'accountant') {
+    throw new LabourError('Bank and ID details need an owner account — ask Rajesh, or leave them blank')
+  }
+}
 
 async function validateStaffRefs(rid: string, input: z.infer<typeof StaffSchema>, selfId: string | null) {
   if (input.joined !== '') assertRealDate(input.joined, 'Joined date')
@@ -74,6 +102,7 @@ async function validateStaffRefs(rid: string, input: z.infer<typeof StaffSchema>
 export async function createStaff(raw: StaffInput): Promise<StaffMutationResult> {
   try {
     const input = StaffSchema.parse(raw)
+    await assertIdentityActor(input.identity)
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     await validateStaffRefs(rid, input, null)
@@ -100,6 +129,12 @@ export async function createStaff(raw: StaffInput): Promise<StaffMutationResult>
                 ${input.phone === '' ? null : input.phone},
                 ${input.status})
         returning id`
+      // A FIELD NOBODY FILLS ON THE WAY PAST IS A FIELD NOBODY EVER FILLS —
+      // so the identifiers are collected at CREATE, not only on the edit
+      // screen, and the person and their bank details commit together.
+      if (input.identity !== undefined && !identityIsEmpty(input.identity)) {
+        await writeIdentity(tx, row.id, rid, input.identity)
+      }
       return row
     })
 
@@ -115,12 +150,14 @@ export async function updateStaff(id: string, raw: StaffInput): Promise<StaffMut
   try {
     if (!UUID.test(id)) throw new LabourError('Malformed staff id')
     const input = StaffSchema.parse(raw)
+    await assertIdentityActor(input.identity)
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     await validateStaffRefs(rid, input, id)
 
     // Only the column-granted fields ever appear in this SET — code never does.
-    const updated = await tsql<{ id: string }[]>`
+    const updated = await txn(async (tx) => {
+      const rows = await tx<{ id: string }[]>`
       update staff set
         name = ${input.name},
         designation = ${input.designation === '' ? null : input.designation},
@@ -136,6 +173,11 @@ export async function updateStaff(id: string, raw: StaffInput): Promise<StaffMut
         status = ${input.status}
       where id = ${id} and restaurant_id = ${rid}
       returning id`
+      if (rows[0] !== undefined && input.identity !== undefined) {
+        await writeIdentity(tx, id, rid, input.identity)
+      }
+      return rows
+    })
     if (!updated[0]) throw new LabourError('Staff member not found — nothing was changed')
 
     const staff = await getStaffDetail(rid, id)

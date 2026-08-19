@@ -50,7 +50,7 @@ export default function SettleShort({
         note: form.note,
       })
       if (res.ok) {
-        toast('Settlement recorded', 'ok')
+        toast(`${SHORT_SETTLEMENT_LABELS[settlement] ?? settlement} — the short is no longer open`, 'ok')
         setOpen(false)
         router.refresh()
       } else {

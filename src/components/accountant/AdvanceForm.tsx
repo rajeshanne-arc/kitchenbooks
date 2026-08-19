@@ -15,11 +15,12 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { AdvanceOutstanding, MoneyAccount } from '@/lib/types'
+import type { AdvanceOutstanding, MoneyAccount, SaveAdvanceResult } from '@/lib/types'
 import { saveAdvance } from '@/server/payroll-actions'
 import { decimalStringToPaise, formatMoneyString, formatPaise, parseMoney } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
+import SaveAck from '@/components/SaveAck'
 import Honesty from '@/components/Honesty'
 import {
   btnCls,
@@ -56,6 +57,7 @@ export default function AdvanceForm({
   const [accountId, setAccountId] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState<Extract<SaveAdvanceResult, { ok: true }> | null>(null)
 
   const person = people.find((p) => p.id === staffId) ?? null
   const already = outstanding.find((o) => o.staff_id === staffId) ?? null
@@ -84,7 +86,7 @@ export default function AdvanceForm({
         toast(res.error, 'error')
         return
       }
-      toast('Advance recorded', 'ok')
+      setSaved(res)
       setStaffId('')
       setAmount('')
       setAccountId('')
@@ -113,7 +115,20 @@ export default function AdvanceForm({
   }
 
   return (
-    <section className={cardCls}>
+    <div className="space-y-4">
+      {saved !== null && (
+        <SaveAck
+          onDismiss={() => setSaved(null)}
+          headline={
+            <>
+              {saved.staffName ?? 'They'} now owes{' '}
+              <span className="tabular-nums">{formatMoneyString(saved.outstanding)}</span> against wages
+            </>
+          }
+          sub="the payroll draft offers this back as recovery on the next run, editable until the run is prepared"
+        />
+      )}
+      <section className={cardCls}>
       <h2 className={sectionHeadCls}>Lend against wages</h2>
       <p className="mt-1 text-xs text-stone-500">
         One advance, one entry. It takes an ADV number like every other payment.
@@ -215,5 +230,6 @@ export default function AdvanceForm({
         </button>
       </div>
     </section>
+    </div>
   )
 }

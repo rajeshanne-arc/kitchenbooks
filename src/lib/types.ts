@@ -873,6 +873,11 @@ export type StaffInput = {
   reportsTo: string
   phone: string
   status: 'active' | 'inactive'
+  /** Bank, statutory, personal — OWNER AND ACCOUNTANT ONLY, refused by name
+   *  for anyone else. Optional because a manager's form does not render the
+   *  block at all, and asked at CREATE as well as on edit: a field nobody
+   *  fills on the way past is a field nobody ever fills. */
+  identity?: UpdateStaffIdentityInput
 }
 
 export type StaffMutationResult = { ok: true; staff: StaffRow } | { ok: false; error: string }
@@ -2592,6 +2597,12 @@ export type StaffIdentity = {
   gender: string | null
 }
 
+/** What they owe AFTER this advance — read back from getOutstandingAdvances,
+ *  the same figure the payroll draft offers as recovery. */
+export type SaveAdvanceResult =
+  | { ok: true; outstanding: string; staffName: string | null }
+  | { ok: false; error: string }
+
 export type UpdateStaffIdentityInput = {
   bankName: string
   accountNo: string
@@ -2746,7 +2757,9 @@ export type SaveAdjustmentsInput = {
   note: string
   lines: AdjustmentLineInput[]
 }
-export type SaveAdjustmentsResult = { ok: true; count: number } | { ok: false; error: string }
+export type SaveAdjustmentsResult =
+  | { ok: true; count: number; reason: string; stock: StockSnap[] }
+  | { ok: false; error: string }
 
 /** ACCEPTING A VARIANCE IS A JUDGEMENT, NOT A CONSEQUENCE. A variance can
  *  be a counting error as easily as a stock error, so the book is never
@@ -2812,7 +2825,17 @@ export type ShortLineInput = {
  * the lines, so the server can refuse a batch that spans two bills.
  */
 export type SaveShortsInput = { purchaseId: string; lines: ShortLineInput[] }
-export type SaveShortsResult = { ok: true; count: number } | { ok: false; error: string }
+export type SaveShortsResult =
+  | {
+      ok: true
+      count: number
+      /** every short on this bill, valued — read back, never echoed */
+      value: string
+      /** the ones nobody has chased: open is the state that matters */
+      openCount: number
+      openValue: string
+    }
+  | { ok: false; error: string }
 
 export type SettleShortInput = {
   id: string
@@ -2863,7 +2886,17 @@ export type VendorReturnInput = {
   }[]
 }
 
-export type VendorReturnResult = { ok: true; id: string } | { ok: false; error: string }
+export type VendorReturnResult =
+  | {
+      ok: true
+      id: string
+      ret: VendorReturnRow
+      /** read back from vendor_dues AFTER the credit — never echoed from the
+       *  lines, so the acknowledgement states the balance somebody will
+       *  actually argue about */
+      dues: DuesSnap
+    }
+  | { ok: false; error: string }
 
 /**
  * `vendor_return_reasons`, verbatim — what came back from this vendor and why.

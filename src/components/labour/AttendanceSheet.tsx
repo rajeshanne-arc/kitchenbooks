@@ -9,7 +9,9 @@ import { useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { saveAttendance } from '@/server/labour-actions'
 import type { AttendanceStatus, DaySheetRow } from '@/lib/types'
-import { fmtDateTime } from '@/lib/format'
+import { fmtDate, fmtDateTime } from '@/lib/format'
+import Honesty from '@/components/Honesty'
+import SaveAck from '@/components/SaveAck'
 import { cardCls, numCls } from '@/components/ui'
 
 const STATUSES: { value: AttendanceStatus; label: string; on: string }[] = [
@@ -26,18 +28,27 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
   const [openHistory, setOpenHistory] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [savedNote, setSavedNote] = useState<string | null>(null)
+  const [saved, setSaved] = useState<{ inserted: number; marked: number } | null>(null)
   const router = useRouter()
   const pathname = usePathname()
 
   const selectionFor = (row: DaySheetRow): AttendanceStatus | null => picks[row.staff_id] ?? row.effective
+  /** Nothing filed AND nothing picked. Silence and absence are different
+   *  facts and conflating them docks somebody's pay for a manager's
+   *  forgetfulness — so the count is on screen before the save, not only
+   *  after it. */
+  const unmarked = sheet.filter((r) => selectionFor(r) === null)
   const changes = sheet.filter((r) => {
     const pick = picks[r.staff_id]
     return pick !== undefined && pick !== r.effective
   })
 
+  /** MARK BY EXCEPTION. Sixty-five people marked one at a time is a job
+   *  nobody does daily, so the sheet starts from "everybody was here" and
+   *  the marker corrects the few who were not. It fills the PICKS, it does
+   *  not save — nothing is filed until Save. */
   function markAllPresent() {
-    setSavedNote(null)
+    setSaved(null)
     setPicks((prev) => {
       const next = { ...prev }
       for (const r of sheet) next[r.staff_id] = 'present'
@@ -49,7 +60,7 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
     if (changes.length === 0 || busy) return
     setBusy(true)
     setError(null)
-    setSavedNote(null)
+    setSaved(null)
     try {
       const res = await saveAttendance({
         date,
@@ -58,7 +69,7 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
       if (res.ok) {
         setSheet(res.sheet)
         setPicks({})
-        setSavedNote(`Saved — ${res.inserted} ${res.inserted === 1 ? 'row' : 'rows'} added for ${date}.`)
+        setSaved({ inserted: res.inserted, marked: res.sheet.filter((r) => r.effective !== null).length })
         router.refresh()
       } else {
         setError(res.error)
@@ -95,12 +106,59 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
           Present and off days are paid, half pays half; leave and absent don’t — the sheets’ assumption, kept.
           Contract staff appear here but never enter labour cost.
         </p>
+        {/* THE LAW OF THE BLANK, said above the sheet rather than discovered
+            at month end. It is not an error state: a day part-marked at
+            four in the afternoon is the normal way this screen is used. */}
+        {unmarked.length > 0 && sheet.length > 0 && (
+          <div className="mt-3">
+            <Honesty
+              verdict="unmarked is not absent"
+              meter={{ filled: sheet.length - unmarked.length, total: sheet.length, unit: 'people marked' }}
+              compact
+            >
+              {unmarked.length} {unmarked.length === 1 ? 'person has' : 'people have'} nothing filed for{' '}
+              {fmtDate(date)}. A blank earns nothing, exactly as an absence does — but nobody has said they were away.
+              “Mark all present” fills the sheet in one tap; then correct the few.
+            </Honesty>
+          </div>
+        )}
       </section>
 
-      {savedNote !== null && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-stone-800">
-          {savedNote}
-        </div>
+      {saved !== null && (
+        <SaveAck
+          onDismiss={() => setSaved(null)}
+          headline={
+            <>
+              {saved.marked} of {sheet.length} marked for {fmtDate(date)}
+            </>
+          }
+          sub={
+            saved.inserted === 0
+              ? 'Nothing changed — every mark already said what you picked, so no row was added.'
+              : `${saved.inserted} ${saved.inserted === 1 ? 'row' : 'rows'} filed · a mark is never edited, the latest one wins`
+          }
+          missing={
+            unmarked.length > 0
+              ? [
+                  {
+                    level: 'alarm' as const,
+                    verdict: 'unmarked',
+                    meter: { filled: saved.marked, total: sheet.length, unit: 'people marked' },
+                    text: (
+                      <>
+                        {unmarked.length === 1
+                          ? `${unmarked[0].name} has`
+                          : `${unmarked.length} people have`}{' '}
+                        nothing filed for this day — {unmarked.map((r) => r.name).join(', ')}. UNMARKED IS NOT ABSENT:
+                        an absence is somebody deciding they were away, and a blank is nobody having said anything, so
+                        they earn nothing for the day either way and only one of those is a fact.
+                      </>
+                    ),
+                  },
+                ]
+              : undefined
+          }
+        />
       )}
 
       {sheet.length === 0 ? (
@@ -145,7 +203,7 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
                           key={s.value}
                           type="button"
                           onClick={() => {
-                            setSavedNote(null)
+                            setSaved(null)
                             setPicks((p) => ({ ...p, [r.staff_id]: s.value }))
                           }}
                           aria-label={`${r.name}: ${s.value}`}
@@ -193,7 +251,11 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
           <div className="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 backdrop-blur">
           <div className="mx-auto flex max-w-2xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
             <span className="text-sm text-stone-500">
-              {changes.length === 0 ? 'No unsaved marks' : `${changes.length} to save`}
+              {changes.length === 0 ? (
+              unmarked.length === 0 ? 'Everyone is marked' : `${unmarked.length} still unmarked`
+            ) : (
+              `${changes.length} to save`
+            )}
             </span>
             <button
               type="button"

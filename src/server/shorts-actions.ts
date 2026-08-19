@@ -21,6 +21,7 @@ import {
   shortsActor,
 } from '@/server/shorts-queries'
 import { SHORT_KIND_LABELS } from '@/components/store/shorts'
+import { listShortsForPurchase } from '@/server/shorts-queries'
 import type { SaveShortsInput, SaveShortsResult, SettleShortInput, ShortResult } from '@/lib/types'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -138,7 +139,17 @@ export async function saveShorts(raw: SaveShortsInput): Promise<SaveShortsResult
       }
     })
 
-    return { ok: true, count: input.lines.length }
+    // Read the value back. A count of lines says nothing about the money in
+    // dispute, and the value is what a claim against the supplier is worth.
+    const rows = await listShortsForPurchase(rid, input.purchaseId)
+    const open = rows.filter((r) => r.settlement === 'open')
+    return {
+      ok: true,
+      count: input.lines.length,
+      openCount: open.length,
+      openValue: open.reduce((n, r) => n + Number(r.short_value), 0).toFixed(2),
+      value: rows.reduce((n, r) => n + Number(r.short_value), 0).toFixed(2),
+    }
   } catch (e) {
     return fail(e)
   }

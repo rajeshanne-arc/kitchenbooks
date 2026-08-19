@@ -14,6 +14,7 @@ import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
 import { rankDishes } from '@/components/DishSuggest'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 import { useBusinessToday } from '@/components/BusinessDay'
 
 export default function OffBookClient({
@@ -56,6 +57,10 @@ export default function OffBookClient({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveOffBookResult, { ok: true }> | null>(null)
+  /** how many lines went with it. The result carries the header only, and a
+   *  lump sum with no lines is a genuinely different record from an itemised
+   *  one — so the honesty strip has to know which it was. */
+  const [savedLines, setSavedLines] = useState(0)
 
   const canSave =
     !saving && mode !== '' && accountId !== '' && parseMoney(amount.trim()) !== null && Number(amount.trim()) > 0
@@ -86,6 +91,7 @@ export default function OffBookClient({
       })
       if (res.ok) {
         setSaved(res)
+        setSavedLines(lines.filter((l) => l.qty.trim() !== '' && l.agreedPrice.trim() !== '').length)
         setDescription('')
         setAmount('')
         setAccountId('')
@@ -110,7 +116,7 @@ export default function OffBookClient({
     try {
       const res = await voidOffBook(id)
       if (res.ok) {
-        toast('Off-book order voided')
+        toast(`Off-book order voided — ${formatMoneyString(res.original.amount)} reversed`)
         router.refresh()
       } else {
         toast(res.error, 'error')
@@ -127,10 +133,32 @@ export default function OffBookClient({
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Record an off-book order</h2>
         {saved !== null && (
-          <p className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-stone-800">
-            {formatMoneyString(saved.order.amount)} · {saved.order.payment_mode} on {fmtDate(saved.order.order_date)}{' '}
-            recorded{saved.order.payment_mode === 'Cash' && ' — it will sit on that day’s ladder'}
-          </p>
+          <div className="mt-2">
+            <SaveAck
+              onDismiss={() => setSaved(null)}
+              headline={
+                <>
+                  <span className="tabular-nums">{formatMoneyString(saved.order.amount)}</span> ·{' '}
+                  {saved.order.payment_mode} recorded
+                </>
+              }
+              sub={
+                saved.order.payment_mode === 'Cash'
+                  ? `${fmtDate(saved.order.order_date)} · CASH, so it is on that day's ladder and the drawer is expected to hold it`
+                  : `${fmtDate(saved.order.order_date)} · not cash, so it never touches the drawer`
+              }
+              missing={
+                savedLines === 0
+                  ? [
+                      {
+                        verdict: 'no lines',
+                        text: 'A lump sum is a true record of the money and nothing more — lines are optional and this one has none. Without them nobody can say what went out or how far under the menu it went, and the food it consumed is costed nowhere.',
+                      },
+                    ]
+                  : undefined
+              }
+            />
+          </div>
         )}
         <div className="mt-3 space-y-3">
           <div className="grid grid-cols-3 gap-3">

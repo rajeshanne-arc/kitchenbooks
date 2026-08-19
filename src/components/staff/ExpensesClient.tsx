@@ -22,6 +22,7 @@ import {
   selectCls,
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 import { useBusinessToday } from '@/components/BusinessDay'
 
 type Line = {
@@ -152,7 +153,7 @@ export default function ExpensesClient({
     try {
       const res = await voidExpense(id)
       if (res.ok) {
-        toast('Expense voided')
+        toast(`Expense voided — ${res.original.category} ${formatMoneyString(res.original.amount)} reversed`)
         router.refresh()
       } else {
         toast(res.error, 'error')
@@ -210,21 +211,40 @@ export default function ExpensesClient({
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Record an expense</h2>
         {saved !== null && (
-          <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-stone-800">
-            {saved.expenses.length === 1
-              ? `${saved.expenses[0].category} · ${formatMoneyString(saved.expenses[0].amount)} via ${saved.expenses[0].paid_via} recorded`
-              : `${saved.expenses.length} expenses recorded — ${formatMoneyString(saved.total)}`}
-            {saved.expenses.length > 1 && (
-              <ul className="mt-1.5 space-y-0.5">
+          <div className="mt-2">
+            <SaveAck
+              onDismiss={() => setSaved(null)}
+              headline={
+                saved.expenses.length === 1 ? (
+                  <>
+                    {saved.expenses[0].category} ·{' '}
+                    <span className="tabular-nums">{formatMoneyString(saved.expenses[0].amount)}</span> via{' '}
+                    {saved.expenses[0].paid_via}
+                  </>
+                ) : (
+                  <>
+                    {saved.expenses.length} expenses recorded —{' '}
+                    <span className="tabular-nums">{formatMoneyString(saved.total)}</span>
+                  </>
+                )
+              }
+              sub="never from till cash — a payment out of the drawer is a Cash Voucher, so the nightly close still balances"
+            >
+              <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
                 {saved.expenses.map((e) => (
-                  <li key={e.id} className="text-xs text-stone-600">
-                    {/* each receipt keeps its OWN number — a batch is entry, not a document */}
-                    {e.doc_no !== null && <span className={docNoCls}>{e.doc_no}</span>} {e.category} ·{' '}
-                    {formatMoneyString(e.amount)}
+                  <li key={e.id} className="flex items-baseline justify-between gap-3 py-1.5 text-sm">
+                    <span className="min-w-0">
+                      <span className="block truncate text-stone-900">{e.category}</span>
+                      {/* each receipt keeps its OWN number — a batch is entry, not a document */}
+                      {e.doc_no !== null && <span className={`block ${docNoCls}`}>{e.doc_no}</span>}
+                    </span>
+                    <span className="shrink-0 font-semibold tabular-nums text-stone-900">
+                      {formatMoneyString(e.amount)}
+                    </span>
                   </li>
                 ))}
               </ul>
-            )}
+            </SaveAck>
           </div>
         )}
 

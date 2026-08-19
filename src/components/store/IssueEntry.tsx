@@ -16,7 +16,6 @@
 // is not a void: the trip out really happened and stays on record.
 
 import { useEffect, useRef, useState } from 'react'
-import Link from 'next/link'
 import type {
   IndentPrefill,
   IndentRow,
@@ -41,6 +40,7 @@ import {
   thCls,
   thNumCls,
 } from '@/components/ui'
+import SaveAck from '@/components/SaveAck'
 import IssueItemPicker from './IssueItemPicker'
 import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
@@ -272,8 +272,10 @@ export default function IssueEntry({
           lines: returnedLines,
         }
         const res = await saveReturn(payload)
-        if (res.ok) setSaved({ kind: 'back', res })
-        else setError(res.error)
+        if (res.ok) {
+          setSaved({ kind: 'back', res })
+          resetForNext()
+        } else setError(res.error)
       } else {
         const payload: SaveIssueInput = {
           issueDate,
@@ -284,8 +286,10 @@ export default function IssueEntry({
           ...(cateringId !== '' ? { cateringId } : {}),
         }
         const res = await saveIssue(payload)
-        if (res.ok) setSaved({ kind: 'out', res })
-        else setError(res.error)
+        if (res.ok) {
+          setSaved({ kind: 'out', res })
+          resetForNext()
+        } else setError(res.error)
       }
     } catch {
       setError(
@@ -298,115 +302,30 @@ export default function IssueEntry({
     }
   }
 
-  function startAnother() {
-    setSaved(null)
+  /** RESET FOR THE NEXT ENTRY, KEEPING WHAT CARRIES.
+   *
+   *  The DATE carries. A store manager catching up on yesterday files several
+   *  issues for that day, and snapping back to today would silently re-date
+   *  every one after the first — the same class of quiet wrongness as the
+   *  session default.
+   *
+   *  The DEPARTMENT clears: it is the question just answered, and the next
+   *  issue is usually to somewhere else. The SESSION carries, because a shift
+   *  is the frame you are working inside rather than a per-entry answer — and
+   *  it is on screen, chosen a minute ago by a person, not supplied by a
+   *  column default. */
+  function resetForNext() {
     setIndent(null)
     setSectionId('')
     setCateringId('')
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
-    setIssueDate(businessToday)
-  }
-
-  if (saved !== null) {
-    const back = saved.kind === 'back'
-    const head = back
-      ? {
-          title: `Returned from ${saved.res.ret.section_name}`,
-          sub: `${fmtDate(saved.res.ret.return_date)} · ${saved.res.ret.line_count} ${
-            saved.res.ret.line_count === 1 ? 'item' : 'items'
-          } · ${saved.res.ret.reason}`,
-        }
-      : {
-          title: `Issued to ${saved.res.issue.section_name}`,
-          sub: `${fmtDate(saved.res.issue.issue_date)} · ${saved.res.issue.line_count} ${
-            saved.res.issue.line_count === 1 ? 'item' : 'items'
-          }${saved.res.issue.indent_id !== null ? ' · indent marked issued' : ''}`,
-        }
-    const savedLines = saved.res.lines
-    const stock = saved.res.stock
-    const totalValue = back ? saved.res.ret.total_value : saved.res.issue.total_value
-    return (
-      <div className="space-y-4">
-        <section className={cardCls}>
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100">
-              <svg className="h-5 w-5 text-emerald-700" viewBox="0 0 20 20" fill="none" aria-hidden>
-                <path d="M4 10.5 8.5 15 16 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-            <div>
-              <h2 className="text-lg font-bold text-stone-900">{head.title}</h2>
-              <p className="text-sm text-stone-500">{head.sub}</p>
-            </div>
-          </div>
-          <ul className="mt-4 divide-y divide-rule-soft border-t border-stone-100">
-            {savedLines.map((l) => (
-              <li key={l.id} className="flex items-center justify-between gap-3 py-2.5">
-                <span className="min-w-0 truncate text-[15px] text-stone-900">{l.item_name}</span>
-                <span className="shrink-0 text-sm text-stone-500">
-                  {l.qty} {l.purchase_unit}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <div className="flex items-center justify-between border-t border-stone-100 pt-3">
-            <span className="text-sm font-medium text-stone-500">
-              {back ? 'Value returned' : 'Total value'}
-            </span>
-            <span className="text-2xl font-bold tabular-nums tracking-tight text-stone-900">
-              {formatMoneyString(totalValue)}
-            </span>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-emerald-800">
-            {back ? 'Stock back in the store' : 'Stock remaining'}
-          </h3>
-          <ul className="mt-2 space-y-1.5">
-            {stock.map((s) => (
-              <li key={s.item_id} className="flex items-center justify-between gap-3 text-[15px] text-stone-900">
-                <span className="min-w-0 truncate">{s.name}</span>
-                <span className="shrink-0 font-semibold tabular-nums">
-                  {s.on_hand_qty} {s.purchase_unit} left
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-xs text-stone-500">read live from stock_on_hand</p>
-        </section>
-
-        <button
-          type="button"
-          onClick={startAnother}
-          className="w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
-        >
-          {back ? 'Enter another movement' : 'Enter another issue'}
-        </button>
-        {!back && saved.res.issue.indent_id !== null && (
-          <Link
-            href={`/kitchen/indent/${saved.res.issue.indent_id}`}
-            className="block text-center text-sm font-medium text-emerald-700 hover:underline"
-          >
-            See asked vs given on the indent →
-          </Link>
-        )}
-        {!back && (
-          <Link
-            href={`/store/books/issues/${saved.res.issue.id}`}
-            className="block text-center text-sm font-medium text-emerald-700 hover:underline"
-          >
-            See it in the store log →
-          </Link>
-        )}
-      </div>
-    )
   }
 
   return (
     <div className="space-y-4">
+      {saved !== null && <IssueAck saved={saved} onDismiss={() => setSaved(null)} />}
       {/* Which way the stock is moving. Two taps wide, stated in the store's
           own words rather than "issue"/"return" — the direction is the thing
           being chosen, so it sits above everything it changes. */}
@@ -734,5 +653,88 @@ export default function IssueEntry({
         Costs are attached automatically from purchase history — nothing to type.
       </p>
     </div>
+  )
+}
+
+/**
+ * What just happened, said in numbers, above a form that is already blank
+ * for the next one. It replaces a full-screen reveal that hid the form until
+ * somebody tapped "Enter another": a store manager issues several times a
+ * morning, and a tap between every one is a tax on the most-used screen in
+ * the app.
+ *
+ * NEGATIVE STOCK IS THE THING STILL MISSING. It is the loudest sentence in
+ * this product — more issued than purchased on record means a bill was never
+ * entered — and the moment it appears is the moment somebody can still go and
+ * find that bill.
+ */
+function IssueAck({ saved, onDismiss }: { saved: Saved; onDismiss: () => void }) {
+  const back = saved.kind === 'back'
+  const doc = back ? saved.res.ret : saved.res.issue
+  const date = back ? saved.res.ret.return_date : saved.res.issue.issue_date
+  const value = back ? saved.res.ret.total_value : saved.res.issue.total_value
+  const short = saved.res.stock.filter((s) => Number(s.on_hand_qty) < 0)
+
+  return (
+    <SaveAck
+      onDismiss={onDismiss}
+      headline={
+        <>
+          {doc.line_count} {doc.line_count === 1 ? 'item' : 'items'}{' '}
+          {back ? 'back from' : 'to'} {doc.section_name} —{' '}
+          <span className="tabular-nums">{formatMoneyString(value)}</span>
+        </>
+      }
+      sub={
+        <>
+          {fmtDate(date)}
+          {back && ` · ${saved.res.ret.reason}`}
+          {!back && saved.res.issue.indent_id !== null && ' · indent marked issued'}
+        </>
+      }
+      missing={
+        short.length > 0
+          ? [
+              {
+                level: 'alarm' as const,
+                verdict: 'negative stock',
+                text: (
+                  <>
+                    {short.map((s) => `${s.name} is at ${s.on_hand_qty} ${s.purchase_unit}`).join(', ')} — more has been
+                    issued than the book says was ever bought. A bill is probably missing; enter it and this corrects
+                    itself.
+                  </>
+                ),
+              },
+            ]
+          : undefined
+      }
+      actions={[
+        ...(!back && saved.res.issue.indent_id !== null
+          ? [{ href: `/kitchen/indent/${saved.res.issue.indent_id}`, label: 'Asked vs given on the indent' }]
+          : []),
+        ...(!back ? [{ href: `/store/books/issues/${saved.res.issue.id}`, label: 'See it in the store log' }] : []),
+      ]}
+    >
+      <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+        {saved.res.lines.map((l) => {
+          const now = saved.res.stock.find((s) => s.item_id === l.item_id)
+          return (
+            <li key={l.id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+              <span className="min-w-0 truncate text-stone-900">{l.item_name}</span>
+              <span className="shrink-0 tabular-nums text-stone-600">
+                {l.qty} {l.purchase_unit}
+                {now !== undefined && (
+                  <span className={Number(now.on_hand_qty) < 0 ? 'ml-2 font-semibold text-red-700' : 'ml-2 text-stone-400'}>
+                    {now.on_hand_qty} left
+                  </span>
+                )}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+      <p className="mt-1.5 text-xs text-stone-500">stock read live from stock_on_hand</p>
+    </SaveAck>
   )
 }
