@@ -3823,12 +3823,27 @@ sold nothing has NO ROW rather than a zero row, and the two cases are
 indistinguishable from this side. So the rate is stated only where a sales
 row exists, and `no_mapped_sales` / `no_hours` say which case a blank is.
 
-`smoke:a2` asserts the arithmetic BY VALUE against real staff — paid 3.5d,
-worked 2.5d, the off day as exactly the difference, 20 hours — inside a
-transaction that rolls back. Until the migration is applied it prints
-**PENDING**, never a tick: kb_app holds SELECT and INSERT and cannot ALTER a
-table, so `migrations/attendance_extra_hours_and_labour_hours.sql` waits for
-Rajesh like every migration in this project.
+`smoke:a2` asserts the arithmetic BY VALUE against real staff, inside a
+transaction that rolls back: paid 3.5d, worked 2.5d, the off day as exactly
+the difference, one 3-hour late night, 23 hours. **The extra-hours leg is
+exercised rather than left at zero** — a sum that is only ever added to 0
+agrees with a broken formula.
+
+### A VIEW BUILT ON EXPLICIT COLUMNS NEVER INHERITS
+
+`attendance_current` selects NAMED columns, not `*`, so adding `extra_hours`
+to `attendance` did not reach it and the view had to be replaced. Caught on
+apply. It generalises: **adding a column to a table changes nothing about any
+view over it** unless that view is replaced too, and every view in this
+schema names its columns.
+
+Two consequences worth keeping. `create or replace view` only permits adding
+columns **at the END** of the select list, so a new column goes last or the
+view must be dropped and recreated — which cascades to dependents. And the
+failure is silent in exactly the worst way: the column exists, every query
+against the TABLE sees it, and only the readers going through the view are
+blind. The gate now asserts `attendance_current` mentions `extra_hours`, so
+the next column added to that table cannot go missing the same way.
 
 ### The sheet marks BY EXCEPTION, and a blank is not an absence
 

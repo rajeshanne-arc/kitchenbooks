@@ -4271,48 +4271,66 @@ async function run() {
 
   // ── attendance hours ──────────────────────────────────────────────────
 
-  await check('the labour-hours migration: applied, or loudly pending', async () => {
-    const { existsSync } = await import('node:fs')
-    const MIG = 'migrations/attendance_extra_hours_and_labour_hours.sql'
-    assert.ok(existsSync(MIG), `${MIG} is missing — the hours work has no migration behind it`)
-
+  await check('worked is not paid, and the hours arithmetic holds by value', async () => {
+    // The PENDING branch this replaces existed only to bridge the window
+    // between writing the migration and Rajesh applying it. It is applied, so
+    // the bridge is gone: from here a missing column is a failure, not a note.
     const col = await tsql<{ n: number }[]>`
       select count(*)::int as n from information_schema.columns
       where table_schema = 'public' and table_name = 'attendance' and column_name = 'extra_hours'`
-    if (col[0].n === 0) {
-      // NOT a tick. kb_app holds SELECT and INSERT and cannot ALTER a table;
-      // every migration in this project is applied by Rajesh. Printed as
-      // PENDING so it can never read as a pass.
-      console.log(`      PENDING — ${MIG} is written and NOT APPLIED.`)
-      console.log('      extra_hours, standard_hours_per_day() and sales_per_labour_hour do not exist yet.')
-      return
-    }
+    assert.equal(col[0].n, 1, 'attendance.extra_hours has gone — the hours views cannot work without it')
 
-    // Applied: prove the arithmetic BY VALUE, on real staff, rolled back.
-    // An assertion that cannot fail on empty data has not been tested.
+    // A VIEW BUILT ON EXPLICIT COLUMNS NEVER INHERITS. attendance_current
+    // selects named columns, so adding extra_hours to the table did NOT reach
+    // it and it had to be replaced. Asserted rather than remembered: the next
+    // column added to attendance will be invisible the same way.
+    const [ac] = await tsql<{ d: string }[]>`select pg_get_viewdef('attendance_current'::regclass, true) as d`
+    assert.ok(/extra_hours/.test(ac.d), 'attendance_current does not carry extra_hours — a named-column view never inherits')
+
     const staff = await tsql<{ id: string }[]>`
       select id from staff where employment_type <> 'contract' order by code limit 2`
-    assert.ok(staff.length === 2, 'fewer than two non-contract staff — this assertion cannot fail, so it proves nothing')
-    let observed: { paid: number; worked: number; hours: number } | null = null
+    assert.ok(
+      staff.length === 2,
+      'fewer than two non-contract staff — this assertion cannot fail, so it proves nothing',
+    )
+    let observed: { paid: number; worked: number; hours: number; extra: number } | null = null
     try {
       await txn(async (tx) => {
         const rid = (await tx<{ id: string }[]>`select id from restaurants limit 1`)[0].id
         const rows = [
-          { staff_id: staff[0].id, att_date: '2099-06-01', status: 'present' },
-          { staff_id: staff[0].id, att_date: '2099-06-02', status: 'half' },
-          { staff_id: staff[0].id, att_date: '2099-06-03', status: 'off' },
-          { staff_id: staff[0].id, att_date: '2099-06-04', status: 'leave' },
-          { staff_id: staff[0].id, att_date: '2099-06-05', status: 'absent' },
-          { staff_id: staff[1].id, att_date: '2099-06-01', status: 'present' },
+          { staff_id: staff[0].id, att_date: '2099-06-01', status: 'present', extra_hours: null },
+          { staff_id: staff[0].id, att_date: '2099-06-02', status: 'half', extra_hours: null },
+          { staff_id: staff[0].id, att_date: '2099-06-03', status: 'off', extra_hours: null },
+          { staff_id: staff[0].id, att_date: '2099-06-04', status: 'leave', extra_hours: null },
+          { staff_id: staff[0].id, att_date: '2099-06-05', status: 'absent', extra_hours: null },
+          // one late night, so the extra-hours leg is exercised rather than
+          // sitting at zero and agreeing with a broken sum
+          { staff_id: staff[1].id, att_date: '2099-06-01', status: 'present', extra_hours: '3' },
         ].map((r) => ({ ...r, restaurant_id: rid, entered_by: 'zz-gate' }))
-        await tx`insert into attendance ${tx(rows, 'restaurant_id', 'att_date', 'staff_id', 'status', 'entered_by')}`
-        const got = await tx<{ paid_days: string; worked_days: string; labour_hours: string }[]>`
-          select paid_days::text, worked_days::text, labour_hours::text
+        await tx`insert into attendance ${tx(
+          rows,
+          'restaurant_id',
+          'att_date',
+          'staff_id',
+          'status',
+          'extra_hours',
+          'entered_by',
+        )}`
+        const got = await tx<{
+          paid_days: string
+          worked_days: string
+          labour_hours: string
+          extra_hours: string
+        }[]>`
+          select paid_days::text, worked_days::text, labour_hours::text, extra_hours::text
           from labour_hours_by_section where month = date '2099-06-01'`
+        const sum = (k: 'paid_days' | 'worked_days' | 'labour_hours' | 'extra_hours') =>
+          got.reduce((n, r) => n + Number(r[k]), 0)
         observed = {
-          paid: got.reduce((n, r) => n + Number(r.paid_days), 0),
-          worked: got.reduce((n, r) => n + Number(r.worked_days), 0),
-          hours: got.reduce((n, r) => n + Number(r.labour_hours), 0),
+          paid: sum('paid_days'),
+          worked: sum('worked_days'),
+          hours: sum('labour_hours'),
+          extra: sum('extra_hours'),
         }
         throw new Error('ROLLBACK')
       })
@@ -4320,18 +4338,39 @@ async function run() {
       if ((e as Error).message !== 'ROLLBACK') throw e
     }
     assert.ok(observed !== null, 'the probe never ran')
-    const o = observed as unknown as { paid: number; worked: number; hours: number }
+    const o = observed as unknown as { paid: number; worked: number; hours: number; extra: number }
     // present 1 + half .5 + off 1 + the second person's present 1
     assert.equal(o.paid, 3.5, 'paid_days no longer applies the pay law')
     // WORKED IS NOT PAID: off is paid and worked by nobody
     assert.equal(o.worked, 2.5, 'worked_days is counting a day nobody worked')
     assert.equal(o.paid - o.worked, 1, 'the off day has stopped being the difference')
-    assert.equal(o.hours, 20, 'labour_hours is not worked_days x the standard day')
-    // and NO overtime rate is computed anywhere
-    const { readFileSync } = await import('node:fs')
-    const mig = readFileSync(MIG, 'utf8')
-    assert.ok(!/1\.5|double time|overtime_rate/i.test(mig), 'an overtime multiplier has appeared in the migration')
-    console.log(`      paid ${o.paid}d · worked ${o.worked}d · ${o.hours}h — and no rate is computed`)
+    assert.equal(o.extra, 3, 'the extra hour never reached the view')
+    // 2.5 worked days x 8 + 3 late hours
+    assert.equal(o.hours, 23, 'labour_hours is not worked_days x the standard day plus the extra hours')
+
+    // The setting is what makes the standard day configurable rather than
+    // this country with extra steps, and it must default to 8, not to null.
+    const [std] = await tsql<{ h: string }[]>`select standard_hours_per_day()::text as h`
+    assert.equal(Number(std.h), 8, 'standard_hours_per_day() no longer answers 8 by default')
+
+    // NO RATE IS COMPUTED — checked against what is actually running, not
+    // against a file that could be deleted.
+    const [fn] = await tsql<{ d: string }[]>`
+      select pg_get_functiondef('standard_hours_per_day()'::regprocedure) as d`
+    const [hv] = await tsql<{ d: string }[]>`select pg_get_viewdef('labour_hours_by_section'::regclass, true) as d`
+    for (const [what, def] of [['standard_hours_per_day()', fn.d], ['labour_hours_by_section', hv.d]] as const) {
+      assert.ok(!/1\.5|overtime/i.test(def), `${what} has grown an overtime multiplier — record what happened, never price it`)
+    }
+
+    // ...and a department with hours and NO mapped sales must not be handed a
+    // confident ₹0.00 per hour. There is no honest zero here: sales_by_section
+    // has no row for a department that sold nothing.
+    const [sph] = await tsql<{ d: string }[]>`select pg_get_viewdef('sales_per_labour_hour'::regclass, true) as d`
+    assert.ok(
+      /sales_value IS NOT NULL/i.test(sph.d),
+      'sales_per_labour_hour divides into a coalesced zero again — that reports an absence as a rate',
+    )
+    console.log(`      paid ${o.paid}d · worked ${o.worked}d · ${o.extra}h late · ${o.hours}h total — and no rate is computed`)
   })
 
   console.log(
