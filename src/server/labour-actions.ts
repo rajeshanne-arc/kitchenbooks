@@ -74,6 +74,23 @@ const StaffSchema = z.object({
  * here because the rule belongs to the DATA rather than to the screen, and
  * the accountant's own copy of it is /accounts/payroll/people.
  */
+/**
+ * WHO MAY CHANGE THE ROSTER. Adding somebody, moving them, setting a salary
+ * or retiring them is the manager's job and the owner's — never the
+ * accountant's, even though the profile page admits them to read it.
+ *
+ * These two actions had NO role gate at all before the accountant was let
+ * into /staff/people/employees; the route gate was carrying the whole weight,
+ * and a server action is a public endpoint.
+ */
+async function assertRosterActor(what: string) {
+  const user = await getSessionUser()
+  if (!user) throw new LabourError('Sign in again — the session has expired')
+  if (user.role !== 'manager' && user.role !== 'owner') {
+    throw new LabourError(`${what} needs a manager or owner account — ask the manager`)
+  }
+}
+
 async function assertIdentityActor(identity: Identity | undefined) {
   if (identity === undefined || identityIsEmpty(identity)) return
   const user = await getSessionUser()
@@ -102,6 +119,7 @@ async function validateStaffRefs(rid: string, input: z.infer<typeof StaffSchema>
 export async function createStaff(raw: StaffInput): Promise<StaffMutationResult> {
   try {
     const input = StaffSchema.parse(raw)
+    await assertRosterActor('Adding somebody to the roster')
     await assertIdentityActor(input.identity)
     const restaurant = await getRestaurant()
     const rid = restaurant.id
@@ -150,6 +168,7 @@ export async function updateStaff(id: string, raw: StaffInput): Promise<StaffMut
   try {
     if (!UUID.test(id)) throw new LabourError('Malformed staff id')
     const input = StaffSchema.parse(raw)
+    await assertRosterActor('Changing a staff record')
     await assertIdentityActor(input.identity)
     const restaurant = await getRestaurant()
     const rid = restaurant.id

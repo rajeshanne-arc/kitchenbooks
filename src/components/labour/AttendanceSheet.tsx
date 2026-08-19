@@ -6,6 +6,7 @@
 // never hidden.
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { saveAttendance } from '@/server/labour-actions'
 import type { AttendanceStatus, DaySheetRow } from '@/lib/types'
@@ -179,7 +180,16 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-[15px] font-medium text-stone-900">{r.name}</span>
+                        {/* THE SHEET IS WHERE YOU NOTICE A PERSON. Rajesh asked
+                            for the profile after using this screen, which is the
+                            right signal: until now there was nowhere to go from
+                            a name you had just thought about. */}
+                        <Link
+                          href={`/staff/people/employees/${r.code}`}
+                          className="truncate text-[15px] font-medium text-stone-900 hover:underline"
+                        >
+                          {r.name}
+                        </Link>
                         {corrected && (
                           <button
                             type="button"

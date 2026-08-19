@@ -880,6 +880,55 @@ export type StaffInput = {
   identity?: UpdateStaffIdentityInput
 }
 
+/** One day on the strip. `filings` > 1 means the day was corrected; the
+ *  correction is BADGED, never merged away. */
+export type AttendanceDay = {
+  att_date: string
+  status: AttendanceStatus
+  /** hours worked BEYOND the normal day. null is the ordinary case. */
+  extra_hours: string | null
+  entered_by: string | null
+  filings: number
+}
+
+/** `staff_payroll_history`, one run. DRAFT IS NOT MONEY THAT MOVED. */
+export type PayrollHistoryRow = {
+  run_id: string
+  doc_no: string | null
+  period_start: string
+  period_end: string
+  status: 'draft' | 'approved' | 'paid'
+  days_in_period: string
+  days_paid: string
+  earned: string
+  overtime: string
+  advance_recovered: string
+  other_deduction: string
+  withholding: string
+  net_payable: string
+  paid_on: string | null
+  pay_mode: string | null
+}
+
+/** `advances_outstanding`. Absent entirely for somebody who never had one. */
+export type AdvancesOutstandingRow = {
+  given: string
+  recovered: string
+  outstanding: string
+  last_advance: string | null
+}
+
+export type AdvanceLedgerRow = {
+  id: string
+  adv_date: string
+  amount: string
+  doc_no: string | null
+  note: string | null
+  entered_by: string | null
+  is_reversal: boolean
+  is_reversed: boolean
+}
+
 export type StaffMutationResult = { ok: true; staff: StaffRow } | { ok: false; error: string }
 
 export type AttendanceHistoryRow = { status: AttendanceStatus; created_at: string }

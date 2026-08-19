@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
+import { getSessionUser } from '@/server/current-user'
+import { canAccess } from '@/lib/roles'
 import { DEPT_ORDER, listRoster } from '@/server/labour-queries'
 import { formatMoneyString } from '@/lib/money'
 import { RetiredBadge } from '@/components/books/Badges'
@@ -23,7 +25,7 @@ function Band({ title, loud, note, rows }: { title: string; loud?: boolean; note
         {rows.map((p) => (
           <li key={p.id}>
             <Link
-              href={`/staff/people/employees/${p.id}`}
+              href={`/staff/people/employees/${p.code}`}
               className={`flex items-center justify-between gap-3 rounded-lg px-2 py-3 hover:bg-stone-50 ${
                 p.status === 'inactive' ? 'opacity-60' : ''
               }`}
@@ -68,7 +70,12 @@ function Band({ title, loud, note, rows }: { title: string; loud?: boolean; note
 
 export default async function StaffPage() {
   const restaurant = await getRestaurant()
-  const roster = await listRoster(restaurant.id)
+  const [user, roster] = await Promise.all([getSessionUser(), listRoster(restaurant.id)])
+  // LAW 1. The accountant reads this list — a person is who they are preparing
+  // pay for — but adding somebody to the roster is the manager's job, so they
+  // must not SEE the button. One source: the matrix, never a role comparison
+  // written out here.
+  const mayAdd = user !== null && canAccess(user.role, '/staff/people/employees/new')
   const assigned = roster.filter((p) => p.section_id !== null)
   const unassigned = roster.filter((p) => p.section_id === null)
 
@@ -78,12 +85,14 @@ export default async function StaffPage() {
         <p className="text-sm text-stone-500">
           {roster.length === 0 ? '' : `${roster.length} people, ordered by department, section, grade — never renumbered.`}
         </p>
-        <Link
-          href="/staff/people/employees/new"
-          className="shrink-0 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
-        >
-          ＋ Add staff
-        </Link>
+        {mayAdd && (
+          <Link
+            href="/staff/people/employees/new"
+            className="shrink-0 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+          >
+            ＋ Add staff
+          </Link>
+        )}
       </div>
 
       {roster.length === 0 ? (
@@ -93,12 +102,14 @@ export default async function StaffPage() {
             Add people one by one — bulk import arrives when Rajesh provides the corrected staff master (the Labour
             sheet supersedes every earlier extract).
           </p>
-          <Link
-            href="/staff/people/employees/new"
-            className="mt-5 inline-block rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
-          >
-            Add the first person
-          </Link>
+          {mayAdd && (
+            <Link
+              href="/staff/people/employees/new"
+              className="mt-5 inline-block rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
+            >
+              Add the first person
+            </Link>
+          )}
         </div>
       ) : (
         <>

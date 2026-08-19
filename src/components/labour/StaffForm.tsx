@@ -145,7 +145,7 @@ export default function StaffForm({
           }
           missing={missingFor(saved)}
           actions={
-            existing === null ? [{ href: `/staff/people/employees/${saved.id}`, label: 'Open their record' }] : undefined
+            existing === null ? [{ href: `/staff/people/employees/${saved.code}`, label: 'Open their record' }] : undefined
           }
         />
       )}

@@ -3968,3 +3968,78 @@ Four actions were extended rather than having the client compute anything:
 the claim and how much of it is still open, `saveAdvance` what the person now
 owes against wages. The rule is phase 1's and has not moved: post-save
 figures come from the database, not from what was typed.
+
+## The employee profile — a person is the second unit of accountability
+
+`/staff/people/employees/<code>` — E001, E014. The same shape as the
+department page and for the same reason: everything about a person already
+existed, scattered across four views, with no page to read it together.
+Rajesh asked for it after using the attendance sheet, which is the right
+signal — the sheet is where you notice somebody and had nowhere to go, so
+the NAME is a link there as well as on the roster.
+
+**ONE ADDRESS PER PERSON.** The code is canonical — permanent, human-readable
+and the thing people say out loud. The edit form used to live at
+`/staff/people/employees/<uuid>`, so that still resolves and then REDIRECTS
+to the code URL rather than the app answering to two addresses for one
+person; the lookup is case-insensitive, because nobody types E014 in caps
+from a phone. The edit form now sits at `<code>/edit`.
+
+**THE ACCOUNTANT IS ADMITTED, AND THE ROSTER'S WRITES WERE UNGATED.** Reading
+attendance, runs and advances for somebody is exactly the accountant's job.
+The matrix is prefix-based, so admitting them to the profile admits them to
+the list too — right, since they already see every person on
+`/accounts/payroll/people` and on every run — but `/new` is denied above it,
+and editing an existing person shares the profile's prefix and **cannot be
+split by prefix at all**. So the real gate went where this repo says a gate
+belongs: `createStaff` and `updateStaff` now check manager-or-owner, which
+they had **never done** — the route gate had been carrying the whole weight
+of two actions that are public endpoints.
+
+`audit:matrix` caught the leak on its first run: the roster's "＋ Add staff"
+button was visible to an accountant who cannot open `/new`. It gates on
+`canAccess`, one source, never a hand-rolled role comparison.
+
+**THE IDENTITY READ IS GATED, NOT JUST THE RENDER.** A manager opens this
+page, and `StaffRow` crosses the wire to them on it — so the page does not
+FETCH a single identifier column unless the reader is an owner or the
+accountant. Filtering the render would ship an account number and a date of
+birth in the RSC payload of somebody who has no reason to hold either. The
+gate asserts the call is conditional, and it was proved by making it
+unconditional and watching the gate name it.
+
+**Two things the brief asked for that the schema does not have**, said on the
+page rather than invented: there is no `emergency_contact` column on `staff`,
+and there is no Aadhaar column anywhere — 0014 added bank / PAN / UAN / PF /
+ESIC / DOB / gender and nothing else. The contact card says so in words. A
+field the database refuses is a field the form must not collect.
+
+### Cannot apply, cannot be assessed, and an empty ledger are three things
+
+The distinction the department page draws, drawn again, and the ORDER of the
+branches is load-bearing:
+
+- **CONTRACT staff can NEVER appear on a payroll run** — their vendor bills
+  for them, and `labour_cost_by_section` has excluded them since phase 5. The
+  contract branch comes FIRST on the Paid card, because "no payroll run has
+  included this person yet" would promise a run that is not coming. The gate
+  asserts that ordering, not merely that both branches exist.
+- **No run yet** is genuinely unassessable, and an empty table is a shrug.
+- **An empty advance ledger is a FACT**: nothing is outstanding because
+  nothing was ever lent. `NotApplicable`, not `Unassessed` — nobody owes an
+  entry.
+- **A retired person with no marks** is not a gap either; their earlier
+  months are still on the record and the card says to widen the period.
+
+**A blank day is drawn as the honesty meter's empty cell**, dashed, not as an
+absence — the same law the sheet now states above itself. **`absent_pct` is
+recomputed over the period's own totals** rather than averaging the monthly
+percentages, which would weight a three-day month like a thirty-day one.
+
+**Late hours are shown and never priced.** "14 hours beyond the normal day
+across 3 shifts — recorded, never priced. What overtime is worth is a
+decision, not a calculation this app makes."
+
+**DRAFT IS NOT MONEY THAT MOVED.** The Paid table carries the run status, and
+a strip counts the runs that are still draft or approved: only a line with a
+`paid_on` date has left an account and reached the wages register.

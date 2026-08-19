@@ -1351,7 +1351,7 @@ async function run() {
     const { readFileSync } = await import('node:fs')
     for (const f of [
       'src/app/staff/people/employees/new/page.tsx',
-      'src/app/staff/people/employees/[id]/page.tsx',
+      'src/app/staff/people/employees/[code]/edit/page.tsx',
       'src/app/staff/money-out/casual/page.tsx',
     ]) {
       assert.ok(readFileSync(f, 'utf8').includes('getAllSections'), `${f} filtered the roster`)
@@ -4371,6 +4371,100 @@ async function run() {
       'sales_per_labour_hour divides into a coalesced zero again — that reports an absence as a rate',
     )
     console.log(`      paid ${o.paid}d · worked ${o.worked}d · ${o.extra}h late · ${o.hours}h total — and no rate is computed`)
+  })
+
+
+  // ── the employee profile ──────────────────────────────────────────────
+
+  await check('every employee-profile read runs against the real database', async () => {
+    const { getStaffByRef, getAttendanceSummary, getAttendanceDays, getPayrollHistory, getAdvancesOutstanding, getAdvanceLedger } =
+      await import('../src/server/staff-profile-queries')
+    const rid = (await tsql<{ id: string }[]>`select id from restaurants limit 1`)[0].id
+    const [any] = await tsql<{ code: string; id: string }[]>`select code, id from staff order by code limit 1`
+    assert.ok(any !== undefined, 'no staff — every assertion below would pass over an empty set and prove nothing')
+
+    // THE CODE IS CANONICAL AND THE UUID STILL RESOLVES. The old edit URL
+    // carried the uuid and phones may have it bookmarked; the page redirects
+    // rather than the app answering to two addresses for one person.
+    const byCode = await getStaffByRef(rid, any.code)
+    const byLower = await getStaffByRef(rid, any.code.toLowerCase())
+    const byId = await getStaffByRef(rid, any.id)
+    assert.ok(byCode !== null, 'a real code does not resolve')
+    assert.ok(byLower !== null, 'the code lookup is case-sensitive — nobody types E014 in caps from a phone')
+    assert.ok(byId !== null, 'the uuid no longer resolves, so every bookmarked edit URL 404s')
+    assert.equal(byId?.id, byCode?.id, 'the two keys resolve to different people')
+    assert.equal(await getStaffByRef(rid, 'E-does-not-exist'), null, 'a bogus ref resolves to somebody')
+
+    const months = ['2026-08-01']
+    const summary = await getAttendanceSummary(rid, any.id, months)
+    const days = await getAttendanceDays(rid, any.id, '2026-08-01', '2026-08-31')
+    const payroll = await getPayrollHistory(rid, any.id)
+    const adv = await getAdvancesOutstanding(rid, any.id)
+    const ledger = await getAdvanceLedger(rid, any.id)
+    console.log(
+      `      ${any.code}: ${summary.length} month(s), ${days.length} day(s), ${payroll.length} run(s), ` +
+        `${ledger.length} advance(s), outstanding ${adv === null ? 'none ever' : adv.outstanding}`,
+    )
+    // getAttendanceSummary with no months must not sweep every month there is
+    assert.deepEqual(await getAttendanceSummary(rid, any.id, []), [], 'an empty period returned rows')
+  })
+
+  await check('the profile gates the identity READ, not just the render', async () => {
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/staff/people/employees/[code]/page.tsx', 'utf8')
+    // A manager opening this page must not receive an account number over the
+    // wire — not merely fail to see it rendered. So the fetch itself must sit
+    // behind the role, which is a conditional, not a filtered render.
+    assert.ok(
+      /mayHoldIdentity \? getStaffIdentity\(/.test(page),
+      'getStaffIdentity is called unconditionally — a manager now receives bank details in the payload',
+    )
+    assert.ok(
+      /user\?\.role === 'owner' \|\| user\?\.role === 'accountant'/.test(page),
+      'the identity role test has changed shape — check who can hold a date of birth',
+    )
+    // ...and the roster's WRITE actions stay manager+owner even though the
+    // accountant may now read the profile.
+    const labour = readFileSync('src/server/labour-actions.ts', 'utf8')
+    for (const fn of ['createStaff', 'updateStaff']) {
+      const body = labour.slice(labour.indexOf(`export async function ${fn}(`))
+      assert.ok(
+        body.slice(0, 900).includes('assertRosterActor'),
+        `${fn} has no role gate — the accountant can now reach it through /staff/people/employees`,
+      )
+    }
+    const guard = labour.slice(labour.indexOf('async function assertRosterActor')).slice(0, 600)
+    assert.ok(/'manager'/.test(guard) && /'owner'/.test(guard), 'the roster guard no longer names manager and owner')
+    assert.ok(!/'accountant'/.test(guard), 'the accountant has been let into the roster write path')
+    console.log('      identity read is conditional; createStaff/updateStaff stay manager+owner')
+  })
+
+  await check('a contract worker is told the page cannot apply, not that data is missing', async () => {
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/staff/people/employees/[code]/page.tsx', 'utf8')
+    // The Paid card has THREE states and the middle one is the whole point: a
+    // contract worker can NEVER be on a payroll run (their vendor bills for
+    // them), so "no payroll run yet" would promise one that is not coming.
+    // Same distinction the department page draws between NotApplicable and
+    // Unassessed.
+    const paid = page.slice(page.indexOf('title="Paid"'), page.indexOf('title="Advances"'))
+    assert.ok(paid.includes('isContract ? ('), 'the Paid card no longer branches on contract')
+    assert.ok(
+      paid.indexOf('NotApplicable') < paid.indexOf('Unassessed'),
+      'the contract branch must come FIRST — otherwise a vendor-billed worker is told a run is coming',
+    )
+    assert.ok(/Unassessed needs="no payroll run yet"/.test(paid), 'the empty-runs case no longer declares itself')
+
+    // ...and the empty advance ledger is a fact, not a gap: nothing is
+    // outstanding because nothing was ever lent.
+    const advances = page.slice(page.indexOf('title="Advances"'))
+    assert.ok(
+      /advances === null && ledger\.length === 0 \? \(\s*<NotApplicable>/.test(advances),
+      'an empty advance ledger reports as unassessable — it is an empty ledger, not a missing one',
+    )
+    // and an over-recovered advance is loud rather than rendered as a credit
+    assert.ok(/Number\(advances\.outstanding\) < 0/.test(advances), 'over-recovery is no longer surfaced')
+    console.log('      contract → cannot apply; no runs → cannot be assessed; no advances → an empty ledger')
   })
 
   console.log(

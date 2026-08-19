@@ -59,6 +59,22 @@ const RULES: [prefix: string, roles: Role[]][] = [
   ['/sales', ['cashier', 'manager', 'owner']],
 
   // --- staff group (manager) -------------------------------------------
+  // THE EMPLOYEE PROFILE ADMITS THE ACCOUNTANT. A person is the second unit
+  // of accountability in this app and the accountant is the one preparing
+  // their pay — reading attendance, runs and advances for somebody is their
+  // job. Chef, store and cashier stay out: they have no reason to see
+  // anyone's pay.
+  //
+  // The matrix is prefix-based, so this admits them to the LIST as well,
+  // which is right — they already see every person on /accounts/payroll/people
+  // and on every run. What it must NOT hand them is the roster's write
+  // surfaces, and the rule above keeps them out of /new. Editing an existing
+  // person shares the profile's prefix and cannot be split by prefix at all,
+  // so the real gate is in the ACTIONS (createStaff/updateStaff, manager and
+  // owner) — which is where this repo says a gate belongs anyway, because a
+  // form is never the check.
+  ['/staff/people/employees/new', ['manager', 'owner']],
+  ['/staff/people/employees', ['manager', 'owner', 'accountant']],
   ['/staff', ['manager', 'owner']],
 
   // --- apis -------------------------------------------------------------
