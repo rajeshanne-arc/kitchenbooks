@@ -14,6 +14,7 @@
 // typed. A blank field is the ordinary case and is never styled as an error.
 
 import { useState } from 'react'
+import PersonLink from '@/components/labour/PersonLink'
 import { useRouter } from 'next/navigation'
 import type { StaffIdentity, UpdateStaffIdentityInput } from '@/lib/types'
 import { updateStaffIdentity } from '@/server/payroll-actions'
@@ -375,7 +376,9 @@ export default function PeopleClient({ staff }: { staff: StaffIdentity[] }) {
                     <span className="min-w-0">
                       <span className="flex flex-wrap items-center gap-2">
                         <span className={codeCls}>{p.code}</span>
-                        <span className="truncate text-[15px] font-medium text-stone-900">{p.name}</span>
+                        <span className="truncate text-[15px] font-medium text-stone-900">
+                          <PersonLink code={p.code} name={p.name} />
+                        </span>
                       </span>
                       {/* department and job, and nothing personal: a date of
                           birth is not a thing to leave on a scannable list */}

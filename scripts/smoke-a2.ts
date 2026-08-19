@@ -4713,6 +4713,94 @@ async function run() {
     console.log(`      ${who.code}: both write paths refuse a sessionless call and change nothing`)
   })
 
+
+  await check('a person is never named without a way through to them', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    // A PERSON'S NAME IS A DOOR. The profile shipped and the roster and the
+    // sheet linked to it; the dashboard, the payroll run, the advances table
+    // and the accountant's people list rendered plain text. Inconsistent is
+    // worse than missing — a reader learns the name is SOMETIMES a link and
+    // stops trying.
+    //
+    // The rule is derived, not listed: any file that renders a person's NAME
+    // out of a row that also carries their CODE must offer a way through,
+    // either <PersonLink> or a row-level link to the profile. Deriving it is
+    // the point — a list would go stale the day somebody adds a table.
+    // PER RENDER SITE, NOT PER FILE — the first version of this gate checked
+    // whether the FILE mentioned PersonLink anywhere, so a file with two
+    // person tables passed while one of them rendered plain text. Removing a
+    // link from the staff dashboard left it green. It now looks at each
+    // occurrence: a name written as a JSX CHILD is the bug, a name passed as
+    // the `name=` PROP of PersonLink is the fix, and an <option> is the one
+    // place a link cannot go.
+    const NAME_FIELDS = ['staff_name', 'r.name', 'p.name', 'l.name', 'd.staff_name']
+    const offenders: string[] = []
+    let personFiles = 0
+    let doors = 0
+    let sites = 0
+    for (const file of [...walk('src/app'), ...walk('src/components')]) {
+      const src = readFileSync(file, 'utf8')
+      const isPerson =
+        /staff_code|staff_id|StaffIdentity|AttendanceSummaryRow|AdvanceOutstanding|StaffRow/.test(src)
+      if (!isPerson) continue
+      // Does this file mention a person's name AT ALL — as a bare child, as a
+      // PersonLink prop, either way? That is what proves the sweep is reading
+      // the tree. Counting only the BARE ones would read zero once they are
+      // all fixed, which is the guard passing because the thing it guards
+      // stopped existing.
+      if (NAME_FIELDS.some((f) => src.includes(`{${f}}`))) personFiles++
+      if (src.includes('<PersonLink')) doors++
+      let rendersAny = false
+      for (const field of NAME_FIELDS) {
+        // A RENDER SITE IS A WHOLE JSX CHILD: `>{r.name}<`. Anything else is
+        // not a name displayed on its own — `${r.name}` is a template literal,
+        // `name={r.name}` is the PersonLink prop that fixes this,
+        // `{r.name}: extra hours` is a screen-reader label, and
+        // `{p.name} — {p.code}` is an <option>, which cannot hold a link.
+        const re = new RegExp(`>\\s*\\{${field.replace('.', '\\.')}\\}\\s*<`, 'g')
+        let m: RegExpExecArray | null
+        while ((m = re.exec(src)) !== null) {
+          rendersAny = true
+          sites++
+          const near = src.slice(Math.max(0, m.index - 1200), m.index)
+          const wrapped = near.includes('/staff/people/employees/${')
+          if (!wrapped) offenders.push(`${file.replace('src/', '')}: {${field}} is not a link`)
+        }
+      }
+      void rendersAny
+    }
+    assert.ok(personFiles >= 6, `only ${personFiles} files name a person — this sweep is not reading the tree`)
+    assert.ok(doors >= 6, `only ${doors} files mount PersonLink — the pattern is not applied`)
+    console.log(`      ${personFiles} files name a person · ${doors} mount PersonLink · ${sites} bare render(s)`)
+    assert.deepEqual(
+      offenders,
+      [],
+      `these name a person and give no way through — a name is a door:\n      ${offenders.join('\n      ')}`,
+    )
+  })
+
+  await check('the day tooltip says it in words, and extra hours is in the headline row', async () => {
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/staff/people/employees/[code]/page.tsx', 'utf8')
+    // "+2h · corrected ×1" is shorthand a reader has to decode, on the one
+    // fact that matters most — somebody worked longer than their day.
+    assert.ok(/worked \$\{day\.extra_hours\} extra/.test(page), 'the tooltip no longer says the hours in words')
+    assert.ok(/'once' : n === 2 \? 'twice'/.test(page), 'corrections are back to ×N')
+    assert.ok(!/\+\$\{day\.extra_hours\}h/.test(page), 'the +Nh shorthand has come back')
+    // and the figure is a column like the other six, not prose underneath
+    assert.ok(/label="Extra hours"/.test(page), 'extra hours has left the stat row')
+    assert.ok(/sm:grid-cols-7/.test(page), 'the stat row is not wide enough to hold it')
+    console.log('      tooltip in words · extra hours is the seventh column')
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

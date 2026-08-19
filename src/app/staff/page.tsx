@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import PersonLink from '@/components/labour/PersonLink'
 import { getRestaurant } from '@/server/queries'
 import { businessToday } from '@/server/business-day'
 import { readPeriodParam, resolvePeriod, monthLabel } from '@/lib/period'
@@ -362,7 +363,9 @@ export default async function StaffDashboardPage({
                     return (
                       <tr key={`${r.staff_id}-${r.month}`} className={trCls}>
                         <td className={tdCodeCls}>{r.code}</td>
-                        <td className={`${tdCls} font-medium`}>{r.name}</td>
+                        <td className={`${tdCls} font-medium`}>
+                          <PersonLink code={r.code} name={r.name} />
+                        </td>
                         <td className={tdNumCls}>{r.days_marked}</td>
                         <td className={tdNumCls}>{r.absent}</td>
                         <td className={tdNumCls}>
@@ -412,7 +415,9 @@ export default async function StaffDashboardPage({
                     {d.advances.map((r) => (
                       <tr key={r.staff_id} className={trCls}>
                         <td className={tdCodeCls}>{r.code}</td>
-                        <td className={`${tdCls} font-medium`}>{r.name}</td>
+                        <td className={`${tdCls} font-medium`}>
+                          <PersonLink code={r.code} name={r.name} />
+                        </td>
                         <td className={tdNumCls}>{formatMoneyString(r.given)}</td>
                         <td className={tdNumCls}>{formatMoneyString(r.recovered)}</td>
                         <td className={`${tdNumCls} font-semibold`}>{formatMoneyString(r.outstanding)}</td>

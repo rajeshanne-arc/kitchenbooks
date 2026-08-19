@@ -107,6 +107,25 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 
 const or = (v: string | null, fallback = '—') => (v === null || v === '' ? fallback : v)
 
+/**
+ * WHAT THE DAY SAYS, IN WORDS. It used to read "19 Aug 2026 — present +2h ·
+ * corrected ×1": shorthand a reader has to decode, on the one fact that
+ * matters most — somebody worked longer than their day. A tooltip is read
+ * once, in passing, by whoever is trying to understand a number; it can
+ * afford the extra characters.
+ */
+const times = (n: number) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`)
+
+function dayTitle(date: string, day: AttendanceDay): string {
+  const parts = [fmtDate(date), STATUS_STYLE[day.status].title]
+  if (day.extra_hours !== null) {
+    const h = Number(day.extra_hours)
+    parts.push(`worked ${day.extra_hours} extra ${h === 1 ? 'hour' : 'hours'}`)
+  }
+  if (day.filings > 1) parts.push(`corrected ${times(day.filings - 1)}`)
+  return parts.join(' · ')
+}
+
 /** The day-by-day strip. A day nobody filed is a BLANK cell, drawn as the
  *  honesty meter's empty cell rather than as an absence — the same law the
  *  sheet states above itself: unmarked is not absent. */
@@ -125,7 +144,7 @@ function DayStrip({ days, from, to }: { days: AttendanceDay[]; from: string; to:
           return (
             <span
               key={date}
-              title={`${fmtDate(date)} — nothing filed`}
+              title={`${fmtDate(date)} · nothing filed — a blank is not an absence`}
               className="flex h-7 w-7 items-center justify-center rounded-md border border-dashed border-stone-300 bg-cell text-[10px] tabular-nums text-stone-400"
             >
               {n}
@@ -136,9 +155,7 @@ function DayStrip({ days, from, to }: { days: AttendanceDay[]; from: string; to:
         return (
           <span
             key={date}
-            title={`${fmtDate(date)} — ${s.title}${day.extra_hours !== null ? ` +${day.extra_hours}h` : ''}${
-              day.filings > 1 ? ` · corrected ×${day.filings - 1}` : ''
-            }`}
+            title={dayTitle(date, day)}
             className={`relative flex h-7 w-7 items-center justify-center rounded-md border text-[11px] font-semibold ${s.cls}`}
           >
             {s.label}
@@ -441,7 +458,12 @@ export default async function StaffProfilePage({
             </Unassessed>
           ) : (
             <>
-              <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+              {/* EXTRA HOURS BELONGS IN THE ROW. It is a fact about the
+                  period exactly like the other six — and it is the only one
+                  that costs money nobody has priced, so burying it in prose
+                  underneath made the cheapest-looking column the expensive
+                  one. */}
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-7">
                 <Field label="Marked" value={<span className={`${heroNumCls} text-lg`}>{marked}</span>} />
                 <Field label="Present" value={<span className={`${heroNumCls} text-lg`}>{present}</span>} />
                 <Field label="Half" value={<span className={`${heroNumCls} text-lg`}>{half}</span>} />
@@ -456,6 +478,24 @@ export default async function StaffProfilePage({
                     </span>
                   }
                 />
+                <Field
+                  label="Extra hours"
+                  value={
+                    lateHours === 0 ? (
+                      <span className={`${heroNumCls} text-lg text-stone-300`}>—</span>
+                    ) : (
+                      // violet, the same ink as the dot on the strip — it is an
+                      // identity, not a status: nothing is wrong and nothing is
+                      // in doubt, somebody simply worked longer.
+                      <span className={`${heroNumCls} text-lg text-violet-800`}>
+                        {lateHours}
+                        <span className="ml-1 text-xs font-normal text-stone-500">
+                          · {lateDays.length} {lateDays.length === 1 ? 'shift' : 'shifts'}
+                        </span>
+                      </span>
+                    )
+                  }
+                />
               </div>
               <div className="mt-4">
                 <DayStrip days={days} from={period.from} to={period.to} />
@@ -467,9 +507,9 @@ export default async function StaffProfilePage({
               </div>
               {lateDays.length > 0 && (
                 <p className="mt-2 text-[13px] text-stone-600">
-                  <span className="font-semibold tabular-nums">{lateHours}</span> hours beyond the normal day across{' '}
-                  {lateDays.length} {lateDays.length === 1 ? 'shift' : 'shifts'} — recorded, never priced. What
-                  overtime is worth is a decision, not a calculation this app makes.
+                  Extra hours are recorded and never priced. What overtime is worth is a decision — set by statute,
+                  different in every state and different again outside this country — not a calculation this app
+                  makes.
                 </p>
               )}
               {days.length < marked && (

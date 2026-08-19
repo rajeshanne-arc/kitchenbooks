@@ -3,6 +3,7 @@
 // re-computation of the same figure in JS.
 import 'server-only'
 import { tsql } from '@/lib/db'
+import { currentTenant } from '@/lib/tenant'
 import type { Category, ItemHit, ItemHitExisting, ItemHitStarter, Restaurant, Unit, VendorHit } from '@/lib/types'
 
 
@@ -38,11 +39,26 @@ export async function getRestaurant(): Promise<Restaurant> {
     return rows[0]
   }
 
+  // NO SESSION. A script, a background job, the build. If the caller has
+  // ANNOUNCED a tenant — withTenant(), which every smoke suite already
+  // wraps itself in — that is the answer, and it is not a guess.
+  //
+  // This is the precondition for ever creating a second restaurant. The
+  // fallback below refuses the moment one exists, by design and in those
+  // words; without this branch, creating a probe tenant would take every
+  // gate that calls a server action down with it.
+  const announced = currentTenant()
+  if (announced !== null) {
+    const named = await tsql<Restaurant[]>`select id, name from restaurants where id = ${announced}`
+    if (!named[0]) throw new Error('The announced tenant does not exist')
+    return named[0]
+  }
+
   const rows = await tsql<Restaurant[]>`select id, name from restaurants order by created_at asc limit 2`
   if (!rows[0]) throw new Error('No restaurant row found — seed the restaurants table first')
   if (rows.length > 1) {
     throw new Error(
-      'More than one restaurant exists and this call has no session to say which — every path must carry a tenant before a second tenant is created',
+      'More than one restaurant exists and this call has no session and announced none — wrap the call in withTenant(), or sign in',
     )
   }
   return rows[0]

@@ -2,6 +2,7 @@
 // recomputed: every figure was worked out when the run was prepared and stored
 // then, so a run says next year what it said the day it was approved.
 import type { PayrollLineRow } from '@/lib/types'
+import PersonLink from '@/components/labour/PersonLink'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import Honesty, { HonestyPill } from '@/components/Honesty'
 import {
@@ -64,7 +65,7 @@ export default function PayrollLinesTable({ lines }: { lines: PayrollLineRow[] }
                 <td className={tdCodeCls}>{l.staff_code}</td>
                 <td className={`${tdCls} whitespace-nowrap`}>
                   <span className="flex items-center gap-2">
-                    {l.staff_name}
+                    <PersonLink code={l.staff_code} name={l.staff_name} />
                     {decimalStringToPaise(l.base_salary) === 0 && (
                       <HonestyPill>no salary</HonestyPill>
                     )}

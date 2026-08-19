@@ -4,6 +4,7 @@
 // Name and code only. The read behind this screen carries bank accounts, PAN
 // and dates of birth; none of them belong on a screen about money owed.
 import type { AdvanceOutstanding } from '@/lib/types'
+import PersonLink from '@/components/labour/PersonLink'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import {
@@ -35,7 +36,9 @@ export default function AdvancesTable({ rows }: { rows: AdvanceOutstanding[] }) 
             const owed = decimalStringToPaise(r.outstanding)
             return (
               <tr key={r.staff_id} className={trCls}>
-                <td className={`${tdCls} font-medium`}>{r.staff_name}</td>
+                <td className={`${tdCls} font-medium`}>
+                  <PersonLink code={r.staff_code} name={r.staff_name} />
+                </td>
                 <td className={tdCodeCls}>{r.staff_code}</td>
                 <td className={`${tdCls} text-stone-500`}>
                   {r.last_advance === null ? (

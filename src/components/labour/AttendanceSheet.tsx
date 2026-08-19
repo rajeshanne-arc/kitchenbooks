@@ -6,13 +6,13 @@
 // never hidden.
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { saveAttendance } from '@/server/labour-actions'
 import type { AttendanceStatus, DaySheetRow } from '@/lib/types'
 import { fmtDate, fmtDateTime } from '@/lib/format'
 import Honesty from '@/components/Honesty'
 import SaveAck from '@/components/SaveAck'
+import PersonLink from '@/components/labour/PersonLink'
 import { cardCls, numCls } from '@/components/ui'
 
 const STATUSES: { value: AttendanceStatus; label: string; on: string }[] = [
@@ -210,12 +210,11 @@ export default function AttendanceSheet({ date, initialSheet }: { date: string; 
                             for the profile after using this screen, which is the
                             right signal: until now there was nowhere to go from
                             a name you had just thought about. */}
-                        <Link
-                          href={`/staff/people/employees/${r.code}`}
-                          className="truncate text-[15px] font-medium text-stone-900 hover:underline"
-                        >
-                          {r.name}
-                        </Link>
+                        <PersonLink
+                          code={r.code}
+                          name={r.name}
+                          className="truncate text-[15px] font-medium text-stone-900"
+                        />
                         {corrected && (
                           <button
                             type="button"

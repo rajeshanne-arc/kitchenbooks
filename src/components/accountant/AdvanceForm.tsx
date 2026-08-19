@@ -21,6 +21,7 @@ import { decimalStringToPaise, formatMoneyString, formatPaise, parseMoney } from
 import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import SaveAck from '@/components/SaveAck'
+import PersonLink from '@/components/labour/PersonLink'
 import Honesty from '@/components/Honesty'
 import {
   btnCls,
@@ -160,6 +161,21 @@ export default function AdvanceForm({
             </span>
           )}
         </label>
+
+        {/* A NAME IN A <select> CANNOT BE A LINK, so the door goes here, on
+            the person who has actually been chosen — which is the better
+            place anyway: the question an accountant has once they have picked
+            somebody is what else that person already has against them. */}
+        {person !== null && (
+          <p className="text-xs text-stone-500">
+            <PersonLink
+              code={person.code}
+              name={`${person.name} · ${person.code}`}
+              className="font-medium text-emerald-800"
+            />{' '}
+            — attendance, runs and advances
+          </p>
+        )}
 
         {/* The advance mechanic has exactly one way back: `advance_recovered`
             on a payroll line. A contract worker never reaches one. */}

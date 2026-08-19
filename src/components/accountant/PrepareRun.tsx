@@ -16,6 +16,7 @@
 // indent prefill "land nowhere".
 
 import { useState, useTransition } from 'react'
+import PersonLink from '@/components/labour/PersonLink'
 import { useRouter } from 'next/navigation'
 import type { PayrollDraftLine, PayrollRunRow } from '@/lib/types'
 import { preparePayrollRun } from '@/server/payroll-actions'
@@ -315,7 +316,7 @@ export default function PrepareRun({
                           <td className={tdCodeCls}>{d.staff_code}</td>
                           <td className={`${tdCls} whitespace-nowrap`}>
                             <span className="flex items-center gap-2">
-                              {d.staff_name}
+                              <PersonLink code={d.staff_code} name={d.staff_name} />
                               {d.unsalaried && <HonestyPill>no salary</HonestyPill>}
                             </span>
                           </td>

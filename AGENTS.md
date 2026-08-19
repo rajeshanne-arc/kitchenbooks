@@ -4133,3 +4133,70 @@ they must not be SELECTED by any query whose result reaches a manager, and
 `StaffRow` does. A gate asserts they appear in the identity read and in
 neither roster query, and it was proved by adding `st.aadhaar` to
 `STAFF_SELECT` and watching it name the file.
+
+## A PERSON'S NAME IS A DOOR
+
+The profile shipped and the roster and the attendance sheet linked to it; the
+staff dashboard, the payroll run, the advances table, the accountant's people
+list and the advance form did not. **Inconsistent is worse than missing** — a
+reader learns the name is SOMETIMES a link and stops trying.
+
+`src/components/labour/PersonLink.tsx` is the one component, and it takes no
+role prop: every surface that mounts it is already manager / owner /
+accountant, and if it is ever mounted somewhere a chef or cashier can see,
+`audit:matrix` fails on the href rather than the component guessing.
+
+**A `<select>` option cannot hold a link**, so the advance form puts the door
+on the person who has actually been CHOSEN — which is the better place
+anyway: the question an accountant has once they have picked somebody is what
+else that person already has against them.
+
+### The gate took three tries, and each failure is the same shape
+
+1. **Per file.** It asked whether the FILE mentioned `PersonLink` anywhere, so
+   a file with two person tables passed while one rendered plain text.
+   Removing a link from the dashboard left it green.
+2. **Per site, too loose.** Matching the substring `{r.name}` also matched
+   `name={r.name}` (the fix), `${r.name}` (a template literal) and
+   `{r.name}: extra hours` (a screen-reader label) — three false positives on
+   correct code.
+3. **Per site, and the guard counted the wrong thing.** With the matcher
+   right, bare renders fell to zero — so `checked >= 5` failed. The guard was
+   counting the thing being ELIMINATED. It now counts files that name a
+   person at all and files that mount `PersonLink`, either of which stays
+   non-zero when the code is correct.
+
+**The rule under all three: a guard must count something that survives the
+fix.** A sweep whose denominator goes to zero when the bug is gone cannot
+tell "clean" from "not looking".
+
+A render site is a WHOLE JSX CHILD — `>{r.name}<`. That definition is what
+makes the check precise enough to be worth having.
+
+## The tooltip says it in words, and the hours are a column
+
+"19 Aug 2026 — present +2h · corrected ×1" became "19 Aug 2026 · present ·
+worked 2 extra hours · corrected once". `+2h` is shorthand a reader has to
+decode, on the one fact that matters most — somebody worked longer than their
+day — and a tooltip is read once, in passing, by whoever is trying to
+understand a number. It can afford the characters.
+
+Extra hours joined the stat row as a seventh column. It is a fact about the
+period exactly like the other six, and it is the only one that **costs money
+nobody has priced**, so leaving it in prose underneath made the cheapest-
+looking row the expensive one. Violet, the same ink as the dot on the strip —
+an identity, not a status: nothing is wrong and nothing is in doubt.
+
+## getRestaurant() honours an announced tenant — the precondition for a second one
+
+With no session it read `limit 2` and refused when more than one restaurant
+existed, in those words: *"every path must carry a tenant before a second
+tenant is created"*. That refusal is right, and it means **creating any
+second restaurant takes down every gate that calls a server action** —
+`saveAttendance`, `updateStaff`, all of them go through `getRestaurant()`.
+
+So it now consults `currentTenant()` first. Every smoke suite already wraps
+itself in `withTenant(KB_TENANT)`, so they answer for themselves; the
+limit-2 fallback stays underneath for the genuinely unannounced case, and
+still refuses. Request paths are unchanged — the session branch returns
+before either.
