@@ -27,6 +27,7 @@ import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
+import { getStockSnaps } from '@/server/store-queries'
 import {
   AdjustmentRefusal,
   assertAdjustableItem,
@@ -276,7 +277,11 @@ export async function saveAdjustments(raw: SaveAdjustmentsInput): Promise<SaveAd
       }
     })
 
-    return { ok: true, count: input.lines.length }
+    // Read the shelf back. A correction's whole purpose is to move the book,
+    // so the acknowledgement has to state where it moved TO — a count of rows
+    // says nothing a person can check against the shelf in front of them.
+    const stock = await getStockSnaps(rid, input.lines.map((l) => l.itemId))
+    return { ok: true, count: input.lines.length, reason: input.reason, stock }
   } catch (e) {
     return fail(e)
   }

@@ -107,7 +107,7 @@ export default function CloseClient({
         toast(res.error, 'error')
         return
       }
-      toast('Period closed', 'ok')
+      toast(`${fmtDate(periodStart)} – ${fmtDate(periodEnd)} closed`, 'ok')
       setNote('')
       router.refresh()
     } catch {
@@ -126,7 +126,7 @@ export default function CloseClient({
         toast(res.error, 'error')
         return
       }
-      toast('Reopened', 'ok')
+      toast(`${fmtDate(periodStart)} – ${fmtDate(periodEnd)} reopened — it stays on the record as reopened`, 'ok')
       setReopening(null)
       setReason('')
       router.refresh()

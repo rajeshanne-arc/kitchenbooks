@@ -19,6 +19,7 @@ import { recordPayment } from '@/server/books-actions'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
+import SaveAck from '@/components/SaveAck'
 import {
   btnCls,
   cardCls,
@@ -107,16 +108,29 @@ export default function BankPayment({
       </p>
 
       {done !== null && (
-        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-stone-800">
-          Recorded <span className="font-semibold tabular-nums">{formatMoneyString(done.payment.amount)}</span>{' '}
-          on {fmtDate(done.payment.paid_date)} — dues{' '}
-          <span className="tabular-nums">{formatMoneyString(done.duesBefore)}</span>
-          {' → '}
-          <span className="font-bold tabular-nums">{formatMoneyString(done.dues.balance)}</span>
-          <span className="ml-1 text-xs text-stone-500">· read live from vendor_dues</span>
-          {done.payment.doc_no !== null && (
-            <span className={`mt-1 block ${docNoCls}`}>{done.payment.doc_no}</span>
-          )}
+        <div className="mt-3">
+          <SaveAck
+            onDismiss={() => setDone(null)}
+            headline={
+              <>
+                <span className="tabular-nums">{formatMoneyString(done.payment.amount)}</span> paid — they are now
+                owed <span className="tabular-nums">{formatMoneyString(done.dues.balance)}</span>
+              </>
+            }
+            sub={
+              <>
+                {fmtDate(done.payment.paid_date)} · was {formatMoneyString(done.duesBefore)} · read live from
+                vendor_dues · the SAME payments table and PAY series as the store&apos;s form — one kind of payment,
+                two people in two places
+                {done.payment.doc_no !== null && (
+                  <>
+                    {' · '}
+                    <span className={docNoCls}>{done.payment.doc_no}</span>
+                  </>
+                )}
+              </>
+            }
+          />
         </div>
       )}
 

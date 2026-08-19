@@ -21,10 +21,11 @@
 import { useState } from 'react'
 import type { MoneyAccount, PaidBy, SaveVouchersResult } from '@/lib/types'
 import { saveVouchers } from '@/server/cash-actions'
+import SaveAck from '@/components/SaveAck'
 import { formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
-import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
+import { cardCls, docNoCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 import { useBusinessToday } from '@/components/BusinessDay'
 
 type Kind = 'expense' | 'stock' | 'labour'
@@ -116,8 +117,10 @@ export default function VoucherForm({
           isCasualLabour: l.kind === 'labour',
         })),
       })
-      if (res.ok) setSaved(res)
-      else setError(res.error)
+      if (res.ok) {
+        setSaved(res)
+        resetForNext()
+      } else setError(res.error)
     } catch {
       setError('Could not reach the server — nothing was saved. Please retry.')
     } finally {
@@ -125,63 +128,18 @@ export default function VoucherForm({
     }
   }
 
-  function startAnother() {
-    setSaved(null)
+  /** Reset for the next entry, keeping what carries: the DATE stays. A
+   *  cashier writing up the evening's vouchers writes several for one day. */
+  function resetForNext() {
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
-    setDate(businessToday)
-  }
-
-  if (saved !== null) {
-    return (
-      <section className={cardCls}>
-        <h2 className={sectionHeadCls}>
-          {saved.vouchers.length === 1 ? 'Voucher recorded' : `${saved.vouchers.length} vouchers recorded`}
-        </h2>
-        <p className="mt-2 text-2xl font-bold tabular-nums text-stone-900">
-          {formatMoneyString(saved.total)}
-        </p>
-        <p className="mt-0.5 text-sm text-stone-500">{fmtDate(saved.vouchers[0].voucher_date)}</p>
-        <ul className="mt-3 divide-y divide-rule-soft border-t border-stone-100">
-          {saved.vouchers.map((v) => (
-            <li key={v.id} className="py-2">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 truncate text-[15px] text-stone-900">
-                  {v.paid_to} · {v.category}
-                </span>
-                <span className="shrink-0 tabular-nums text-sm font-semibold text-stone-900">
-                  {formatMoneyString(v.amount)}
-                </span>
-              </div>
-              <p className="text-xs text-stone-500">
-                {/* every voucher keeps its OWN number — a batch is entry, not a document */}
-                {v.doc_no !== null && <span className="font-mono">{v.doc_no}</span>}
-                {v.doc_no !== null && ' · '}
-                {v.paid_by === 'owner' ? (
-                  <span className="font-medium text-amber-800">
-                    paid by {v.owner_name} from pocket — not in the drawer math; lands in owners owed
-                  </span>
-                ) : (
-                  'paid by the cashier from the drawer — lands on the day’s ladder'
-                )}
-              </p>
-            </li>
-          ))}
-        </ul>
-        <button
-          type="button"
-          onClick={startAnother}
-          className="mt-3 w-full rounded-xl bg-emerald-700 py-2.5 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
-        >
-          Record another
-        </button>
-      </section>
-    )
   }
 
   return (
-    <section className={cardCls}>
+    <div className="space-y-4">
+      {saved !== null && <VoucherAck saved={saved} onDismiss={() => setSaved(null)} />}
+      <section className={cardCls}>
       <h2 className={sectionHeadCls}>Cash vouchers</h2>
 
       <label className="mt-3 block sm:w-44">
@@ -409,5 +367,68 @@ export default function VoucherForm({
         {saving ? 'Saving…' : lines.length === 1 ? 'Record voucher' : `Record ${lines.length} vouchers`}
       </button>
     </section>
+    </div>
+  )
+}
+
+/**
+ * PAID BY IS THE THING TO SAY BACK. An owner-funded voucher never touches
+ * the drawer — day_close_ladder filters on paid_by = 'cashier' — so the same
+ * ₹500 lands in two completely different places depending on one control,
+ * and the cashier has to be able to see which one they picked long before the
+ * drawer fails to reconcile at midnight.
+ */
+function VoucherAck({
+  saved,
+  onDismiss,
+}: {
+  saved: Extract<SaveVouchersResult, { ok: true }>
+  onDismiss: () => void
+}) {
+  const owner = saved.vouchers.filter((v) => v.paid_by === 'owner')
+  return (
+    <SaveAck
+      onDismiss={onDismiss}
+      headline={
+        <>
+          {saved.vouchers.length === 1 ? 'Voucher' : `${saved.vouchers.length} vouchers`} recorded —{' '}
+          <span className="tabular-nums">{formatMoneyString(saved.total)}</span>
+        </>
+      }
+      sub={fmtDate(saved.vouchers[0].voucher_date)}
+      missing={
+        owner.length > 0
+          ? [
+              {
+                verdict: 'owner money',
+                text: `${owner
+                  .map((v) => `${v.owner_name} ${formatMoneyString(v.amount)}`)
+                  .join(', ')} came out of a pocket, not the drawer — so it is NOT on tonight's ladder and the drawer must still balance without it. It opens a debt in owners owed; the reimbursement is itself a cashier voucher.`,
+              },
+            ]
+          : undefined
+      }
+    >
+      <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+        {saved.vouchers.map((v) => (
+          <li key={v.id} className="py-1.5 text-sm">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 truncate text-stone-900">
+                {v.paid_to} · {v.category}
+              </span>
+              <span className="shrink-0 font-semibold tabular-nums text-stone-900">{formatMoneyString(v.amount)}</span>
+            </div>
+            <p className="text-xs text-stone-500">
+              {/* every voucher keeps its OWN number — a batch is entry, not a document */}
+              {v.doc_no !== null && <span className={docNoCls}>{v.doc_no}</span>}
+              {v.doc_no !== null && ' · '}
+              {v.paid_by === 'owner'
+                ? `paid by ${v.owner_name} from pocket`
+                : 'paid by the cashier from the drawer — lands on tonight’s ladder'}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </SaveAck>
   )
 }

@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import type { MoneyAccount, SaveOtherIncomesResult, Unit } from '@/lib/types'
 import { saveOtherIncomes } from '@/server/cash-actions'
+import SaveAck from '@/components/SaveAck'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
@@ -99,8 +100,10 @@ export default function OtherIncomeForm({
           receivedBy: l.receivedBy.trim(),
         })),
       })
-      if (res.ok) setSaved(res)
-      else setError(res.error)
+      if (res.ok) {
+        setSaved(res)
+        resetForNext()
+      } else setError(res.error)
     } catch {
       setError('Could not reach the server — the income was not saved. Please retry.')
     } finally {
@@ -108,63 +111,18 @@ export default function OtherIncomeForm({
     }
   }
 
-  function startAnother() {
-    setSaved(null)
+  /** Reset for the next entry, keeping what carries: the DATE stays. A
+   *  day's sundries are written up together — a scrap dealer, a vending
+   *  commission and a staff sale on one afternoon. */
+  function resetForNext() {
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
-    setDate(businessToday)
-  }
-
-  if (saved !== null) {
-    return (
-      <section className={cardCls}>
-        <h2 className={sectionHeadCls}>
-          {saved.rows.length === 1 ? 'Income recorded' : `${saved.rows.length} receipts recorded`}
-        </h2>
-        <p className="mt-2 text-2xl font-bold tabular-nums text-stone-900">
-          {formatMoneyString(saved.total)}
-        </p>
-        <p className="mt-0.5 text-sm text-stone-500">
-          {fmtDate(saved.rows[0].income_date)} · joins the day’s ladder as cash in
-        </p>
-        <ul className="mt-3 divide-y divide-rule-soft border-t border-stone-100">
-          {saved.rows.map((i) => (
-            <li key={i.id} className="flex items-baseline justify-between gap-3 py-2">
-              <span className="min-w-0">
-                <span className="block truncate text-[15px] text-stone-900">
-                  {i.item}
-                  {i.qty !== null && (
-                    <>
-                      {' '}
-                      · {i.qty} {i.unit}
-                    </>
-                  )}
-                </span>
-                <span className="block text-xs text-stone-500">
-                  {i.buyer !== null && <>to {i.buyer}</>}
-                  {i.buyer !== null && i.received_by !== null && ' · '}
-                  {i.received_by !== null && <>received by {i.received_by}</>}
-                </span>
-              </span>
-              <span className="shrink-0 tabular-nums text-sm font-semibold text-stone-900">
-                {formatMoneyString(i.amount)}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <button
-          type="button"
-          onClick={startAnother}
-          className="mt-3 w-full rounded-xl bg-emerald-700 py-2.5 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
-        >
-          Record another
-        </button>
-      </section>
-    )
   }
 
   return (
+    <div className="space-y-4">
+      {saved !== null && <IncomeAck saved={saved} onDismiss={() => setSaved(null)} />}
     <section className={cardCls}>
       <h2 className={sectionHeadCls}>Other income</h2>
       <label className="mt-3 block sm:w-44">
@@ -333,5 +291,71 @@ export default function OtherIncomeForm({
         {saving ? 'Saving…' : lines.length === 1 ? 'Record income' : `Record ${lines.length} receipts`}
       </button>
     </section>
+    </div>
+  )
+}
+
+/**
+ * A RECEIPT WITH NO QUANTITY IS A RUPEE FIGURE AND NOTHING ELSE. Used oil is
+ * sold by the litre and FSSAI expects that reconciliation, so a sale recorded
+ * only in money cannot answer the one question anybody will ask about it.
+ * Some sundries genuinely have no quantity — a vending commission — so this
+ * is said, never refused.
+ */
+function IncomeAck({
+  saved,
+  onDismiss,
+}: {
+  saved: Extract<SaveOtherIncomesResult, { ok: true }>
+  onDismiss: () => void
+}) {
+  const noQty = saved.rows.filter((r) => r.qty === null)
+  return (
+    <SaveAck
+      onDismiss={onDismiss}
+      headline={
+        <>
+          {saved.rows.length === 1 ? 'Income recorded' : `${saved.rows.length} receipts recorded`} —{' '}
+          <span className="tabular-nums">{formatMoneyString(saved.total)}</span>
+        </>
+      }
+      sub={`${fmtDate(saved.rows[0].income_date)} · joins the day’s ladder as cash in`}
+      missing={
+        noQty.length > 0
+          ? [
+              {
+                verdict: 'no quantity',
+                text: `${noQty
+                  .map((r) => r.item)
+                  .join(', ')} — recorded in money only. Anything sold by volume or weight (used oil above all) is reconciled on the quantity, and a rupee figure alone cannot answer that.`,
+              },
+            ]
+          : undefined
+      }
+    >
+      <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+        {saved.rows.map((i) => (
+          <li key={i.id} className="flex items-baseline justify-between gap-3 py-1.5 text-sm">
+            <span className="min-w-0">
+              <span className="block truncate text-stone-900">
+                {i.item}
+                {i.qty !== null && (
+                  <>
+                    {' '}
+                    · {i.qty} {i.unit}
+                  </>
+                )}
+              </span>
+              <span className="block text-xs text-stone-500">
+                {i.buyer !== null && <>to {i.buyer}</>}
+                {i.buyer !== null && i.received_by !== null && ' · '}
+                {i.received_by !== null && <>received by {i.received_by}</>}
+              </span>
+            </span>
+            <span className="shrink-0 font-semibold tabular-nums text-stone-900">{formatMoneyString(i.amount)}</span>
+          </li>
+        ))}
+      </ul>
+    </SaveAck>
   )
 }

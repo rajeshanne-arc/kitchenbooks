@@ -285,7 +285,7 @@ function RowPair({
     try {
       const res = await recordCreditNote(row.id, ref.trim(), purchaseId)
       if (res.ok) {
-        toast('Credit note recorded')
+        toast(`Credit note recorded — ${formatMoneyString(row.total)} is no longer waiting`)
         setRef('')
         setPurchaseId('')
         onDone()

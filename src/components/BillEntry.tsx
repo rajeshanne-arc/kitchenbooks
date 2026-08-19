@@ -120,6 +120,7 @@ export default function BillEntry({
       const res = await saveBill(payload)
       if (res.ok) {
         setSaved(res)
+        resetForNext()
       } else {
         setError(res.error)
       }
@@ -130,8 +131,12 @@ export default function BillEntry({
     }
   }
 
-  const startAnother = () => {
-    setSaved(null)
+  /** RESET FOR THE NEXT ENTRY, KEEPING WHAT CARRIES — the rule the sheets
+   *  settled on years ago: THE DATE STAYS, THE VENDOR CLEARS. A stack of
+   *  bills entered in one sitting is usually one delivery day and always
+   *  several suppliers, and snapping the date back to today would quietly
+   *  re-date every bill after the first. */
+  const resetForNext = () => {
     setVendor(null)
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
@@ -139,10 +144,7 @@ export default function BillEntry({
     setTransport('')
     setExtrasOpen(false)
     setError(null)
-    setBillDate(businessToday)
   }
-
-  if (saved) return <SaveReveal saved={saved} onAgain={startAnother} />
 
   const fmtAmt = (s: string) => {
     const p = parseMoney(s.trim())
@@ -151,6 +153,7 @@ export default function BillEntry({
 
   return (
     <div className="mx-auto max-w-2xl space-y-4 px-4 sm:px-6">
+      {saved !== null && <SaveReveal saved={saved} onDismiss={() => setSaved(null)} />}
       <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="grid gap-4 sm:grid-cols-[11rem_1fr]">
           <label className="block">

@@ -13,9 +13,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { IssuableItemHit } from '@/lib/types'
+import type { IssuableItemHit, SaveAdjustmentsResult } from '@/lib/types'
 import { saveAdjustments } from '@/server/adjustment-actions'
-import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 import { parseQty } from '@/lib/money'
 import IssueItemPicker from '@/components/store/IssueItemPicker'
 import {
@@ -50,6 +50,7 @@ export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
   const [typedReason, setTypedReason] = useState('')
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState<Extract<SaveAdjustmentsResult, { ok: true }> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const reason = picked === OTHER ? typedReason.trim() : picked
@@ -93,9 +94,7 @@ export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
         })),
       })
       if (res.ok) {
-        toast(
-          res.count === 1 ? 'Book corrected — 1 item' : `Book corrected — ${res.count} items`,
-        )
+        setSaved(res)
         setLines([newLine(nextKey)])
         setNextKey((k) => k + 1)
         setNote('')
@@ -111,7 +110,45 @@ export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
   }
 
   return (
-    <section className={cardCls}>
+    <div className="space-y-4">
+      {saved !== null && (
+        <SaveAck
+          onDismiss={() => setSaved(null)}
+          headline={`Book corrected — ${saved.count} ${saved.count === 1 ? 'item' : 'items'}`}
+          sub={`${saved.reason} · a correction is a DIFFERENCE, never a new total — two counts taken before either was accepted both measure against the same book`}
+          missing={
+            saved.stock.filter((x) => Number(x.on_hand_qty) < 0).length > 0
+              ? [
+                  {
+                    level: 'alarm' as const,
+                    verdict: 'still negative',
+                    text: `${saved.stock
+                      .filter((x) => Number(x.on_hand_qty) < 0)
+                      .map((x) => `${x.name} is at ${x.on_hand_qty} ${x.purchase_unit}`)
+                      .join(', ')} — the correction did not bring it back above zero, so a bill is still missing rather than the count being wrong.`,
+                  },
+                ]
+              : undefined
+          }
+        >
+          <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+            {saved.stock.map((x) => (
+              <li key={x.item_id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+                <span className="min-w-0 truncate text-stone-900">{x.name}</span>
+                <span
+                  className={`shrink-0 font-semibold tabular-nums ${
+                    Number(x.on_hand_qty) < 0 ? 'text-red-700' : 'text-stone-900'
+                  }`}
+                >
+                  now {x.on_hand_qty} {x.purchase_unit}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-xs text-stone-500">read live from stock_on_hand</p>
+        </SaveAck>
+      )}
+      <section className={cardCls}>
       <h2 className={sectionHeadCls}>Correct the book</h2>
       <p className="mt-1.5 text-sm text-stone-500">
         One item, one difference, one reason. The cost is taken from what the item has been costing — it is never
@@ -291,5 +328,6 @@ export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
         </button>
       </div>
     </section>
+    </div>
   )
 }

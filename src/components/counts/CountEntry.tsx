@@ -95,8 +95,23 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
             total variance across {saved.count.line_count} {saved.count.line_count === 1 ? 'item' : 'items'} — negative
             means the shelf holds less than the books say
           </p>
-          <div className="mt-3">
+          <div className="mt-3 space-y-2">
             <FirstCountWarning days={saved.historyDays} />
+            {/* AN ITEM NOT COUNTED IS NOT A ZERO — it is simply not in this
+                count, so its book is untouched and its variance is unknown.
+                Said here because the variance list looks complete: every row
+                on it is an item somebody counted, and the ones that were
+                skipped leave no row at all to notice. */}
+            {items.length > saved.count.line_count && (
+              <Honesty
+                verdict="partly counted"
+                meter={{ filled: saved.count.line_count, total: items.length, unit: 'items counted' }}
+              >
+                {items.length - saved.count.line_count} of {items.length} items were left blank. A blank is not a
+                count of nothing — those items keep their book quantity and appear nowhere in the variance above, so
+                accepting this count corrects only what was actually walked past.
+              </Honesty>
+            )}
           </div>
           <ul className="mt-2 divide-y divide-rule-soft">
             {saved.variances.map((v) => {

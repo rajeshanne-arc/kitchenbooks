@@ -3773,3 +3773,183 @@ script.
 
 **Status hues stay reserved.** Wages, contract and casual are IDENTITIES: red
 would read as "wrong" and gold as "doubt". A gate asserts no category wears one.
+
+## No shifts. One extra column, and the productivity figure it unlocks
+
+Rajesh asked whether attendance needs shifts. It does not, and the reason is
+UNIVERSALITY: **P / Half / Off / Leave / Absent is understood by every
+restaurant on earth**, while two shifts is Thrayam's arrangement — a QSR
+rotates, a cafe runs one, a hotel runs three. Shifts would cost a master, a
+per-person assignment, 130 rows a day instead of 65 and a heavier sheet, in
+exchange for precision nobody reads: for pay, half is half, and which half
+changes no number. The five statuses stay exactly as they are.
+
+What they cannot say is that somebody stayed late. `attendance.extra_hours`
+(nullable, `> 0 and <= 16`) says it, self-describing, with no shift model
+behind it — and `settings.standard_hours_per_day` (default 8) turns marks
+into hours. **`standard_hours_per_day()` takes NO restaurant argument, and
+that is the security property**: `settings` is RLS'd, so it reads only the
+tenant announced on the current transaction, and it must therefore be called
+through `tsql`/`txn`. Same shape as `business_date()`, deliberately.
+
+**NO OVERTIME PAY IS COMPUTED, and the gate greps for the multipliers.**
+`payroll_lines.overtime` stays a TYPED amount. Recording what happened and
+pricing it are different jobs: overtime rates are statutory, differ by state
+and differ entirely outside this country — the withholding rule again.
+
+### WORKED IS NOT PAID, and the view publishes both rather than choosing
+
+The pay law says **off = 1** — an off day is PAID, a stated assumption since
+phase 5. But nobody WORKS an off day, so counting it as eight hours would
+understate sales-per-hour by about a seventh and quietly flatter or damn a
+department for its rota. `labour_hours_by_section` therefore carries
+`paid_days` (the pay law verbatim) AND `worked_days` (off, leave, absent all
+0), and `labour_hours` is built from the WORKED days. Both are on the row so
+the difference is readable rather than assumed. **The brief said
+"day_fraction" and did not say which; this is the answer chosen, said out
+loud rather than picked silently.**
+
+### The probe caught a lie in the view it was written to prove
+
+`sales_per_labour_hour` first divided `coalesce(sales, 0)` by real hours and
+published **₹0.00 per labour hour** for a department that has hours and no
+mapped sales at all — a confident accusation built from an absence, on a page
+named after a team. Moving six attendance rows through it in a rolled-back
+transaction is what showed it; reading it did not.
+
+The fix is narrower than it looks: **there is no honest zero available
+here.** `sales_by_section` is grouped from POS lines, so a department that
+sold nothing has NO ROW rather than a zero row, and the two cases are
+indistinguishable from this side. So the rate is stated only where a sales
+row exists, and `no_mapped_sales` / `no_hours` say which case a blank is.
+
+`smoke:a2` asserts the arithmetic BY VALUE against real staff — paid 3.5d,
+worked 2.5d, the off day as exactly the difference, 20 hours — inside a
+transaction that rolls back. Until the migration is applied it prints
+**PENDING**, never a tick: kb_app holds SELECT and INSERT and cannot ALTER a
+table, so `migrations/attendance_extra_hours_and_labour_hours.sql` waits for
+Rajesh like every migration in this project.
+
+### The sheet marks BY EXCEPTION, and a blank is not an absence
+
+"Mark all present", then correct the few — 65 people marked one at a time is
+a job nobody does daily. It fills the PICKS and saves nothing; nothing is
+filed until Save.
+
+**UNMARKED IS NOT ABSENT**, and the strip says so above the sheet as well as
+after the save. Silence and absence are different facts: an absence is
+somebody deciding they were away, a blank is nobody having said anything.
+They earn the same (nothing) and only one of them is a claim — conflating
+them docks somebody's pay for a manager's forgetfulness. The fixed bottom bar
+now reads "N still unmarked" rather than "No unsaved marks", because the
+absence of unsaved work is not the same as the day being done.
+
+### The staff form's stale note — three phases out of date
+
+"ID and bank details arrive with the login phase" was written in phase 5,
+when there was no login and RLS was off, and it was RIGHT then: the form must
+not ask for what the app cannot protect. Migration 0014 added all ten columns
+once real auth existed and nobody came back for the sentence.
+
+They are on the form now, **at CREATE as well as on edit** — a field nobody
+fills on the way past is a field nobody ever fills, and a payroll run with no
+account number pays nobody.
+
+**OWNER ONLY on this screen, and the READ is gated as well as the render.**
+The brief said owner and accountant; the accountant cannot reach `/staff` at
+all (the matrix gives them only `/accounts`), so here it is the owner's, and
+`/accounts/payroll/people` stays the accountant's copy. `StaffRow` crosses
+the wire to a MANAGER on the same screen, so the page does not fetch a single
+identifier column for them — LAW 1 applied to a payload, not just to a link.
+`assertIdentityActor` re-checks the role server-side because a hidden field
+is not a check.
+
+**ONE SET LIST, in `src/server/staff-identity.ts`** — deliberately not a
+`'use server'` file, since every export from one of those is a public
+endpoint. Two screens writing eleven columns through two SET lists is exactly
+how they drift. A gate holds it, and it is **scoped to `update staff set`**:
+vendors carry `bank_name` / `account_no` / `ifsc` / `upi_id` too, and a
+name-only sweep reported `books-actions.ts` as a second staff identity path.
+A gate that cries wolf is a gate people start ignoring.
+
+## The save acknowledgement — one shape, three rules
+
+Rajesh wants to stay on the page and be told it saved. The audit found four
+different answers to that across the app, which is why this is now one.
+
+**THE RULES, and each is gated structurally rather than by naming the files
+that were fixed:**
+
+1. **SAY NUMBERS, NOT "SAVED SUCCESSFULLY."** "63 of 65 marked", "Sneha ·
+   3 lines — ₹1,256, they are now owed ₹4,256", "5 kg to Chinese, 15 kg
+   left". A count is proof; a checkmark is a claim. The gate greps for the
+   empty strings — *saved / success / done / ok / recorded / updated* — as a
+   headline OR as a toast, and it caught the two master forms that had been
+   answering with "Saved ✓".
+2. **NAME WHAT IS STILL MISSING**, at the one moment somebody can still fix
+   it, in the same `<Honesty>` strips the rest of the app uses rather than a
+   second voice. Negative stock after an issue. A batch that came out at
+   ₹0.00 because its ingredients have no bill. The departments that have not
+   closed tonight. A new item with no reorder level, which will never appear
+   on the Reorder tab. 2 unmarked people. A one-sided settlement, which is
+   uncompared and not a zero difference.
+3. **RESET FOR THE NEXT ENTRY, KEEPING WHAT CARRIES** — the rule the sheets
+   settled on years ago: **the date stays, the vendor clears.**
+
+`src/components/SaveAck.tsx` is the shape: headline, sub, detail, honesty
+strips, links. It renders **IN PLACE above the form and scrolls itself into
+view** — the save button is at the bottom of a phone screen, and an
+acknowledgement at the top that nobody sees is the same as no
+acknowledgement at all.
+
+**WHAT CARRIES IS ARGUED PER FORM, and it came out differently on almost
+every one** — the same finding as the header/lines split:
+
+| form | carries | and why |
+|---|---|---|
+| bill | date | a stack of bills is one delivery day and several suppliers |
+| issue | date + session | a shift is the frame you are working inside; the department is the question just answered |
+| production, kitchen loss | date + department | a chef is standing in one kitchen |
+| **closing** | date only | filing the same department twice is a CORRECTION, not the next entry |
+| store loss, voucher, other income, expense | date | a day's entries are written up together |
+| vendor return | date | a van at the door means several crates |
+| staff | **nothing** | a roster is not a batch: a grade left over from the last hire files somebody in the wrong place |
+
+### Navigating away is allowed, but never silently
+
+Six forms used to `router.push` after a save. Three genuinely should — a
+recipe with no lines is useless so adding ingredients IS the next act; a
+payroll run is approved on its own page; a statement is imported in order to
+be matched. **Three should not**, and did: ItemNew and VendorNew threw you
+onto the detail page (masters are created in runs — a delivery brings four
+new things at once), and the staff form threw you back to the roster, so
+adding three people at induction meant finding the Add link twice more and
+the permanent E### code flashed past in a toast.
+
+The gate sweeps every component that calls a server action and requires a
+**stated reason** for each one that navigates. A new one fails until somebody
+writes down why.
+
+### Two forms keep the full-screen reveal, and the line is principled
+
+**The count and the day close.** In both the reveal IS the deliverable — the
+variance table, the ladder and its WhatsApp text — and there is no next entry
+that day, so replacing the form costs nothing and hiding it costs nothing
+either. Everywhere else the entry repeats, and the reveal is an interruption
+before the next one.
+
+**Where the save writes a row into a list on the same screen** — masters,
+lists, partners, money accounts, settings, the mapping queue — **the row is
+the acknowledgement**, and a toast carries the confirmation. Saying it twice
+is not more honest. But rule 1 still binds the toast: every one that had a
+number available and was withholding it now says it, including the voids
+(`res.original` was in scope the whole time and none of them used it).
+
+### Read the figure back; never echo the input
+
+Four actions were extended rather than having the client compute anything:
+`saveVendorReturn` now returns the vendor's dues after the credit,
+`saveAdjustments` the shelf after the correction, `saveShorts` the value of
+the claim and how much of it is still open, `saveAdvance` what the person now
+owes against wages. The rule is phase 1's and has not moved: post-save
+figures come from the database, not from what was typed.

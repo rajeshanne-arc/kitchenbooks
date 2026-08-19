@@ -20,6 +20,7 @@ import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls, sectionHeadCls } from '@/components/ui'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 import { useBusinessToday } from '@/components/BusinessDay'
 
 const moneyClean = (s: string) => s.replace(/[^\d.]/g, '')
@@ -60,6 +61,11 @@ export default function SettlementsClient({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Extract<SaveSettlementResult, { ok: true }> | null>(null)
+  /** the gap as it was FILED. `settlements.gap` is a GENERATED column on the
+   *  view, not on the row the action returns, so this is captured from the two
+   *  sides that were typed — and left null when only one of them was, because
+   *  an unfilled side is uncompared and not a zero difference. */
+  const [savedGap, setSavedGap] = useState<string | null>(null)
 
   const canSave =
     !saving &&
@@ -95,6 +101,11 @@ export default function SettlementsClient({
       })
       if (res.ok) {
         setSaved(res)
+        setSavedGap(
+          billed.trim() !== '' && claimed.trim() !== ''
+            ? (Number(billed) - Number(claimed)).toFixed(2)
+            : null,
+        )
         setGross('')
         setCommission('')
         setDeductions('')
@@ -140,11 +151,40 @@ export default function SettlementsClient({
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Record a settlement</h2>
         {saved !== null && (
-          <p className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-stone-800">
-            {saved.settlement.partner} · {fmtDate(saved.settlement.period_start)} –{' '}
-            {fmtDate(saved.settlement.period_end)} recorded — gross{' '}
-            <span className="font-semibold tabular-nums">{formatMoneyString(saved.settlement.gross_sales ?? '0')}</span>
-          </p>
+          <div className="mt-2">
+            <SaveAck
+              onDismiss={() => setSaved(null)}
+              headline={
+                <>
+                  {saved.settlement.partner} — gross{' '}
+                  <span className="tabular-nums">{formatMoneyString(saved.settlement.gross_sales ?? '0')}</span>
+                  {savedGap !== null && (
+                    <>
+                      , gap <span className="tabular-nums">{formatMoneyString(savedGap)}</span>
+                    </>
+                  )}
+                </>
+              }
+              sub={`${fmtDate(saved.settlement.period_start)} – ${fmtDate(saved.settlement.period_end)}${
+                saved.settlement.commission !== null && Number(saved.settlement.gross_sales ?? 0) > 0
+                  ? ` · they kept ${(
+                      (Number(saved.settlement.commission) / Number(saved.settlement.gross_sales)) *
+                      100
+                    ).toFixed(1)}% against the agreed rate on their partner card`
+                  : ''
+              }`}
+              missing={
+                savedGap === null
+                  ? [
+                      {
+                        verdict: 'one-sided',
+                        text: 'Only one of billed-by-us and claimed-by-them is filled, so the gap cannot be worked out. This settlement counts as uncompared on the dashboard rather than as agreeing — an unfilled side is not a zero difference.',
+                      },
+                    ]
+                  : undefined
+              }
+            />
+          </div>
         )}
         <div className="mt-3 space-y-3">
           <div className="grid grid-cols-3 gap-3">

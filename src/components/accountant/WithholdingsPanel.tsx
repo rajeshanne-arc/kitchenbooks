@@ -109,7 +109,9 @@ export default function WithholdingsPanel({
         toast(res.error, 'error')
         return
       }
-      toast('Recorded', 'ok')
+      // rate_pct is DERIVED for display and is never an input — saying it
+      // back is the app reporting what was withheld, not advising a rate
+      toast(`${formatMoneyString(amount)} withheld from ${party} recorded`, 'ok')
       setParty('')
       setRegimeCode('')
       setBaseAmount('')
@@ -133,7 +135,7 @@ export default function WithholdingsPanel({
         toast(res.error, 'error')
         return
       }
-      toast('Marked deposited', 'ok')
+      toast(`Deposited ${fmtDate(depDate)}${depRef === '' ? '' : ` · ${depRef}`}`, 'ok')
       setDepositing(null)
       setDepRef('')
       setDepAccountId('')

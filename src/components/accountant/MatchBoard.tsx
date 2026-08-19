@@ -120,7 +120,9 @@ export default function MatchBoard({
         toast(res.error, 'error')
         return
       }
-      toast('Matched', 'ok')
+      // the amount is the whole point: a match asserts these two rows ARE
+      // one transaction, and the figure is what makes that checkable
+      toast(`Matched ${formatPaise(decimalStringToPaise(chosenLine.amount))} — it cannot be undone from here`, 'ok')
       setLineId('')
       setMovement('')
       setNote('')

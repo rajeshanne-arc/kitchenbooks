@@ -5,9 +5,9 @@
 // against it; asked vs given (the gap) lives on the indent's page.
 
 import { useEffect, useRef, useState } from 'react'
-import Link from 'next/link'
 import type { IssuableItemHit, SaveIndentResult, Section } from '@/lib/types'
 import { saveIndent } from '@/server/kitchen-actions'
+import SaveAck from '@/components/SaveAck'
 import { parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
@@ -122,8 +122,10 @@ export default function IndentEntry({
         note: note.trim(),
         lines: lines.map((l) => ({ itemId: (l.item as IssuableItemHit).id, qty: l.qty.trim() })),
       })
-      if (res.ok) setSaved(res)
-      else setError(res.error)
+      if (res.ok) {
+        setSaved(res)
+        resetForNext()
+      } else setError(res.error)
     } catch {
       setError('Could not reach the server — the indent was not saved. Please retry.')
     } finally {
@@ -131,62 +133,21 @@ export default function IndentEntry({
     }
   }
 
-  function startAnother() {
-    setSaved(null)
+  /** Reset for the next entry, keeping what carries: the DATE and the
+   *  SESSION stay — a chef raising the morning's requests raises them for one
+   *  shift — and the DEPARTMENT clears, because a department already has an
+   *  open ask once this is filed and the next request is somebody else's. */
+  function resetForNext() {
     setSectionId('')
     setNote('')
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
-    setDate(businessToday)
-  }
-
-  if (saved !== null) {
-    return (
-      <section className={cardCls}>
-        <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100">
-            <svg className="h-5 w-5 text-emerald-700" viewBox="0 0 20 20" fill="none" aria-hidden>
-              <path d="M4 10.5 8.5 15 16 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-          <div>
-            <h2 className="text-lg font-bold text-stone-900">Indent open — {saved.indent.section_name}</h2>
-            <p className="text-sm text-stone-500">
-              {fmtDate(saved.indent.indent_date)} · {saved.indent.line_count}{' '}
-              {saved.indent.line_count === 1 ? 'item' : 'items'} · waiting for the store
-            </p>
-          </div>
-        </div>
-        <ul className="mt-4 divide-y divide-rule-soft border-t border-stone-100">
-          {saved.lines.map((l) => (
-            <li key={l.id} className="flex items-center justify-between gap-3 py-2.5">
-              <span className="min-w-0 truncate text-[15px] text-stone-900">{l.item_name}</span>
-              <span className="shrink-0 text-sm text-stone-500">
-                {l.qty_requested} {l.purchase_unit}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <Link
-          href={`/kitchen/indent/${saved.indent.id}`}
-          className="mt-3 block text-center text-sm font-medium text-emerald-700 hover:underline"
-        >
-          Open the indent — asked vs given lives there →
-        </Link>
-        <button
-          type="button"
-          onClick={startAnother}
-          className="mt-2 w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
-        >
-          New indent
-        </button>
-      </section>
-    )
   }
 
   return (
     <div className="space-y-4">
+      {saved !== null && <IndentAck saved={saved} onDismiss={() => setSaved(null)} />}
       <section className={cardCls}>
         <div className="grid gap-4 sm:grid-cols-[11rem_1fr]">
           <label className="block">
@@ -325,5 +286,50 @@ export default function IndentEntry({
         The indent records what was asked; the issue records what was given. The gap between them stays visible.
       </p>
     </div>
+  )
+}
+
+/**
+ * An indent is a REQUEST, so the honest thing to say after saving one is that
+ * nothing has been given yet — the gap it exists to measure does not have a
+ * value until the store issues against it. That is a precondition, not a
+ * shortage, and the indent page says the same thing in the same words.
+ */
+function IndentAck({
+  saved,
+  onDismiss,
+}: {
+  saved: Extract<SaveIndentResult, { ok: true }>
+  onDismiss: () => void
+}) {
+  return (
+    <SaveAck
+      onDismiss={onDismiss}
+      headline={
+        <>
+          {saved.indent.line_count} {saved.indent.line_count === 1 ? 'item' : 'items'} asked for —{' '}
+          {saved.indent.section_name}
+        </>
+      }
+      sub={`${fmtDate(saved.indent.indent_date)} · ${saved.indent.session} · open, waiting for the store`}
+      missing={[
+        {
+          verdict: 'not issued yet',
+          text: 'Nothing has been given against this request. Asked-vs-given is on the indent and stays blank until the store issues — an unfilled ask is not a shortage.',
+        },
+      ]}
+      actions={[{ href: `/kitchen/indent/${saved.indent.id}`, label: 'Open the indent' }]}
+    >
+      <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+        {saved.lines.map((l) => (
+          <li key={l.id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+            <span className="min-w-0 truncate text-stone-900">{l.item_name}</span>
+            <span className="shrink-0 tabular-nums text-stone-600">
+              {l.qty_requested} {l.purchase_unit}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </SaveAck>
   )
 }

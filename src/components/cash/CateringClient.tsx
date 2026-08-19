@@ -93,7 +93,7 @@ export default function CateringClient({
     try {
       const res = await addCateringExpense({ cateringId: id, ...ex, amount: ex.amount.trim() })
       if (res.ok) {
-        toast('Expense added')
+        toast(`Expense added — ${formatMoneyString(ex.amount.trim())}`)
         setEx({ description: '', amount: '', paidVia: '' })
         setExpenseFor(null)
         router.refresh()

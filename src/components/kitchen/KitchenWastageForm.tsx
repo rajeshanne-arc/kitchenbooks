@@ -20,6 +20,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { KitchenComponentHit, SaveKitchenLossesResult, Section } from '@/lib/types'
 import { saveKitchenLosses } from '@/server/kitchen-actions'
+import SaveAck from '@/components/SaveAck'
 import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import {
@@ -137,6 +138,7 @@ export default function KitchenWastageForm({
       })
       if (res.ok) {
         setSaved(res)
+        resetForNext()
         router.refresh()
       } else {
         setError(res.error)
@@ -148,54 +150,19 @@ export default function KitchenWastageForm({
     }
   }
 
-  function startAnother() {
-    setSaved(null)
-    setSectionId('')
+  /** Reset for the next entry, keeping what carries: the DATE and the
+   *  DEPARTMENT stay — a chef writing up a shift's losses is in one kitchen
+   *  on one day. The lines and note clear. */
+  function resetForNext() {
     setNote('')
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
   }
 
-  if (saved !== null) {
-    return (
-      <section className={cardCls}>
-        <h2 className="text-lg font-bold text-stone-900">
-          {saved.rows.length} {saved.rows.length === 1 ? 'loss' : 'losses'} recorded —{' '}
-          {formatMoneyString(saved.total)}
-        </h2>
-        <p className="text-sm text-stone-500">
-          {fmtDate(saved.rows[0].waste_date)} · {saved.rows[0].section_name}
-        </p>
-        <ul className="mt-3 divide-y divide-rule-soft border-t border-stone-100">
-          {saved.rows.map((r) => (
-            <li key={r.id} className="flex items-center justify-between gap-3 py-2">
-              <span className="min-w-0">
-                <span className="block truncate text-[15px] text-stone-900">
-                  {r.item_name ?? r.recipe_name ?? 'Value only'}
-                </span>
-                <span className="block text-xs text-stone-500">{r.reason}</span>
-              </span>
-              <span className="shrink-0 tabular-nums text-sm font-semibold text-stone-900">
-                {formatMoneyString(r.value)}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 text-xs text-stone-400">cost frozen at save from the live books</p>
-        <button
-          type="button"
-          onClick={startAnother}
-          className="mt-3 w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
-        >
-          Record another
-        </button>
-      </section>
-    )
-  }
-
   return (
     <div className="space-y-4">
+      {saved !== null && <KitchenLossAck saved={saved} onDismiss={() => setSaved(null)} />}
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>{label('kitchen_wastage_title')}</h2>
@@ -404,5 +371,57 @@ export default function KitchenWastageForm({
         </button>
       </section>
     </div>
+  )
+}
+
+/**
+ * A VALUE-ONLY LINE MAKES NO CLAIM ABOUT WHAT WAS LOST, and that is a real
+ * difference worth saying at the moment it is written: half a tray of gravy
+ * is a true rupee figure with nothing behind it, so it never reaches
+ * stock_on_hand and never names an item in the waste report.
+ */
+function KitchenLossAck({
+  saved,
+  onDismiss,
+}: {
+  saved: Extract<SaveKitchenLossesResult, { ok: true }>
+  onDismiss: () => void
+}) {
+  const valueOnly = saved.rows.filter((r) => r.item_name === null && r.recipe_name === null)
+  return (
+    <SaveAck
+      onDismiss={onDismiss}
+      headline={
+        <>
+          {saved.rows.length} {saved.rows.length === 1 ? 'loss' : 'losses'} recorded —{' '}
+          <span className="tabular-nums">{formatMoneyString(saved.total)}</span>
+        </>
+      }
+      sub={`${fmtDate(saved.rows[0].waste_date)} · ${saved.rows[0].section_name} · cost frozen at save from the live books`}
+      missing={
+        valueOnly.length > 0
+          ? [
+              {
+                verdict: 'value only',
+                text: `${valueOnly.length} of these ${
+                  valueOnly.length === 1 ? 'names no component' : 'name no component'
+                } — the rupee figure is on record and counts against the kitchen, but nothing says WHAT was lost, so it never reaches the waste report by item. Where you can name the item or the batch, name it.`,
+              },
+            ]
+          : undefined
+      }
+    >
+      <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+        {saved.rows.map((r) => (
+          <li key={r.id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+            <span className="min-w-0">
+              <span className="block truncate text-stone-900">{r.item_name ?? r.recipe_name ?? 'Value only'}</span>
+              <span className="block text-xs text-stone-500">{r.reason}</span>
+            </span>
+            <span className="shrink-0 font-semibold tabular-nums text-stone-900">{formatMoneyString(r.value)}</span>
+          </li>
+        ))}
+      </ul>
+    </SaveAck>
   )
 }

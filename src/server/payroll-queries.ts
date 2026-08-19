@@ -190,6 +190,24 @@ export async function getOutstandingAdvances(restaurantId: string): Promise<Adva
  * protection in one sentence. The matrix keeps them out of /accounts, which
  * is why this lives here rather than beside the roster.
  */
+/** ONE person's identifiers, for the owner's half of the staff form. Read
+ *  separately from getStaffDetail on purpose: StaffRow crosses the wire to a
+ *  MANAGER on the same screen, and a field they must not hold must not be in
+ *  the payload at all — not merely unrendered. */
+export async function getStaffIdentity(restaurantId: string, staffId: string): Promise<StaffIdentity | null> {
+  const rows = await tsql<StaffIdentity[]>`
+    select s.id, s.code, s.name, s.designation, sec.name as section_name,
+           s.employment_type, s.pay_mode,
+           s.base_salary::text as base_salary,
+           s.bank_name, s.account_no, s.ifsc, s.upi_id,
+           s.pan, s.uan, s.pf_number, s.esic_number,
+           s.dob::text as dob, s.gender
+    from staff s
+    left join sections sec on sec.id = s.section_id
+    where s.restaurant_id = ${restaurantId} and s.id = ${staffId}`
+  return rows[0] ?? null
+}
+
 export async function listStaffIdentities(restaurantId: string): Promise<StaffIdentity[]> {
   return tsql<StaffIdentity[]>`
     select s.id, s.code, s.name, s.designation, sec.name as section_name,

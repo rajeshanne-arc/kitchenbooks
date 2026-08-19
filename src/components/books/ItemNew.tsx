@@ -6,11 +6,11 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { Category, Unit, VendorHit } from '@/lib/types'
+import type { Category, ItemDetail, Unit, VendorHit } from '@/lib/types'
 import { createItem } from '@/server/books-actions'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
 import { FormGroup, Wide } from '@/components/books/FormGroup'
-import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 // The five fields that cannot wait are asked first; every other column the
 // database will accept sits behind a fold. It is one form, not two trips —
@@ -45,6 +45,7 @@ export default function ItemNew({
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState<ItemDetail | null>(null)
 
   const canSave = !saving && name.trim() !== '' && category !== '' && purchaseUnit !== ''
 
@@ -62,8 +63,26 @@ export default function ItemNew({
         ...x,
       })
       if (res.ok) {
-        toast(`${res.item.code} — ${res.item.name} created`)
-        router.push(`/store/masters/items/${res.item.id}`)
+        // STAY HERE. Items are created in runs — a delivery brings four new
+        // things at once — and being thrown onto the item page after each one
+        // made the second a trip back. The code is the reason to acknowledge
+        // at all: it is assigned in the save transaction and is what the
+        // store writes on the shelf.
+        setSaved(res.item)
+        setName('')
+        setBrand('')
+        setOpeningRate('')
+        setX({
+          stockUnit: '',
+          conversionFactor: '',
+          gstRate: '',
+          parLevel: '',
+          reorderLevel: '',
+          defaultVendorId: '',
+          itemType: '',
+          notes: '',
+        })
+        setMore(false)
         router.refresh()
       } else {
         setError(res.error)
@@ -76,7 +95,30 @@ export default function ItemNew({
   }
 
   return (
-    <section className={cardCls}>
+    <div className="space-y-4">
+      {saved !== null && (
+        <SaveAck
+          onDismiss={() => setSaved(null)}
+          headline={
+            <>
+              <span className="font-mono">{saved.code}</span> · {saved.name}
+            </>
+          }
+          sub={`${saved.category} · bought in ${saved.purchase_unit} — the code and the unit are locked from here on`}
+          missing={
+            saved.reorder_level === null
+              ? [
+                  {
+                    verdict: 'no reorder level',
+                    text: 'Nothing will ever prompt anyone to buy this — the Reorder tab only lists items that carry a level. Set one on the item page, or the next time you run out you find out from the kitchen.',
+                  },
+                ]
+              : undefined
+          }
+          actions={[{ href: `/store/masters/items/${saved.id}`, label: 'Open the item' }]}
+        />
+      )}
+      <section className={cardCls}>
       <div className="space-y-3">
         <label className="block">
           <span className={fieldLabelCls}>Name</span>
@@ -260,5 +302,6 @@ export default function ItemNew({
         The code assigns itself in the same series bills use — CAT-NNN, no forks.
       </p>
     </section>
+    </div>
   )
 }

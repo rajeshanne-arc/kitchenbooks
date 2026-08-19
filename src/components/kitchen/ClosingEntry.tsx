@@ -12,6 +12,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type {
+  ClosingChecklistRow,
   KitchenComponentHit,
   ProductionRow,
   RefillSet,
@@ -19,10 +20,10 @@ import type {
   Section,
 } from '@/lib/types'
 import { saveItemizedClosing } from '@/server/kitchen-actions'
+import SaveAck, { type Missing } from '@/components/SaveAck'
 import { formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
-import Honesty from '@/components/Honesty'
 import KitchenComponentPicker from './KitchenComponentPicker'
 import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
@@ -45,10 +46,15 @@ const cleanQty = (raw: string) => {
 
 export default function ClosingEntry({
   sections,
+  checklist,
   todaysProductions,
   lastSets,
 }: {
   sections: Section[]
+  /** every closable department and whether it is closed tonight. It lives on
+   *  the page below too; the acknowledgement repeats it because after a save
+   *  the reader is at the TOP of the form and the checklist is off-screen. */
+  checklist: ClosingChecklistRow[]
   todaysProductions: ProductionRow[]
   /** last winning closing per section id, for refill — resolved server-side */
   lastSets?: Record<string, RefillSet>
@@ -170,6 +176,7 @@ export default function ClosingEntry({
       if (res.ok) {
         setSavedUntouched(untouched)
         setSaved(res)
+        resetForNext()
         router.refresh()
       } else {
         setError(res.error)
@@ -181,8 +188,11 @@ export default function ClosingEntry({
     }
   }
 
-  function startAnother() {
-    setSaved(null)
+  /** Reset for the next entry, keeping what carries: the DATE stays, the
+   *  DEPARTMENT clears. Closing is done department by department, and filing
+   *  the same one twice is a CORRECTION rather than the next entry — so this
+   *  is the one batch form where the department must not carry. */
+  function resetForNext() {
     setSectionId('')
     setNote('')
     setLines([newLine(nextKey)])
@@ -190,62 +200,16 @@ export default function ClosingEntry({
     setError(null)
   }
 
-  if (saved !== null) {
-    const c = saved.closing
-    return (
-      <section className={cardCls}>
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-bold text-stone-900">
-            {c.section_name} closed — {formatMoneyString(c.closing_value)}
-          </h2>
-          {c.filings > 1 && (
-            <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-              corrected ×{c.filings - 1}
-            </span>
-          )}
-        </div>
-        <p className="text-sm text-stone-500">{fmtDate(c.close_date)} · latest filing wins</p>
-        {saved.lines.length === 0 ? (
-          <p className="mt-3 text-sm text-stone-600">Empty closing — the section holds nothing tonight. That is information.</p>
-        ) : (
-          <ul className="mt-3 divide-y divide-rule-soft border-t border-stone-100">
-            {saved.lines.map((l) => (
-              <li key={l.id} className="flex items-center justify-between gap-3 py-2">
-                <span className="min-w-0">
-                  <span className="block truncate text-[15px] text-stone-900">{l.component_name}</span>
-                  <span className="block text-xs text-stone-500">
-                    {l.qty} {l.unit} × {formatMoneyString(l.unit_cost)} <span className="uppercase">({l.kind})</span>
-                  </span>
-                </span>
-                <span className="shrink-0 tabular-nums text-sm font-semibold text-stone-900">
-                  {formatMoneyString(l.value)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {savedUntouched > 0 && (
-          <Honesty level="alarm" verdict="not recounted" compact>
-            {savedUntouched} of {saved.lines.length}{' '}
-            {savedUntouched === 1 ? 'line was' : 'lines were'} saved exactly as last night&apos;s
-            closing, unchanged. If the shelf was not actually recounted, file this closing again —
-            food cost and cost of goods both read this number.
-          </Honesty>
-        )}
-        <p className="mt-2 text-xs text-stone-400">costs frozen at save · header = sum of lines · kitchen_closing_current</p>
-        <button
-          type="button"
-          onClick={startAnother}
-          className="mt-3 w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
-        >
-          Close another section
-        </button>
-      </section>
-    )
-  }
-
   return (
     <div className="space-y-4">
+      {saved !== null && (
+        <ClosingAck
+          saved={saved}
+          untouched={savedUntouched}
+          checklist={checklist}
+          onDismiss={() => setSaved(null)}
+        />
+      )}
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>{label('closing_title')}</h2>
@@ -386,5 +350,95 @@ export default function ClosingEntry({
         <p className="text-center text-xs text-stone-400">Zero is a real closing — an empty section is information.</p>
       )}
     </div>
+  )
+}
+
+/**
+ * WHAT IS STILL MISSING HERE IS THE OTHER DEPARTMENTS. A closing is what
+ * cost of goods subtracts, so a kitchen that files six of eight and goes home
+ * leaves the month unclosable — and section_food_cost will correctly refuse
+ * to state a figure rather than guess. Naming the gap at the moment the chef
+ * is still standing at the screen is the whole point of saying it here.
+ *
+ * The not-recounted count is the alarm twin: a line saved with the quantity
+ * it was PREFILLED with looks exactly like a counted one, and food cost reads
+ * this number either way.
+ */
+function ClosingAck({
+  saved,
+  untouched,
+  checklist,
+  onDismiss,
+}: {
+  saved: Extract<SaveItemizedClosingResult, { ok: true }>
+  untouched: number
+  checklist: ClosingChecklistRow[]
+  onDismiss: () => void
+}) {
+  const c = saved.closing
+  const open = checklist.filter((r) => r.closing_value === null)
+  const missing: Missing[] = []
+  if (untouched > 0) {
+    missing.push({
+      level: 'alarm',
+      verdict: 'not recounted',
+      text: (
+        <>
+          {untouched} of {saved.lines.length} {untouched === 1 ? 'line was' : 'lines were'} saved exactly as last
+          night&apos;s closing, unchanged. If the shelf was not actually recounted, file this closing again — food cost
+          and cost of goods both read this number.
+        </>
+      ),
+    })
+  }
+  if (open.length > 0) {
+    missing.push({
+      verdict: 'still open',
+      meter: { filled: checklist.length - open.length, total: checklist.length, unit: 'departments closed' },
+      text: (
+        <>
+          {open.map((r) => r.name).join(', ')} {open.length === 1 ? 'has' : 'have'} not closed tonight. Cost of goods
+          subtracts the closing, so the month cannot be stated until every one is in — zero is a real closing and takes
+          two taps.
+        </>
+      ),
+    })
+  }
+  return (
+    <SaveAck
+      onDismiss={onDismiss}
+      headline={
+        <>
+          {c.section_name} closed — <span className="tabular-nums">{formatMoneyString(c.closing_value)}</span>
+          {c.filings > 1 && (
+            <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 align-middle text-[11px] font-medium text-amber-800">
+              corrected ×{c.filings - 1}
+            </span>
+          )}
+        </>
+      }
+      sub={`${fmtDate(c.close_date)} · latest filing wins · costs frozen at save`}
+      missing={missing.length > 0 ? missing : undefined}
+    >
+      {saved.lines.length === 0 ? (
+        <p className="text-sm text-stone-600">
+          Empty closing — the department holds nothing tonight. That is information, not a blank.
+        </p>
+      ) : (
+        <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+          {saved.lines.map((l) => (
+            <li key={l.id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+              <span className="min-w-0">
+                <span className="block truncate text-stone-900">{l.component_name}</span>
+                <span className="block text-xs text-stone-500">
+                  {l.qty} {l.unit} × {formatMoneyString(l.unit_cost)} <span className="uppercase">({l.kind})</span>
+                </span>
+              </span>
+              <span className="shrink-0 font-semibold tabular-nums text-stone-900">{formatMoneyString(l.value)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SaveAck>
   )
 }

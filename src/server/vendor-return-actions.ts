@@ -25,6 +25,7 @@ import {
   assertVendor,
   getVendorReturn,
 } from '@/server/vendor-return-queries'
+import { getDues } from '@/server/books-queries'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
 import type { VendorReturnInput, VendorReturnResult } from '@/lib/types'
@@ -177,7 +178,11 @@ export async function saveVendorReturn(raw: VendorReturnInput): Promise<VendorRe
 
     const ret = await getVendorReturn(rid, saved.id)
     if (!ret) throw new VendorReturnRefusal('Could not verify the save — the return is missing after commit')
-    return { ok: true, id: ret.id }
+    // READ THE FIGURES BACK, never echo the input. The credit is what the
+    // vendor's balance moved by, and vendor_dues is where that lives — the
+    // acknowledgement has to say the number a person will argue about.
+    const dues = await getDues(vendor.id)
+    return { ok: true, id: ret.id, ret, dues }
   } catch (e) {
     return fail(e)
   }

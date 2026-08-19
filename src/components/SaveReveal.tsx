@@ -1,110 +1,117 @@
 'use client'
 
-import Link from 'next/link'
+// The bill acknowledgement. It used to REPLACE the form and wait for a tap on
+// "Enter another bill"; it now sits above a form that is already blank, and
+// the tap is gone. A bookkeeper entering a stack of bills does this thirty
+// times in a sitting.
+//
+// WHAT IS STILL MISSING, on a bill, is the masters born inline. An item
+// created on the way past carries a name, a code and a unit and nothing
+// else — so it has no reorder level, and the Reorder tab will never mention
+// it. Said here, where the codes are on screen and the item pages are one
+// tap away, rather than discovered as an empty reorder list in a month.
+
 import type { SavedBill } from '@/lib/types'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
-import { docNoCls, sectionHeadCls } from '@/components/ui'
+import { docNoCls } from '@/components/ui'
+import SaveAck, { type Missing } from '@/components/SaveAck'
 
 const fmtDate = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between text-sm">
       <dt className="text-stone-500">{label}</dt>
       <dd className="font-medium tabular-nums text-stone-900">{value}</dd>
     </div>
   )
 }
 
-export default function SaveReveal({ saved, onAgain }: { saved: SavedBill; onAgain: () => void }) {
+export default function SaveReveal({ saved, onDismiss }: { saved: SavedBill; onDismiss: () => void }) {
   const { purchase, vendor, createdItems, dues } = saved
-  const createdSomething = vendor.created || createdItems.length > 0
+  const missing: Missing[] = []
+  if (createdItems.length > 0) {
+    missing.push({
+      verdict: 'new items, bare',
+      text: (
+        <>
+          {createdItems.map((i) => i.name).join(', ')} {createdItems.length === 1 ? 'was' : 'were'} created on this
+          bill and {createdItems.length === 1 ? 'carries' : 'carry'} a name, a code and a unit — nothing else. With no
+          reorder level {createdItems.length === 1 ? 'it' : 'they'} can never appear on the reorder list, and with no
+          stock unit or conversion the count sheet reads in purchase units. Set them on the item page while you
+          remember what {createdItems.length === 1 ? 'it is' : 'they are'}.
+        </>
+      ),
+    })
+  }
+
   return (
-    <div className="mx-auto max-w-2xl space-y-4 px-4 sm:px-6">
-      <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100">
-            <svg className="h-5 w-5 text-emerald-700" viewBox="0 0 20 20" fill="none" aria-hidden>
-              <path d="M4 10.5 8.5 15 16 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-          <div>
-            <h2 className="text-lg font-bold text-stone-900">Bill saved</h2>
-            <p className="text-sm text-stone-500">
-              {fmtDate(purchase.billDate)} · {vendor.name} · {purchase.lineCount}{' '}
-              {purchase.lineCount === 1 ? 'line' : 'lines'}
-            </p>
-            {/* the moment to write the number on the paper bill: it exists
-                now, it is unique, and it survives even a later void */}
-            {purchase.docNo !== null && <p className={`mt-1 ${docNoCls}`}>{purchase.docNo}</p>}
-          </div>
-        </div>
-        <dl className="mt-4 space-y-1.5 border-t border-stone-100 pt-4 text-sm">
-          <Row label="Goods" value={formatMoneyString(purchase.goodsTotal)} />
-          {decimalStringToPaise(purchase.gstTotal) !== 0 && <Row label="GST" value={formatMoneyString(purchase.gstTotal)} />}
-          {decimalStringToPaise(purchase.transport) !== 0 && (
-            <Row label="Transport" value={formatMoneyString(purchase.transport)} />
+    <SaveAck
+      onDismiss={onDismiss}
+      headline={
+        <>
+          {vendor.name} · {purchase.lineCount} {purchase.lineCount === 1 ? 'line' : 'lines'} —{' '}
+          <span className="tabular-nums">{formatMoneyString(purchase.billTotal)}</span>
+        </>
+      }
+      sub={
+        <>
+          {fmtDate(purchase.billDate)}
+          {/* the moment to write the number on the paper bill: it exists now,
+              it is unique, and it survives even a later void */}
+          {purchase.docNo !== null && (
+            <>
+              {' · '}
+              <span className={docNoCls}>{purchase.docNo}</span>
+            </>
           )}
-          <div className="flex items-center justify-between border-t border-stone-100 pt-2.5">
-            <dt className="font-medium text-stone-500">Bill total</dt>
-            <dd className="text-2xl font-bold tabular-nums tracking-tight text-stone-900">
-              {formatMoneyString(purchase.billTotal)}
-            </dd>
-          </div>
-        </dl>
-      </section>
+        </>
+      }
+      missing={missing.length > 0 ? missing : undefined}
+      actions={[{ href: `/store/books/bills/${purchase.id}`, label: 'See it in Books' }]}
+    >
+      <dl className="space-y-1">
+        <Row label="Goods" value={formatMoneyString(purchase.goodsTotal)} />
+        {decimalStringToPaise(purchase.gstTotal) !== 0 && (
+          <Row label="GST" value={formatMoneyString(purchase.gstTotal)} />
+        )}
+        {decimalStringToPaise(purchase.transport) !== 0 && (
+          <Row label="Transport" value={formatMoneyString(purchase.transport)} />
+        )}
+      </dl>
 
-      {createdSomething && (
-        <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-          <h3 className={sectionHeadCls}>Created with this bill</h3>
-          <ul className="mt-3 space-y-2">
-            {vendor.created && (
-              <li className="flex items-center gap-2.5">
-                <code className="rounded bg-stone-900 px-1.5 py-0.5 font-mono text-[11px] font-medium text-white">
-                  {vendor.code}
-                </code>
-                <span className="min-w-0 truncate text-[15px] text-stone-900">{vendor.name}</span>
-                <span className="shrink-0 text-xs text-stone-400">new vendor</span>
-              </li>
-            )}
-            {createdItems.map((it) => (
-              <li key={it.id} className="flex items-center gap-2.5">
-                <code className="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-stone-700">
-                  {it.code}
-                </code>
-                <span className="min-w-0 truncate text-[15px] text-stone-900">{it.name}</span>
-                <span className="shrink-0 text-xs text-stone-400">new item</span>
-              </li>
-            ))}
-          </ul>
-        </section>
+      <p className="mt-3 border-t border-emerald-200/60 pt-3 text-[15px] text-stone-900">
+        {vendor.name} is now owed{' '}
+        <span className="text-xl font-bold tabular-nums tracking-tight">{formatMoneyString(dues.balance)}</span>
+        <span className="ml-1.5 text-xs text-stone-500">
+          purchased {formatMoneyString(dues.purchased)} − paid {formatMoneyString(dues.paid)} · read live from
+          vendor_dues
+        </span>
+      </p>
+
+      {(vendor.created || createdItems.length > 0) && (
+        <ul className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 border-t border-emerald-200/60 pt-3">
+          {vendor.created && (
+            <li className="flex items-center gap-1.5 text-sm">
+              <code className="rounded bg-stone-900 px-1.5 py-0.5 font-mono text-[11px] font-medium text-white">
+                {vendor.code}
+              </code>
+              <span className="text-stone-900">{vendor.name}</span>
+              <span className="text-xs text-stone-400">new vendor</span>
+            </li>
+          )}
+          {createdItems.map((it) => (
+            <li key={it.id} className="flex items-center gap-1.5 text-sm">
+              <code className="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-stone-700">
+                {it.code}
+              </code>
+              <span className="text-stone-900">{it.name}</span>
+              <span className="text-xs text-stone-400">new item</span>
+            </li>
+          ))}
+        </ul>
       )}
-
-      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-emerald-800">Vendor dues</h3>
-        <p className="mt-1.5 text-[15px] text-stone-900">
-          {vendor.name} is now owed{' '}
-          <span className="text-2xl font-bold tabular-nums tracking-tight">{formatMoneyString(dues.balance)}</span>
-        </p>
-        <p className="mt-1 text-xs text-stone-500">
-          purchased {formatMoneyString(dues.purchased)} − paid {formatMoneyString(dues.paid)} · read live from vendor_dues
-        </p>
-      </section>
-
-      <button
-        type="button"
-        onClick={onAgain}
-        className="w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
-      >
-        Enter another bill
-      </button>
-      <Link
-        href={`/store/books/bills/${purchase.id}`}
-        className="block text-center text-sm font-medium text-emerald-700 hover:underline"
-      >
-        See it in Books →
-      </Link>
-    </div>
+    </SaveAck>
   )
 }

@@ -26,6 +26,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { DishUsage, ProducibleRow, RefillSet, SaveProductionsResult, Section } from '@/lib/types'
 import { saveProductions } from '@/server/kitchen-actions'
+import SaveAck from '@/components/SaveAck'
 import { formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import {
@@ -155,6 +156,7 @@ export default function ProductionEntry({
       })
       if (res.ok) {
         setSaved(res)
+        resetForNext()
         router.refresh()
       } else {
         setError(res.error)
@@ -166,57 +168,20 @@ export default function ProductionEntry({
     }
   }
 
-  function startAnother() {
-    setSaved(null)
-    setSectionId('')
+  /** Reset for the next entry, keeping what carries: the DATE and the
+   *  DEPARTMENT stay. A chef recording batches is standing in one kitchen on
+   *  one day and records several in a row — clearing the department would
+   *  make them answer the same question every time. The lines clear. */
+  function resetForNext() {
     setNote('')
     setLines([newLine(nextKey)])
     setNextKey((k) => k + 1)
     setError(null)
   }
 
-  if (saved !== null) {
-    return (
-      <section className={cardCls}>
-        <h2 className="text-lg font-bold text-stone-900">
-          {saved.rows.length} {saved.rows.length === 1 ? 'batch' : 'batches'} recorded —{' '}
-          {formatMoneyString(saved.total)}
-        </h2>
-        <p className="text-sm text-stone-500">
-          {fmtDate(saved.rows[0].prod_date)} · {saved.rows[0].section_name}
-        </p>
-        <ul className="mt-3 divide-y divide-rule-soft border-t border-stone-100">
-          {saved.rows.map((r) => (
-            <li key={r.id} className="flex items-center justify-between gap-3 py-2">
-              <span className="min-w-0">
-                <span className="block truncate text-[15px] text-stone-900">{r.recipe_name}</span>
-                <span className="block text-xs text-stone-500">
-                  {r.output_qty} {r.output_unit} × {formatMoneyString(r.unit_cost)}
-                </span>
-              </span>
-              <span className="shrink-0 tabular-nums text-sm font-semibold text-stone-900">
-                {formatMoneyString(r.value)}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 text-xs text-stone-400">
-          unit cost frozen at save — per batch unit for a sub, per portion for a dish · production
-          records, it does not move stock
-        </p>
-        <button
-          type="button"
-          onClick={startAnother}
-          className="mt-3 w-full rounded-xl bg-emerald-700 py-3 text-[15px] font-semibold text-white shadow-sm hover:bg-emerald-800"
-        >
-          Record another
-        </button>
-      </section>
-    )
-  }
-
   return (
     <div className="space-y-4">
+      {saved !== null && <ProductionAck saved={saved} onDismiss={() => setSaved(null)} />}
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>What was made</h2>
@@ -419,5 +384,71 @@ export default function ProductionEntry({
         </button>
       </section>
     </div>
+  )
+}
+
+/**
+ * A BATCH WORTH ₹0.00 IS THE THING STILL MISSING. saveProductions refuses a
+ * recipe it cannot cost AT ALL, and refuses a dish with no portions set — but
+ * a recipe whose ingredients have no bill behind them costs zero rather than
+ * null, so it saves, and the batch sits on the books at nothing. The strip
+ * says so here, where the chef is looking at that recipe, rather than leaving
+ * it to be discovered in a month-end total.
+ */
+function ProductionAck({
+  saved,
+  onDismiss,
+}: {
+  saved: Extract<SaveProductionsResult, { ok: true }>
+  onDismiss: () => void
+}) {
+  const free = saved.rows.filter((r) => Number(r.value) === 0)
+  return (
+    <SaveAck
+      onDismiss={onDismiss}
+      headline={
+        <>
+          {saved.rows.length} {saved.rows.length === 1 ? 'batch' : 'batches'} recorded —{' '}
+          <span className="tabular-nums">{formatMoneyString(saved.total)}</span>
+        </>
+      }
+      sub={`${fmtDate(saved.rows[0].prod_date)} · ${saved.rows[0].section_name}`}
+      missing={
+        free.length > 0
+          ? [
+              {
+                verdict: 'costs nothing',
+                text: `${free
+                  .map((r) => r.recipe_name)
+                  .join(', ')} came out at ₹0.00 — the ingredients on that card have no purchase bill behind them yet, so the batch is on the books at nothing. Enter the bills and every batch since re-costs itself.`,
+              },
+            ]
+          : undefined
+      }
+    >
+      <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
+        {saved.rows.map((r) => (
+          <li key={r.id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+            <span className="min-w-0">
+              <span className="block truncate text-stone-900">{r.recipe_name}</span>
+              <span className="block text-xs text-stone-500">
+                {r.output_qty} {r.output_unit} × {formatMoneyString(r.unit_cost)}
+              </span>
+            </span>
+            <span
+              className={`shrink-0 font-semibold tabular-nums ${
+                Number(r.value) === 0 ? 'text-amber-800' : 'text-stone-900'
+              }`}
+            >
+              {formatMoneyString(r.value)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5 text-xs text-stone-500">
+        unit cost frozen at save — per batch unit for a sub, per portion for a dish · production records, it does not
+        move stock
+      </p>
+    </SaveAck>
   )
 }

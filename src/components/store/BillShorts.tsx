@@ -16,7 +16,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { saveShorts } from '@/server/shorts-actions'
-import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 import { formatMoneyString } from '@/lib/money'
 import {
   SHORT_KINDS,
@@ -45,7 +45,7 @@ import {
   trCls,
 } from '@/components/ui'
 import { HonestyPill } from '@/components/Honesty'
-import type { ShortKind, ShortSettlement } from '@/lib/types'
+import type { SaveShortsResult, ShortKind, ShortSettlement } from '@/lib/types'
 
 export type ShortableLine = {
   id: string
@@ -76,6 +76,7 @@ export default function BillShorts({
   // once — that is the whole point of the change.
   const [forms, setForms] = useState<Record<string, typeof BLANK>>({})
   const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState<Extract<SaveShortsResult, { ok: true }> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
@@ -119,15 +120,11 @@ export default function BillShorts({
         })),
       })
       if (res.ok) {
-        toast(
-          res.count === 1 ? 'Short recorded against this bill' : `${res.count} shorts recorded against this bill`,
-          'ok',
-        )
+        setSaved(res)
         setForms({})
         router.refresh()
       } else {
         setError(res.error)
-        toast(res.error, 'error')
       }
     } catch {
       setError('Could not reach the server — nothing was recorded.')
@@ -140,7 +137,30 @@ export default function BillShorts({
   for (const s of shorts) byLine.set(s.purchase_line_id, [...(byLine.get(s.purchase_line_id) ?? []), s])
 
   return (
-    <section className={cardCls}>
+    <div className="space-y-4">
+      {saved !== null && (
+        <SaveAck
+          onDismiss={() => setSaved(null)}
+          headline={
+            <>
+              {saved.count} {saved.count === 1 ? 'short' : 'shorts'} recorded —{' '}
+              <span className="tabular-nums">{formatMoneyString(saved.value)}</span> on this bill
+            </>
+          }
+          sub="the bill's own quantities still say WHAT ARRIVED, so stock, cost and COGS are unmoved — a short is a claim recorded beside the line"
+          missing={
+            saved.openCount > 0
+              ? [
+                  {
+                    verdict: 'nobody has chased it',
+                    text: `${saved.openCount} of these ${saved.openCount === 1 ? 'is' : 'are'} open — ${formatMoneyString(saved.openValue)} the vendor has neither credited nor replaced. An open short and a settled one are different facts about a supplier, and only the open ones are money still owed to us.`,
+                  },
+                ]
+              : undefined
+          }
+        />
+      )}
+      <section className={cardCls}>
       <div className="flex items-baseline justify-between gap-2">
         <h3 className={sectionHeadCls}>Short, damaged or rejected</h3>
         <span className="font-mono text-[10px] text-stone-400">purchase_line_shorts</span>
@@ -334,5 +354,6 @@ export default function BillShorts({
         </div>
       )}
     </section>
+    </div>
   )
 }
