@@ -198,6 +198,62 @@ export default function FetchDay({ defaultDate, today }: { defaultDate: string; 
             {result.duplicateIds > 0 && <> · {result.duplicateIds} duplicate ids skipped</>} · read back from
             sales_by_day
           </p>
+          {/* WHAT PETPOOJA ACTUALLY SENT. Key names only — no values are read,
+              logged or stored. It exists to settle, in one real fetch, two
+              questions nobody could answer from the code: whether an item
+              code arrives (we key on the internal id and always will, but a
+              code shown beside the name would ease matching), and whether any
+              of the leakage fields Petpooja's own dashboard reports are in
+              the payload at all. Read it once and it has done its job. */}
+          <details className="mt-3 rounded-lg border border-stone-200 bg-white/70 px-2.5 py-1.5">
+            <summary className="cursor-pointer text-xs font-medium text-stone-600">
+              What Petpooja sent — {result.census.orderKeys.length} order fields,{' '}
+              {result.census.itemKeys.length} item fields
+            </summary>
+            <div className="mt-2 space-y-2 text-[11px] leading-relaxed text-stone-600">
+              <p>
+                <span className="font-semibold text-stone-700">An item code? </span>
+                {result.census.candidates.itemCode.length === 0 ? (
+                  <span className="text-amber-800">
+                    No field on an item looks like a code. We key on Petpooja&rsquo;s internal item id and always
+                    will; there is nothing to show beside the name.
+                  </span>
+                ) : (
+                  <span className="text-emerald-800">
+                    yes — <span className="font-mono">{result.census.candidates.itemCode.join(', ')}</span>. It can be
+                    SHOWN beside the name; it must never be keyed on, because item codes have no uniqueness check.
+                  </span>
+                )}
+              </p>
+              <p>
+                <span className="font-semibold text-stone-700">Anything about leakage? </span>
+                {result.census.candidates.leakage.length === 0 ? (
+                  <span className="text-amber-800">
+                    Nothing that looks like a KOT cancellation, bill modification, re-print, waiver or biller. Those
+                    are on Petpooja&rsquo;s own dashboard, so they exist — they are just not in Get Orders. Something
+                    to ask them to expose.
+                  </span>
+                ) : (
+                  <span className="text-emerald-800">
+                    yes — <span className="font-mono">{result.census.candidates.leakage.join(', ')}</span>. A control
+                    report is worth building on these.
+                  </span>
+                )}
+              </p>
+              <p className="border-t border-stone-100 pt-1.5">
+                <span className="font-semibold text-stone-700">Order: </span>
+                <span className="font-mono">{result.census.orderKeys.join(', ') || '(none)'}</span>
+              </p>
+              <p>
+                <span className="font-semibold text-stone-700">Item: </span>
+                <span className="font-mono">{result.census.itemKeys.join(', ') || '(none)'}</span>
+              </p>
+              <p className="text-stone-400">
+                Key names only. No value from the payload is read, shown or stored here.
+              </p>
+            </div>
+          </details>
+
           {result.compDisagreements > 0 && (
             <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
               {result.compDisagreements} C-prefixed order{result.compDisagreements === 1 ? '' : 's'} not marked

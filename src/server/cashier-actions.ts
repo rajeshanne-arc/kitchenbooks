@@ -555,6 +555,86 @@ export async function saveDue(raw: SaveDueInput): Promise<SaveDueResult> {
   }
 }
 
+/**
+ * CONFIRM ONE POS RECEIVABLE — a queue, never an automatic write.
+ *
+ * The POS knows an order was billed as Due Payment or Part Payment. It does
+ * NOT know who owes it, and `dues_outstanding` nets on lower(trim(party)) —
+ * so an automatic row would have to invent a party name, and every invented
+ * name is a permanent second entity in a ledger that nets on names.
+ *
+ * DUE PAYMENT asks WHO: the whole bill is owed, so the amount is the POS's
+ * own figure and is not being guessed. PART PAYMENT asks WHO AND HOW MUCH,
+ * because the POS gives the order total and not the split — the total is
+ * shown for reference and never written as the amount.
+ *
+ * `ref` carries `pos:<date>:<order id>`, which is what makes a second
+ * confirmation impossible: the queue excludes anything already referenced,
+ * and this re-checks it INSIDE the transaction, because a queue open in two
+ * tabs is exactly how a receivable gets entered twice.
+ */
+export async function confirmPosReceivable(raw: {
+  businessDate: string
+  posOrderId: string
+  party: string
+  amount: string
+  note: string
+}): Promise<SaveDueResult> {
+  try {
+    const input = z
+      .object({
+        businessDate: z.string().regex(DATE_RE),
+        posOrderId: z.string().trim().min(1).max(40),
+        party: z.string().trim().min(1).max(120),
+        amount: z.string().trim().min(1).max(20),
+        note: z.string().trim().max(300),
+      })
+      .parse(raw)
+    assertRealDate(input.businessDate, 'Business date')
+    const amount = parseMoney(input.amount)
+    if (amount === null || amount <= 0) throw new CashierError('Amount must be more than zero')
+
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const by = await enteredBy()
+    const ref = `pos:${input.businessDate}:${input.posOrderId}`
+
+    const saved = await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [order] = await tx<{ payment_mode: string; order_total: string }[]>`
+        select payment_mode, order_total::text as order_total
+        from sales_current
+        where restaurant_id = ${rid} and business_date = ${input.businessDate}::date
+          and pos_order_id = ${input.posOrderId} and status_class = 'revenue'`
+      if (!order) throw new CashierError('That POS order is no longer in the latest fetch for its day')
+      if (order.payment_mode !== 'Due Payment' && order.payment_mode !== 'Part Payment') {
+        throw new CashierError(`That order was paid by ${order.payment_mode ?? 'an unstated mode'} — nothing is owed on it`)
+      }
+      if (amount > parseMoney(order.order_total)!) {
+        throw new CashierError(
+          `More than the bill: the order came to ${order.order_total} and cannot owe more than that`,
+        )
+      }
+      const [dup] = await tx<{ id: string }[]>`
+        select id from due_payments where restaurant_id = ${rid} and ref = ${ref}`
+      if (dup) throw new CashierError('This order has already been confirmed — it is off the queue')
+      const [row] = await tx<{ id: string }[]>`
+        insert into due_payments (restaurant_id, due_date, party, amount, against_what, ref, note, entered_by)
+        values (${rid}, ${input.businessDate}, ${cleanName(input.party)}, ${input.amount},
+                ${`POS ${order.payment_mode} · order ${input.posOrderId}`}, ${ref},
+                ${input.note === '' ? null : input.note}, ${by})
+        returning id`
+      return { id: row.id }
+    })
+
+    const due = await getDue(rid, saved.id)
+    if (!due) throw new CashierError('Could not verify the save — due entry missing after commit')
+    return { ok: true, due, outstanding: await getDuesOutstanding(rid) }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
 export async function voidDue(id: string): Promise<VoidDueResult> {
   try {
     if (!UUID.test(id)) throw new CashierError('Malformed due id')

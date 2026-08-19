@@ -1013,10 +1013,37 @@ export type FetchDayResult =
       duplicateIds: number
       compDisagreements: number
       note: string | null
+      /** WHAT PETPOOJA ACTUALLY SENT — key NAMES only, never values. It
+       *  answers, in one real fetch, two questions unanswerable from this
+       *  side: whether an item code arrives, and whether any leakage field
+       *  does. Not persisted: it is a diagnostic read once by a person, and
+       *  a census of a payload carrying customer names must not become a
+       *  copy of it. */
+      census: PayloadCensus
       day: SalesDayRow | null
       unknownOrders: UnknownOrderRow[]
     }
   | { ok: false; error: string }
+
+/** One POS order billed and not (fully) collected, waiting for a person to
+ *  say who owes it. Due Payment asks WHO; Part Payment asks WHO and HOW MUCH,
+ *  with the order total shown for reference — the POS gives us the total, not
+ *  the split. */
+export type PosReceivableRow = {
+  business_date: string
+  pos_order_id: string
+  payment_mode: string
+  order_total: string
+  channel: string | null
+  order_time: string | null
+}
+
+export type PayloadCensus = {
+  topKeys: string[]
+  orderKeys: string[]
+  itemKeys: string[]
+  candidates: { itemCode: string[]; leakage: string[] }
+}
 
 export type UnmappedPosItem = {
   pos_item_id: string

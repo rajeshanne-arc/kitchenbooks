@@ -9,6 +9,7 @@ import type {
   DishOption,
   MappingCoverage,
   PaymentSplitRow,
+  PosReceivableRow,
   SalesHourRow,
   PosMapRow,
   QtySoldRow,
@@ -162,6 +163,42 @@ export async function countUnmapped(restaurantId: string): Promise<number> {
   const rows = await tsql<{ n: number }[]>`
     select count(*)::int as n from unmapped_pos_items where restaurant_id = ${restaurantId}`
   return rows[0]?.n ?? 0
+}
+
+/**
+ * MONEY THE POS SAYS WE ARE OWED AND OUR BOOKS DO NOT.
+ *
+ * `payment_mode = 'Due Payment'` is billed and not collected; 'Part Payment'
+ * is billed and not FULLY collected. Both are receivables the POS already
+ * knows about and `due_payments` — manual-entry only — never hears about.
+ *
+ * A QUEUE, NOT AN AUTOMATIC WRITE. The POS carries the amount and the order;
+ * it does not carry WHO owes it. `dues_outstanding` nets on
+ * lower(trim(party)), so an automatic row would have to invent a party name,
+ * and every invented name is a permanent second entity in a ledger that nets
+ * on names. So a person confirms each one.
+ *
+ * Confirmed orders drop out by their `ref` — `pos:<date>:<order id>` on the
+ * due_payments row — so a confirmation can never be made twice.
+ */
+export async function listPosReceivables(restaurantId: string): Promise<PosReceivableRow[]> {
+  return tsql<PosReceivableRow[]>`
+    select o.business_date::text as business_date,
+           o.pos_order_id,
+           o.payment_mode,
+           o.order_total::text as order_total,
+           o.channel,
+           o.order_time::text as order_time
+    from sales_current o
+    where o.restaurant_id = ${restaurantId}
+      and o.status_class = 'revenue'
+      and o.payment_mode in ('Due Payment', 'Part Payment')
+      and not exists (
+        select 1 from due_payments d
+        where d.restaurant_id = o.restaurant_id
+          and d.ref = 'pos:' || o.business_date::text || ':' || o.pos_order_id
+      )
+    order by o.business_date desc, o.pos_order_id asc`
 }
 
 /** Active dishes for the mapping picker — a POS item maps to a DISH; the

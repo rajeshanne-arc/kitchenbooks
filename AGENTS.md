@@ -4448,3 +4448,102 @@ where "which fetch wins" and "which duplicate is skipped" are decided. The
 check is narrowed BY STRUCTURE — everything from `FROM` onwards — and proved
 still to fire on a real join. Blinding it to the name would have been the easy
 fix and the wrong one.
+
+## The payload census — key NAMES only, and the two questions it settles
+
+We store no raw Petpooja payload, so a field could arrive on every fetch and
+leave no trace. Two questions were unanswerable from this side: does Petpooja
+send an `itemcode`, and does it send any of the leakage fields its own
+dashboard reports — KOT cancellations, bill modifications, re-prints, waivers,
+a biller identity?
+
+So the fetch reports WHAT IT WAS SENT: the union of key names at each level,
+plus candidates matched by MEANING (`/kot|cancel|modif|reprint|waiv|biller|…/`)
+rather than by an exact key we would have had to guess right. It renders on
+the fetch reveal, is read once by a person, and is **not persisted** — a
+census of a payload carrying customer names and phone numbers must not become
+a copy of it.
+
+**NOT ONE VALUE CROSSES THE BOUNDARY, and that is the assertion that matters.**
+`smoke:a2` runs a synthetic payload whose customer name, phone, item name and
+item code are all the same distinctive string, and asserts that string appears
+nowhere in the census. Proved able to fail by making the key-union carry
+`key:value` — the perturbation that would be easiest to write by accident.
+
+**Mapping keys on Petpooja's internal item id and always will.** If the census
+finds a code it may be SHOWN beside the name to ease matching; it must never
+be keyed on, because the sheets work established that item codes have no
+uniqueness check — five codes shared across two or three items, one truncated
+at 20 characters.
+
+## Pruning superseded fetch bodies — why this DELETE is not the attendance one
+
+`migrations/pos_prune_superseded_fetch_bodies.sql` (**written, not applied**)
+grants DELETE on `pos_orders` and `pos_lines`.
+
+Every other event table holds something only WE hold; it cannot be
+reconstructed, so it is append-only and a correction is a reversal.
+`pos_orders` is **a cached copy of somebody else's system** — Petpooja holds
+the truth, a fetch is a photocopy, and a re-fetch takes another one. Deleting
+a superseded photocopy loses nothing that cannot be fetched again. That is the
+whole distinction, and it is why the refusal on `attendance` stands.
+
+Measured on live data, a re-fetch re-inserts the fetch row AND every order and
+line: 71 orders and 334 lines a day, so fifty refreshes in a service is 3,550
+orders and 16,700 lines for 71 and 334 of truth.
+
+**THE TRADE, recorded because it is a real loss:** the DIFF between two
+generations of one date is a bill-modification signal — an order whose total
+changed between fetches was edited after printing, which is exactly what
+Petpooja's Leakage panel reports. Pruning discards it. Accepted because a
+direct field beats a diff, and the census settles which within one fetch —
+**if the census comes back with no modification fields, reopen this**, since
+the diff is then the only copy of that signal.
+
+Every `pos_fetches` row is KEPT: it is the audit trail and carries the note.
+
+## POS receivables — a queue, because the POS never knows who owes
+
+`payment_mode = 'Due Payment'` is billed and nothing collected; `'Part
+Payment'` is billed and not all collected. Both are receivables the POS knows
+about and `due_payments` — manual-entry only — never heard about. Live: ten
+orders, ₹18,330.
+
+**AN AUTOMATIC WRITE IS IMPOSSIBLE, not merely unwise.** `dues_outstanding`
+nets on `lower(trim(party))`, and the POS carries the amount and the order but
+never the person — so an automatic row would have to invent a party name, and
+every invented name is a permanent second entity in a ledger that nets on
+names. Hence a queue somebody confirms.
+
+**Due Payment asks WHO** — the whole bill is owed, so the amount is the POS's
+own figure, prefilled and editable rather than guessed. **Part Payment asks
+WHO AND HOW MUCH**, because the POS gives the order total and not the split;
+the total is shown for reference and never written as the amount.
+
+`due_payments.ref` carries `pos:<date>:<order id>` — no migration needed — and
+that is what makes a second confirmation impossible rather than unlikely: the
+queue excludes anything already referenced, and `confirmPosReceivable`
+re-checks it INSIDE the transaction, because a queue open in two tabs is
+exactly how a receivable gets entered twice. A debt larger than the bill is
+refused by name.
+
+Unconfirmed rows stay visible as a FINDING, not a gap: the POS knows we are
+owed money and our books do not.
+
+## Auth secrets: state the property precisely, because "the app is blind" is false
+
+I wrote that a definer function could return "a payload, never the
+credentials". **That is wrong if the app makes the HTTP call** — it must hold
+the secret at that moment, in memory, unavoidably. The only way it would be
+true is issuing the outbound call from Postgres (pg_net), which is a real
+architectural choice with its own debugging cost and is NOT what is proposed.
+
+What a `SECURITY DEFINER` accessor actually buys, stated exactly:
+
+- `kb_app` holds no SELECT on the credentials table, so a leaked app-role
+  connection cannot enumerate every tenant's POS keys;
+- access goes through one function, which can be logged;
+- secrets at rest live in **Supabase Vault**, not a plaintext column.
+
+The app still handles the key it uses, for as long as the request takes.
+Nobody should believe otherwise.

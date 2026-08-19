@@ -8,7 +8,7 @@
 // status wins, and every disagreement is logged on the fetch row.
 import 'server-only'
 import { txn } from '@/lib/db'
-import type { StatusClass } from '@/lib/types'
+import type { PayloadCensus, StatusClass } from '@/lib/types'
 
 export class SalesIngestError extends Error {}
 
@@ -77,6 +77,53 @@ export type ParsedOrder = {
   lines: ParsedLine[]
 }
 
+/**
+ * THE PAYLOAD CENSUS — KEY NAMES ONLY, NEVER VALUES.
+ *
+ * Two questions have been open and unanswerable from this side: does
+ * Petpooja send an `itemcode` we could show beside a name, and does it send
+ * any of the leakage fields its own dashboard reports — KOT cancellations,
+ * bill modifications, re-prints, waivers, a biller identity?
+ *
+ * We store no raw payload, so a field could be arriving on every fetch and
+ * leave no trace. Rather than guess twice, the fetch reports WHAT IT WAS
+ * SENT: the set of key names at each level, and a flag for the specific
+ * fields we are asking about. One real fetch settles both.
+ *
+ * ONLY NAMES CROSS THIS BOUNDARY. Values are never read, never logged and
+ * never stored — a census of a payload that carries customer names and phone
+ * numbers must not become a copy of it.
+ *
+ * The type lives in lib/types beside FetchDayResult, which carries it back.
+ */
+
+/** What a leakage field might be called. Petpooja's naming is unknown, so
+ *  this matches on meaning rather than on an exact key we would have to have
+ *  guessed right. */
+const LEAKAGE_RE = /kot|cancel|modif|reprint|re_print|print_count|waiv|biller|edited|void|discount_by|approved_by/i
+const ITEMCODE_RE = /item_?code|short_?code|\bcode\b|sku|alias/i
+
+function censusOf(payload: unknown, orders: Record<string, unknown>[], items: Record<string, unknown>[]): PayloadCensus {
+  const top = payload !== null && typeof payload === 'object' ? Object.keys(payload as object) : []
+  const union = (rows: Record<string, unknown>[]) => {
+    const set = new Set<string>()
+    for (const r of rows) for (const k of Object.keys(r)) set.add(k)
+    return [...set].sort()
+  }
+  const orderKeys = union(orders)
+  const itemKeys = union(items)
+  const all = [...new Set([...top, ...orderKeys, ...itemKeys])]
+  return {
+    topKeys: top.sort(),
+    orderKeys,
+    itemKeys,
+    candidates: {
+      itemCode: itemKeys.filter((k) => ITEMCODE_RE.test(k)).sort(),
+      leakage: all.filter((k) => LEAKAGE_RE.test(k)).sort(),
+    },
+  }
+}
+
 export type NormalizedPayload = {
   orders: ParsedOrder[]
   apiOrderCount: number
@@ -87,6 +134,8 @@ export type NormalizedPayload = {
   withTime: number
   compDisagreements: number
   note: string | null
+  /** Key NAMES only — see PayloadCensus. */
+  census: PayloadCensus
 }
 
 type RawEntry = { Order?: Record<string, unknown>; OrderItem?: unknown }
@@ -100,6 +149,10 @@ export function normalizePayload(payload: unknown, businessDate: string): Normal
   }
 
   const orders: ParsedOrder[] = []
+  // Collected for the census: the objects themselves, so their KEYS can be
+  // unioned. Nothing reads their values.
+  const rawOrders: Record<string, unknown>[] = []
+  const rawItems: Record<string, unknown>[] = []
   const otherDates: Record<string, number> = {}
   const seenIds = new Set<string>()
   let duplicateIds = 0
@@ -109,6 +162,8 @@ export function normalizePayload(payload: unknown, businessDate: string): Normal
   for (const entry of body.order_json as RawEntry[]) {
     const o = entry?.Order
     if (!o || typeof o !== 'object') continue
+    rawOrders.push(o)
+    if (Array.isArray(entry.OrderItem)) rawItems.push(...(entry.OrderItem as Record<string, unknown>[]))
     const orderDate = str(o.order_date, 10)
     const posOrderId = str(o.orderID, 40)
     if (orderDate === null || posOrderId === null) continue
@@ -192,7 +247,17 @@ export function normalizePayload(payload: unknown, businessDate: string): Normal
   else if (withTime < orders.length) noteParts.push(`${orders.length - withTime} order(s) carried no time`)
   const note = noteParts.length > 0 ? `API returned ${apiOrderCount}; ${noteParts.join('; ')}`.slice(0, 500) : null
 
-  return { orders, apiOrderCount, skippedOtherDates, otherDates, duplicateIds, compDisagreements, withTime, note }
+  return {
+    orders,
+    apiOrderCount,
+    skippedOtherDates,
+    otherDates,
+    duplicateIds,
+    compDisagreements,
+    withTime,
+    note,
+    census: censusOf(payload, rawOrders, rawItems),
+  }
 }
 
 export type PersistedFetch = {

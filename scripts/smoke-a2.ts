@@ -5044,6 +5044,131 @@ async function run() {
     console.log('      3 validated hues; the 7-mode split is direct-labelled bars')
   })
 
+
+  await check('the payload census reports key NAMES and cannot leak a value', async () => {
+    const { normalizePayload } = await import('../src/server/sales-ingest')
+    // A synthetic payload carrying the two things we are asking about, plus a
+    // customer name and phone — because the census runs over a payload that
+    // really does contain those, and the property that matters is that not one
+    // character of a VALUE can reach it.
+    const SECRET = 'ZzCustomerNameAndPhone9876543210'
+    const payload = {
+      success: '1',
+      order_json: [
+        {
+          Order: {
+            order_date: '2026-08-19',
+            orderID: 'A1',
+            status: 'Success',
+            payment_type: 'Cash',
+            total: '100',
+            customer_name: SECRET,
+            phone: SECRET,
+            kot_cancelled: '2',
+            bill_reprint_count: '7',
+            biller_name: SECRET,
+          },
+          OrderItem: [{ itemid: '9', name: SECRET, quantity: '1', total: '100', itemcode: SECRET }],
+        },
+      ],
+    }
+    const norm = normalizePayload(payload, '2026-08-19')
+    const c = norm.census
+
+    // it FINDS the things we are asking about, by meaning rather than by an
+    // exact key we would have had to guess right
+    assert.ok(c.candidates.itemCode.includes('itemcode'), 'the census missed an item code')
+    for (const k of ['kot_cancelled', 'bill_reprint_count', 'biller_name']) {
+      assert.ok(c.candidates.leakage.includes(k), `the census missed the leakage field ${k}`)
+    }
+    assert.ok(c.orderKeys.includes('customer_name'), 'the census is not reading order keys')
+    assert.ok(c.itemKeys.includes('itemid'), 'the census is not reading item keys')
+
+    // ...AND NOT ONE VALUE ESCAPES. This is the assertion that matters: a
+    // census of a payload carrying names and phone numbers must never become
+    // a copy of it.
+    const dumped = JSON.stringify(c)
+    assert.ok(!dumped.includes(SECRET), 'a payload VALUE reached the census — it must carry key names only')
+    assert.ok(!dumped.includes('9876543210'), 'a phone number reached the census')
+
+    // and it is not persisted: pos_fetches has no column for it
+    const col = await tsql<{ n: number }[]>`
+      select count(*)::int as n from information_schema.columns
+      where table_schema = 'public' and table_name = 'pos_fetches'
+        and column_name in ('census', 'payload', 'payload_keys', 'raw')`
+    assert.equal(col[0].n, 0, 'the census is being stored — it is a diagnostic read once, not a record')
+    console.log(
+      `      found ${c.candidates.itemCode.length} code field(s), ${c.candidates.leakage.length} leakage field(s); no value escaped`,
+    )
+  })
+
+
+  await check('a POS receivable reaches the dues ledger — and cannot be confirmed twice', async () => {
+    // MONEY THE POS KNOWS ABOUT AND OUR BOOKS DID NOT. Proved by moving one
+    // through, in a transaction that rolls back — the only way to show a
+    // receivable reaches dues_outstanding is to put one there.
+    const { listPosReceivables } = await import('../src/server/sales-queries')
+    const rid = (await tsql<{ id: string }[]>`select id from restaurants limit 1`)[0].id
+    const queue = await listPosReceivables(rid)
+    assert.ok(queue.length > 0, 'no POS receivable on the live tenant — this assertion could not fail')
+    // both modes are in the queue, not just Due Payment: Part Payment is the
+    // same question — money billed and not fully collected.
+    const modes = new Set(queue.map((r) => r.payment_mode))
+    assert.ok(modes.has('Due Payment'), 'Due Payment left the queue')
+    assert.ok(modes.has('Part Payment'), 'Part Payment is not in the queue — Rs 8,564 invisible')
+
+    const one = queue[0]
+    const ref = `pos:${one.business_date}:${one.pos_order_id}`
+    let observed: { before: number; after: number; queueAfter: number; secondRefused: boolean } | null = null
+    try {
+      await txn(async (tx) => {
+        const b = await tx<{ n: number }[]>`
+          select count(*)::int as n from due_payments where restaurant_id = ${rid}`
+        await tx`
+          insert into due_payments (restaurant_id, due_date, party, amount, against_what, ref, entered_by)
+          values (${rid}, ${one.business_date}::date, 'Zz Probe Party', ${one.order_total}::numeric,
+                  ${'POS ' + one.payment_mode}, ${ref}, 'zz-gate')`
+        const a = await tx<{ n: number }[]>`
+          select count(*)::int as n from due_payments where restaurant_id = ${rid}`
+        // THE CONFIRMED ORDER DROPS OFF THE QUEUE — that is what makes a
+        // second confirmation impossible rather than merely unlikely.
+        const stillQueued = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from sales_current o
+          where o.restaurant_id = ${rid} and o.status_class = 'revenue'
+            and o.payment_mode in ('Due Payment', 'Part Payment')
+            and o.business_date = ${one.business_date}::date and o.pos_order_id = ${one.pos_order_id}
+            and not exists (
+              select 1 from due_payments d
+              where d.restaurant_id = o.restaurant_id
+                and d.ref = 'pos:' || o.business_date::text || ':' || o.pos_order_id)`
+        // and the ledger nets it under the party, which is the whole reason a
+        // name may not be invented
+        const [owed] = await tx<{ balance: string }[]>`
+          select balance::text as balance from dues_outstanding
+          where restaurant_id = ${rid} and lower(trim(party)) = 'zz probe party'`
+        assert.equal(Number(owed?.balance), Number(one.order_total), 'the debt did not reach dues_outstanding')
+        observed = { before: b[0].n, after: a[0].n, queueAfter: stillQueued[0].n, secondRefused: true }
+        throw new Error('ROLLBACK')
+      })
+    } catch (e) {
+      if ((e as Error).message !== 'ROLLBACK') throw e
+    }
+    const o = observed as unknown as { before: number; after: number; queueAfter: number }
+    assert.equal(o.after, o.before + 1, 'the confirmation wrote nothing')
+    assert.equal(o.queueAfter, 0, 'a confirmed order is still on the queue — it could be confirmed twice')
+
+    // the refusal is in the action, not only in the query
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/cashier-actions.ts', 'utf8')
+    const fn = src.slice(src.indexOf('export async function confirmPosReceivable'))
+    assert.ok(/already been confirmed/.test(fn.slice(0, 4000)), 'a double confirmation is not refused by name')
+    assert.ok(/cannot owe more than that/.test(fn.slice(0, 4000)), 'a debt larger than the bill is accepted')
+    console.log(
+      `      ${queue.length} waiting (${[...modes].join(' + ')}) · one confirmed reaches dues and leaves the queue`,
+    )
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

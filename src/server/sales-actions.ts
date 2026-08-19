@@ -70,6 +70,7 @@ export async function fetchDay(raw: { date: string }): Promise<FetchDayResult> {
       duplicateIds: norm.duplicateIds,
       compDisagreements: norm.compDisagreements,
       note: norm.note,
+      census: norm.census,
       day,
       unknownOrders,
     }
