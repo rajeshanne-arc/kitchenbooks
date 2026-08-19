@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict'
 // period.ts is pure, so it imports statically; everything that touches the
 // database is pulled in AFTER the env file is loaded, as the other smokes do.
-import { resolvePeriod, isPeriodKey, PERIOD_KEYS } from '../src/lib/period'
+import { resolvePeriod, isPeriodKey, PERIOD_KEYS, type PeriodKey } from '../src/lib/period'
 import { fyLabel, fyRange, parseFyStartMonth } from '../src/lib/fy'
 
 process.loadEnvFile('.env.local')
@@ -3170,6 +3170,224 @@ async function run() {
      almost every card is unassessable, so the assertions that matter are the
      ones that would catch a confident zero — not the ones that check a query
      returns rows. */
+
+  /* ── THE CUSTOM DATE RANGE ────────────────────────────────────────────
+     resolvePeriod gained a branch. The presets are asserted BY VALUE against a
+     table captured BEFORE the change, because "I was careful" is not a proof —
+     and the existing checks were structurally insufficient: they never asserted
+     label at all, never asserted PERIOD_KEYS' contents or order, and never
+     asserted last-month's reportMonth. */
+
+  await check('every preset resolves byte-identically to before the change', async () => {
+    const { readFileSync } = await import('node:fs')
+    const golden = JSON.parse(readFileSync('scripts/fixtures/period-presets.json', 'utf8')) as Record<
+      string,
+      Record<string, unknown>
+    >
+    const keys = Object.keys(golden)
+    assert.ok(keys.length > 400, `the golden table shrank to ${keys.length} — it is the whole proof`)
+    let compared = 0
+    for (const k of keys) {
+      const at = k.lastIndexOf('@')
+      const got = resolvePeriod(k.slice(0, at) as PeriodKey, k.slice(at + 1))
+      assert.deepEqual(got, golden[k], `${k} changed`)
+      // the SHAPE too, so a field added for the custom case cannot slip into
+      // the preset returns unnoticed
+      assert.deepEqual(
+        Object.keys(got).sort(),
+        ['from', 'key', 'label', 'months', 'reportMonth', 'to'],
+        `${k}: Period gained or lost a field`,
+      )
+      compared++
+    }
+    assert.deepEqual(
+      PERIOD_KEYS,
+      ['this-month', 'last-month', 'last-3-months'],
+      'PERIOD_KEYS changed — the old check only counted them, so a reorder shipped green',
+    )
+    console.log(`      ${compared} preset resolutions identical across ${new Set(keys.map((k) => k.slice(k.lastIndexOf('@') + 1))).size} anchors`)
+  })
+
+  await check('the front door cannot re-route a preset into the custom branch', async () => {
+    // THE ASSERTION WORTH WRITING FIRST. `this-month` is reached by falling
+    // through rather than by an `if`, and PERIOD_LABELS[key] runs before any
+    // branch — so a custom branch placed in the obvious spot would have
+    // returned a this-month range wearing a custom key, with the URL saying
+    // 15 July and every figure saying August, and nothing throwing.
+    const { readPeriodParam } = await import('../src/lib/period')
+    for (const k of PERIOD_KEYS) {
+      const req = readPeriodParam(k, '2026-08-19')
+      assert.equal(req.param, k, `${k} must survive the front door unchanged`)
+      assert.equal(req.error, null)
+      assert.deepEqual(resolvePeriod(req.param, '2026-08-19'), resolvePeriod(k, '2026-08-19'))
+    }
+    // and a custom range must NOT come back as a preset
+    const custom = readPeriodParam('2026-07-15..2026-08-17', '2026-08-19')
+    assert.equal(typeof custom.param, 'object', 'a valid range must not be swallowed into a preset')
+    const p = resolvePeriod(custom.param, '2026-08-19')
+    assert.equal(p.from, '2026-07-15', 'the range start must survive')
+    assert.equal(p.to, '2026-08-17', 'and its end')
+    assert.deepEqual(p.months, ['2026-07-01', '2026-08-01'], 'months are the whole months it touches')
+    assert.equal(p.reportMonth, '2026-08-01', 'and reportMonth is the last of them')
+  })
+
+  await check('a malformed range is refused, and never mangled or thrown', async () => {
+    // Each of these currently WOULD pass a regex-only validator, which is why
+    // the round-trip check exists. Measured: utc('2026-02-31') rolls silently
+    // to 2026-03-03, and '2026-13-01' / '2026-8-1' / 'not-a-date' make iso()
+    // throw a RangeError — a 500 on twelve pages.
+    const { readPeriodParam, isDate } = await import('../src/lib/period')
+    const T = '2026-08-19'
+    assert.equal(isDate('2026-02-31'), false, 'a regex-only validator passes this and utc() mangles it')
+    assert.equal(isDate('2026-13-01'), false)
+    assert.equal(isDate('2026-8-1'), false)
+    assert.equal(isDate('2024-02-29'), true, 'a real leap day must still be accepted')
+
+    for (const bad of ['2026-02-31..2026-03-05', '2026-13-01..2026-13-05', '2026-8-1..2026-8-9', '2026-01-01..x']) {
+      const r = readPeriodParam(bad, T)
+      assert.equal(r.param, 'this-month', `${bad} must fall back`)
+      assert.ok(r.error !== null, `${bad} must SAY it was refused, not swallow it`)
+    }
+    // reversed: refused BY NAME, never silently swapped — swapping answers a
+    // question nobody asked and the person never learns they typed it backwards
+    const rev = readPeriodParam('2026-08-17..2026-08-01', T)
+    assert.equal(rev.param, 'this-month')
+    assert.match(rev.error ?? '', /later than/, 'a reversed range must name itself')
+    assert.ok(!/swapp?ed to/i.test(rev.error ?? ''), 'and must not claim to have fixed it')
+  })
+
+  await check('a future end clamps, a future start is refused, and the span is capped', async () => {
+    const { readPeriodParam, MAX_RANGE_MONTHS } = await import('../src/lib/period')
+    const T = '2026-08-19'
+    // A range ending in the future is FINE — both presets that can run past
+    // today already clamp, and smoke asserts a period never reports days that
+    // have not happened. The cap must be measured against the CLAMPED end, or
+    // "1 Aug to the end of time" is refused as too long when it is 19 days.
+    const far = readPeriodParam('2026-08-01..2099-01-01', T)
+    assert.equal(typeof far.param, 'object', 'a future end must be accepted, not refused as too long')
+    assert.equal(far.error, null)
+    const p = resolvePeriod(far.param, T)
+    assert.equal(p.to, T, 'and clamped to today')
+    assert.ok(p.to <= T, 'a period never reports days that have not happened')
+
+    const future = readPeriodParam('2026-09-01..2026-09-30', T)
+    assert.equal(future.param, 'this-month')
+    assert.match(future.error ?? '', /has not happened yet/, 'a range starting in the future must say so')
+
+    // exactly at the cap, and one over
+    const at = readPeriodParam('2025-08-01..2026-08-19', T)
+    assert.equal(typeof at.param, 'object', `${MAX_RANGE_MONTHS} months must be admitted`)
+    assert.equal(resolvePeriod(at.param, T).months.length, MAX_RANGE_MONTHS)
+    const over = readPeriodParam('2025-01-01..2026-08-01', T)
+    assert.equal(over.param, 'this-month')
+    assert.match(over.error ?? '', /at most/, 'over the cap must be REFUSED, never truncated')
+  })
+
+  await check('the two predicates are disjoint, and the URL round-trips', async () => {
+    const { readPeriodParam, periodParamValue, isPeriodKey, PERIOD_SEP } = await import('../src/lib/period')
+    for (const k of PERIOD_KEYS) {
+      assert.equal(isPeriodKey(k), true, `${k} must still be a preset`)
+      assert.ok(!k.includes(PERIOD_SEP), `${k} must not contain the separator, or the two collide`)
+    }
+    assert.equal(isPeriodKey('2026-08-01..2026-08-17'), false, 'a range must never read as a preset')
+    const value = '2026-08-01..2026-08-17'
+    const back = readPeriodParam(value, '2026-08-19')
+    assert.equal(periodParamValue(back.param), value, 'a pasted link must survive the round trip whole')
+    for (const k of PERIOD_KEYS) assert.equal(periodParamValue(k), k)
+  })
+
+  await check('a partial-month edge is stated, never quietly summed', async () => {
+    // The monthly views answer only in whole months, so a range starting on the
+    // 15th makes them cover the whole month while the event cards beside them
+    // start on the 15th — two cards under one heading answering two questions.
+    const { partialEdges } = await import('../src/lib/period')
+    const T = '2026-08-19'
+    const whole = resolvePeriod('last-month', T)
+    assert.deepEqual(partialEdges(whole), { head: false, tail: false }, 'a whole month has no partial edge')
+    const midStart = resolvePeriod({ kind: 'custom', from: '2026-07-15', to: '2026-08-31' }, T)
+    assert.equal(partialEdges(midStart).head, true, 'a start that is not a 1st is a partial head')
+    const midEnd = resolvePeriod({ kind: 'custom', from: '2026-07-01', to: '2026-08-10' }, T)
+    assert.equal(partialEdges(midEnd).tail, true, 'an end that is not a month end is a partial tail')
+    // and `this-month` has a partial TAIL every day of its life, which is why
+    // the strip fires on a partial HEAD only — otherwise it would be permanent
+    // on the owner dashboard's default view and read as furniture.
+    assert.equal(partialEdges(resolvePeriod('this-month', T)).tail, true)
+    assert.equal(partialEdges(resolvePeriod('this-month', T)).head, false)
+    const strip2 = (await import('node:fs')).readFileSync('src/components/dashboard/PartialMonths.tsx', 'utf8')
+    assert.match(strip2, /const \{ head \} = partialEdges/, 'the strip must not fire on a partial tail')
+
+    const { readFileSync } = await import('node:fs')
+    const strip = readFileSync('src/components/dashboard/PartialMonths.tsx', 'utf8')
+    assert.match(strip, /whole months only/, 'the strip must name what the monthly figures cover')
+    // and it must be mounted on BOTH pages that read a monthly view
+    for (const f of ['src/app/owner/page.tsx', 'src/app/kitchen/departments/[code]/page.tsx']) {
+      assert.match(readFileSync(f, 'utf8'), /<PartialMonths period=\{period\} \/>/, `${f} reads a monthly view and must say so`)
+    }
+  })
+
+  await check('every page reads ?period= through the one front door', async () => {
+    // Twelve hand-written two-branch ternaries becoming twelve hand-written
+    // three-branch ones is twelve chances to get precedence wrong.
+    const { readFileSync } = await import('node:fs')
+    const { readdirSync, statSync } = await import('node:fs')
+    const walkFiles = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir)) {
+        const q = `${dir}/${e}`
+        if (statSync(q).isDirectory()) walkFiles(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const files = [...walkFiles('src/app'), ...walkFiles('src/components')]
+    const offenders: string[] = []
+    let doors = 0
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8')
+      if (/isPeriodKey\(/.test(src)) offenders.push(f)
+      if (/readPeriodParam\(/.test(src)) doors++
+    }
+    assert.deepEqual(offenders, [], 'these still decide the period themselves instead of calling readPeriodParam')
+    assert.ok(doors >= 12, `only ${doors} pages call the front door — the sweep found fewer than the known mounts`)
+    console.log(`      ${doors} surfaces read ?period= through readPeriodParam`)
+  })
+
+  await check('every basePath the control is given is a real route', async () => {
+    // No gate reads this control: audit:matrix matches only hrefs with a
+    // literal leading slash and PeriodControl's href opens with an
+    // interpolation, so it is invisible to it.
+    const { readFileSync } = await import('node:fs')
+    const { readdirSync, statSync } = await import('node:fs')
+    const walkFiles = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir)) {
+        const q = `${dir}/${e}`
+        if (statSync(q).isDirectory()) walkFiles(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const routes = new Set<string>()
+    for (const f of walkFiles('src/app')) {
+      if (!/[\\/]page\.tsx$/.test(f)) continue
+      routes.add(
+        f.replace(/^src\/app/, '').replace(/\/page\.tsx$/, '').replace(/\/\([^)]*\)/g, '') || '/',
+      )
+    }
+    const dynamic = (p: string) => p.replace(/\/\[[^\]]+\]/g, '/[x]')
+    const known = new Set([...routes].map(dynamic))
+    const bad: string[] = []
+    let seen = 0
+    for (const f of walkFiles('src/app')) {
+      const src = readFileSync(f, 'utf8')
+      for (const m of src.matchAll(/<PeriodControl[^>]*?basePath=(?:"([^"]+)"|\{`([^`]+)`\})/gs)) {
+        seen++
+        const raw = (m[1] ?? m[2]).replace(/\$\{[^}]+\}/g, '[x]')
+        if (!known.has(dynamic(raw))) bad.push(`${f}: ${raw}`)
+      }
+    }
+    assert.ok(seen >= 10, `only ${seen} basePath props found — the matcher stopped matching`)
+    assert.deepEqual(bad, [], 'these mount the period control on a path with no page behind it')
+    console.log(`      ${seen} basePath props, all resolving`)
+  })
 
   await check('every department resolves, and a bogus code does not', async () => {
     const { getDepartment, DEPT_CODE } = await import('../src/server/department-queries')

@@ -19,13 +19,14 @@ import {
 } from '@/server/dashboard-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { isPeriodKey, monthLabel, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { readPeriodParam, monthLabel, resolvePeriod } from '@/lib/period'
 import { requires, UNASSESSABLE_URGENCY } from '@/lib/precondition'
 import { countOrdersWithTime, getBusinessDayDisagreements } from '@/server/business-day'
-import { cardCls, heroNumCls, moneyCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, heroNumCls, moneyCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import Honesty, { HonestyPill } from '@/components/Honesty'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import PeriodControl from '@/components/dashboard/PeriodControl'
+import PartialMonths from '@/components/dashboard/PartialMonths'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
 import {
   BilledVsClaimed,
@@ -170,9 +171,12 @@ export default async function DashboardPage({
   searchParams: Promise<{ period?: string }>
 }) {
   const { period: periodParam } = await searchParams
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
   const today = await businessToday()
-  const period = resolvePeriod(periodKey, today)
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+  // one place rather than in twelve hand-written ternaries.
+  const periodToday = today
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
 
   const restaurant = await getRestaurant()
   const user = await getSessionUser()
@@ -864,9 +868,10 @@ export default async function DashboardPage({
     <>
       <header className="pb-4">
         <h1 className={pageTitleCls}>{restaurant.name}</h1>
-        <p className={pageSubCls}>
-          {period.label} · {period.from === period.to ? fmtDate(period.from) : `${fmtDate(period.from)} — ${fmtDate(period.to)}`}
-        </p>
+        {/* the range used to be stated here AND again under the control, in two
+            different formats — "1 Aug 2026 — 19 Aug 2026" against
+            "1–19 Aug 2026". The control says it now, once, for all twelve of
+            its mounts. */}
       </header>
 
       {/* What the accountant is asking. Managers and owners see what they are
@@ -876,7 +881,11 @@ export default async function DashboardPage({
       </div>
 
       <div className="pb-4">
-        <PeriodControl active={periodKey} />
+        <PeriodControl period={period} error={periodReq.error} />
+      </div>
+
+      <div className="mb-4">
+        <PartialMonths period={period} />
       </div>
 
       {/* The honest empty state. Two bills and no sales is the ordinary

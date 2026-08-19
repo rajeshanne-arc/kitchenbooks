@@ -214,8 +214,13 @@ export async function getSettlementGap(
       on p.restaurant_id = ps.restaurant_id
      and lower(trim(p.name)) = lower(trim(ps.partner))
     where ps.restaurant_id = ${restaurantId}
-      and ps.period_start >= ${from}::date
-      and ps.period_end <= ${to}::date
+      -- OVERLAP, NOT CONTAINMENT. This required the settlement to sit wholly
+      -- inside the period, so one straddling a boundary vanished from the gap
+      -- card in silence. Three month-aligned presets rarely straddled anything;
+      -- an arbitrary range straddles constantly, so the fault would have gone
+      -- from rare to routine the day custom ranges shipped.
+      and ps.period_start <= ${to}::date
+      and ps.period_end >= ${from}::date
     group by ps.partner
     having count(*) > 0
     order by coalesce(sum(ps.gap), 0) desc, ps.partner asc`

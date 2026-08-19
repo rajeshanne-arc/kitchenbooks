@@ -10,7 +10,7 @@ import {
   REGISTER_SOURCES,
   REGISTER_TITLES,
 } from '@/server/register-queries'
-import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { periodParamValue, readPeriodParam, resolvePeriod } from '@/lib/period'
 import { fmtDate } from '@/lib/format'
 import RegisterTable from '@/components/accountant/RegisterTable'
 import PeriodControl from '@/components/dashboard/PeriodControl'
@@ -29,8 +29,11 @@ export default async function RegisterPage({
   const { key } = await params
   if (!isRegisterKey(key)) notFound()
   const { period: periodParam } = await searchParams
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, await businessToday())
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+  // one place rather than in twelve hand-written ternaries.
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
 
   const restaurant = await getRestaurant()
   const rows = await getRegister(restaurant.id, key, period.from, period.to)
@@ -46,7 +49,7 @@ export default async function RegisterPage({
       </header>
 
       <div className="pb-4">
-        <PeriodControl active={periodKey} basePath={`/accounts/registers/${key}`} />
+        <PeriodControl period={period} error={periodReq.error} basePath={`/accounts/registers/${key}`} />
       </div>
 
       <section className={cardCls}>
@@ -70,7 +73,7 @@ export default async function RegisterPage({
         </p>
         {rows.length > 0 && (
           <a
-            href={`/api/accounts/export?register=${key}&period=${periodKey}`}
+            href={`/api/accounts/export?register=${key}&period=${periodParamValue(periodReq.param)}`}
             download
             className="shrink-0 rounded-lg border border-rule bg-cell px-3 py-2 text-sm font-medium text-stone-700 hover:border-emerald-400 hover:text-emerald-800"
           >

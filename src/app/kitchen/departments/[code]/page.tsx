@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
 import { businessToday } from '@/server/business-day'
-import { isPeriodKey, monthLabel, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { readPeriodParam, monthLabel, resolvePeriod } from '@/lib/period'
 import {
   DEPT_CODE,
   getDepartment,
@@ -13,9 +13,10 @@ import {
 import { getFoodCost } from '@/server/kitchen-queries'
 import { listDishCosts } from '@/server/recipes-queries'
 import { formatMoneyString } from '@/lib/money'
-import { fmtDate, fmtRange } from '@/lib/format'
+import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
 import PeriodControl from '@/components/dashboard/PeriodControl'
+import PartialMonths from '@/components/dashboard/PartialMonths'
 import Unassessed from '@/components/dashboard/Unassessed'
 import Honesty, { Doubted } from '@/components/Honesty'
 import GapCell from '@/components/kitchen/GapCell'
@@ -126,8 +127,15 @@ export default async function DepartmentPage({
   const dept = await getDepartment(restaurant.id, raw)
   if (dept === null) notFound()
 
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, await businessToday())
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+
+  // one place rather than in twelve hand-written ternaries.
+
+  const periodToday = await businessToday()
+
+  const periodReq = readPeriodParam(periodParam, periodToday)
+
+  const period = resolvePeriod(periodReq.param, periodToday)
 
   // Two batched transactions plus the shared readers, rather than ten separate
   // ones: each `tsql` is BEGIN + SET LOCAL + the query + COMMIT, which is three
@@ -270,14 +278,21 @@ export default async function DepartmentPage({
           </p>
         </div>
         <div className="shrink-0 text-right">
-          <PeriodControl active={periodKey} basePath={`/kitchen/departments/${dept.code}`} />
-          {/* the preset AND the range it resolved to: "This month" alone leaves
-              the reader guessing whether it ends today or at month end */}
-          <p className="mt-1.5 text-xs text-stone-500">
-            {period.label} · {fmtRange(period.from, period.to)}
-          </p>
+          {/* the range in words comes from the control itself now, so every
+              one of its twelve mounts states what it covers rather than only
+              this one */}
+          <PeriodControl
+            period={period}
+            error={periodReq.error}
+            basePath={`/kitchen/departments/${dept.code}`}
+          />
         </div>
       </header>
+
+      {/* the monthly cards below (food cost) cover whole months; a range with a
+          partial edge says so rather than letting one heading cover two
+          different questions */}
+      <PartialMonths period={period} />
 
       {unassessable.length > 0 && (
         <Unassessed

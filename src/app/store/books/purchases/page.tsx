@@ -2,7 +2,7 @@ import { getRestaurant } from '@/server/queries'
 import { getDailyPurchases } from '@/server/reports-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import {
   cardCls, dataTableCls, pageSubCls, pageTitleCls, sectionHeadCls,
   tdCls, tdCodeCls, tdNumCls, thCls, thNumCls, trCls,
@@ -22,8 +22,11 @@ export default async function DailyPurchasesPage({
   searchParams: Promise<{ period?: string }>
 }) {
   const { period: periodParam } = await searchParams
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, await businessToday())
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+  // one place rather than in twelve hand-written ternaries.
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
   const restaurant = await getRestaurant()
   const rows = await getDailyPurchases(restaurant.id, period.from, period.to)
 
@@ -40,7 +43,7 @@ export default async function DailyPurchasesPage({
       </header>
 
       <div className="pb-4">
-        <PeriodControl active={periodKey} basePath="/store/books/purchases" />
+        <PeriodControl period={period} error={periodReq.error} basePath="/store/books/purchases" />
       </div>
 
       {rows.length === 0 ? (

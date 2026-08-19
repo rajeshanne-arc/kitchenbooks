@@ -13,7 +13,7 @@ import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
 import { getVendorDetail } from '@/server/books-queries'
 import { getVendorStatement } from '@/server/register-queries'
-import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { RetiredBadge } from '@/components/books/Badges'
@@ -47,9 +47,12 @@ export default async function VendorStatementPage({
   const { id } = await params
   if (!UUID.test(id)) notFound()
   const { period: periodParam } = await searchParams
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
   const today = await businessToday()
-  const period = resolvePeriod(periodKey, today)
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+  // one place rather than in twelve hand-written ternaries.
+  const periodToday = today
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
 
   const restaurant = await getRestaurant()
   const vendor = await getVendorDetail(restaurant.id, id)
@@ -110,7 +113,7 @@ export default async function VendorStatementPage({
       </header>
 
       <div className="flex flex-wrap items-center gap-2 pb-4 print:hidden">
-        <PeriodControl active={periodKey} basePath={`/accounts/parties/${id}`} />
+        <PeriodControl period={period} error={periodReq.error} basePath={`/accounts/parties/${id}`} />
         <PrintButton label="Print statement" />
       </div>
 

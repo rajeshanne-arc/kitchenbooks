@@ -3,7 +3,7 @@ import { getRestaurant } from '@/server/queries'
 import { getActivityFacets, getActivityLog } from '@/server/reports-queries'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
-import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { periodParamValue, readPeriodParam, resolvePeriod } from '@/lib/period'
 import {
   cardCls,
   dataTableCls,
@@ -46,8 +46,11 @@ export default async function ActivityPage({
   searchParams: Promise<{ period?: string; who?: string; what?: string }>
 }) {
   const { period: periodParam, who, what } = await searchParams
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, await businessToday())
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+  // one place rather than in twelve hand-written ternaries.
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
   const restaurant = await getRestaurant()
 
   const [rows, facets] = await Promise.all([
@@ -62,7 +65,8 @@ export default async function ActivityPage({
 
   const q = (extra: Record<string, string | undefined>) => {
     const p = new URLSearchParams()
-    if (periodKey !== 'this-month') p.set('period', periodKey)
+    const pv = periodParamValue(periodReq.param)
+    if (pv !== 'this-month') p.set('period', pv)
     const merged = { who, what, ...extra }
     for (const [k, v] of Object.entries(merged)) if (v !== undefined && v !== '') p.set(k, v)
     const s = p.toString()
@@ -81,7 +85,7 @@ export default async function ActivityPage({
       </header>
 
       <div className="space-y-3 pb-4">
-        <PeriodControl active={periodKey} basePath="/owner/activity" />
+        <PeriodControl period={period} error={periodReq.error} basePath="/owner/activity" />
 
         {facets.people.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">

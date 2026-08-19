@@ -22,7 +22,6 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { setInputTaxCreditable } from '@/server/accountant-actions'
-import type { PeriodKey } from '@/lib/period'
 import { formatMoneyString, formatPaise } from '@/lib/money'
 import Honesty from '@/components/Honesty'
 import { cardCls, heroNumCls, sectionHeadCls } from '@/components/ui'
@@ -35,7 +34,7 @@ export default function InputTaxPanel({
   outputTaxPaise,
   saleDays,
   setting,
-  periodKey,
+  periodValue,
 }: {
   taxable: string
   tax: string
@@ -47,7 +46,9 @@ export default function InputTaxPanel({
   saleDays: number
   /** the raw setting: null means nobody has answered, which is its own fact */
   setting: string | null
-  periodKey: PeriodKey
+  /** the ?period= value to carry forward — a preset key OR a custom range,
+   *  which is why it arrives already serialised rather than as a PeriodKey */
+  periodValue: string
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
@@ -127,7 +128,7 @@ export default function InputTaxPanel({
           From {bills} {bills === 1 ? 'bill' : 'bills'} totalling {formatMoneyString(taxable)}{' '}
           before tax.{' '}
           <Link
-            href={`/accounts/registers/purchase?period=${periodKey}`}
+            href={`/accounts/registers/purchase?period=${periodValue}`}
             className="underline underline-offset-2 hover:text-stone-700"
           >
             The purchase register

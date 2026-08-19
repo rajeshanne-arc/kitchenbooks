@@ -3388,3 +3388,144 @@ decision about what a section head sees on a shared screen like the kitchen
 dashboard. Do not add a `section_id` to `app_users` as a shortcut — a person can
 plausibly run two departments, and a column would make that unrepresentable the
 day it matters.
+
+## The period control: three presets, and now a range
+
+**THE STATE BEFORE THIS CHANGE, since it was misremembered three times.** The
+control offered exactly **three** presets — `this-month · last-month ·
+last-3-months` — and never a fourth. It did **not** persist: zero occurrences of
+`localStorage` or `sessionStorage` in the repo, no layout threading it, no
+context, no rewrite. The choice lived only in `?period=` on the page you were
+standing on, deliberately, so a link survives a bookmark and a WhatsApp paste.
+It was mounted in **eleven** places (twelve surfaces read `?period=`, counting
+`/accounts/registers` forwarding into its child and the CSV export route).
+
+### A SIBLING UNION, not a wider one
+
+`PeriodParam = PeriodKey | CustomPeriod`. Widening `PeriodKey` itself would have
+broken the two `Record<PeriodKey, string>` maps — `PERIOD_LABELS` and the
+control's own `LABELS` — neither of which can be keyed by an open type, and it
+would have forced `isPeriodKey` to admit more than its three-string whitelist.
+As a sibling, every existing export is untouched.
+
+**THE CUSTOM BRANCH RETURNS FIRST, and that placement is the whole risk.**
+`PERIOD_LABELS[key]` runs unconditionally before any branch and would hand a
+range `undefined` as its label; and `this-month` was reached by *falling
+through* rather than by an `if`. A custom branch added in the obvious place —
+beside the other two — returns a **this-month range wearing a custom key**: the
+URL says 15 July to 17 August, every figure on the page is August, nothing
+throws and nothing looks wrong. The fall-through is now an explicit branch so
+the next key added cannot inherit it.
+
+### One front door, twelve callers
+
+Twelve surfaces carried the identical ternary `isPeriodKey(v) ? v :
+'this-month'`. Turning twelve hand-written two-branch ternaries into twelve
+hand-written three-branch ones is twelve chances to get precedence wrong, so
+there is one `readPeriodParam(v, today)` and they all call it. A gate sweeps
+`src/app` and `src/components` and fails if `isPeriodKey` reappears in either.
+
+**A REFUSAL IS NAMED, NOT SWALLOWED.** A reversed range says *"The start
+(2026-08-17) is later than the end (2026-08-01) — swap them"* and shows this
+month meanwhile. Silently swapping would answer a question nobody asked and the
+person would never learn they had typed it backwards.
+
+`isDate` was **lifted from the payroll runs page rather than rewritten**, and
+the ISO round trip is the load-bearing half: measured, `'2026-02-31'` rolls
+**silently** to 2026-03-03 — a wrong range that renders perfectly — while
+`'2026-13-01'`, `'2026-8-1'` and `'not-a-date'` make `iso()` throw a
+`RangeError`, which on this path is a 500 on twelve pages.
+
+**A future END clamps; a future START is refused.** Both presets that can run
+past today already clamp, and a period must never report days that have not
+happened. The span cap is measured against the **clamped** end — otherwise
+"1 Aug to the end of time" is refused as too long when it is nineteen days.
+**Thirteen months, refused and never truncated:** `months` feeds
+`month = any($1::date[])` while `from`/`to` feed the event tables, so
+truncating one and not the other makes the monthly cards sum a different set of
+months than the range covers — the exact disagreement `period.ts` exists to
+forbid.
+
+### The one genuinely new lie, and where it is said
+
+`months` and `reportMonth` keep their meaning: every calendar month the range
+touches, and the last of them. They have to — `section_costs` is a join of
+whole-month aggregates and `section_food_cost` takes its opening from the last
+closing *before* the month. **There is no part-month form of those numbers.**
+
+A range starting mid-month therefore makes the monthly cards cover days the
+owner explicitly excluded. `partialEdges(p)` derives that from fields `Period`
+already has, so no consumer learns a second shape, and `<PartialMonths>` says it
+in words on the two pages that read monthly views. **It fires on a partial HEAD
+only** — `this-month` has a partial tail every day of its life, and a strip
+that is always there is one people learn to look past.
+
+### THE BUSINESS-DAY VERDICT: it was already right, and here is why
+
+**A period range means BUSINESS DAYS today, throughout.** The feared
+discrepancy does not exist, and the reason is worth keeping so nobody re-hunts
+it: all twelve call sites anchor on `await businessToday()`, `grep -rn "new
+Date()" src/` returns **zero** hits, `useBusinessDay()` throws rather than
+falling back to the browser clock, and every column a period compares against is
+an app-supplied business date. A sweep of all 62 views for a timestamp truncated
+to a date found none. **Both sides of every comparison are already business
+dates, so the 00:00–05:00 window is folded onto the correct day before any
+comparison happens.**
+
+Verified by value: cutover 05:00 Asia/Kolkata, and 18 Aug 00:04 / 00:21 / 01:35
+/ 04:59 IST all carry business date **17 Aug**. Rung up at 00:04 on 1 September,
+a business anchor gives 1–31 Aug and includes the sale; a calendar anchor would
+have shown an empty September while the kitchen was still mid-service.
+
+**Three real edge faults exist, none of them that one.** Named so they are not
+re-hunted: `pos_orders.business_date` carries **Petpooja's** cutover, not ours,
+and `day_close_ladder` joins the two definitions directly — unverifiable while
+`pos_orders` is empty, and an empty `business_day_disagreements` is *not*
+agreement. `slow_moving_stock` and `section_frequent_items` key on
+`CURRENT_DATE` under a UTC session, disagreeing with the business day for thirty
+minutes a day; neither is period-scoped, and fixing them is a migration.
+
+**And one that this change made material, so it was fixed here:**
+`getSettlementGap` required a settlement to sit **wholly inside** the period
+(`period_start >= from AND period_end <= to`), so one straddling a boundary
+vanished from the gap card in silence. Three month-aligned presets rarely
+straddled anything; an arbitrary range straddles constantly. It is an overlap
+test now.
+
+### The equality proof, and gates that were proved able to fail
+
+**A golden table captured BEFORE the change**: 435 preset resolutions across 149
+anchors — every month boundary and mid-month over four years, both leap days,
+the January year-roll and the December→January roll — asserted field by field
+plus the *shape* of `Period`, so a field added for the custom case cannot slip
+into a preset return. **0 differ.**
+
+The seven checks that existed were structurally insufficient: they never
+asserted `label` at all, never asserted `PERIOD_KEYS`' contents or order (only
+`.length === 3`, which cannot see a reorder), and never asserted `last-month`'s
+`reportMonth`. Proved by perturbing exactly that: changing `last-month`'s
+`reportMonth` now fails with `last-month@2024-01-01 changed`, and it shipped
+green before.
+
+The `basePath` gate was proved the same way — pointing `/store`'s control at a
+dead path named the file. **No gate read this control at all** before:
+`audit:matrix` matches only hrefs with a literal leading `/` and the control's
+href opens with an interpolation, and `audit:schema`/`audit:tenancy` never walk
+`src/lib`.
+
+### The rogue list — reported, not quietly given a second picker
+
+Surfaces with a period that is **not** on the shared control:
+
+| surface | how it scopes | verdict |
+|---|---|---|
+| `/kitchen` | fixed `businessMonthStart()` | **should adopt** — its two siblings `/store` and `/sales` both have the control, so the three group dashboards answer over different scopes depending on which one you stand in |
+| `/kitchen/books/food-cost` | fixed month | should adopt, reporting `reportMonth` named on screen |
+| `/kitchen/books/sections` (`SectionsView`) | fixed month | should adopt — `/owner` already reads the same `section_costs` period-scoped |
+| `/staff/money-out/expense` | fixed month ×4 | partly — it is the **entire reporting surface of the staff group**, which has no dashboard and no period control on any route |
+| `/sales/partners` | **lifetime sums**, `effective_pct` blended across all time | should adopt — the owner dashboard reads the same data period-scoped |
+| `/accounts/payroll/runs`, `/accounts/close` | own `from`/`to` inputs | **legitimately different** — they write an arbitrary period into a document, where "last 3 months" is meaningless. Both duplicate a `lastMonth()` helper verbatim |
+| `/staff/people/attendance`, `/sales/record/close` | one day | legitimately different |
+| the `/sales/record/*` entry screens | fixed month or 20-row cap | legitimately different — the month is context beside a form |
+
+None of these was given a picker in this change.

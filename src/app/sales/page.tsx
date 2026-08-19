@@ -6,7 +6,7 @@ import { getGstServiceByDay } from '@/server/reports-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
-import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import {
   cardCls, heroNumCls, pageSubCls, pageTitleCls, sectionHeadCls,
 } from '@/components/ui'
@@ -42,8 +42,11 @@ export default async function SalesDashboard({
   searchParams: Promise<{ period?: string }>
 }) {
   const { period: periodParam } = await searchParams
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, await businessToday())
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+  // one place rather than in twelve hand-written ternaries.
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
   const restaurant = await getRestaurant()
 
   const [series, yesterday, unmapped, missing, gst, everFetched] = await Promise.all([
@@ -134,7 +137,7 @@ export default async function SalesDashboard({
       </div>
 
       <div className="pb-4">
-        <PeriodControl active={periodKey} basePath="/sales" />
+        <PeriodControl period={period} error={periodReq.error} basePath="/sales" />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">

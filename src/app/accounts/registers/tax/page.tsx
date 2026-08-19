@@ -21,7 +21,7 @@ import { getRestaurant } from '@/server/queries'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getGstDays, getInputTax, listWithholdings } from '@/server/register-queries'
 import { getSettingValue } from '@/server/settings'
-import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { periodParamValue, readPeriodParam, resolvePeriod } from '@/lib/period'
 import { decimalStringToPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import PeriodControl from '@/components/dashboard/PeriodControl'
@@ -39,9 +39,12 @@ export default async function TaxPage({
   searchParams: Promise<{ period?: string }>
 }) {
   const { period: periodParam } = await searchParams
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
   const today = await businessToday()
-  const period = resolvePeriod(periodKey, today)
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+  // one place rather than in twelve hand-written ternaries.
+  const periodToday = today
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
 
   const restaurant = await getRestaurant()
   // one fan-out, not four awaits — the pool is shared with the group layout
@@ -79,7 +82,7 @@ export default async function TaxPage({
       </p>
 
       <div className="pb-4">
-        <PeriodControl active={periodKey} basePath="/accounts/registers/tax" />
+        <PeriodControl period={period} error={periodReq.error} basePath="/accounts/registers/tax" />
       </div>
 
       <div className="space-y-4">
@@ -92,7 +95,7 @@ export default async function TaxPage({
           outputTaxPaise={totals.tax}
           saleDays={days.length}
           setting={creditableSetting}
-          periodKey={periodKey}
+          periodValue={periodParamValue(periodReq.param)}
         />
 
         <WithholdingsPanel rows={withholdings} today={today} accounts={accounts} />

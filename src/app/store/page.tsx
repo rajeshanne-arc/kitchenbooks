@@ -7,7 +7,7 @@ import { listIndents } from '@/server/kitchen-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
-import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import {
   cardCls,
   dataTableCls,
@@ -52,9 +52,12 @@ export default async function StoreHome({
   searchParams: Promise<{ period?: string }>
 }) {
   const { period: periodParam } = await searchParams
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
   const today = await businessToday()
-  const period = resolvePeriod(periodKey, today)
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+  // one place rather than in twelve hand-written ternaries.
+  const periodToday = today
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
 
   const restaurant = await getRestaurant()
   const [
@@ -156,7 +159,7 @@ export default async function StoreHome({
       </div>
 
       <div className="pb-4">
-        <PeriodControl active={periodKey} basePath="/store" />
+        <PeriodControl period={period} error={periodReq.error} basePath="/store" />
       </div>
 
       {/* what needs doing right now, above everything measured */}

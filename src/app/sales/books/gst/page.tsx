@@ -2,7 +2,7 @@ import { getRestaurant } from '@/server/queries'
 import { getGstServiceByDay } from '@/server/reports-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { isPeriodKey, resolvePeriod, type PeriodKey } from '@/lib/period'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import {
   cardCls,
   dataTableCls,
@@ -41,8 +41,11 @@ export default async function GstPage({
   searchParams: Promise<{ period?: string }>
 }) {
   const { period: periodParam } = await searchParams
-  const periodKey: PeriodKey = isPeriodKey(periodParam) ? periodParam : 'this-month'
-  const period = resolvePeriod(periodKey, await businessToday())
+  // ONE front door for ?period=, so preset/custom precedence is decided in
+  // one place rather than in twelve hand-written ternaries.
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
   const restaurant = await getRestaurant()
   const rows = await getGstServiceByDay(restaurant.id, period.from, period.to)
 
@@ -63,7 +66,7 @@ export default async function GstPage({
       </header>
 
       <div className="pb-4">
-        <PeriodControl active={periodKey} basePath="/sales/books/gst" />
+        <PeriodControl period={period} error={periodReq.error} basePath="/sales/books/gst" />
       </div>
 
       <p className="mb-4 rounded-xl border border-rule bg-stone-50 px-3 py-2 text-sm text-stone-700">

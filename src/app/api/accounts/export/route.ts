@@ -10,7 +10,7 @@ import { getRestaurant } from '@/server/queries'
 import { getRegister, isRegisterKey, REGISTER_TITLES } from '@/server/register-queries'
 import { canAccess } from '@/lib/roles'
 import { csvFilename, toCsv } from '@/lib/csv'
-import { isPeriodKey, resolvePeriod } from '@/lib/period'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
@@ -26,7 +26,11 @@ export async function GET(request: Request) {
   if (!isRegisterKey(key)) return new NextResponse('Unknown register', { status: 400 })
 
   const periodParam = url.searchParams.get('period') ?? ''
-  const period = resolvePeriod(isPeriodKey(periodParam) ? periodParam : 'this-month', await businessToday())
+  // The CSV must cover exactly what the screen covered — the register page
+  // carries its ?period= into this href, custom range included, so the same
+  // front door reads it here.
+  const today = await businessToday()
+  const period = resolvePeriod(readPeriodParam(periodParam, today).param, today)
 
   const restaurant = await getRestaurant()
   const rows = await getRegister(restaurant.id, key, period.from, period.to)
