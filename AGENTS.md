@@ -4853,10 +4853,30 @@ apply; with RLS off there is nothing to apply. So the second migration fixed
 the visible half and bought nothing, and only tier 3 — which walks the tables
 — said so.
 
-Nothing has leaked: the tables hold zero rows everywhere, and every read the
-app makes names its tenant. **That is the app's discipline, not the database's
-backstop**, which is the exact state the whole RLS phase existed to leave
-behind. It also means the tier-2 keyed-read exemption is NOT safe on these
+Nothing leaked — **and the reason was emptiness, not discipline.** I first wrote
+here that the app was "protected by its own discipline", and that understated
+it. Measured afterwards: `anon`, `authenticated` and `service_role` each hold
+`arwdDxtm` — *every* privilege — on all 72 public tables, granted directly by
+`postgres`, which is Supabase's default and the same pattern this file already
+records for FUNCTIONS. `anon` is the role behind the project's **public** API
+key, and PostgREST is live (`/rest/v1/` answers 401).
+
+So a tenant table with no RLS is not "guarded by careful queries". It is
+**readable and writable through a key designed to be public**, and those three
+tables sat in that state for as long as they existed. They held zero rows, so
+there was nothing to take.
+
+What contains it is narrow and worth knowing rather than assuming: `anon` and
+`authenticated` are **NOLOGIN**, so they are reachable only through PostgREST,
+which issues SELECT/INSERT/UPDATE/DELETE — all RLS-filtered — and cannot
+TRUNCATE, which is the one privilege RLS does not filter. All 68 tenant tables
+are enabled + forced + policied. The only tables `anon` can actually read are
+`categories`, `units` and `starter_library`: global reference data with no
+`restaurant_id` at all.
+
+**Which makes tier 3 of `audit:tenancy` the wall, not a second opinion.** It is
+the only thing standing between a table and the open internet, and that is a
+sharper stake than the one written here yesterday. It also means the tier-2 keyed-read exemption is NOT safe on these
 three: `where id = $1` alone crosses the boundary today. Every query in
 `meters-queries.ts` names `restaurant_id` explicitly and says why in a comment.
 
@@ -5066,6 +5086,62 @@ belong with the decision: `kb_app` holds INSERT + SELECT and **no DELETE**, so
 an attachment row cannot be removed once written (only its `caption` is
 updatable); and the table has no RLS until the migration above is applied.
 
+## A PRIVILEGE CHECK THAT LOOKS IN THE OBVIOUS PLACE IS NOT A PRIVILEGE CHECK
+
+Three times now, and it is a family rather than three incidents:
+
+| The natural query | What it could not answer |
+|---|---|
+| `column_privileges` | DELETE, which is a TABLE privilege and never appears there |
+| `revoke … from public` | Supabase's EXPLICIT grants to `anon` / `authenticated` / `service_role`, which survive it |
+| `table_privileges` says INSERT | whether the SEQUENCE behind a `serial` default can be reached |
+
+**The general form: each time, the authoritative fact lived somewhere the
+natural query does not reach — and each time it was found by EXERCISING the
+path, never by reading it.** A screen was built saying a match was permanent; a
+function believed private answered the anon key; an INSERT grant that was
+genuinely present still refused every insert. In all three the obvious
+catalogue answered confidently and answered the wrong question.
+
+So: when a privilege matters, **make the path run**. `has_table_privilege`,
+`has_sequence_privilege` and `has_function_privilege` answer what a role can
+actually do, where `information_schema` answers what was written down about it;
+and better than either is a probe that performs the operation and observes the
+refusal.
+
+**And the preference that removes the third one entirely: `GENERATED ALWAYS AS
+IDENTITY` needs no separate grant**, because the sequence is reached through
+the table's own INSERT privilege. `serial` and `bigserial` call `nextval()`
+from a column default and therefore need one. Two spellings of the same
+intention; prefer the one with nothing to forget.
+
+### The gate states its exemption instead of filtering it
+
+`smoke:a2` walks every column in the schema whose default is a `nextval()`, and
+the passing condition is a DISJUNCTION said out loud: **the sequence is
+reachable, OR the role has no INSERT on that table.** `starter_library.id` is
+the second case — global read-only reference data, `kb_app` holds SELECT only —
+and it is PRINTED as exempt rather than dropped by a `where` clause.
+
+Both halves matter. Filtering it out would have worked and left nobody able to
+see that it had been considered; leaving it in as a failure would have made the
+gate show one permanent red line, **and a gate that always shows one failure is
+a gate people stop reading.** A second assertion requires that at least one
+sequence-backed column sits on a table `kb_app` CAN insert into, so the
+disjunction can never be satisfied by its exempt half alone — proved by forcing
+that half and watching the gate name it.
+
+## The rulings, confirmed
+
+- **The tie sharpening stands.** Proving that a row stamped LATER IN TIME beats
+  one merely inserted later is the assertion that catches an
+  `order by seq desc` alone; the tie and tiebreak checks both pass under that
+  regression, and only the ordering check fails.
+- **Deleting the RLS scaffolding check was right.** It held pressure on an
+  unapplied migration. Tier 3 of `audit:tenancy` is the permanent home, and a
+  second implementation beside it is a copy that can drift — the same reasoning
+  as the vendor-return refusal flag, which was deleted rather than flipped.
+
 ## The two rulings — decided
 
 **Attachments: Vercel Blob with OIDC. APPROVED.** The argument that decided it
@@ -5073,7 +5149,13 @@ is not convenience: a Supabase `sb_secret_…` key is the documented replacement
 for `service_role`, which bypasses RLS project-wide — a master key to every
 restaurant's books, `app_users` included, introduced in order to store a
 photograph of a meter. No documented way to scope one to Storage alone means no
-acceptable version of that trade. **Check an ap-south region is offered before
+acceptable version of that trade.
+
+**Measured on this database rather than quoted from the docs:
+`service_role` carries `rolbypassrls = true`.** It is NOLOGIN, so it is
+reachable only through PostgREST — which is exactly what a leaked
+`sb_secret_…` key reaches. Every policy on all 68 tenant tables is skipped for
+it, by the role's own attribute, in `pg_roles`. **Check an ap-south region is offered before
 creating the store** — non-blocking, since photo upload latency is not critical,
 but know it rather than discover it.
 

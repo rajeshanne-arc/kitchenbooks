@@ -4906,57 +4906,70 @@ async function run() {
   /* ── grants that a write path silently depends on ──────────────────── */
   console.log('\ngrants: every insert path can reach the sequence behind it')
 
-  await check('kb_app can USE every sequence its INSERT grants depend on', async () => {
+  await check('every sequence-backed INSERT path can reach its sequence', async () => {
     // FOUND BY A GATE GOING RED, and it was a live production break rather
     // than a test failure: `permission denied for sequence
     // meter_readings_seq_seq`.
     //
     // `bigserial` is not a type. It is a bigint whose DEFAULT calls nextval()
-    // on a sequence created as a side effect, and **a role needs USAGE on
-    // that sequence to insert the row**. Adding `seq` to attendance,
-    // day_closes, kitchen_closings and meter_readings therefore broke every
-    // insert into all four — attendance marking, the nightly day close,
-    // kitchen closings and meter readings, which is a restaurant's whole
-    // evening — and it broke at the moment of SAVING, after the sheet had
-    // been keyed.
+    // on a sequence created as a side effect, and **a role needs USAGE on that
+    // sequence to insert the row**. Adding `seq` to attendance, day_closes,
+    // kitchen_closings and meter_readings therefore broke every insert into
+    // all four — attendance marking, the nightly day close, kitchen closings
+    // and meter readings, a restaurant's whole evening — and it broke at the
+    // moment of SAVING, after the sheet had been keyed.
     //
-    // `GENERATED ALWAYS AS IDENTITY` would have needed no grant: an identity
+    // `GENERATED ALWAYS AS IDENTITY` needs no separate grant: an identity
     // column's sequence is reached through the table's own INSERT privilege.
-    // Two spellings of one intention, one of which quietly needs a second
-    // grant, and nothing in `information_schema.table_privileges` shows the
-    // difference — which is why this is asked of pg_depend instead.
+    // That spelling removes this failure entirely, and is the one to prefer.
     //
-    // THE CLASS, NOT THE INSTANCE: every table kb_app may INSERT into, every
-    // column of it whose default is a nextval(), and whether kb_app may use
-    // that sequence.
-    const rows = await tsql<{ table_name: string; column_name: string; sequence_name: string; usage: boolean }[]>`
-      select t.table_name, a.attname as column_name, s.relname as sequence_name,
+    // THE PASSING CONDITION IS A DISJUNCTION, and it is stated rather than
+    // achieved by filtering: a column is fine if its sequence is REACHABLE, or
+    // if the role has NO INSERT on the table at all. `starter_library.id` is
+    // the second case — global read-only reference data, SELECT only — and it
+    // is printed as exempt rather than dropped from the query, so a reader can
+    // see it was considered. A gate that always shows one failure is a gate
+    // people stop reading; a gate that silently filters is one nobody can
+    // check.
+    const rows = await tsql<{
+      tbl: string; col: string; seq: string; ins: boolean; usage: boolean
+    }[]>`
+      select c.relname as tbl, a.attname as col, s.relname as seq,
+             has_table_privilege('kb_app', c.oid, 'INSERT') as ins,
              has_sequence_privilege('kb_app', s.oid, 'USAGE') as usage
-      from information_schema.table_privileges t
-      join pg_class c on c.relname = t.table_name
+      from pg_class c
       join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
       join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
       join pg_attrdef d on d.adrelid = c.oid and d.adnum = a.attnum
       join pg_depend dep on dep.refobjid = c.oid and dep.refobjsubid = a.attnum
                         and dep.classid = 'pg_class'::regclass and dep.deptype = 'a'
       join pg_class s on s.oid = dep.objid and s.relkind = 'S'
-      where t.grantee = 'kb_app' and t.privilege_type = 'INSERT' and t.table_schema = 'public'
-        and pg_get_expr(d.adbin, d.adrelid) like 'nextval%'
+      where c.relkind = 'r' and pg_get_expr(d.adbin, d.adrelid) like 'nextval%'
       order by 1, 2`
-    // It must be capable of failing: a schema with no sequence-backed insert
-    // path would pass this vacuously, and that is not the same as safe.
+    // Capable of failing: a schema with no sequence-backed column would pass
+    // this vacuously, and vacuous is not the same as safe.
     assert.ok(
       rows.length > 0,
-      'no INSERT path is backed by a sequence — this check found nothing to check and cannot fail',
+      'no column anywhere defaults to a nextval() — this check found nothing to check and cannot fail',
     )
-    const broken = rows.filter((r) => !r.usage)
+    const writable = rows.filter((r) => r.ins)
+    assert.ok(
+      writable.length > 0,
+      'no sequence-backed column sits on a table kb_app may INSERT into — the disjunction is satisfied only by its exempt half, so a broken grant could not show up here',
+    )
+    const broken = writable.filter((r) => !r.usage)
     assert.deepEqual(
-      broken.map((r) => `${r.table_name}.${r.column_name} -> ${r.sequence_name}`),
+      broken.map((r) => `${r.tbl}.${r.col} -> ${r.seq}`),
       [],
-      'kb_app cannot use the sequence behind these columns, so every insert into those tables is refused ' +
-        '— apply migrations/kb_app_sequence_usage.sql',
+      'kb_app may INSERT into these tables and cannot use the sequence behind them, so every insert is refused',
     )
-    console.log(`      ${rows.length} sequence-backed insert path(s), all reachable`)
+    const exempt = rows.filter((r) => !r.ins)
+    console.log(
+      `      ${writable.length} reachable` +
+        (exempt.length > 0
+          ? ` · ${exempt.length} exempt, no INSERT: ${exempt.map((r) => `${r.tbl}.${r.col}`).join(', ')}`
+          : ''),
+    )
   })
 
   /* ── meters ────────────────────────────────────────────────────────── */
