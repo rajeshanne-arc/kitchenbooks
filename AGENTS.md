@@ -4853,26 +4853,23 @@ apply; with RLS off there is nothing to apply. So the second migration fixed
 the visible half and bought nothing, and only tier 3 — which walks the tables
 — said so.
 
-Nothing leaked — **and the reason was emptiness, not discipline.** I first wrote
-here that the app was "protected by its own discipline", and that understated
-it. Measured afterwards: `anon`, `authenticated` and `service_role` each hold
+**THE RECORDED VERSION, and it corrects what was first written here.** I wrote
+that these tables were "protected by the app's discipline". That was wrong.
+
+> **They were reachable through a key designed to be PUBLISHED, and what
+> protected them was that they held zero rows. RLS is the wall; a table without
+> it has no wall.**
+
+Measured afterwards: `anon`, `authenticated` and `service_role` each held
 `arwdDxtm` — *every* privilege — on all 72 public tables, granted directly by
-`postgres`, which is Supabase's default and the same pattern this file already
-records for FUNCTIONS. `anon` is the role behind the project's **public** API
-key, and PostgREST is live (`/rest/v1/` answers 401).
+`postgres`. That is Supabase's default and the same pattern this file already
+records for FUNCTIONS. `anon` is the role behind the project's public API key,
+and PostgREST is live (`/rest/v1/` answers 401).
 
-So a tenant table with no RLS is not "guarded by careful queries". It is
-**readable and writable through a key designed to be public**, and those three
-tables sat in that state for as long as they existed. They held zero rows, so
-there was nothing to take.
-
-What contains it is narrow and worth knowing rather than assuming: `anon` and
-`authenticated` are **NOLOGIN**, so they are reachable only through PostgREST,
-which issues SELECT/INSERT/UPDATE/DELETE — all RLS-filtered — and cannot
-TRUNCATE, which is the one privilege RLS does not filter. All 68 tenant tables
-are enabled + forced + policied. The only tables `anon` can actually read are
-`categories`, `units` and `starter_library`: global reference data with no
-`restaurant_id` at all.
+What contained it was narrow and is worth knowing rather than assuming: `anon`
+and `authenticated` are **NOLOGIN**, reachable only through PostgREST, which
+issues SELECT/INSERT/UPDATE/DELETE — all RLS-filtered — and cannot TRUNCATE,
+which is the one privilege RLS does not filter.
 
 **Which makes tier 3 of `audit:tenancy` the wall, not a second opinion.** It is
 the only thing standing between a table and the open internet, and that is a
@@ -5085,6 +5082,72 @@ has been chosen**, so no UI exists — see the written proposal. Two facts that
 belong with the decision: `kb_app` holds INSERT + SELECT and **no DELETE**, so
 an attachment row cannot be removed once written (only its `caption` is
 updatable); and the table has no RLS until the migration above is applied.
+
+## anon and authenticated hold NOTHING — and the gate is green, not red
+
+`revoke_anon_authenticated_everything`. Both roles now hold zero privileges on
+every table, sequence and function in `public`, **and ALTER DEFAULT PRIVILEGES
+is revoked for `postgres`** — which was the real recurrence risk, because
+default privileges decide what a table gets the moment it is CREATED, so
+without that the next migration would have quietly handed it all back.
+
+**THIS IS THE ASSERTION THAT WAS CORRECTLY NOT WRITTEN YESTERDAY.** Yesterday it
+could only have been red, and a permanently red gate is one people stop
+reading. Today it is the honest state, which is exactly when a state is worth
+freezing. Two checks in `smoke:a2`:
+
+1. **zero grants to either role on any relation or function in `public`** — plus
+   `kb_app` still holding its own, because a revoke can go too wide and every
+   screen in the app would go blank;
+2. **no role that OWNS anything in `public` has default privileges granting to
+   them.** `postgres` owns all 72 app tables and its defaults now name only
+   `service_role`. `supabase_admin` still grants both and **owns nothing here**,
+   so it is printed as exempt rather than filtered — and it stops being exempt
+   automatically the day it creates its first table, which is precisely when it
+   would begin to matter.
+
+That second check is the sequence gate's disjunction again: **state the
+exemption, show it, and let the condition that makes it exempt be the thing
+that expires.**
+
+Both scoped to `public`. Supabase's `storage`, `graphql`, `graphql_public` and
+`auth` schemas still grant both roles plenty and must — that is how Storage and
+the GraphQL endpoint work — so a database-wide assertion would be permanently
+red for reasons nobody here may fix.
+
+**LEFT OPEN, DELIBERATELY: both still hold schema USAGE via PUBLIC.** Removing
+it means revoking from PUBLIC and re-granting explicitly, and what that breaks
+in Supabase's internals cannot be tested from here. With no table privileges it
+lets them resolve names and read nothing.
+
+**`service_role` IS UNDECIDED and is Rajesh's call** — see
+`docs/service-role-decision.md`. It holds SELECT and DELETE on 147/147
+relations AND `rolbypassrls`, so a leaked `sb_secret_…` key is total access to
+every restaurant's books, reads and deletes alike: **the append-only guarantee
+this whole ledger rests on does not apply to that key.** Nothing in the project
+consumes it — no edge functions, no webhooks, no HTTP-calling triggers, no
+pg_cron, zero non-internal triggers in `public`, and this app has no Supabase
+SDK — so the only plausible consumer is Supabase's own Dashboard, which cannot
+be tested from here.
+
+## A BAD TEST THAT FAILS INFORMATIVELY BEATS A GOOD TEST THAT PASSES
+
+The whole grant surface above was found by a perturbation that **failed for the
+wrong reason**.
+
+Proving the sequence gate could fail, I pointed its privilege check at `anon`,
+expecting a role that obviously lacks USAGE — and the gate **passed**. The
+first reading was "the gate is broken". It was not: `anon` genuinely held
+USAGE, and INSERT, and DELETE, on everything. The premise was wrong, not the
+instrument, and chasing *why* the premise was wrong is what surfaced the entire
+default-grant surface, the exposure of three un-RLS'd tables to a published
+key, and `service_role`'s `rolbypassrls`.
+
+**A test that passes tells you one thing. A test that fails tells you which of
+your assumptions was false**, and that is worth more — especially when the
+assumption was one nobody had thought to write down. When a perturbation does
+not behave as expected, the useful question is not "how do I fix the test" but
+"what did I believe that is not true".
 
 ## A PRIVILEGE CHECK THAT LOOKS IN THE OBVIOUS PLACE IS NOT A PRIVILEGE CHECK
 

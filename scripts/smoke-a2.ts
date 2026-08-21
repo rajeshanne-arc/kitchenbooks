@@ -4906,6 +4906,109 @@ async function run() {
   /* ── grants that a write path silently depends on ──────────────────── */
   console.log('\ngrants: every insert path can reach the sequence behind it')
 
+  await check('anon and authenticated hold NOTHING in schema public', async () => {
+    // THE FREEZE. Yesterday this assertion could only have been red, so it was
+    // correctly not written: Supabase grants `anon`, `authenticated` and
+    // `service_role` every privilege on every table in `public` by default,
+    // directly from `postgres`, and `anon` is the role behind the project's
+    // PUBLISHED API key. `revoke_anon_authenticated_everything` closed it, and
+    // this is now the honest state — which is exactly when an assertion is
+    // worth having.
+    //
+    // SCOPED TO `public`, deliberately. Supabase's own `storage`, `graphql`,
+    // `graphql_public` and `auth` schemas still grant both roles plenty, and
+    // they must: that is how Storage and the GraphQL endpoint work. Asserting
+    // over the whole database would be permanently red for reasons nobody here
+    // may fix.
+    const rel = await tsql<{ relname: string; grantee: string; privilege_type: string }[]>`
+      select c.relname, g.rolname as grantee, a.privilege_type
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+      cross join lateral aclexplode(c.relacl) a
+      join pg_roles g on g.oid = a.grantee
+      where g.rolname in ('anon', 'authenticated')
+      order by 1, 2, 3`
+    const fn = await tsql<{ proname: string; grantee: string; privilege_type: string }[]>`
+      select p.proname, g.rolname as grantee, a.privilege_type
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace and n.nspname = 'public'
+      cross join lateral aclexplode(p.proacl) a
+      join pg_roles g on g.oid = a.grantee
+      where g.rolname in ('anon', 'authenticated')
+      order by 1, 2, 3`
+    assert.deepEqual(
+      rel.map((r) => `${r.relname}.${r.privilege_type} -> ${r.grantee}`),
+      [],
+      'a published API key can reach these relations again',
+    )
+    assert.deepEqual(
+      fn.map((r) => `${r.proname}() ${r.privilege_type} -> ${r.grantee}`),
+      [],
+      'a published API key can execute these functions again',
+    )
+
+    // A REVOKE CAN GO TOO WIDE. kb_app must still be able to work — if a
+    // future sweep strips it, every screen in the app goes blank and this is
+    // the cheapest place to notice.
+    const [kb] = await tsql<{ sel: number; ins: number }[]>`
+      select count(*) filter (where has_table_privilege('kb_app', c.oid, 'SELECT'))::int as sel,
+             count(*) filter (where has_table_privilege('kb_app', c.oid, 'INSERT'))::int as ins
+      from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind in ('r', 'v', 'm', 'p')`
+    assert.ok(kb.sel > 0 && kb.ins > 0, 'kb_app lost its own grants — a revoke went too wide')
+    console.log(`      0 grants to anon/authenticated in public · kb_app keeps SELECT ${kb.sel}, INSERT ${kb.ins}`)
+  })
+
+  await check('no OWNING role hands them back on the next object created', async () => {
+    // THE RECURRENCE RISK, and it is the half a current-state check misses:
+    // ALTER DEFAULT PRIVILEGES decides what a table gets the moment it is
+    // CREATED, so without this a new table would arrive wide open and the
+    // check above would only go red after the fact.
+    //
+    // THE SAME DISJUNCTION AS THE SEQUENCE GATE, and for the same reason. Two
+    // roles carry default privileges in `public`:
+    //
+    //   postgres        -> service_role only. anon and authenticated revoked.
+    //                      It owns all 72 app tables, so this is the one that
+    //                      decides what every migration creates.
+    //   supabase_admin  -> still grants anon and authenticated, and OWNS
+    //                      NOTHING in public. Supabase's, not ours to revoke.
+    //
+    // So the rule is: a role's defaults may grant to anon/authenticated only
+    // while it owns nothing here. supabase_admin is printed as exempt rather
+    // than filtered away — and it stops being exempt automatically the day it
+    // creates its first table, which is precisely when it would start to
+    // matter.
+    const rows = await tsql<{ for_role: string; grantee: string; owns: number }[]>`
+      select o.rolname as for_role, g.rolname as grantee,
+             (select count(*)::int from pg_class c
+              join pg_namespace cn on cn.oid = c.relnamespace and cn.nspname = 'public'
+              where c.relowner = o.oid and c.relkind = 'r') as owns
+      from pg_default_acl d
+      join pg_namespace dn on dn.oid = d.defaclnamespace and dn.nspname = 'public'
+      join pg_roles o on o.oid = d.defaclrole
+      cross join lateral aclexplode(d.defaclacl) a
+      join pg_roles g on g.oid = a.grantee
+      where g.rolname in ('anon', 'authenticated')
+      group by 1, 2, 3 order by 1, 2`
+    const dangerous = rows.filter((r) => r.owns > 0)
+    assert.deepEqual(
+      dangerous.map((r) => `${r.for_role} owns ${r.owns} table(s) and its defaults grant ${r.grantee}`),
+      [],
+      'the next table this role creates arrives readable and writable by a published API key',
+    )
+    // Capable of failing: if nobody owns anything here the check is vacuous.
+    const [owners] = await tsql<{ n: number }[]>`
+      select count(distinct c.relowner)::int as n from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public' where c.relkind = 'r'`
+    assert.ok(owners.n > 0, 'no role owns a table in public — this check has nothing to check')
+    const exempt = rows.filter((r) => r.owns === 0).map((r) => r.for_role)
+    console.log(
+      `      ${owners.n} owning role(s), none hands them back` +
+        (exempt.length > 0 ? ` · exempt, owns nothing: ${[...new Set(exempt)].join(', ')}` : ''),
+    )
+  })
+
   await check('every sequence-backed INSERT path can reach its sequence', async () => {
     // FOUND BY A GATE GOING RED, and it was a live production break rather
     // than a test failure: `permission denied for sequence
