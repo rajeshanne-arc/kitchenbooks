@@ -167,12 +167,18 @@ export default function MappingTable({
   dishes,
   sections,
   coverage,
+  view,
 }: {
   unmapped: UnmappedPosItem[]
   mapped: PosMapRow[]
   dishes: DishOption[]
   sections: Section[]
   coverage: MappingCoverage | null
+  /** UNMAPPED is the queue and the default. MAPPED is a different task —
+   *  reviewing a decision somebody already made — and on a 218-row queue the
+   *  two do not belong on one scroll. Coverage stays above both, because it
+   *  is the headline either way. */
+  view: 'unmapped' | 'mapped'
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
@@ -244,7 +250,8 @@ export default function MappingTable({
       )}
       {cov !== null && <Coverage c={cov} />}
 
-      <section className={cardCls}>
+      {view === 'unmapped' && (
+        <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>Unmapped · biggest money first</h2>
           <span className="font-mono text-[11px] text-stone-400">unmapped_pos_items</span>
@@ -283,8 +290,18 @@ export default function MappingTable({
           </>
         )}
       </section>
+      )}
 
-      {mapped.length > 0 && (
+      {view === 'mapped' && mapped.length === 0 && (
+        <section className={cardCls}>
+          <h2 className={sectionHeadCls}>Nothing mapped yet</h2>
+          <p className="mt-1.5 text-sm text-stone-700">
+            No POS item has been pointed at a dish or a department, so no revenue is attributed to anything.
+          </p>
+        </section>
+      )}
+
+      {view === 'mapped' && mapped.length > 0 && (
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>Mapped</h2>
           <ul className="mt-1 divide-y divide-rule-soft">

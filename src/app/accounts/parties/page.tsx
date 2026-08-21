@@ -13,13 +13,26 @@ import Honesty from '@/components/Honesty'
 import AggregatorTable from '@/components/accountant/AggregatorTable'
 import VendorDuesTable from '@/components/accountant/VendorDuesTable'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
 
 export const dynamic = 'force-dynamic'
 
-export default async function PartiesPage() {
+const VIEWS = [
+  { value: 'owed' as const, label: 'Owed', hint: 'The payment queue — anyone with a balance, worst first.' },
+  { value: 'settled' as const, label: 'Settled', hint: 'Live parties at exactly zero, which the queue hides entirely.' },
+  { value: 'all' as const, label: 'All', hint: 'Every party with a dues row, owed or not.' },
+]
+
+export default async function PartiesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>
+}) {
+  const view = readView('parties', (await searchParams).view)
   const restaurant = await getRestaurant()
   const [dues, receivable] = await Promise.all([
-    listVendorsWithDues(restaurant.id),
+    listVendorsWithDues(restaurant.id, view),
     getAggregatorReceivable(restaurant.id),
   ])
 
@@ -44,11 +57,21 @@ export default async function PartiesPage() {
         </p>
       </header>
 
-      <div className="space-y-4">
+      <ViewToggle
+        param="view"
+        value={view}
+        options={VIEWS}
+        defaultValue={VIEW_KEYS.parties[0]}
+        label="Which parties to show"
+      />
+
+      <div className="mt-4 space-y-4">
         {/* ── what we owe ───────────────────────────────────────────────── */}
         <section className={cardCls}>
           <div className="flex items-baseline justify-between gap-3">
-            <h2 className={sectionHeadCls}>Owed to vendors</h2>
+            <h2 className={sectionHeadCls}>
+              {view === 'settled' ? 'Vendors at zero' : view === 'all' ? 'Every vendor' : 'Owed to vendors'}
+            </h2>
             <span className="font-mono text-[10px] text-stone-400">vendor_dues</span>
           </div>
 

@@ -14,6 +14,8 @@ import PayrollRunsList from '@/components/accountant/PayrollRunsList'
 import PrepareRun from '@/components/accountant/PrepareRun'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import { businessToday } from '@/server/business-day'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,12 +45,20 @@ function lastMonth(today: string): { from: string; to: string } {
   return { from: `${y}-${mm}-01`, to: `${y}-${mm}-${String(last).padStart(2, '0')}` }
 }
 
+const VIEWS = [
+  { value: 'all' as const, label: 'All', hint: 'Every run, whatever stage it is at.' },
+  { value: 'draft' as const, label: 'Draft', hint: 'Prepared and not yet approved — waiting on an owner.' },
+  { value: 'approved' as const, label: 'Approved', hint: 'Signed off and not yet paid — waiting on the money going out.' },
+  { value: 'paid' as const, label: 'Paid', hint: 'Money has left an account. Only these reach the wages register.' },
+]
+
 export default async function PayrollRunsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string }>
+  searchParams: Promise<{ from?: string; to?: string; view?: string }>
 }) {
-  const { from: fromParam, to: toParam } = await searchParams
+  const { from: fromParam, to: toParam, view } = await searchParams
+  const runView = readView('payroll', view)
   const offered = lastMonth(await businessToday())
   const from = isDate(fromParam) ? fromParam : offered.from
   const to = isDate(toParam) ? toParam : offered.to
@@ -57,7 +67,7 @@ export default async function PayrollRunsPage({
   // A backwards period would have the draft dividing by a negative day count,
   // so it is not asked — the screen says so instead.
   const [runs, draft] = await Promise.all([
-    listPayrollRuns(restaurant.id),
+    listPayrollRuns(restaurant.id, 24, runView),
     to < from ? Promise.resolve([]) : getPayrollDraft(restaurant.id, from, to),
   ])
 
@@ -78,7 +88,15 @@ export default async function PayrollRunsPage({
         </p>
       </header>
 
-      <div className="space-y-4">
+      <ViewToggle
+        param="view"
+        value={runView}
+        options={VIEWS}
+        defaultValue={VIEW_KEYS.payroll[0]}
+        label="Which runs to show"
+      />
+
+      <div className="mt-4 space-y-4">
         <section className={cardCls}>
           <div className="flex flex-wrap items-baseline justify-between gap-3">
             <h2 className={sectionHeadCls}>Runs</h2>

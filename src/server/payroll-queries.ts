@@ -32,7 +32,13 @@ const PAY_FACTOR = `
     else 0::numeric
   end`
 
-export async function listPayrollRuns(restaurantId: string, limit = 24): Promise<PayrollRunRow[]> {
+/** WHAT IS WAITING ON ME. draft -> approved -> paid is a chain with three
+ *  different people in it, so "which runs need me" is a real question that a
+ *  single list of everything cannot answer. `all` stays the default: the
+ *  status is on every row anyway, and a filtered default would hide work. */
+export async function listPayrollRuns(restaurantId: string, limit = 24,
+  status: 'all' | 'draft' | 'approved' | 'paid' = 'all',
+): Promise<PayrollRunRow[]> {
   return tsql<PayrollRunRow[]>`
     select r.id, r.doc_no, r.period_start::text as period_start, r.period_end::text as period_end,
            r.status, r.prepared_by, r.prepared_at::text as prepared_at,
@@ -45,6 +51,7 @@ export async function listPayrollRuns(restaurantId: string, limit = 24): Promise
       from payroll_lines group by run_id
     ) l on l.run_id = r.id
     where r.restaurant_id = ${restaurantId}
+      ${status === 'all' ? sql`` : sql`and r.status = ${status}`}
     order by r.period_start desc, r.prepared_at desc
     limit ${limit}`
 }

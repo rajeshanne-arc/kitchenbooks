@@ -5,7 +5,8 @@
 // money figures come from labour_cost_by_section / section_costs.
 import 'server-only'
 import { sql, tsql } from '@/lib/db'
-import type { DaySheetRow, SectionCostRow, StaffRow } from '@/lib/types'
+import type {
+  AttendanceSummaryRow, DaySheetRow, SectionCostRow, StaffRow } from '@/lib/types'
 
 export const DEPT_ORDER = ['Management', 'Support', 'Kitchen', 'Service', 'Bar'] as const
 
@@ -30,11 +31,25 @@ const ROSTER_ORDER = `
            st.grade asc nulls last,
            st.name asc`
 
-export async function listRoster(restaurantId: string): Promise<StaffRow[]> {
+/** THE ROSTER ORDER IS COMPUTED, NEVER STORED, and it is the default because
+ *  a marker's place on the sheet must not move between mornings. BY SALARY is
+ *  the other question — where the wage bill actually sits — and it is a
+ *  different one: the biggest salary is rarely at the top of the roster.
+ *
+ *  Nobody with no salary sorts first under by-salary: an unset salary is a gap
+ *  in the record, not a zero wage, and topping the list with it would read as
+ *  the cheapest people. They sort LAST and the screen says the wage bill
+ *  understates by however much they earn. */
+export async function listRoster(
+  restaurantId: string,
+  order: 'by-department' | 'by-salary' = 'by-department',
+): Promise<StaffRow[]> {
   return tsql<StaffRow[]>`
     ${sql.unsafe(STAFF_SELECT)}
     where st.restaurant_id = ${restaurantId}
-    ${sql.unsafe(ROSTER_ORDER)}`
+    ${order === 'by-salary'
+      ? sql`order by st.base_salary desc nulls last, st.name asc`
+      : sql.unsafe(ROSTER_ORDER)}`
 }
 
 export async function getStaffDetail(restaurantId: string, id: string): Promise<StaffRow | null> {
@@ -110,4 +125,36 @@ export async function getSectionCosts(restaurantId: string, monthStart: string):
       on l.restaurant_id = sc.restaurant_id and l.section_code = sc.section_code and l.month = sc.month
     where sc.restaurant_id = ${restaurantId} and sc.section_code = '—' and sc.month = ${monthStart}::date`
   return [...rows, ...unassigned]
+}
+
+/**
+ * ATTENDANCE OVER A PERIOD — "who is absent most", which a day sheet cannot
+ * answer however many days you page through.
+ *
+ * RANKED BY ABSENCE, never by name: a roster sorted alphabetically hides the
+ * one fact this view exists to surface. Same ordering as the staff dashboard,
+ * because they answer the same question at two grains.
+ *
+ * `absent_pct` is recomputed over the period's own totals rather than averaged
+ * across months — averaging monthly percentages weights a three-day month like
+ * a thirty-day one.
+ */
+export async function getAttendanceOverPeriod(
+  restaurantId: string,
+  months: string[],
+): Promise<AttendanceSummaryRow[]> {
+  if (months.length === 0) return []
+  const rows = await tsql<AttendanceSummaryRow[]>`
+    select staff_id, code, name, section_code, section_name,
+           min(month)::text as month,
+           sum(days_marked)::int as days_marked, sum(present)::int as present,
+           sum(half)::int as half, sum(off_days)::int as off_days,
+           sum(leave_days)::int as leave_days, sum(absent)::int as absent,
+           case when sum(days_marked) = 0 then null
+                else round(100.0 * sum(absent) / sum(days_marked), 1)::text end as absent_pct
+    from attendance_summary
+    where restaurant_id = ${restaurantId} and month = any(${months}::date[])
+    group by staff_id, code, name, section_code, section_name
+    order by absent_pct desc nulls last, absent desc, name asc`
+  return rows
 }

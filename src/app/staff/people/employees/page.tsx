@@ -6,6 +6,9 @@ import { DEPT_ORDER, listRoster } from '@/server/labour-queries'
 import { formatMoneyString } from '@/lib/money'
 import { RetiredBadge } from '@/components/books/Badges'
 import type { StaffRow } from '@/lib/types'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
+import Honesty from '@/components/Honesty'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,9 +71,19 @@ function Band({ title, loud, note, rows }: { title: string; loud?: boolean; note
   )
 }
 
-export default async function StaffPage() {
+const VIEWS = [
+  { value: 'by-department' as const, label: 'By department', hint: 'The roster order — computed, and the same every morning so a marker keeps their place.' },
+  { value: 'by-salary' as const, label: 'By salary', hint: 'Where the wage bill actually sits. Anyone with no salary set sorts last, because that is a gap in the record and not a zero wage.' },
+]
+
+export default async function StaffPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>
+}) {
+  const view = readView('employees', (await searchParams).view)
   const restaurant = await getRestaurant()
-  const [user, roster] = await Promise.all([getSessionUser(), listRoster(restaurant.id)])
+  const [user, roster] = await Promise.all([getSessionUser(), listRoster(restaurant.id, view)])
   // LAW 1. The accountant reads this list — a person is who they are preparing
   // pay for — but adding somebody to the roster is the manager's job, so they
   // must not SEE the button. One source: the matrix, never a role comparison
@@ -79,11 +92,17 @@ export default async function StaffPage() {
   const assigned = roster.filter((p) => p.section_id !== null)
   const unassigned = roster.filter((p) => p.section_id === null)
 
+  const noSalary = roster.filter((r) => r.base_salary === null).length
+
   return (
     <section className="mt-4 space-y-5">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-stone-500">
-          {roster.length === 0 ? '' : `${roster.length} people, ordered by department, section, grade — never renumbered.`}
+          {roster.length === 0
+            ? ''
+            : view === 'by-salary'
+              ? `${roster.length} people, biggest salary first.`
+              : `${roster.length} people, ordered by department, section, grade — never renumbered.`}
         </p>
         {mayAdd && (
           <Link
@@ -94,6 +113,21 @@ export default async function StaffPage() {
           </Link>
         )}
       </div>
+
+      <ViewToggle
+        param="view"
+        value={view}
+        options={VIEWS}
+        defaultValue={VIEW_KEYS.employees[0]}
+        label="How to order the roster"
+      />
+
+      {view === 'by-salary' && noSalary > 0 && (
+        <Honesty verdict="salary unset" compact>
+          {noSalary} of {roster.length} {noSalary === 1 ? 'person has' : 'people have'} no salary on record, so they
+          sort last here and contribute nothing to any wage bill. That is a gap in the record, not a zero wage.
+        </Honesty>
+      )}
 
       {roster.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-12 text-center">

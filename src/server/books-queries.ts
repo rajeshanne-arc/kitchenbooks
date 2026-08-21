@@ -87,7 +87,10 @@ export async function listActiveVendors(restaurantId: string): Promise<VendorHit
  *
  * days_since_payment is null when they have never been paid: that is a
  * different fact from "paid a long time ago" and the screen says so. */
-export async function listVendorsWithDues(restaurantId: string): Promise<VendorDueRow[]> {
+export async function listVendorsWithDues(
+  restaurantId: string,
+  filter: 'owed' | 'settled' | 'all' = 'owed',
+): Promise<VendorDueRow[]> {
   return tsql<VendorDueRow[]>`
     select v.id, v.code, v.name, c.name as category_name,
            v.payment_terms, v.phone,
@@ -107,7 +110,14 @@ export async function listVendorsWithDues(restaurantId: string): Promise<VendorD
       select vendor_id, max(paid_date) as last_paid_date
       from payments group by vendor_id
     ) lp on lp.vendor_id = v.id
-    where v.restaurant_id = ${restaurantId} and d.balance <> 0
+    where v.restaurant_id = ${restaurantId}
+      -- OWED is the default because this list is a payment QUEUE: a vendor at
+      -- zero is not a job. But filtering on a non-zero balance also makes a
+      -- live, fully-settled vendor invisible, which is a different fact and
+      -- worth being able to see — so the filter is a view, not a hard-coded
+      -- truth. (No backticks in a comment inside a template literal: one would
+      -- close the template.)
+      ${filter === 'owed' ? sql`and d.balance <> 0` : filter === 'settled' ? sql`and d.balance = 0` : sql``}
     order by d.balance desc, v.name asc`
 }
 

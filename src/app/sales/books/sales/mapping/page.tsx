@@ -5,10 +5,22 @@ import { canAccess } from '@/lib/roles'
 import { getMappingCoverage, listDishOptions, listMappings, listUnmapped } from '@/server/sales-queries'
 import { getDishCodingSections } from '@/server/kitchen-queries'
 import MappingTable from '@/components/sales/MappingTable'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
 
 export const dynamic = 'force-dynamic'
 
-export default async function MappingPage() {
+const VIEWS = [
+  { value: 'unmapped' as const, label: 'Unmapped', hint: 'The queue, richest first — the top rows are half the money.' },
+  { value: 'mapped' as const, label: 'Mapped', hint: 'What has already been attributed, for reviewing a decision somebody made.' },
+]
+
+export default async function MappingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>
+}) {
+  const view = readView('mapping', (await searchParams).view)
   const restaurant = await getRestaurant()
   const user = await getSessionUser()
   // LAW 1. The chef may open this queue and NOT the sales books it sits in,
@@ -41,7 +53,16 @@ export default async function MappingPage() {
         Every department view in this app is fed from here — sales by department, food cost, margin, the department
         pages, dish quantities sold. Map the biggest rows first: a handful of them is most of the money.
       </p>
+      <ViewToggle
+        param="view"
+        value={view}
+        options={VIEWS}
+        defaultValue={VIEW_KEYS.mapping[0]}
+        label="Which mappings to show"
+      />
+
       <MappingTable
+        view={view}
         unmapped={unmapped}
         mapped={mapped}
         dishes={dishes}
