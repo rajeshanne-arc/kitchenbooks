@@ -4663,3 +4663,80 @@ instance in this project of a check structurally incapable of finding what it
 exists to find, and the most expensive. `audit:tenancy` has a fourth tier now,
 and it stays red under `--strict` until
 `migrations/views_security_invoker.sql` is applied.
+
+## CREATE OR REPLACE VIEW SILENTLY DROPS reloptions — so the rule has two halves
+
+> **EVERY VIEW CARRIES `security_invoker = on`, AND `create or replace view`
+> DROPS IT — so any migration that replaces a view must set it again in the
+> same migration.**
+
+This is why the leak was not simply "views created after 0024". `vendor_dues`,
+`sales_current` and `attendance_current` all HAD the option and lost it when
+they were replaced for unrelated reasons. Nothing warned; the replacement
+succeeded, the view worked, and it silently began running as its owner. It
+reopened every single time anybody touched a view.
+
+**A habit could never have held this.** Tier 4 of `audit:tenancy` is what
+makes it stick — it reads `pg_options_to_table` for every view in the schema
+and fails `--strict` on any that lacks the option.
+
+### A view that leaks is invisible to a test that reads it as postgres
+
+`postgres` has BYPASSRLS, so every view returns everything and nothing looks
+wrong. **The only measurement that works is: as kb_app, announcing ONE tenant,
+counting the OTHER tenant's rows** — and it only works because a second tenant
+exists at all.
+
+`smoke:tenancy` now does exactly that for **all 73 tenant-scoped views**, every
+run. That is the probe tenant earning its keep a second time: it was created so
+the gates would stop writing to the live books, and it turns out to be the only
+instrument that can see a cross-tenant read.
+
+## The owner day sheet — a flash report
+
+`/owner/day/<date>`. A standard restaurant artifact: Restaurant365 and
+MarketMan build their daily workflow on one, URY computes a daily P&L,
+Petpooja gives the money-in half. What makes a good one is that it FITS ON A
+PAGE, LOOKS IDENTICAL EVERY DAY so the eye learns where to look, and answers
+"did yesterday go well" in fifteen seconds.
+
+**THE ORDER IS FIXED AND IS NEVER RE-SORTED BY WHAT IS INTERESTING TODAY.**
+Header · money in · money out · the three ratios · collected for others ·
+cash. That is the opposite of the owner dashboard, which ranks by what is most
+wrong — and correctly, because it is triage across many subjects. This is one
+subject read the same way every morning, and a page that reshuffles is a page
+nobody learns.
+
+**ISSUED IS NOT CONSUMED, and the page says ISSUED.** A kitchen draws ten
+kilos on Monday and cooks it over three days. Consumption is opening + issued
+− closing, and a closing exists only if the chef filed one that night — so the
+food-cost ratio appears only where EVERY closable department has closed, and
+says which ones have not otherwise. A daily food cost built on issues alone is
+noise wearing a percentage.
+
+**WHAT THE PEERS DO NOT DO, and it is the differentiator:** their flash
+reports render ZEROS where data is missing, so a day with no bills entered
+reads as a day with no food cost and the ratio looks superb. `day_summary`
+coalesces its money columns to 0 and would do exactly that — so
+`getDayEvidence` returns the COUNTS (bills, issues, marks, roster, closings,
+fetches) and every card declares which one it rests on. **A flash report is
+read fast, and a fast reader believes a number.**
+
+Against today's data the page is honestly thin: 3 fetches, 0 bills, 0 issues,
+0 of 2 marked, 0 of 9 departments closed. It says that, in words, rather than
+printing six zeroes.
+
+### A date is a door — but only where the door opens
+
+`DateLink` mirrors `PersonLink` and takes no role prop, for the same reason:
+every mount must already be on a surface its reader can open, and
+`audit:matrix` fails on the href rather than the component guessing.
+
+**IT IS DELIBERATELY NOT MOUNTED ON EVERY DATE IN THE APP.** `/owner/day` is
+manager+owner, and dates are rendered on chef, store and cashier screens — the
+fetch list, the day-close ladder, the sales books. A cashier cannot open a
+flash report carrying the wage bill, so linking a date there would be LAW 1
+broken in the smallest possible way. The drill lives where it is legal: the
+sheet's own prev/next and its strip of recent days, which is also the range
+grain one tap away — `day_summary` summed over a period IS the owner
+dashboard, and one row of it is this page.

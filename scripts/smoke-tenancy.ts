@@ -332,6 +332,62 @@ async function main() {
     ok('the probe account is left with a password nobody holds', true, 'reset again after the test')
   }
 
+  // ── 8. EVERY VIEW, MEASURED — not inspected ───────────────────────────
+  //
+  // A VIEW THAT LEAKS IS INVISIBLE TO A TEST THAT READS IT AS POSTGRES.
+  // `postgres` has BYPASSRLS, so every view returns everything and nothing
+  // looks wrong. The only measurement that works is this one: as kb_app,
+  // announcing ONE tenant, counting the OTHER tenant's rows — and it only
+  // works because a second tenant exists at all.
+  //
+  // That is the probe tenant earning its keep a second time. It was created
+  // so the gates would stop writing to the live books; it is now also the
+  // only instrument that can see a cross-tenant read.
+  //
+  // 22 views once failed this: attendance_current 15 rows, labour_cost_daily
+  // 15, day_summary 11, vendor_dues 5 — because a view without
+  // `security_invoker` runs as its OWNER.
+  if (probe) {
+    const views = await sql<{ relname: string }[]>`
+      select c.relname
+      from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind = 'v'
+        and exists (select 1 from information_schema.columns col
+                    where col.table_schema = 'public' and col.table_name = c.relname
+                      and col.column_name = 'restaurant_id')
+      order by c.relname`
+    const leaks: string[] = []
+    let checked = 0
+    for (const v of views) {
+      const n = await withTenant(probe, async () => {
+        const rows = await tsql<{ n: number }[]>`
+          select count(*)::int as n from ${sql.unsafe(v.relname)} where restaurant_id = ${RID}`
+        return rows[0].n
+      })
+      checked++
+      if (n > 0) leaks.push(`${v.relname} (${n})`)
+    }
+    ok(
+      `all ${checked} tenant-scoped views refuse the other tenant's rows`,
+      leaks.length === 0,
+      leaks.length === 0 ? 'measured as kb_app, announcing the probe tenant' : `LEAKING: ${leaks.join(', ')}`,
+    )
+    // ...and the option itself, so a view is caught the day it is REPLACED
+    // rather than the day somebody notices a wrong number. CREATE OR REPLACE
+    // VIEW silently drops reloptions.
+    const invokerless = await sql<{ relname: string }[]>`
+      select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind = 'v'
+        and not coalesce((select true from pg_options_to_table(c.reloptions)
+                          where option_name = 'security_invoker'
+                            and lower(option_value) in ('on', 'true')), false)`
+    ok(
+      'every view carries security_invoker — CREATE OR REPLACE VIEW silently drops it',
+      invokerless.length === 0,
+      invokerless.length === 0 ? '' : invokerless.map((x) => x.relname).join(', '),
+    )
+  }
+
   console.log(
     failures === 0
       ? '\nISOLATION HOLDS — reads, writes and provisioning, as the app role.\n'

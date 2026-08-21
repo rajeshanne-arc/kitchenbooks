@@ -5383,6 +5383,85 @@ async function run() {
     console.log(`      ${ALLOWED.length} tables deletable, each argued: ${ALLOWED.join(', ')}`)
   })
 
+
+  // ── the owner day sheet ───────────────────────────────────────────────
+
+  await check('day_summary is exactly one row per business date', async () => {
+    // THE GRAIN WAS UNTRUSTWORTHY UNTIL THE VIEWS WERE FIXED. Two rows came
+    // back for one date, carrying salaries from two different restaurants —
+    // that was the security_invoker leak, not the view's grain. Asserted now
+    // rather than assumed, because a flash report written against a view that
+    // can return two rows would silently render one of them.
+    const dupRows = await tsql<{ d: string; n: number }[]>`
+      select business_date::text as d, count(*)::int as n
+      from day_summary group by business_date having count(*) > 1`
+    // A PLAIN ARRAY, because postgres.js returns a Result object — an Array
+    // subclass carrying `count`, `command` and `columns` — and
+    // assert.deepEqual against a bare [] fails even when it is empty. The
+    // first version of this assertion failed for that reason and reported a
+    // duplicate date of ''. A gate that fails for the wrong reason is no
+    // better than one that passes for the wrong reason.
+    const dup = dupRows.map((x) => `${x.d} ×${x.n}`)
+    assert.deepEqual(dup, [], `day_summary returns more than one row for: ${dup.join(', ')}`)
+    const n = await tsql<{ n: number }[]>`select count(*)::int as n from day_summary`
+    assert.ok(n[0].n > 0, 'day_summary is empty — this assertion could not fail')
+    console.log(`      ${n[0].n} days, one row each`)
+  })
+
+  await check('the day sheet refuses a ratio rather than dividing by an absence', async () => {
+    const { getDaySummary, getDayEvidence, getDayChannels, getDayHours, getDayLabour, listDayDates } = await import(
+      '../src/server/day-queries'
+    )
+    const rid = (await tsql<{ id: string }[]>`select id from restaurants limit 1`)[0].id
+    const dates = await listDayDates(rid, 5)
+    assert.ok(dates.length > 0, 'no day to read — this assertion could not fail')
+    const d = dates[0]
+    const [day, ev, ch, hrs, lab] = await Promise.all([
+      getDaySummary(rid, d),
+      getDayEvidence(rid, d),
+      getDayChannels(rid, d),
+      getDayHours(rid, d),
+      getDayLabour(rid, d),
+    ])
+    assert.ok(day !== null, `no day_summary row for ${d}`)
+
+    // THE PRECONDITION COLUMNS ARE THE POINT. day_summary coalesces its money
+    // columns to 0, so purchases = 0 is indistinguishable from "no bill was
+    // entered" — and a flash report is read fast by somebody who believes a
+    // number. The counts are what tell them apart.
+    if (ev.bills === 0) {
+      assert.equal(Number(day.purchases), 0, 'purchases without a bill — the evidence disagrees with the figure')
+    }
+    if (ev.marks === 0) {
+      assert.equal(Number(day.labour), 0, 'a wage bill with nobody marked')
+    }
+
+    // ISSUED IS NOT CONSUMED, and the page must not treat it as such: a food
+    // cost may be stated only where every closable department filed a
+    // closing. Asserted in the SOURCE, because the condition is what would
+    // silently loosen.
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/owner/day/[date]/page.tsx', 'utf8')
+    assert.ok(
+      page.includes('day.sections_closed >= ev.closable_sections'),
+      'the food-cost precondition no longer requires every closing — issues alone are not consumption',
+    )
+    assert.ok(
+      page.includes('const consumed = closingsIn ? paise(day.issued_net) : null'),
+      'consumption is being read without a closing behind it',
+    )
+    assert.ok(
+      page.includes('const primePct = foodPct !== null && labourPct !== null'),
+      'prime cost is stated when one of its halves is missing',
+    )
+    assert.ok(page.includes('label="Issued"'), 'the issued figure is no longer labelled ISSUED')
+
+    console.log(
+      `      ${d}: ${ev.fetches} fetch(es), ${ev.bills} bills, ${ev.issues} issues, ${ev.marks}/${ev.roster} marked, ` +
+        `${day.sections_closed}/${ev.closable_sections} closed · ${ch.length} channels · ${hrs.length} hours · ${lab.length} dept(s)`,
+    )
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

@@ -1041,6 +1041,57 @@ export type PosReceivableRow = {
   order_time: string | null
 }
 
+/** `day_summary`, one row per business date — the flash report's spine, and
+ *  the same view the owner dashboard sums over a period. */
+export type DaySummaryRow = {
+  business_date: string
+  revenue: string | null
+  orders: number | null
+  covers: number | null
+  cash_revenue: string | null
+  comps: number | null
+  comp_value: string | null
+  cancelled: number | null
+  unknown_status: number | null
+  per_cover: string | null
+  off_book: string
+  other_income: string
+  purchases: string
+  bills: number
+  /** ISSUED IS NOT CONSUMED. Stock that left the store, not food that was
+   *  eaten — a kitchen draws 10 kg on Monday and cooks it over three days. */
+  issued: string
+  returned: string
+  issued_net: string
+  store_wastage: string
+  kitchen_wastage: string
+  labour: string
+  giveaway_cost: string
+  gst_collected: string | null
+  service_charge: string | null
+  effective_gst_pct: string | null
+  expected_cash: string | null
+  cash_counted: string | null
+  difference: string | null
+  day_closed: boolean
+  sections_closed: number
+}
+
+/** WHAT MAY BE SAID AT ALL. day_summary coalesces its money columns to 0, so
+ *  a day with no bills entered reports ₹0 of purchases — indistinguishable
+ *  from a day that bought nothing. These counts are the difference. */
+export type DayEvidence = {
+  bills: number
+  issues: number
+  store_losses: number
+  kitchen_losses: number
+  marks: number
+  roster: number
+  no_salary: number
+  closable_sections: number
+  fetches: number
+}
+
 export type PayloadCensus = {
   topKeys: string[]
   orderKeys: string[]
