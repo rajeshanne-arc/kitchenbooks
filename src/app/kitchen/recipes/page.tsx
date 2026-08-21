@@ -11,6 +11,8 @@ import { sectionHeadCls } from '@/components/ui'
 import { HonestyPill } from '@/components/Honesty'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
 import type { DishCostRow } from '@/lib/types'
 import { businessMonthStart } from '@/server/business-day'
 
@@ -22,22 +24,102 @@ const UncostedPill = ({ n }: { n: number }) => (
   </HonestyPill>
 )
 
-export default async function RecipesPage() {
+// TWO TOGGLES, because they answer two independent questions. A chef working
+// on gravies wants only gravies (KIND); "what is expensive" is a different
+// question from "what is in Chinese" (ORDER). Collapsing them into one control
+// would force a choice between them.
+const KINDS = [
+  { value: 'all' as const, label: 'All', hint: 'Dishes and sub-recipes together.' },
+  { value: 'dishes' as const, label: 'Dishes', hint: 'Only what is sold — each coded to a department.' },
+  { value: 'subs' as const, label: 'Subs', hint: 'Only what is made in batches and used by other recipes.' },
+]
+const ORDERS = [
+  { value: 'by-section' as const, label: 'By department', hint: 'Grouped the way a kitchen is organised.' },
+  { value: 'by-food-cost' as const, label: 'By food cost', hint: 'Dearest first, wherever it lives. Uncosted dishes sort last — zero is a broken link, not a cheap dish.' },
+]
+
+/** ONE DISH ROW, rendered grouped by department and flat by food cost. Two
+ *  copies would be two places for the next change. `showSection` is the only
+ *  difference: inside a department heading it repeats, and in the flat list it
+ *  is the context that says which kitchen the expensive dish belongs to. */
+function DishLine({
+  d,
+  sold,
+  showSection = false,
+}: {
+  d: DishCostRow
+  sold?: { qty_sold: string }
+  showSection?: boolean
+}) {
+  return (
+    <li key={d.recipe_id}>
+      <Link
+        href={`/kitchen/recipes/${d.recipe_id}`}
+        className={`flex items-center justify-between gap-3 rounded-lg px-2 py-3 hover:bg-stone-50 ${
+          d.status === 'inactive' ? 'opacity-60' : ''
+        }`}
+      >
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <code className="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-stone-700">
+            {d.code}
+          </code>
+          <span className="truncate text-[15px] font-medium text-stone-900">{d.name}</span>
+          {d.status === 'inactive' && <RetiredBadge />}
+    {showSection && (
+      <span className="text-[11px] text-stone-400">{d.section_name}</span>
+    )}
+          {sold !== undefined && (
+            <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] tabular-nums text-stone-500">
+              × {sold.qty_sold} this month
+            </span>
+          )}
+        </span>
+        <span className="shrink-0 text-right">
+          {d.uncosted_lines > 0 ? (
+            <UncostedPill n={d.uncosted_lines} />
+          ) : (
+            <>
+              <span className="block text-[15px] font-semibold tabular-nums text-stone-900">
+                {formatMoneyString(d.dish_cost)}
+              </span>
+              {d.food_cost_pct !== null && (
+                <span className="block text-xs tabular-nums text-stone-500">
+                  {d.food_cost_pct}% of {formatMoneyString(d.selling_price ?? '0')}
+                </span>
+              )}
+            </>
+          )}
+        </span>
+      </Link>
+    </li>
+  )
+}
+
+export default async function RecipesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ kind?: string; order?: string }>
+}) {
+  const sp = await searchParams
+  const kind = readView('recipeKind', sp.kind)
+  const order = readView('recipeOrder', sp.order)
   const restaurant = await getRestaurant()
   // LAW 1: photographs are owner-only. A chef or manager reading this page
   // must not SEE the section, not merely be refused when they click it.
   const user = await getSessionUser()
   const canPhotograph = user !== null && canAccess(user.role, '/owner/snapshots')
   const [dishes, subs, sold, snapshots] = await Promise.all([
-    listDishCosts(restaurant.id),
+    listDishCosts(restaurant.id, order),
     listSubCosts(restaurant.id),
     getQtySold(restaurant.id, await businessMonthStart()),
     listSnapshots(restaurant.id),
   ])
   const soldByRecipe = new Map(sold.map((s) => [s.recipe_id, s]))
 
+  // Grouped only under by-section: under by-food-cost the whole point is one
+  // list that crosses departments, so grouping would undo the ordering.
   const bySection = new Map<string, { name: string; rows: DishCostRow[] }>()
-  for (const d of dishes) {
+  for (const d of order === 'by-section' ? dishes : []) {
     const g = bySection.get(d.section_code) ?? { name: d.section_name, rows: [] }
     g.rows.push(d)
     bySection.set(d.section_code, g)
@@ -60,6 +142,27 @@ export default async function RecipesPage() {
         </Link>
       </div>
 
+      {(dishes.length > 0 || subs.length > 0) && (
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-1">
+          <ViewToggle
+            param="kind"
+            value={kind}
+            options={KINDS}
+            defaultValue={VIEW_KEYS.recipeKind[0]}
+            label="Which recipes to show"
+          />
+          {kind !== 'subs' && (
+            <ViewToggle
+              param="order"
+              value={order}
+              options={ORDERS}
+              defaultValue={VIEW_KEYS.recipeOrder[0]}
+              label="How to order the dishes"
+            />
+          )}
+        </div>
+      )}
+
       {dishes.length === 0 && subs.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-12 text-center">
           <p className="text-lg font-semibold text-stone-900">No recipes yet.</p>
@@ -70,56 +173,33 @@ export default async function RecipesPage() {
         </div>
       ) : (
         <>
-          {[...bySection.entries()].map(([code, group]) => (
+          {kind !== 'subs' &&
+            order === 'by-food-cost' && (
+              <div>
+                <h2 className={sectionHeadCls}>Dearest first</h2>
+                <ul className="mt-1 divide-y divide-rule-soft">
+                  {dishes.map((d) => (
+                    <DishLine key={d.recipe_id} d={d} sold={soldByRecipe.get(d.recipe_id)} showSection />
+                  ))}
+                </ul>
+              </div>
+            )}
+          {kind !== 'subs' &&
+            order === 'by-section' &&
+            [...bySection.entries()].map(([code, group]) => (
             <div key={code}>
               <h2 className={sectionHeadCls}>
                 {group.name} <span className="ml-1 font-mono text-[11px] text-stone-400">{code}</span>
               </h2>
               <ul className="mt-1 divide-y divide-rule-soft">
                 {group.rows.map((d) => (
-                  <li key={d.recipe_id}>
-                    <Link
-                      href={`/kitchen/recipes/${d.recipe_id}`}
-                      className={`flex items-center justify-between gap-3 rounded-lg px-2 py-3 hover:bg-stone-50 ${
-                        d.status === 'inactive' ? 'opacity-60' : ''
-                      }`}
-                    >
-                      <span className="flex min-w-0 flex-wrap items-center gap-2">
-                        <code className="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-stone-700">
-                          {d.code}
-                        </code>
-                        <span className="truncate text-[15px] font-medium text-stone-900">{d.name}</span>
-                        {d.status === 'inactive' && <RetiredBadge />}
-                        {soldByRecipe.has(d.recipe_id) && (
-                          <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] tabular-nums text-stone-500">
-                            × {soldByRecipe.get(d.recipe_id)!.qty_sold} this month
-                          </span>
-                        )}
-                      </span>
-                      <span className="shrink-0 text-right">
-                        {d.uncosted_lines > 0 ? (
-                          <UncostedPill n={d.uncosted_lines} />
-                        ) : (
-                          <>
-                            <span className="block text-[15px] font-semibold tabular-nums text-stone-900">
-                              {formatMoneyString(d.dish_cost)}
-                            </span>
-                            {d.food_cost_pct !== null && (
-                              <span className="block text-xs tabular-nums text-stone-500">
-                                {d.food_cost_pct}% of {formatMoneyString(d.selling_price ?? '0')}
-                              </span>
-                            )}
-                          </>
-                        )}
-                      </span>
-                    </Link>
-                  </li>
+                  <DishLine key={d.recipe_id} d={d} sold={soldByRecipe.get(d.recipe_id)} />
                 ))}
               </ul>
             </div>
           ))}
 
-          {subs.length > 0 && (
+          {kind !== 'dishes' && subs.length > 0 && (
             <div>
               <h2 className={sectionHeadCls}>Sub-recipes</h2>
               <ul className="mt-1 divide-y divide-rule-soft">

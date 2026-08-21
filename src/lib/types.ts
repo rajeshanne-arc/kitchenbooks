@@ -2,6 +2,7 @@
 // All money values travel as Postgres numeric::text strings — never floats.
 
 import type { Role } from '@/lib/roles'
+import { readOneOf } from '@/lib/views'
 
 export type Category = { code: string; name: string; kind: 'ingredient' | 'operational'; sort_order: number }
 export type Unit = { code: string; name: string }
@@ -3336,7 +3337,8 @@ export type StockView = 'by-category' | 'by-value'
  *  falls back to the default rather than throwing: a pasted URL with a typo
  *  should show the page, not a 500. */
 export function readStockView(v: string | undefined): StockView {
-  return v === 'by-value' ? 'by-value' : 'by-category'
+  // Delegates so the option list lives in exactly one place — see VIEW_KEYS.
+  return readOneOf(v, ['by-category', 'by-value'] as const, 'by-category')
 }
 
 export type MeterKind = 'electricity' | 'gas' | 'water' | 'other'

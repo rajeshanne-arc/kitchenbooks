@@ -19,6 +19,9 @@ import {
   trCls,
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
+import type { ReorderRow } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,7 +42,80 @@ export const dynamic = 'force-dynamic'
 // Every figure here is reorder_due's: on hand, the level it crossed, and the
 // suggested quantity. Nothing is recomputed on this page.
 
-export default async function ReorderPage() {
+/** ONE TABLE DEFINITION, rendered grouped and flat alike. Vendor is the trip;
+ *  urgency is the risk — two real questions over the same rows, so the markup
+ *  must not fork. `showVendor` is the only difference: inside a vendor card it
+ *  would repeat the heading, and in the flat list it is the missing context. */
+function ReorderTable({ rows, showVendor }: { rows: ReorderRow[]; showVendor: boolean }) {
+  return (
+      <div className="mt-2 overflow-x-auto">
+        <table className={dataTableCls}>
+          <thead>
+            <tr>
+              <th className={thCls}>Item</th>
+              <th className={thCls}>Code</th>
+      {showVendor && <th className={thCls}>Vendor</th>}
+              <th className={thNumCls}>On hand</th>
+              <th className={thNumCls}>Reorder at</th>
+              <th className={thNumCls}>Suggested</th>
+              <th className={thCls}>Unit</th>
+              <th className={thNumCls}>Est. value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const short = Number(r.on_hand_qty) < 0
+              const estimate =
+                r.issue_cost === null
+                  ? null
+                  : (Number(r.suggested_qty) * Number(r.issue_cost)).toFixed(2)
+              return (
+                <tr key={r.item_id} className={trCls}>
+                  <td className={tdCls}>
+                    <Link
+                      href={`/store/masters/items/${r.item_id}`}
+                      className="font-medium hover:text-emerald-700 hover:underline"
+                    >
+                      {r.name}
+                    </Link>
+                  </td>
+                  <td className={tdCodeCls}>{r.code}</td>
+      {showVendor && (
+        <td className={`${tdCls} text-stone-500`}>{r.usual_vendor ?? 'no usual vendor'}</td>
+      )}
+                  <td className={`${tdNumCls} ${short ? 'font-semibold text-red-700' : ''}`}>
+                    {r.on_hand_qty}
+                  </td>
+                  <td className={`${tdNumCls} text-stone-500`}>{r.reorder_level}</td>
+                  <td className={`${tdNumCls} font-semibold`}>{r.suggested_qty}</td>
+                  <td className={`${tdCls} text-stone-500`}>{r.purchase_unit}</td>
+                  <td className={tdNumCls}>
+                    {estimate === null ? (
+                      <span className="text-stone-400">—</span>
+                    ) : (
+                      formatMoneyString(estimate)
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+  )
+}
+
+const VIEWS = [
+  { value: 'by-vendor' as const, label: 'By vendor', hint: 'One card per supplier — the trip is the unit of work.' },
+  { value: 'by-urgency' as const, label: 'By urgency', hint: 'One list, emptiest shelf first — the risk, regardless of who supplies it.' },
+]
+
+export default async function ReorderPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>
+}) {
+  const view = readView('reorder', (await searchParams).view)
   const restaurant = await getRestaurant()
   const [rows, itemsWithLevel] = await Promise.all([
     listReorderDue(restaurant.id),
@@ -103,7 +179,28 @@ export default async function ReorderPage() {
             {ordered.length} {ordered.length === 1 ? 'supplier' : 'suppliers'}.
           </p>
 
-          {ordered.map((g) => (
+          <ViewToggle
+            param="view"
+            value={view}
+            options={VIEWS}
+            defaultValue={VIEW_KEYS.reorder[0]}
+            label="How to order what needs buying"
+          />
+
+          {view === 'by-urgency' ? (
+            <section className={cardCls}>
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className={sectionHeadCls}>Emptiest first</h2>
+                <span className="font-mono text-[11px] text-stone-400">
+                  {rows.length} {rows.length === 1 ? 'item' : 'items'}
+                </span>
+              </div>
+              {/* `rows` arrives urgency-ordered from the query, so this is the
+                  view's own ordering surviving to the screen untouched. */}
+              <ReorderTable rows={rows} showVendor />
+            </section>
+          ) : (
+          ordered.map((g) => (
             <section key={g.vendorId ?? 'none'} className={cardCls}>
               <div className="flex items-baseline justify-between gap-3">
                 <h2 className={sectionHeadCls}>
@@ -128,56 +225,7 @@ export default async function ReorderPage() {
                 </p>
               )}
 
-              <div className="mt-2 overflow-x-auto">
-                <table className={dataTableCls}>
-                  <thead>
-                    <tr>
-                      <th className={thCls}>Item</th>
-                      <th className={thCls}>Code</th>
-                      <th className={thNumCls}>On hand</th>
-                      <th className={thNumCls}>Reorder at</th>
-                      <th className={thNumCls}>Suggested</th>
-                      <th className={thCls}>Unit</th>
-                      <th className={thNumCls}>Est. value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {g.rows.map((r) => {
-                      const short = Number(r.on_hand_qty) < 0
-                      const estimate =
-                        r.issue_cost === null
-                          ? null
-                          : (Number(r.suggested_qty) * Number(r.issue_cost)).toFixed(2)
-                      return (
-                        <tr key={r.item_id} className={trCls}>
-                          <td className={tdCls}>
-                            <Link
-                              href={`/store/masters/items/${r.item_id}`}
-                              className="font-medium hover:text-emerald-700 hover:underline"
-                            >
-                              {r.name}
-                            </Link>
-                          </td>
-                          <td className={tdCodeCls}>{r.code}</td>
-                          <td className={`${tdNumCls} ${short ? 'font-semibold text-red-700' : ''}`}>
-                            {r.on_hand_qty}
-                          </td>
-                          <td className={`${tdNumCls} text-stone-500`}>{r.reorder_level}</td>
-                          <td className={`${tdNumCls} font-semibold`}>{r.suggested_qty}</td>
-                          <td className={`${tdCls} text-stone-500`}>{r.purchase_unit}</td>
-                          <td className={tdNumCls}>
-                            {estimate === null ? (
-                              <span className="text-stone-400">—</span>
-                            ) : (
-                              formatMoneyString(estimate)
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <ReorderTable rows={g.rows} showVendor={false} />
 
               {g.rows.some((r) => r.issue_cost === null) && (
                 <p className="mt-2 text-xs text-stone-500">
@@ -185,7 +233,7 @@ export default async function ReorderPage() {
                 </p>
               )}
             </section>
-          ))}
+          )))}
 
           {/* SLOW-MOVING is the same question from the other end — what to buy
               against what was over-bought — so it belongs next to this list

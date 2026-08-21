@@ -5768,6 +5768,34 @@ only active is correct and intended. Two more were pure false positives:
 - `listUsers`'s `status = 'active'` is inside its **ORDER BY**, sorting active
   first — the opposite of hiding.
 
+### READ A PROMPT AS "CHECK WHETHER X", NOT AS "X IS TRUE"
+
+Rajesh's own note, recorded because it is the more useful half:
+
+> *"I asserted 'every list filters to active' from the retire-never-delete rule
+> without reading one listing query. Fourth instance of me inferring app
+> behaviour from a RULE rather than the SOURCE."*
+
+The four:
+
+| | The rule that was reasoned from | What the source said |
+|---|---|---|
+| kitchen analytics | — | the figures were already published |
+| `kitchen_wastage.qty` | "value-only, so qty is unused" | live behind a `component \| value` mode toggle |
+| `saveProduction` | "a picker is only a courtesy" | it already refused a dish BY NAME, server-side |
+| every master list | "retire-never-delete, so lists filter to active" | not one listing query filters |
+
+**Every one is the same shape: a correct rule, applied to code that already
+handled it.** A rule describes what the code SHOULD do, and the code was
+written by somebody following the rule — so "the rule implies X" and "the code
+does X" agree far more often than not, which is exactly what makes the
+occasional disagreement invisible.
+
+**So a brief that states a premise is a brief asking whether the premise
+holds.** Check it, in the source, before building on it — and say so plainly
+when it does not, because the check is often worth more than the build. Three
+of the four above ended with nothing built and something learned.
+
 > **A column appearing in a query is not that query filtering on it, and a
 > filter in a neighbouring function is not this one's.** Slice the function
 > before reading its WHERE, and strip the ORDER BY before deciding something is

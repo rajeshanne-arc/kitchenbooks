@@ -2,7 +2,7 @@
 // from item_costs at read time and are never stored. Per-line costs join the
 // same named views server-side; nothing money-shaped is computed client-side.
 import 'server-only'
-import { tsql } from '@/lib/db'
+import { sql, tsql } from '@/lib/db'
 import type {
   ComponentHit,
   DishCard,
@@ -14,7 +14,18 @@ import type {
   ProducibleRow,
 } from '@/lib/types'
 
-export async function listDishCosts(restaurantId: string): Promise<DishCostRow[]> {
+/** Ordered by SECTION (the department a chef works in) or by FOOD COST
+ *  (what is expensive, wherever it lives). Two real questions over one list:
+ *  "what is in Chinese" and "what is expensive" almost never have the same
+ *  answer, and a section grouping hides the second entirely.
+ *
+ *  Uncosted dishes sort LAST under by-food-cost rather than first: a dish
+ *  costing zero is a broken link, not a cheap dish, and putting it at the top
+ *  of "most expensive" would read as the opposite of what it is. */
+export async function listDishCosts(
+  restaurantId: string,
+  order: 'by-section' | 'by-food-cost' = 'by-section',
+): Promise<DishCostRow[]> {
   return tsql<DishCostRow[]>`
     select dc.recipe_id, dc.code, dc.name, dc.section_code, dc.section_name,
            s.sort_order as section_sort,
@@ -35,7 +46,11 @@ export async function listDishCosts(restaurantId: string): Promise<DishCostRow[]
     from dish_costs dc
     join sections s on s.restaurant_id = dc.restaurant_id and s.code = dc.section_code
     where dc.restaurant_id = ${restaurantId}
-    order by s.sort_order asc, dc.code asc`
+    order by ${
+      order === 'by-food-cost'
+        ? sql`(dc.uncosted_lines > 0) asc, dc.food_cost_pct desc nulls last,`
+        : sql`s.sort_order asc,`
+    } dc.code asc`
 }
 
 export async function listSubCosts(restaurantId: string): Promise<SubCostRow[]> {
