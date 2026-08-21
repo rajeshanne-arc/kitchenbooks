@@ -1,6 +1,21 @@
 # service_role: what a leaked secret key would cost, and what revoking it might
 
-**Status: a decision for Rajesh.** Nothing has been changed.
+**Status: DECIDED — revoke. `revoke_service_role_from_public` applied.**
+
+Rajesh took it rather than deferring, and the reason is the enumeration below:
+he deferred originally because he could not test what consumes `service_role`,
+and the table established that nothing does except the Dashboard. **That
+removed the basis for deferring** — the question was never "is it risky", it
+was "is it testable", and enumerating the consumers answered it.
+
+`rolbypassrls` deliberately left alone: bypassing RLS on a table you have no
+privilege to touch grants nothing, so the riskier role-attribute change buys
+nothing.
+
+**ONE HALF DID NOT LAND — see the note at the foot of this file.**
+
+The reasoning below is kept as written, because the argument is what makes the
+decision reviewable later.
 
 `anon` and `authenticated` now hold nothing in `public`, and the default
 privileges that would hand it back are revoked for `postgres` — the role that
@@ -99,3 +114,39 @@ secret key stops being a master key to every restaurant's books.
 already reach through the SQL editor, and through this app.
 **What you gain:** the one credential that could silently read *and delete*
 every tenant's ledger stops being able to.
+
+
+---
+
+## Applied, and one half did not take
+
+Measured after the migration:
+
+| | before | after |
+|---|---|---|
+| sequences (`USAGE`) | 5/5 | **0/5** ✓ |
+| functions (`EXECUTE`) | 4/4 | **0/4** ✓ |
+| default privileges in `public` | granted | **revoked** ✓ |
+| **tables and views** | 147/147 | **147/147 — unchanged** ✗ |
+
+All 147 relations still carry `service_role=arwdDxtm/postgres`: a direct grant
+of all eight privileges, straight from `postgres`, with no role membership
+involved. So `service_role` still holds SELECT *and DELETE* on every table and
+view in `public`, and the append-only guarantee still does not apply to that
+key.
+
+The missing line:
+
+```sql
+revoke all on all tables in schema public from service_role;
+```
+
+`all tables` covers views as well — proved by `anon`, which reached 0 of 72
+tables and 0 of 75 views. There are **no materialized views** in this schema,
+which `all tables` would *not* have covered; if one is ever added, it needs its
+own revoke.
+
+`smoke:a2` names this until it lands. Worth noting which gate caught it: the
+current-state check is red and the recurrence check is green, because the two
+halves of one migration landed differently — which is the argument for having
+written them as two checks rather than one.

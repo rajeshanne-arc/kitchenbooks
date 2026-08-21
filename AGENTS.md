@@ -5120,8 +5120,31 @@ it means revoking from PUBLIC and re-granting explicitly, and what that breaks
 in Supabase's internals cannot be tested from here. With no table privileges it
 lets them resolve names and read nothing.
 
-**`service_role` IS UNDECIDED and is Rajesh's call** — see
-`docs/service-role-decision.md`. It holds SELECT and DELETE on 147/147
+**`service_role` IS DECIDED: revoke.** `revoke_service_role_from_public`, and
+the reason it was decided rather than deferred again is worth keeping. It had
+been deferred because nobody could test what consumes it — and enumerating the
+consumers (no edge functions, no webhooks, no HTTP-calling triggers, no
+pg_cron, zero non-internal triggers, no Supabase SDK in this app) left only the
+Dashboard. **The question was never "is it risky", it was "is it testable", and
+the enumeration answered it.** `rolbypassrls` was left alone deliberately:
+bypassing RLS on a table you have no privilege to touch grants nothing, so the
+riskier role-attribute change buys nothing.
+
+**AND ONE HALF DID NOT LAND.** Sequences (0/5), functions (0/4) and the default
+privileges were revoked; **tables and views were not**. All 147 relations still
+carry `service_role=arwdDxtm/postgres` — a direct grant of all eight
+privileges, no role membership involved — so that key still holds SELECT and
+DELETE on everything. One line closes it:
+`revoke all on all tables in schema public from service_role;` (`all tables`
+covers views; there are no materialized views here, which it would not have
+covered). `smoke:a2` is red until it lands.
+
+**The two gates disagreed, and that is the argument for two gates.** The
+current-state check went red and the recurrence check stayed green, because the
+two halves of one migration landed differently. A single combined assertion
+would have reported one failure and hidden which half was intact.
+
+See `docs/service-role-decision.md`. It holds SELECT and DELETE on 147/147
 relations AND `rolbypassrls`, so a leaked `sb_secret_…` key is total access to
 every restaurant's books, reads and deletes alike: **the append-only guarantee
 this whole ledger rests on does not apply to that key.** Nothing in the project
@@ -5129,6 +5152,31 @@ consumes it — no edge functions, no webhooks, no HTTP-calling triggers, no
 pg_cron, zero non-internal triggers in `public`, and this app has no Supabase
 SDK — so the only plausible consumer is Supabase's own Dashboard, which cannot
 be tested from here.
+
+## AN EXEMPTION MUST EXPIRE BY ITSELF
+
+> **The condition that makes something exempt should always be the thing that
+> expires. Otherwise an exemption is a permanent blind spot wearing a
+> justification.**
+
+Both grant gates are built this way and it is the shape to copy:
+
+- `starter_library.id` is exempt from the sequence check **because `kb_app`
+  holds no INSERT on that table** — and the moment it does, the exemption is
+  gone without anybody editing the gate.
+- `supabase_admin` is exempt from the default-privileges check **because it
+  owns nothing in `public`** — and the day it creates its first table, it stops
+  being exempt automatically, which is precisely the day it would begin to
+  matter.
+
+Neither is a name on a list. A name on a list is forever; a condition is
+checked on every run. And both are **printed** rather than filtered out of the
+query, so a reader can see the exemption was considered rather than wonder
+whether the case was missed.
+
+The test when writing the next one: *what would have to become true for this
+exemption to be wrong, and does the gate evaluate that thing?* If the answer is
+"somebody would have to remember", it is not an exemption, it is a hole.
 
 ## A BAD TEST THAT FAILS INFORMATIVELY BEATS A GOOD TEST THAT PASSES
 

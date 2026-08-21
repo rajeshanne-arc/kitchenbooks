@@ -4906,14 +4906,29 @@ async function run() {
   /* ── grants that a write path silently depends on ──────────────────── */
   console.log('\ngrants: every insert path can reach the sequence behind it')
 
-  await check('anon and authenticated hold NOTHING in schema public', async () => {
-    // THE FREEZE. Yesterday this assertion could only have been red, so it was
-    // correctly not written: Supabase grants `anon`, `authenticated` and
-    // `service_role` every privilege on every table in `public` by default,
-    // directly from `postgres`, and `anon` is the role behind the project's
-    // PUBLISHED API key. `revoke_anon_authenticated_everything` closed it, and
-    // this is now the honest state — which is exactly when an assertion is
-    // worth having.
+  // THE ROLES THAT MUST HOLD NOTHING IN `public`, named once. kb_app is the
+  // only role with any privilege here: SELECT 147, INSERT 67, DELETE 5, each
+  // of the five argued in AGENTS.md.
+  const REVOKED_ROLES = ['anon', 'authenticated', 'service_role']
+
+  await check(`${REVOKED_ROLES.join(', ')} hold NOTHING in schema public`, async () => {
+    // THE FREEZE. This assertion could only have been red when it was first
+    // considered, so it was correctly not written then: Supabase grants
+    // `anon`, `authenticated` and `service_role` every privilege on every
+    // table in `public` by default, directly from `postgres`, and `anon` is
+    // the role behind the project's PUBLISHED API key.
+    //
+    // `revoke_anon_authenticated_everything` closed the first two.
+    // `revoke_service_role_from_public` was meant to close the third — and it
+    // took on SEQUENCES, FUNCTIONS and DEFAULT PRIVILEGES but NOT on tables
+    // and views, which still carry `service_role=arwdDxtm/postgres` on all
+    // 147 of them. This gate names that until the missing line lands:
+    //
+    //   revoke all on all tables in schema public from service_role;
+    //
+    // (`all tables` covers views too — proved by anon, which reached 0 of 72
+    // tables AND 0 of 75 views. There are no materialized views here, which
+    // `all tables` would NOT have covered.)
     //
     // SCOPED TO `public`, deliberately. Supabase's own `storage`, `graphql`,
     // `graphql_public` and `auth` schemas still grant both roles plenty, and
@@ -4926,7 +4941,7 @@ async function run() {
       join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
       cross join lateral aclexplode(c.relacl) a
       join pg_roles g on g.oid = a.grantee
-      where g.rolname in ('anon', 'authenticated')
+      where g.rolname = any(${REVOKED_ROLES})
       order by 1, 2, 3`
     const fn = await tsql<{ proname: string; grantee: string; privilege_type: string }[]>`
       select p.proname, g.rolname as grantee, a.privilege_type
@@ -4934,17 +4949,17 @@ async function run() {
       join pg_namespace n on n.oid = p.pronamespace and n.nspname = 'public'
       cross join lateral aclexplode(p.proacl) a
       join pg_roles g on g.oid = a.grantee
-      where g.rolname in ('anon', 'authenticated')
+      where g.rolname = any(${REVOKED_ROLES})
       order by 1, 2, 3`
     assert.deepEqual(
       rel.map((r) => `${r.relname}.${r.privilege_type} -> ${r.grantee}`),
       [],
-      'a published API key can reach these relations again',
+      'these relations are reachable by a role that must hold nothing here',
     )
     assert.deepEqual(
       fn.map((r) => `${r.proname}() ${r.privilege_type} -> ${r.grantee}`),
       [],
-      'a published API key can execute these functions again',
+      'these functions are executable by a role that must hold nothing here',
     )
 
     // A REVOKE CAN GO TOO WIDE. kb_app must still be able to work — if a
@@ -4956,7 +4971,9 @@ async function run() {
       from pg_class c join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and c.relkind in ('r', 'v', 'm', 'p')`
     assert.ok(kb.sel > 0 && kb.ins > 0, 'kb_app lost its own grants — a revoke went too wide')
-    console.log(`      0 grants to anon/authenticated in public · kb_app keeps SELECT ${kb.sel}, INSERT ${kb.ins}`)
+    console.log(
+      `      0 grants to ${REVOKED_ROLES.join('/')} in public · kb_app keeps SELECT ${kb.sel}, INSERT ${kb.ins}`,
+    )
   })
 
   await check('no OWNING role hands them back on the next object created', async () => {
@@ -4968,17 +4985,21 @@ async function run() {
     // THE SAME DISJUNCTION AS THE SEQUENCE GATE, and for the same reason. Two
     // roles carry default privileges in `public`:
     //
-    //   postgres        -> service_role only. anon and authenticated revoked.
-    //                      It owns all 72 app tables, so this is the one that
-    //                      decides what every migration creates.
-    //   supabase_admin  -> still grants anon and authenticated, and OWNS
-    //                      NOTHING in public. Supabase's, not ours to revoke.
+    //   postgres        -> kb_app only, now that service_role's defaults are
+    //                      revoked too. It owns all 72 app tables, so this is
+    //                      the one that decides what every migration creates.
+    //   supabase_admin  -> still grants all three, and OWNS NOTHING in
+    //                      public. Supabase's, not ours to revoke.
     //
-    // So the rule is: a role's defaults may grant to anon/authenticated only
-    // while it owns nothing here. supabase_admin is printed as exempt rather
-    // than filtered away — and it stops being exempt automatically the day it
+    // So the rule is: a role's defaults may grant to one of these only while
+    // it owns nothing here. supabase_admin is printed as exempt rather than
+    // filtered away — and it stops being exempt automatically the day it
     // creates its first table, which is precisely when it would start to
     // matter.
+    //
+    // THE CONDITION THAT MAKES SOMETHING EXEMPT SHOULD ALWAYS BE THE THING
+    // THAT EXPIRES. Otherwise an exemption is a permanent blind spot wearing
+    // a justification.
     const rows = await tsql<{ for_role: string; grantee: string; owns: number }[]>`
       select o.rolname as for_role, g.rolname as grantee,
              (select count(*)::int from pg_class c
@@ -4989,13 +5010,13 @@ async function run() {
       join pg_roles o on o.oid = d.defaclrole
       cross join lateral aclexplode(d.defaclacl) a
       join pg_roles g on g.oid = a.grantee
-      where g.rolname in ('anon', 'authenticated')
+      where g.rolname = any(${REVOKED_ROLES})
       group by 1, 2, 3 order by 1, 2`
     const dangerous = rows.filter((r) => r.owns > 0)
     assert.deepEqual(
       dangerous.map((r) => `${r.for_role} owns ${r.owns} table(s) and its defaults grant ${r.grantee}`),
       [],
-      'the next table this role creates arrives readable and writable by a published API key',
+      'the next table this role creates arrives granted to a role that must hold nothing here',
     )
     // Capable of failing: if nobody owns anything here the check is vacuous.
     const [owners] = await tsql<{ n: number }[]>`
