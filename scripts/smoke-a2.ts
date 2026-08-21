@@ -4915,21 +4915,17 @@ async function run() {
     // service_role, and called it done — while relacl said the grant was on
     // all 147 relations.
     //
-    // The mechanism, measured on this database as kb_app:
+    // CAUSE NOT ESTABLISHED, for the no-op or the discrepancy. A mechanism was
+    // offered and withdrawn: member-visibility does not explain it, because
+    // `postgres` IS a member of `service_role`. See AGENTS.md for exactly what
+    // is established and what is not.
     //
-    //   information_schema.role_table_grants, grantee=kb_app     219 rows
-    //   information_schema.role_table_grants, grantee=postgres     0 rows
-    //   relacl,                               grantee=postgres  1191 grants
-    //
-    // Those views show only grants where the grantor or grantee is a
-    // CURRENTLY ENABLED role. Another role's grants are not absent there, they
-    // are INVISIBLE — so "I looked and saw nothing" is exactly what you see
-    // whether or not the grant exists. `pg_class.relacl` has no such filter.
-    //
-    // So this asserts the instrument, not the state: the two grant checks
-    // above must read relacl, and must not reach for the view that cannot see
-    // what they are looking for. Elsewhere in this file information_schema is
-    // fine — column existence is not a privilege.
+    // The rule survives the missing explanation, which is why it is the rule:
+    // read relacl via aclexplode, never information_schema for a privilege
+    // question. This asserts the INSTRUMENT rather than the state, so the
+    // gates cannot be quietly simplified back to the view that got it wrong.
+    // Elsewhere in this file information_schema is fine — column existence is
+    // not a privilege.
     const { readFileSync } = await import('node:fs')
     const src = readFileSync('scripts/smoke-a2.ts', 'utf8')
     // Find the check DEFINITION, not the first mention of its name — the
@@ -4953,7 +4949,7 @@ async function run() {
       )
       assert.ok(
         !/information_schema/.test(body as string),
-        `"${name}" reads information_schema, which hides grants belonging to roles the caller is not a member of`,
+        `"${name}" reads information_schema, which once reported a live grant as absent — cause never established`,
       )
     }
     console.log('      both grant checks read pg_class.relacl via aclexplode; neither touches information_schema')

@@ -5184,33 +5184,50 @@ change**, and read it from the authority rather than from a convenience view.
 
 ### AND THE CHECK THAT CONFIRMS A FIX CAN BE THE THING THAT IS WRONG
 
-This one was the sharpest instance, because the verification failed rather than
-the fix. The revoke was confirmed by querying
-`information_schema.role_table_grants`, which returned nothing for
-`service_role` — while `relacl` said the grant was on all 147 relations.
+The sharpest instance, because the verification failed rather than the fix. The
+revoke was confirmed by querying `information_schema.role_table_grants`, which
+returned nothing for `service_role` — while `relacl` said the grant was on all
+147 relations.
 
-The mechanism, measured on this database as `kb_app`:
+**WHAT IS ESTABLISHED, and only this:**
 
-    information_schema.role_table_grants, grantee=kb_app     219 rows
-    information_schema.role_table_grants, grantee=postgres     0 rows
-    pg_class.relacl,                      grantee=postgres  1191 grants
+- after the bulk revoke reported success, `relacl` carried
+  `service_role=arwdDxtm/postgres` on all 147 relations;
+- `information_schema.role_table_grants` showed NOTHING for `service_role` at
+  the same moment;
+- a targeted revoke on a single table worked immediately;
+- the sequence and function revokes in the same migration took effect;
+- `postgres` is a member of `service_role`
+  (`pg_has_role('postgres','service_role','USAGE') = true`), so
+  member-visibility does not explain it.
 
-**Those views show only grants where the grantor or grantee is a CURRENTLY
-ENABLED role.** Another role's grants are not absent there — they are
-*invisible*. So "I looked and saw nothing" is exactly what you see whether or
-not the grant exists. `pg_class.relacl` has no such filter.
+**TWO THINGS ARE UNEXPLAINED: the bulk-REVOKE no-op, and the
+`information_schema` discrepancy. Cause not established for either.**
 
-That is the third member of the family below, and the first where it bit the
-instrument rather than the code. **Both grant gates therefore read `relacl` via
-`aclexplode`, and `smoke:a2` asserts that they do** — a source-level check, so
-that "simplifying" them to `information_schema` fails loudly instead of passing
-forever. Elsewhere in that file `information_schema` is fine: column existence
-is not a privilege.
+*A mechanism was offered here and withdrawn.* The claim was that those views
+show only grants involving a currently-enabled role, so another role's grants
+are invisible rather than absent. The measurement behind it was taken **as
+`kb_app`**, which is a member of nothing:
 
-*(Its own first version sliced the wrong text — it searched for the check's
-NAME and found the first mention, which was inside its own array literal, and
-reported a correct gate as broken. Fixed to find the check DEFINITION. A gate
-that reads source has to be pointed at the right source.)*
+    as kb_app:  grantee=kb_app        information_schema 223   relacl  227
+                grantee=postgres      information_schema   0   relacl 1215
+
+That is consistent with the documented rule and says **nothing about what
+`postgres` could see** — and `postgres` is exactly who ran the failing
+verification. One session's visibility was used to explain another session's,
+which is not evidence. *(The commit message on `aaa5c10` still carries the
+withdrawn mechanism; this file is the record that is kept correct.)*
+
+**THE PRACTICAL RULE IS UNAFFECTED, AND IS THE ONLY PART THAT MATTERS: read
+`relacl` via `aclexplode`; never `information_schema` for a privilege
+question.** It holds whether or not the cause is ever found — which is the
+point of preferring a rule that survives an unexplained observation to an
+explanation that does not survive a measurement.
+
+Both grant gates therefore read `relacl`, and `smoke:a2` asserts in SOURCE that
+neither touches `information_schema` — so "simplifying" them fails loudly
+instead of passing forever. Elsewhere in that file `information_schema` is
+fine: column existence is not a privilege.
 
 ## AN EXEMPTION MUST EXPIRE BY ITSELF
 
@@ -5255,6 +5272,23 @@ your assumptions was false**, and that is worth more — especially when the
 assumption was one nobody had thought to write down. When a perturbation does
 not behave as expected, the useful question is not "how do I fix the test" but
 "what did I believe that is not true".
+
+### A GATE THAT READS SOURCE HAS TO BE POINTED AT THE RIGHT SOURCE
+
+The same lesson one level up, and it was found the same way. The assertion that
+the grant gates read `relacl` slices each check out of this file BY NAME — and
+its first version searched for the name and found the FIRST mention, which was
+inside its own array literal. It sliced its own body, saw the word
+`information_schema` in its own comment, and reported a correct gate as broken.
+
+Fixed by finding the check DEFINITION — walking the `await check(` positions
+and matching the name in the header — rather than the first occurrence of a
+string that the checker itself also contains.
+
+The general form: **a checker that reads source is part of the source it
+reads.** Anchor on structure, never on a substring the instrument also carries.
+It is the same family as the walking-order gate that examined zero rows: both
+looked like they were working, and both were pointed at nothing.
 
 ## A PRIVILEGE CHECK THAT LOOKS IN THE OBVIOUS PLACE IS NOT A PRIVILEGE CHECK
 
