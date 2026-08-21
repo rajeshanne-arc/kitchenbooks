@@ -1009,6 +1009,9 @@ export type FetchDayResult =
       businessDate: string
       apiOrderCount: number
       insertedOrders: number
+      /** superseded generations of this date, removed in the same
+       *  transaction — every pos_fetches row is kept */
+      prunedOrders: number
       skippedOtherDates: number
       duplicateIds: number
       compDisagreements: number

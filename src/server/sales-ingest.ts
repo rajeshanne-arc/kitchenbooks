@@ -264,6 +264,9 @@ export type PersistedFetch = {
   fetchId: string
   insertedOrders: number
   insertedLines: number
+  /** Orders of SUPERSEDED generations of this date, removed in the same
+   *  transaction. Their lines go with them by cascade. */
+  prunedOrders: number
 }
 
 /** Write one fetch: the pos_fetches row, its orders, its lines — one
@@ -317,6 +320,43 @@ export async function persistFetch(
       }
     }
 
-    return { fetchId: fetch.id, insertedOrders: norm.orders.length, insertedLines }
+    // ── PRUNE THE SUPERSEDED BODIES ──────────────────────────────────
+    //
+    // WHY THIS DELETE IS LEGITIMATE WHERE THE ONE ON `attendance` IS NOT:
+    // pos_orders is a CACHED COPY of somebody else's system. Petpooja holds
+    // the truth, a fetch is a photocopy, and a re-fetch takes another one —
+    // so a superseded photocopy loses nothing that cannot be fetched again.
+    // Every other event table holds something only we hold, which is why they
+    // stay append-only and are corrected by reversal.
+    //
+    // Measured before this existed: a re-fetch re-inserted the fetch row AND
+    // every order and line — 71 orders and 334 lines a day, so fifty
+    // refreshes in a service left 3,550 orders and 16,700 lines standing in
+    // for 71 and 334 of truth.
+    //
+    // IT KEYS ON THE FETCH ID, NOT ON `fetched_at`. Anything ordering by time
+    // would be a second opinion about which generation wins and could
+    // disagree with `latest_fetches`; "everything for this date that is not
+    // what I just wrote" cannot. It is confined to one restaurant and one
+    // date by its own WHERE, and to our own rows by RLS on top of that.
+    //
+    // LINES GO BY CASCADE — pos_lines_order_id_fkey is ON DELETE CASCADE, so
+    // removing orders is sufficient and the ordering is not something anyone
+    // can get wrong. EVERY pos_fetches ROW SURVIVES: it is the audit trail
+    // and carries the note, and kb_app holds no DELETE on it at all, so that
+    // is enforced by grant rather than by discipline.
+    const pruned = await tx<{ id: string }[]>`
+      delete from pos_orders
+      where restaurant_id = ${restaurantId}
+        and business_date = ${businessDate}::date
+        and fetch_id <> ${fetch.id}
+      returning id`
+
+    return {
+      fetchId: fetch.id,
+      insertedOrders: norm.orders.length,
+      insertedLines,
+      prunedOrders: pruned.length,
+    }
   })
 }

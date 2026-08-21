@@ -5169,6 +5169,220 @@ async function run() {
     )
   })
 
+
+  await check('N refreshes leave ONE generation of orders and N fetch rows', async () => {
+    // On the PROBE TENANT: this commits, and the live books are counted before
+    // and after the suite. It is also self-demonstrating — the fetch rows
+    // accumulate across runs and the order bodies do not, which is the whole
+    // design in one assertion.
+    const { persistFetch } = await import('../src/server/sales-ingest')
+    const { txn } = await import('../src/lib/db')
+    const DAY = '2099-09-09'
+    const gen = (tag: string) => ({
+      orders: [
+        {
+          pos_order_id: 'ZZ1',
+          order_time_local: null,
+          channel: tag,
+          order_type: null,
+          payment_mode: 'Cash',
+          covers: 2,
+          status_raw: 'Success',
+          status_class: 'revenue' as const,
+          subtotal: '100',
+          discount: null,
+          tax: null,
+          service_charge: null,
+          container: null,
+          round_off: null,
+          order_total: '100',
+          lines: [
+            { pos_item_id: 'ZZI', item_name: 'Zz probe item', qty: '1', amount: '100', tax: null, discount: null },
+          ],
+        },
+        {
+          pos_order_id: 'ZZ2',
+          order_time_local: null,
+          channel: tag,
+          order_type: null,
+          payment_mode: 'UPI',
+          covers: 1,
+          status_raw: 'Success',
+          status_class: 'revenue' as const,
+          subtotal: '50',
+          discount: null,
+          tax: null,
+          service_charge: null,
+          container: null,
+          round_off: null,
+          order_total: '50',
+          lines: [
+            { pos_item_id: 'ZZI', item_name: 'Zz probe item', qty: '1', amount: '50', tax: null, discount: null },
+          ],
+        },
+      ],
+      apiOrderCount: 2,
+      skippedOtherDates: 0,
+      otherDates: {},
+      duplicateIds: 0,
+      withTime: 0,
+      compDisagreements: 0,
+      note: null,
+      census: { topKeys: [], orderKeys: [], itemKeys: [], candidates: { itemCode: [], leakage: [] } },
+    })
+
+    const out = await onProbe(async () => {
+      const rid = (await tsql<{ id: string }[]>`select id from restaurants limit 1`)[0].id
+      const before = await tsql<{ n: number }[]>`
+        select count(*)::int as n from pos_fetches where business_date = ${DAY}::date`
+
+      // FIRST generation, then a snapshot of what every reader sees.
+      await persistFetch(rid, DAY, gen('first'))
+      const [dayBefore] = await tsql<{ row: string }[]>`
+        select row(orders, covers, revenue, cash_revenue, comps, comp_value, cancelled, unknown_status)::text as row
+        from sales_by_day where restaurant_id = ${rid} and business_date = ${DAY}::date`
+
+      // SECOND generation of the same date — the prune runs inside it.
+      const second = await persistFetch(rid, DAY, gen('second'))
+      const [dayAfter] = await tsql<{ row: string }[]>`
+        select row(orders, covers, revenue, cash_revenue, comps, comp_value, cancelled, unknown_status)::text as row
+        from sales_by_day where restaurant_id = ${rid} and business_date = ${DAY}::date`
+
+      // ── THE PRUNE IS INVISIBLE TO EVERY READER ──────────────────────
+      //
+      // Observed ACROSS the prune, with the generations carrying DIFFERENT
+      // figures — because two identical generations make "byte-identical"
+      // trivially true and the assertion worthless. That was the first
+      // version of this gate and it could not have failed.
+      //
+      // A third generation is written by hand so the moment between insert
+      // and prune can be looked at, which persistFetch deliberately does not
+      // expose. Rolled back.
+      const invisible = await txn(async (tx) => {
+        const [f3] = await tx<{ id: string }[]>`
+          insert into pos_fetches (restaurant_id, business_date, order_count, note)
+          values (${rid}, ${DAY}::date, 1, 'zz-gate third generation') returning id`
+        await tx`
+          insert into pos_orders (fetch_id, restaurant_id, business_date, pos_order_id, channel,
+                                  payment_mode, covers, status_raw, status_class, subtotal, order_total)
+          values (${f3.id}, ${rid}, ${DAY}::date, 'ZZ9', 'third', 'Cash', 7,
+                  'Success', 'revenue', '999', '999')`
+        // BEFORE: two generations sit in the table, and the reader already
+        // sees only the newest, because latest_fetches filters.
+        const [pre] = await tx<{ row: string; gens: number }[]>`
+          select (select row(orders, covers, revenue)::text from sales_by_day
+                  where restaurant_id = ${rid} and business_date = ${DAY}::date) as row,
+                 (select count(distinct fetch_id)::int from pos_orders
+                  where restaurant_id = ${rid} and business_date = ${DAY}::date) as gens`
+        await tx`
+          delete from pos_orders
+          where restaurant_id = ${rid} and business_date = ${DAY}::date and fetch_id <> ${f3.id}`
+        const [post] = await tx<{ row: string; gens: number }[]>`
+          select (select row(orders, covers, revenue)::text from sales_by_day
+                  where restaurant_id = ${rid} and business_date = ${DAY}::date) as row,
+                 (select count(distinct fetch_id)::int from pos_orders
+                  where restaurant_id = ${rid} and business_date = ${DAY}::date) as gens`
+        throw Object.assign(new Error('ROLLBACK'), {
+          out: { pre: pre.row, post: post.row, gensPre: pre.gens, gensPost: post.gens },
+        })
+      }).catch((e: Error & { out?: { pre: string; post: string; gensPre: number; gensPost: number } }) => {
+        if (e.message !== 'ROLLBACK' || e.out === undefined) throw e
+        return e.out
+      })
+
+      const orders = await tsql<{ n: number; gens: number }[]>`
+        select count(*)::int as n, count(distinct fetch_id)::int as gens
+        from pos_orders where restaurant_id = ${rid} and business_date = ${DAY}::date`
+      const lines = await tsql<{ n: number }[]>`
+        select count(*)::int as n from pos_lines pl
+        join pos_orders po on po.id = pl.order_id
+        where po.restaurant_id = ${rid} and po.business_date = ${DAY}::date`
+      // ORPHANS: lines whose order is gone. The cascade is what prevents them,
+      // and a cascade that silently stopped working would leave exactly this.
+      const orphans = await tsql<{ n: number }[]>`
+        select count(*)::int as n from pos_lines pl
+        where not exists (select 1 from pos_orders po where po.id = pl.order_id)`
+      const fetches = await tsql<{ n: number; latest: string }[]>`
+        select count(*)::int as n,
+               (select id::text from latest_fetches
+                where restaurant_id = ${rid} and business_date = ${DAY}::date) as latest
+        from pos_fetches where restaurant_id = ${rid} and business_date = ${DAY}::date`
+      return {
+        fetchesBefore: before[0].n,
+        fetches: fetches[0].n,
+        latest: fetches[0].latest,
+        secondId: second.fetchId,
+        pruned: second.prunedOrders,
+        orders: orders[0].n,
+        gens: orders[0].gens,
+        lines: lines[0].n,
+        orphans: orphans[0].n,
+        dayBefore: dayBefore?.row ?? null,
+        dayAfter: dayAfter?.row ?? null,
+        invisible,
+      }
+    })
+
+    // ONE generation survives, whatever N is.
+    assert.equal(out.gens, 1, `${out.gens} generations of orders survive — the prune is not pruning`)
+    assert.equal(out.orders, 2, `${out.orders} orders survive for one 2-order generation`)
+    assert.equal(out.lines, 2, `${out.lines} lines survive for one 2-line generation`)
+    assert.equal(out.orphans, 0, `${out.orphans} orphaned pos_lines — the cascade is not firing`)
+    assert.equal(out.pruned, 2, 'the second fetch reported pruning nothing')
+
+    // EVERY fetch row is kept — it is the audit trail, and kb_app holds no
+    // DELETE on pos_fetches at all.
+    assert.equal(out.fetches, out.fetchesBefore + 2, 'a pos_fetches row went missing — that is the audit trail')
+
+    // THE PRUNE IS INVISIBLE TO EVERY READER. latest_fetches still resolves to
+    // the newest generation, and sales_by_day is byte-identical across it.
+    assert.equal(out.latest, out.secondId, 'latest_fetches no longer resolves to the newest fetch')
+    assert.equal(out.dayAfter, out.dayBefore, 'the same payload fetched twice reported different figures')
+    // ...and across a prune where the generations DIFFER, which is the only
+    // case that can catch a prune removing the wrong one.
+    assert.ok(out.invisible.gensPre > out.invisible.gensPost, 'the observed prune removed nothing')
+    assert.equal(out.invisible.gensPost, 1, 'more than one generation survived the observed prune')
+    assert.equal(
+      out.invisible.post,
+      out.invisible.pre,
+      `sales_by_day changed across a prune — it must be invisible (${out.invisible.pre} -> ${out.invisible.post})`,
+    )
+    console.log(
+      `      ${out.fetches} fetch rows for that date · 1 generation · ${out.orders} orders · sales_by_day ${out.dayAfter}`,
+    )
+  })
+
+  await check('pos_fetches can never be deleted, and the DELETE list stays short', async () => {
+    // The audit trail is protected by GRANT, not by discipline.
+    const f = await tsql<{ p: string }[]>`
+      select privilege_type as p from information_schema.table_privileges
+      where grantee = 'kb_app' and table_name = 'pos_fetches'`
+    assert.ok(!f.some((x) => x.p === 'DELETE'), 'kb_app can delete a pos_fetches row — that is the audit trail')
+
+    // FIVE TABLES MAY BE DELETED FROM, and each is the same reason in
+    // different clothes: the row asserts an INTENTION nothing depends on yet
+    // (recipe_lines, indent_lines), records a JUDGEMENT that was never true
+    // (reconciliation_matches), or CACHES someone else's fact (pos_orders,
+    // pos_lines). None is an event only we hold. A sixth appearing without an
+    // argument in AGENTS.md is the thing this catches.
+    const ALLOWED = ['indent_lines', 'pos_lines', 'pos_orders', 'recipe_lines', 'reconciliation_matches']
+    const all = await tsql<{ t: string }[]>`
+      select table_name as t from information_schema.table_privileges
+      where grantee = 'kb_app' and privilege_type = 'DELETE' and table_schema = 'public'
+      order by table_name`
+    assert.deepEqual(
+      all.map((x) => x.t),
+      ALLOWED,
+      'the DELETE list changed — every entry needs its reason argued in AGENTS.md first',
+    )
+    const { readFileSync } = await import('node:fs')
+    const agents = readFileSync('AGENTS.md', 'utf8')
+    for (const t of ALLOWED) {
+      assert.ok(agents.includes(t), `${t} may be deleted from and is not argued for in AGENTS.md`)
+    }
+    console.log(`      ${ALLOWED.length} tables deletable, each argued: ${ALLOWED.join(', ')}`)
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

@@ -4547,3 +4547,65 @@ What a `SECURITY DEFINER` accessor actually buys, stated exactly:
 
 The app still handles the key it uses, for as long as the request takes.
 Nobody should believe otherwise.
+
+## THE FIVE TABLES THAT MAY BE DELETED FROM — one reason in five costumes
+
+`kb_app` holds DELETE on exactly five tables, and the count is not the point;
+the reason is, and it is the same reason every time:
+
+> **A row may be deleted only when it asserts an INTENTION nothing depends on
+> yet, records a JUDGEMENT that was never true, or CACHES a fact somebody else
+> holds. Never when it is an event only we hold.**
+
+| Table | Which kind | Why |
+|---|---|---|
+| `recipe_lines` | intention | a card is a description of a dish, always editable |
+| `indent_lines` | intention | a request nobody has acted on; frozen the instant an issue stamps it |
+| `reconciliation_matches` | judgement | a wrong match was never true, so there is nothing to reverse |
+| `pos_orders` | cache | Petpooja holds the truth; a fetch is a photocopy |
+| `pos_lines` | cache | same, and they follow their order by cascade |
+
+`smoke:a2` reads `table_privileges` and asserts the list BY VALUE, and that
+every name on it appears in this file. **A sixth table appearing without its
+argument written here fails the suite** — which is the point: the list stays
+short because adding to it costs an argument, not a grant.
+
+## Pruning superseded fetch bodies — applied, and how it is held
+
+`pos_lines.order_id` is **ON DELETE CASCADE** (Rajesh changed it from NO
+ACTION on apply — the app would otherwise have had to delete lines first, and
+forgetting the order is a foreign-key error at prune time that nobody would
+meet until a re-fetch). So removing orders is sufficient and the ordering
+stops being something anyone can get wrong. Safe under RLS: only our own
+orders are deletable, so the cascade can only reach our own lines.
+
+**THE PRUNE KEYS ON THE FETCH ID, NOT ON `fetched_at`.** Anything ordering by
+time would be a second opinion about which generation wins and could disagree
+with `latest_fetches`; "everything for this date that is not what I just
+wrote" cannot. It runs inside the same transaction as the insert.
+
+**`pos_fetches` KEEPS EVERY ROW** — the audit trail, and it carries the note.
+That is enforced by GRANT (kb_app has no DELETE on it at all), not by
+discipline, and the gate asserts the absence of that privilege.
+
+Two assertions, both proved by breaking them:
+
+1. **N refreshes leave ONE generation and N fetch rows.** Self-demonstrating,
+   because the gate runs on the probe tenant and commits: the fetch rows
+   accumulate across runs and the bodies do not. Disabling the prune fails it
+   with "3 generations of orders survive".
+2. **The prune is invisible to every reader** — `latest_fetches` still
+   resolves to the newest, and `sales_by_day` is byte-identical across it.
+
+**THE FIRST VERSION OF (2) COULD NOT HAVE FAILED.** Both generations carried
+identical figures, so "byte-identical before and after" was trivially true.
+It now writes a third generation with DIFFERENT figures and observes the
+moment between insert and prune — which `persistFetch` deliberately does not
+expose, so the gate does it by hand inside a rolled-back transaction.
+Inverting the prune to remove the NEW generation fails it with
+`(1,7,999) -> null`: the reader seeing something different, which is the whole
+property.
+
+Also caught while checking orphans: `pos_lines` with no surviving order would
+be the signature of a cascade that silently stopped working, so the gate
+counts them and requires zero.

@@ -66,6 +66,7 @@ export async function fetchDay(raw: { date: string }): Promise<FetchDayResult> {
       businessDate: input.date,
       apiOrderCount: norm.apiOrderCount,
       insertedOrders: persisted.insertedOrders,
+      prunedOrders: persisted.prunedOrders,
       skippedOtherDates: norm.skippedOtherDates,
       duplicateIds: norm.duplicateIds,
       compDisagreements: norm.compDisagreements,
