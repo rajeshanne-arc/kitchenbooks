@@ -5145,6 +5145,105 @@ async function run() {
     )
   })
 
+  /* ── retire-never-delete: a door back ──────────────────────────────── */
+  console.log('\nnothing retired ever vanishes')
+
+  await check('every master that can be retired still LISTS and MARKS the retired', async () => {
+    // RETIRE-NEVER-DELETE IS ONLY SAFE IF THERE IS A DOOR BACK. The moment a
+    // master's listing screen filters to active, a mistaken retirement makes
+    // the row vanish with no way to see it or undo it — and because nothing
+    // is deleted, nobody would even find it in the database to complain about.
+    //
+    // Checked and found ALREADY TRUE of all eleven, which is why this is an
+    // assertion rather than a change: they were built retire-visible. What was
+    // missing is the thing that keeps the TWELFTH honest, since there are four
+    // different ways of arriving at it today (no filter at all, a default of
+    // include, an explicit `true` at the call site, and an ORDER BY that sorts
+    // retired last).
+    const { readFileSync } = await import('node:fs')
+
+    // table -> where its listing query lives, and what renders the row
+    const MASTERS: Record<string, { query: string; fn: string; marks: string }> = {
+      items: { query: 'src/server/books-queries.ts', fn: 'listItems', marks: 'src/app/store/masters/items/page.tsx' },
+      vendors: { query: 'src/server/books-queries.ts', fn: 'listVendors', marks: 'src/app/store/masters/vendors/page.tsx' },
+      staff: { query: 'src/server/labour-queries.ts', fn: 'listRoster', marks: 'src/app/staff/people/employees/page.tsx' },
+      recipes: { query: 'src/server/recipes-queries.ts', fn: 'listDishCosts', marks: 'src/app/kitchen/recipes/page.tsx' },
+      sections: { query: 'src/app/kitchen/departments/page.tsx', fn: '', marks: 'src/components/settings/DepartmentsClient.tsx' },
+      partners: { query: 'src/server/cashier-queries.ts', fn: 'listPartners', marks: 'src/components/cash/PartnersClient.tsx' },
+      money_accounts: { query: 'src/server/accounts-queries.ts', fn: 'listMoneyAccounts', marks: 'src/components/accounts/AccountsEditor.tsx' },
+      app_users: { query: 'src/server/auth-core.ts', fn: 'listUsers', marks: 'src/components/auth/UsersAdmin.tsx' },
+      list_options: { query: 'src/server/settings.ts', fn: 'getAllListOptions', marks: 'src/components/settings/ListsEditor.tsx' },
+      storage_locations: { query: 'src/server/locations-queries.ts', fn: 'listLocations', marks: 'src/components/settings/LocationsEditor.tsx' },
+      meters: { query: 'src/server/meters-queries.ts', fn: 'listMeters', marks: 'src/components/meters/MetersClient.tsx' },
+    }
+    // GLOBAL masters have no per-restaurant screen and nobody retires one from
+    // this app — printed rather than filtered, so the case is visiblyconsidered.
+    const EXEMPT: Record<string, string> = {
+      categories: 'global master shared by every tenant — seeded, not tenant-scoped, and no screen edits it',
+    }
+
+    // THE FAMILY IS READ FROM THE DATABASE, not from a list here: a twelfth
+    // master with an active|inactive CHECK fails until somebody names where it
+    // is listed and where it is marked.
+    const family = await tsql<{ relname: string; tenant: boolean }[]>`
+      select c.relname,
+             exists (select 1 from pg_attribute a2 where a2.attrelid = c.oid
+                       and a2.attname = 'restaurant_id' and a2.attnum > 0 and not a2.attisdropped) as tenant
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+      join pg_attribute a on a.attrelid = c.oid and a.attname = 'status'
+                         and a.attnum > 0 and not a.attisdropped
+      where c.relkind = 'r'
+        and exists (
+          select 1 from pg_constraint con
+          where con.conrelid = c.oid and con.contype = 'c'
+            and pg_get_constraintdef(con.oid) like '%status%'
+            and pg_get_constraintdef(con.oid) like '%''active''%'
+            and pg_get_constraintdef(con.oid) like '%''inactive''%'
+            and pg_get_constraintdef(con.oid) not like '%''pending''%')
+      order by 1`
+    assert.ok(family.length > 5, `only ${family.length} retire-never-delete tables found — the scan is not reaching them`)
+
+    const unregistered = family
+      .map((f) => f.relname)
+      .filter((t) => MASTERS[t] === undefined && EXEMPT[t] === undefined)
+    assert.deepEqual(
+      unregistered,
+      [],
+      'these tables can be retired and nothing here says where a retired row is listed or how it is marked — a mistaken retirement would vanish',
+    )
+
+    const hiding: string[] = []
+    const unmarked: string[] = []
+    for (const [table, m] of Object.entries(MASTERS)) {
+      const src = readFileSync(m.query, 'utf8')
+      // Slice the listing function so a NEIGHBOURING query's filter cannot be
+      // read as this one's — which is exactly how `listActiveStaff` (a picker)
+      // was mistaken for `listRoster` filtering.
+      let body = src
+      if (m.fn !== '') {
+        const at = src.indexOf(`export async function ${m.fn}`)
+        assert.ok(at > 0, `${m.fn} has been renamed — ${table} has no listing query`)
+        const next = src.indexOf('export async function ', at + 10)
+        body = src.slice(at, next === -1 ? src.length : next)
+      }
+      // An ORDER BY may mention it — sorting retired last is the opposite of
+      // hiding them. Only a WHERE-side filter hides.
+      const stripped = body.replace(/order by[\s\S]*?`/gi, '`')
+      if (/status\s*=\s*'active'/.test(stripped) && !/includeRetired/.test(body)) hiding.push(`${table} (${m.fn})`)
+      if (!/RetiredBadge|line-through|opacity-50|· retired|'inactive'/.test(readFileSync(m.marks, 'utf8'))) {
+        unmarked.push(`${table} (${m.marks.replace('src/', '')})`)
+      }
+    }
+    assert.deepEqual(hiding, [], 'these master lists filter to active, so a retired row vanishes with no door back')
+    assert.deepEqual(unmarked, [], 'these master lists show retired rows without marking them, which reads as active')
+
+    console.log(
+      `      ${family.length} retirable tables · ${Object.keys(MASTERS).length} list and mark the retired · ${Object.keys(EXEMPT).length} exempt`,
+    )
+    for (const [t, why] of Object.entries(EXEMPT)) console.log(`        exempt: ${t} — ${why}`)
+  })
+
   /* ── the save acknowledgement, every path ──────────────────────────── */
   console.log('\nafter saving, the page does not sit still')
 

@@ -5735,3 +5735,58 @@ edits source is subject to the same rule as a gate that reads it: anchor on
 structure, and verify where the edit landed rather than that it applied.** The
 check afterwards — *is every render below its own state, in the same component?*
 — is what caught the third.
+
+## RETIRE-NEVER-DELETE ALREADY HAS ITS DOOR BACK — checked, not assumed
+
+The brief was that ten masters carry a status column, every list filters to
+active, and a mistaken retirement therefore vanishes with no way back. **That is
+not true today**, and the checking is the useful part.
+
+Measured across every table whose `status` CHECK is exactly `active | inactive`
+— twelve, not ten:
+
+| | listing query filters to active? | marks retired? | can un-retire? |
+|---|---|---|---|
+| items, vendors, recipes, list_options, sections | no filter at all | yes | yes |
+| staff, app_users | no filter — see below | yes | yes |
+| partners, money_accounts, meters | `includeRetired`, screen passes `true` | yes | yes |
+| storage_locations | `includeRetired` **defaults true** | yes | yes |
+
+Eleven tenant masters, all listing the retired, all marking them, all with a
+status write on their update action. `categories` is the twelfth and is a global
+master shared by every tenant with no screen. Zero rows are retired anywhere, so
+nothing was ever at risk.
+
+**WHERE THE WRONG PREMISE CAME FROM, and it is a rule.** `grep "status =
+'active'"` over `src/server` returns about thirty hits, which reads as "every
+list filters". Almost all of them are **pickers** (issue to a department, choose
+an item for a bill) and **computations** (headcount, labour cost), where showing
+only active is correct and intended. Two more were pure false positives:
+
+- `listRoster` has no filter; the one four lines below belongs to
+  `listActiveStaff`, a picker;
+- `listUsers`'s `status = 'active'` is inside its **ORDER BY**, sorting active
+  first — the opposite of hiding.
+
+> **A column appearing in a query is not that query filtering on it, and a
+> filter in a neighbouring function is not this one's.** Slice the function
+> before reading its WHERE, and strip the ORDER BY before deciding something is
+> hidden.
+
+That is the same family as reading a rendered form instead of its handler, and
+as a gate slicing its own body — every one of them is a signal taken from near
+the thing rather than from the thing.
+
+**SO THE CONTROL WAS NOT BUILT.** A filter offering Active / Retired / All on
+eleven screens that already show all rows would be a second answer to a question
+already answered — the exact fault the brief itself names under "deliberately
+not building". What was genuinely missing is the part that keeps the TWELFTH
+master honest, because there are four different ways of arriving at the right
+behaviour today and nothing holds any of them.
+
+`smoke:a2` reads the family **from the database**, not from a list in the file,
+and requires every retirable table to name where its retired rows are listed and
+what marks them — with `categories` exempt and its reason printed. A twelfth
+master fails until somebody says. Proved able to fail both ways: removing one
+registration named it as unprotected, and making one listing query filter to
+active named it as hiding.
