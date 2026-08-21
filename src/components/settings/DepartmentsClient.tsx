@@ -32,6 +32,7 @@ import {
   trCls,
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 const GROUPS = ['Management', 'Support', 'Kitchen', 'Service', 'Bar'] as const
 
@@ -59,6 +60,7 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
     status: 'active' as 'active' | 'inactive',
   })
   const [busy, setBusy] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function saveEdit(id: string) {
@@ -67,6 +69,10 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
     try {
       const res = await updateDepartment(id, draft)
       if (res.ok) {
+        setAck({
+          headline: `${draft.name} saved`,
+          sub: 'The name follows everywhere at once — dish codes, issues and staff postings all read this one row. The CODE never changes.',
+        })
         toast('Department saved — the new name shows on dishes, issues and postings')
         setEditing(null)
         router.refresh()
@@ -84,6 +90,10 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
     try {
       const res = await createDepartment({ ...neu, deptKind: kind })
       if (res.ok) {
+        setAck({
+          headline: `${neu.name} added as ${neu.code.toUpperCase()}`,
+          sub: `${neu.codesDishes ? 'Dishes can be coded to it' : 'No dish can be coded to it'} · ${neu.receivesStock ? 'receives stock' : 'receives no stock'}. The code is permanent — every dish coded to it carries it forever.`,
+        })
         toast(`${neu.name} added`)
         setNeu({ name: '', code: '', deptGroup: 'Kitchen', codesDishes: false, receivesStock: true, sortOrder: '', status: 'active' })
         setAdding(false)
@@ -104,6 +114,7 @@ export default function DepartmentsClient({ rows }: { rows: DepartmentRow[] }) {
 
   return (
     <div className="space-y-4">
+      {ack !== null && <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />}
       <div className="flex gap-2" role="group" aria-label="Department kind">
         {(
           [

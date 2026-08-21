@@ -5660,3 +5660,78 @@ laptop.
 
 **Check what is SERVED before diagnosing what is RENDERED.** A UI question asked
 against undeployed code has an answer that is true and useless.
+
+## AFTER SAVING, THE PAGE MUST NOT SIT STILL
+
+Rajesh's words, and the acceptance test for every write in the app. He found
+the gap by saving an item and watching nothing happen — the third time a
+"finished" sweep turned out to have a bucket left in it, and the third time he
+found it by using the app rather than any gate finding it.
+
+**What the earlier sweep actually reached:** the 11 full-screen reveals and the
+6 navigators. The masters, the settings screens and the voids were left on a
+toast — and `ItemEdit` and `VendorEdit` on a literal `saved ✓` rendered at the
+TOP of a long form while the save button sits at the bottom. On a phone nothing
+in view changed at all.
+
+Three rules follow from the test:
+
+- **a) SAY NUMBERS, NOT A CHECKMARK.** "Black Pepper saved — dry store,
+  reorders at 2 kg" tells you what landed. A checkmark is a claim. For a master,
+  read back what changed *including the field that unlocks something*: a
+  location set means the count sheet gained a row.
+- **b) IT MUST BE VISIBLE FROM WHERE THE BUTTON IS.** `SaveAck` scrolls itself
+  into view for exactly this reason. A marker beside a heading fails it when the
+  button is a screen away. *(The toast does not: it is `fixed inset-x-0
+  bottom-4`, bottom-anchored near the thumb — worth knowing, because "a toast at
+  the top" is the usual version of this complaint and is not what this app has.)*
+- **c) SAY WHAT IS STILL MISSING**, while somebody is still holding the thing
+  they could fix. "5 of 6 items still have no location."
+
+### The census, and why it is enumerated rather than filtered
+
+`smoke:a2` walks every exported action in a `'use server'` file whose body
+writes, finds its call sites, and requires each to render `SaveAck` — or to be
+on an exempt list **with a reason that is printed on every run**:
+
+    104 writing actions · 89 acknowledged · 9 exempt · 6 with no UI call site
+
+Nine exemptions, three kinds, each named: **full-screen reveal** (BillEntry,
+CountEntry, DayClose — the form is replaced by the result), **navigates to a
+real next screen** (CreateRecipe, StatementImport, PrepareRun), and **inline row
+control** (UnmatchButton, CancelIndent, SettleShort — a `<span>` inside a table
+row, acting on the row it sits in, where the row moving lists IS the change and
+a hatched band inside a table cell would be worse than the toast).
+
+**An exemption that no longer applies fails the gate.** A reason nobody re-reads
+is how a filter grows into a hiding place — so the list cannot rot quietly.
+
+### The gate had the substring flaw. Again.
+
+Proving it could fail, I renamed `<SaveAck` to `<SaveAckX` in ItemEdit and the
+gate **stayed green**: `/<SaveAck/` matches `<SaveAckX` too. That is precisely
+the `<DateLink` / `<DateLinkX` flaw already recorded in this file — repeated
+inside the gate written to stop a recurrence. Fixed to `/<SaveAck[\s/>]/`, a
+real JSX boundary, and re-proved.
+
+**Match on a boundary, never on a prefix.** Third instance now, and the pattern
+is always the same: the perturbation that should break the check is a rename,
+and a prefix match survives one.
+
+### Three transforms, three ways of pointing at the wrong source
+
+Doing forty files by script produced three failures worth keeping, because all
+three are the same mistake as the gate's:
+
+- `^import .*$` matched the OPENING line of a multi-line import and split it in
+  half;
+- an anchor on `const [x] = useState(` matched a MULTI-LINE initializer and put
+  the new state inside its object literal;
+- a `return (` anchor matched a small helper component earlier in the file, so
+  the acknowledgement rendered in a stat tile instead of the form.
+
+Each looked plausible and each was pointed at the wrong text. **A transform that
+edits source is subject to the same rule as a gate that reads it: anchor on
+structure, and verify where the edit landed rather than that it applied.** The
+check afterwards — *is every render below its own state, in the same component?*
+— is what caught the third.

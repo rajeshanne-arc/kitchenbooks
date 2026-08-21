@@ -25,6 +25,7 @@ import {
   selectCls,
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 const ROLE_LABEL: Record<Role, string> = {
   store: 'Store',
@@ -46,6 +47,7 @@ function waiting(raisedAt: string): string {
 export default function QueueClient({ open, recent }: { open: QueryRow[]; recent: QueryRow[] }) {
   const router = useRouter()
   const [asking, setAsking] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [entityType, setEntityType] = useState('')
   const [entityDate, setEntityDate] = useState('')
   const [assignedRole, setAssignedRole] = useState('')
@@ -71,6 +73,7 @@ export default function QueueClient({ open, recent }: { open: QueryRow[]; recent
         toast(res.error, 'error')
         return
       }
+setAck({ headline: `Asked of the ${ROLE_LABEL[res.query.assigned_role].toLowerCase()}`, sub: 'It appears on the screen they already open every morning — and the period cannot close until it is resolved.' })
       toast(`Asked of the ${ROLE_LABEL[res.query.assigned_role].toLowerCase()}`, 'ok')
       setEntityType('')
       setEntityDate('')
@@ -94,6 +97,7 @@ export default function QueueClient({ open, recent }: { open: QueryRow[]; recent
         toast(res.error, 'error')
         return
       }
+setAck({ headline: 'Resolved', sub: 'You asked it, so you decide whether the answer settles it. Both halves stay on the record — in a month the answer is the only thing that explains the number.' })
       toast('Resolved', 'ok')
       router.refresh()
     } catch {
@@ -105,6 +109,11 @@ export default function QueueClient({ open, recent }: { open: QueryRow[]; recent
 
   return (
     <div className="space-y-4">
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>Questions out</h2>

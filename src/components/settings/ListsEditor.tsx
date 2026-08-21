@@ -12,20 +12,29 @@ import { LIST_KEYS } from '@/lib/lists'
 import { addListOption, moveListOption, setListOptionStatus } from '@/server/settings-actions'
 import { cardCls, numCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 export default function ListsEditor({ initialOptions }: { initialOptions: ListOptionRow[] }) {
   const router = useRouter()
   const [options, setOptions] = useState(initialOptions)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
-  async function run(p: Promise<{ ok: true; options: ListOptionRow[] } | { ok: false; error: string }>) {
+  // SILENT ON SUCCESS until now: the row list re-rendered and nothing said
+  // what had happened. `ok` is required rather than optional, so a new call
+  // site cannot quietly reintroduce the silence.
+  async function run(
+    p: Promise<{ ok: true; options: ListOptionRow[] } | { ok: false; error: string }>,
+    ok: (options: ListOptionRow[]) => { headline: string; sub?: string },
+  ) {
     if (busy) return
     setBusy(true)
     try {
       const res = await p
       if (res.ok) {
         setOptions(res.options)
+        setAck(ok(res.options))
         router.refresh()
       } else {
         toast(res.error, 'error')
@@ -39,6 +48,7 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
 
   return (
     <div className="space-y-4">
+      {ack !== null && <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />}
       {LIST_KEYS.map(({ key, name, usedBy }) => {
         const rows = options.filter((o) => o.list_key === key)
         const draft = drafts[key] ?? ''
@@ -58,7 +68,7 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
                     <button
                       type="button"
                       disabled={busy || i === 0}
-                      onClick={() => void run(moveListOption(o.id, 'up'))}
+                      onClick={() => void run(moveListOption(o.id, 'up'), () => ({ headline: `“${o.value}” moved up`, sub: `The ${name} list is offered in this order everywhere it appears.` }))}
                       aria-label={`Move ${o.value} up`}
                       className="rounded-md px-1.5 py-0.5 text-sm text-stone-400 hover:bg-stone-100 hover:text-stone-700 disabled:opacity-30"
                     >
@@ -67,7 +77,7 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
                     <button
                       type="button"
                       disabled={busy || i === rows.length - 1}
-                      onClick={() => void run(moveListOption(o.id, 'down'))}
+                      onClick={() => void run(moveListOption(o.id, 'down'), () => ({ headline: `“${o.value}” moved down`, sub: `The ${name} list is offered in this order everywhere it appears.` }))}
                       aria-label={`Move ${o.value} down`}
                       className="rounded-md px-1.5 py-0.5 text-sm text-stone-400 hover:bg-stone-100 hover:text-stone-700 disabled:opacity-30"
                     >
@@ -77,7 +87,7 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => void run(setListOptionStatus(o.id, 'inactive'))}
+                        onClick={() => void run(setListOptionStatus(o.id, 'inactive'), (opts) => ({ headline: `“${o.value}” retired`, sub: `Every entry that already used it keeps it — it simply stops being offered. ${opts.filter((r) => r.list_key === key && r.status === 'active').length} values left on ${name}.` }))}
                         className="rounded-md border border-stone-200 px-2 py-0.5 text-xs font-medium text-stone-500 hover:border-amber-300 hover:text-amber-700 disabled:opacity-40"
                       >
                         retire
@@ -86,7 +96,7 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => void run(setListOptionStatus(o.id, 'active'))}
+                        onClick={() => void run(setListOptionStatus(o.id, 'active'), (opts) => ({ headline: `“${o.value}” is offered again`, sub: `${opts.filter((r) => r.list_key === key && r.status === 'active').length} values on ${name}.` }))}
                         className="rounded-md border border-stone-200 px-2 py-0.5 text-xs font-medium text-emerald-700 hover:border-emerald-300 disabled:opacity-40"
                       >
                         restore
@@ -102,7 +112,7 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
                 onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && draft.trim() !== '') {
-                    void run(addListOption(key, draft.trim())).then(() => setDrafts((d) => ({ ...d, [key]: '' })))
+                    void run(addListOption(key, draft.trim()), (opts) => ({ headline: `“${draft.trim()}” added to ${name}`, sub: `${opts.filter((r) => r.list_key === key && r.status === 'active').length} values on this list, offered in the order shown.` })).then(() => setDrafts((d) => ({ ...d, [key]: '' })))
                   }
                 }}
                 placeholder="add a value"
@@ -112,7 +122,7 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
               <button
                 type="button"
                 disabled={busy || draft.trim() === ''}
-                onClick={() => void run(addListOption(key, draft.trim())).then(() => setDrafts((d) => ({ ...d, [key]: '' })))}
+                onClick={() => void run(addListOption(key, draft.trim()), (opts) => ({ headline: `“${draft.trim()}” added to ${name}`, sub: `${opts.filter((r) => r.list_key === key && r.status === 'active').length} values on this list, offered in the order shown.` })).then(() => setDrafts((d) => ({ ...d, [key]: '' })))}
                 className="shrink-0 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:bg-stone-300"
               >
                 Add

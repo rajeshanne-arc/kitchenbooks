@@ -7,6 +7,7 @@ import { voidIssue } from '@/server/store-actions'
 import type { VoidIssueResult } from '@/lib/types'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
+import SaveAck from '@/components/SaveAck'
 
 export default function VoidIssue({
   issueId,
@@ -48,8 +49,10 @@ export default function VoidIssue({
 
   if (done) {
     return (
-      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-emerald-800">Issue voided</h3>
+      <SaveAck
+        headline={`Issue voided — ${formatMoneyString(done.reversal.total_value)} reversed`}
+        sub={`${sectionName} this month is now ${formatMoneyString(done.monthValue)}. Unit costs were copied exactly from the original lines, never re-snapshotted.`}
+      >
         <p className="mt-2 text-sm text-stone-700">
           A{' '}
           <Link href={`/store/books/issues/${done.reversal.id}`} className="font-medium text-emerald-800 underline">
@@ -74,7 +77,7 @@ export default function VoidIssue({
           ))}
         </ul>
         <p className="mt-1.5 text-xs text-stone-500">read live from stock_on_hand</p>
-      </section>
+      </SaveAck>
     )
   }
 

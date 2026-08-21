@@ -31,6 +31,7 @@ import {
   selectCls,
   sectionHeadCls,
 } from '@/components/ui'
+import SaveAck from '@/components/SaveAck'
 
 export default function RunActions({
   runId,
@@ -49,6 +50,7 @@ export default function RunActions({
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [paidOn, setPaidOn] = useState(today)
   const [accountId, setAccountId] = useState('')
@@ -63,6 +65,7 @@ export default function RunActions({
         toast(res.error ?? 'That did not go through', 'error')
         return
       }
+setAck({ headline: done, sub: 'draft → approved → paid, and no shortcut between them. Only a line with a paid date has left an account and reached the wages register.' })
       toast(done, 'ok')
       setConfirming(false)
       router.refresh()
@@ -173,6 +176,11 @@ export default function RunActions({
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <h2 className={sectionHeadCls}>Approved — record the payment</h2>
       <p className="mt-1.5 text-sm text-stone-700">
         This records that the wages went out: the date, the account they came from and how they were

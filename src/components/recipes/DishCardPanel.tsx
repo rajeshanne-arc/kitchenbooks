@@ -35,6 +35,7 @@ import {
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 const DIETS = ['Veg', 'Non-veg', 'Egg', 'Vegan']
 
@@ -112,6 +113,7 @@ export default function DishCardPanel({
     overheadPct: card.overhead_pct ?? '',
     sellingPrice: card.selling_price ?? '',
   })
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -124,6 +126,7 @@ export default function DishCardPanel({
     try {
       const res = await updateDishCard(card.recipe_id, f)
       if (res.ok) {
+        setAck({ headline: 'Card saved', sub: 'Costs are live: they read the current issue cost at query time, so a rate change on a bill moves this dish with no re-cost step.' })
         toast('Card saved')
         router.refresh()
       } else setError(res.error)
@@ -140,6 +143,11 @@ export default function DishCardPanel({
 
   return (
     <div className="space-y-4">
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       {/* header strip */}
       <section className={cardCls}>
         <div className="flex flex-wrap items-center gap-2">

@@ -25,6 +25,7 @@ import { saveBusinessDay } from '@/server/business-day-actions'
 import { toast } from '@/components/Toasts'
 import Honesty from '@/components/Honesty'
 import { btnCls, cardCls, fieldLabelCls, inputCls, sectionHeadCls } from '@/components/ui'
+import SaveAck from '@/components/SaveAck'
 
 /** A SHORT list of common zones as suggestions, not 400 rendered options. The
  *  field still accepts any IANA name — Postgres' own catalogue is the check,
@@ -62,6 +63,7 @@ export default function BusinessDayEditor({
 }) {
   const router = useRouter()
   const [tz, setTz] = useState(timezone)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [start, setStart] = useState(businessDayStart)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -75,6 +77,7 @@ export default function BusinessDayEditor({
     try {
       const res = await saveBusinessDay(tz, start)
       if (res.ok) {
+        setAck({ headline: `The day now runs from ${start} in ${tz}`, sub: 'No stored date moved. What changed is how every date is read from now on — and what the disagreement report computes for orders already stored.' })
         toast('Saved — dates are read against the new day from now on')
         setConfirming(false)
         router.refresh()
@@ -88,6 +91,11 @@ export default function BusinessDayEditor({
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>The day, and where you are</h2>
         <span className="font-mono text-[11px] text-stone-400">settings</span>

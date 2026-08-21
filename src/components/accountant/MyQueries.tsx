@@ -18,10 +18,12 @@ import { entityLabel } from '@/lib/query-entities'
 import { fmtDate } from '@/lib/format'
 import { btnCls, cardCls, inputCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 export default function MyQueries({ queries }: { queries: QueryRow[] }) {
   const router = useRouter()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
   if (queries.length === 0) return null
@@ -36,6 +38,7 @@ export default function MyQueries({ queries }: { queries: QueryRow[] }) {
         toast(res.error, 'error')
         return
       }
+      setAck({ headline: 'Answered — the accountant sees it on their queue', sub: 'Answered is not resolved: they decide whether the answer settles it, and the period stays open until they do.' })
       toast('Answered — the accountant will see it', 'ok')
       setDrafts((d) => ({ ...d, [id]: '' }))
       router.refresh()
@@ -48,6 +51,11 @@ export default function MyQueries({ queries }: { queries: QueryRow[] }) {
 
   return (
     <section className={`${cardCls} border-amber-300`}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>The accountant is asking</h2>
         <span className="text-xs text-stone-400">

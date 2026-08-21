@@ -7,10 +7,12 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { photographMenu } from '@/server/counts-actions'
+import SaveAck from '@/components/SaveAck'
 
 export default function SnapshotButton() {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   async function onClick() {
@@ -33,6 +35,11 @@ export default function SnapshotButton() {
 
   return (
     <div>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <button
         type="button"
         onClick={onClick}

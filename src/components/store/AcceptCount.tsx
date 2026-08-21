@@ -15,6 +15,7 @@ import { acceptCount } from '@/server/adjustment-actions'
 import { toast } from '@/components/Toasts'
 import { formatMoneyString } from '@/lib/money'
 import { btnCls, btnGhostCls, cardCls, sectionHeadCls } from '@/components/ui'
+import SaveAck from '@/components/SaveAck'
 
 export default function AcceptCount({
   countId,
@@ -28,6 +29,7 @@ export default function AcceptCount({
 }) {
   const router = useRouter()
   const [confirming, setConfirming] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -57,6 +59,11 @@ export default function AcceptCount({
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <h2 className={sectionHeadCls}>Accept into the book</h2>
       <p className="mt-2 text-sm text-stone-700">
         The count above changed nothing. A variance can be a counting error as easily as a stock error, so the book

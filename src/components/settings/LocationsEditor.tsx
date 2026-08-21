@@ -15,6 +15,7 @@ import type { SaveLocationInput, StorageLocation } from '@/lib/types'
 import { createLocation, moveLocation, updateLocation } from '@/server/locations-actions'
 import { toast } from '@/components/Toasts'
 import Honesty from '@/components/Honesty'
+import SaveAck from '@/components/SaveAck'
 import {
   btnCls,
   btnGhostCls,
@@ -74,8 +75,16 @@ export default function LocationsEditor({
   const [adding, setAdding] = useState(initial.length === 0)
   const [draft, setDraft] = useState<SaveLocationInput>(blank)
   const [busy, setBusy] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
-  async function run(fn: () => Promise<{ ok: true; locations: StorageLocation[] } | { ok: false; error: string }>, ok: string) {
+  // THE ACKNOWLEDGEMENT IS INLINE, not only a toast: SaveAck scrolls itself
+  // into view, and on a phone the button that triggered this is halfway down
+  // a list. `sub` says what is still unplaced, because that is the number
+  // somebody can act on while they are still on this screen.
+  async function run(
+    fn: () => Promise<{ ok: true; locations: StorageLocation[] } | { ok: false; error: string }>,
+    ok: string,
+  ) {
     if (busy) return
     setBusy(true)
     try {
@@ -85,6 +94,11 @@ export default function LocationsEditor({
         return
       }
       setLocations(res.locations)
+      const placed = res.locations.reduce((n, l) => n + l.item_count, 0)
+      setAck({
+        headline: ok,
+        sub: `${res.locations.filter((l) => l.status === 'active').length} locations in the walk · ${placed} of ${totalItems} items placed`,
+      })
       toast(ok, 'ok')
       setEditing(null)
       setAdding(false)
@@ -99,6 +113,11 @@ export default function LocationsEditor({
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>Storage locations</h2>
         <span className="font-mono text-[11px] text-stone-400">storage_locations</span>

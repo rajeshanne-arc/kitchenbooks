@@ -11,12 +11,14 @@ import { TAB_GROUP_NAMES, TAB_GROUPS, type TabDef, type TabGroup } from '@/lib/t
 import { saveTabsSetting } from '@/server/settings-actions'
 import { cardCls, numCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 export default function TabsEditor({ initialTabs }: { initialTabs: Record<TabGroup, TabDef[]> }) {
   const router = useRouter()
   const [tabs, setTabs] = useState(initialTabs)
   const [dirty, setDirty] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState<TabGroup | null>(null)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
   function move(group: TabGroup, index: number, dir: -1 | 1) {
     setTabs((t) => {
@@ -49,6 +51,10 @@ export default function TabsEditor({ initialTabs }: { initialTabs: Record<TabGro
       if (res.ok) {
         setTabs((t) => ({ ...t, [group]: res.tabs }))
         setDirty((d) => ({ ...d, [group]: false }))
+        setAck({
+          headline: `${TAB_GROUP_NAMES[group]} — ${res.tabs.length} tabs, in this order`,
+          sub: res.tabs.map((t) => t.label).join(' · '),
+        })
         toast(`${TAB_GROUP_NAMES[group]} tabs saved`)
         router.refresh()
       } else {
@@ -63,6 +69,7 @@ export default function TabsEditor({ initialTabs }: { initialTabs: Record<TabGro
 
   return (
     <div className="space-y-4">
+      {ack !== null && <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />}
       {TAB_GROUPS.map((group) => (
         <section key={group} className={cardCls}>
           <div className="flex items-baseline justify-between gap-3">

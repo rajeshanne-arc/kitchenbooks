@@ -38,6 +38,7 @@ import {
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 /** derived, so the toggle cannot drift from what the action accepts */
 type Direction = StaffFundInput['direction']
@@ -61,6 +62,7 @@ export default function CloseClient({
 }) {
   const router = useRouter()
   const [periodStart, setPeriodStart] = useState(defaultStart)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [periodEnd, setPeriodEnd] = useState(defaultEnd)
   const [note, setNote] = useState('')
   const [reopening, setReopening] = useState<string | null>(null)
@@ -107,6 +109,7 @@ export default function CloseClient({
         toast(res.error, 'error')
         return
       }
+setAck({ headline: `${fmtDate(periodStart)} – ${fmtDate(periodEnd)} closed`, sub: 'No query was left open — a period cannot close while one is, which is what makes the deadline mean anything.' })
       toast(`${fmtDate(periodStart)} – ${fmtDate(periodEnd)} closed`, 'ok')
       setNote('')
       router.refresh()
@@ -126,6 +129,7 @@ export default function CloseClient({
         toast(res.error, 'error')
         return
       }
+setAck({ headline: `${fmtDate(periodStart)} – ${fmtDate(periodEnd)} reopened`, sub: 'It stays on the record as reopened. Nothing is erased — a period that was closed and opened again is a thing somebody did.' })
       toast(`${fmtDate(periodStart)} – ${fmtDate(periodEnd)} reopened — it stays on the record as reopened`, 'ok')
       setReopening(null)
       setReason('')
@@ -153,6 +157,7 @@ export default function CloseClient({
         toast(res.error, 'error')
         return
       }
+setAck({ headline: direction === 'collected' ? 'Collection recorded' : 'Payout recorded', sub: 'The staff fund is a LIABILITY, not income — collected on behalf of the staff, less what has been handed to them.' })
       toast(direction === 'collected' ? 'Collection recorded' : 'Payout recorded', 'ok')
       setAmount('')
       setSource('')
@@ -167,6 +172,11 @@ export default function CloseClient({
 
   return (
     <div className="space-y-4">
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       {blocked && (
         <Honesty
           level="alarm"

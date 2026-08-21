@@ -13,6 +13,7 @@ import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import { cardCls, fieldLabelCls, heroNumCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 import Honesty, { Doubted } from '@/components/Honesty'
 import ComponentPicker from './ComponentPicker'
+import SaveAck from '@/components/SaveAck'
 
 const cleanNum = (raw: string) => {
   const cleaned = raw.replace(/[^\d.]/g, '')
@@ -38,7 +39,7 @@ export default function RecipeEditor({
   const [outputUnit, setOutputUnit] = useState(initialRecipe.output_unit)
   const [sellingPrice, setSellingPrice] = useState(initialRecipe.selling_price ?? '')
   const [status, setStatus] = useState<'active' | 'inactive'>(initialRecipe.status)
-  const [headerSaved, setHeaderSaved] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({})
   const [yieldDrafts, setYieldDrafts] = useState<Record<string, string>>({})
@@ -82,7 +83,6 @@ export default function RecipeEditor({
 
   async function saveHeader() {
     if (!headerOk || busy) return
-    setHeaderSaved(false)
     const ok = await run(() =>
       updateRecipe(recipe.id, {
         name: name.trim(),
@@ -92,7 +92,18 @@ export default function RecipeEditor({
         status,
       }),
     )
-    if (ok) setHeaderSaved(true)
+    if (ok) {
+      // COSTS ARE LIVE, so the acknowledgement states the one the card now
+      // carries rather than echoing what was typed. `Saved ✓` sat at the top
+      // of the card while the controls are down the page.
+      setAck({
+        headline: `${recipe.name} saved`,
+        sub:
+          recipe.uncosted_lines > 0
+            ? `${recipe.uncosted_lines} ${recipe.uncosted_lines === 1 ? 'ingredient has' : 'ingredients have'} no cost behind them, so the batch total below is understated — it prices them at zero.`
+            : 'The cost below is read live from current issue costs, so a rate change on a bill moves it with no re-cost step.',
+      })
+    }
   }
 
   const addQtyOk = component !== null && parseQty(newQty.trim()) !== null && Number(newQty) > 0
@@ -116,6 +127,7 @@ export default function RecipeEditor({
 
   return (
     <div className="mt-4 space-y-4">
+      {ack !== null && <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />}
       {/* live cost — the point of the phase */}
       <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
@@ -177,7 +189,7 @@ export default function RecipeEditor({
       <section className={cardCls}>
         <div className="flex items-center justify-between">
           <h3 className={sectionHeadCls}>Details</h3>
-          {headerSaved && <span className="text-xs font-medium text-emerald-700">Saved ✓</span>}
+
         </div>
         <div className="mt-3 space-y-3">
           <label className="block">
@@ -186,7 +198,6 @@ export default function RecipeEditor({
               value={name}
               onChange={(e) => {
                 setName(e.target.value)
-                setHeaderSaved(false)
               }}
               className={inputCls}
             />
@@ -200,7 +211,6 @@ export default function RecipeEditor({
                   value={outputQty}
                   onChange={(e) => {
                     setOutputQty(cleanNum(e.target.value))
-                    setHeaderSaved(false)
                   }}
                   className={`${numCls} w-20`}
                 />
@@ -208,7 +218,6 @@ export default function RecipeEditor({
                   value={outputUnit}
                   onChange={(e) => {
                     setOutputUnit(e.target.value)
-                    setHeaderSaved(false)
                   }}
                   className={selectCls}
                 >
@@ -232,7 +241,6 @@ export default function RecipeEditor({
                     value={sellingPrice}
                     onChange={(e) => {
                       setSellingPrice(cleanNum(e.target.value))
-                      setHeaderSaved(false)
                     }}
                     placeholder="—"
                     className={`${inputCls} pl-7`}
@@ -249,7 +257,6 @@ export default function RecipeEditor({
                 value={status}
                 onChange={(e) => {
                   setStatus(e.target.value as 'active' | 'inactive')
-                  setHeaderSaved(false)
                 }}
                 className={selectCls}
               >

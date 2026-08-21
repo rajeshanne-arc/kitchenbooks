@@ -27,6 +27,7 @@ import {
   trCls,
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 const blank = { name: '', kind: '', agreedCommissionPct: '', status: 'active' as const }
 
@@ -40,6 +41,7 @@ export default function PartnersClient({ partners }: { partners: Partner[] }) {
   }>(blank)
   const [editing, setEditing] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const canSave = !busy && form.name.trim() !== '' && form.kind.trim() !== ''
@@ -62,6 +64,13 @@ export default function PartnersClient({ partners }: { partners: Partner[] }) {
     try {
       const res = editing === null ? await createPartner(form) : await updatePartner(editing, form)
       if (res.ok) {
+        setAck({
+          headline: `${res.partner.name} — ${res.partner.kind}`,
+          sub:
+            res.partner.agreed_commission_pct === null
+              ? 'No agreed commission, so a settlement cannot be measured against a rate — only the rupee gap will be stated.'
+              : `Agreed at ${res.partner.agreed_commission_pct}%. Every settlement is measured against it, and the effective rate is stated beside it.`,
+        })
         toast(editing === null ? `${res.partner.name} added` : `${res.partner.name} saved`)
         setForm(blank)
         setEditing(null)
@@ -80,6 +89,7 @@ export default function PartnersClient({ partners }: { partners: Partner[] }) {
 
   return (
     <div className="space-y-4">
+      {ack !== null && <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />}
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>{editing === null ? 'Add a partner' : 'Edit partner'}</h2>

@@ -22,6 +22,7 @@ import { createMeter, setMeteringMode, updateMeter } from '@/server/meters-actio
 import { formatMoneyString, formatRate } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import Honesty from '@/components/Honesty'
+import SaveAck from '@/components/SaveAck'
 import { LockedField } from '@/components/books/Locked'
 import { toast } from '@/components/Toasts'
 import {
@@ -117,6 +118,7 @@ export default function MetersClient({
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState<SaveMeterInput>(() => blank('electricity'))
   const [busy, setBusy] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
   const gasMetered = mode.gas === 'meter'
   const elecOn = mode.electricity === 'on'
@@ -135,6 +137,14 @@ export default function MetersClient({
         return
       }
       setMode(res.mode)
+      setAck({
+        headline: `Gas is measured as ${res.mode.gas === 'meter' ? 'a piped meter' : 'cylinders'}`,
+        sub: `Electricity metering ${res.mode.electricity}. ${
+          res.mode.gas === 'cylinders'
+            ? 'A gas meter reading is refused — a cylinder is consumed when it is issued.'
+            : 'Gas readings are taken at the day close.'
+        }`,
+      })
       toast(
         `Gas measured as ${res.mode.gas === 'meter' ? 'a meter' : 'cylinders'} · electricity metering ${res.mode.electricity}`,
         'ok',
@@ -162,6 +172,13 @@ export default function MetersClient({
         ),
       )
       // Rule (1) of the save acknowledgement: say the figures, never "Saved".
+      setAck({
+        headline: `${res.meter.name} — ${KIND_LABEL[res.meter.kind].toLowerCase()} in ${res.meter.unit}`,
+        sub:
+          res.meter.assumed_rate === null
+            ? 'No rate set, so readings record units and no rupee figure at all — an estimate of ₹0.00 would read as free.'
+            : `Estimated at ${formatRate(res.meter.assumed_rate)}/${res.meter.unit}. Every cost from it is an estimate until the bill arrives.`,
+      })
       toast(
         `${res.meter.name} — ${KIND_LABEL[res.meter.kind].toLowerCase()} in ${res.meter.unit}${
           res.meter.assumed_rate === null
@@ -184,6 +201,7 @@ export default function MetersClient({
 
   return (
     <div className="space-y-4">
+      {ack !== null && <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />}
       {/* ── HOW THIS RESTAURANT MEASURES ──────────────────────────────── */}
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">

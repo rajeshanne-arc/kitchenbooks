@@ -11,10 +11,12 @@ import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 export default function KitchenWastageList({ rows }: { rows: KitchenWastageRow[] }) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
   async function onVoid(id: string) {
     if (busy !== null) return
@@ -22,6 +24,10 @@ export default function KitchenWastageList({ rows }: { rows: KitchenWastageRow[]
     try {
       const res = await voidKitchenWastage(id)
       if (res.ok) {
+        setAck({
+          headline: `Loss voided — ${formatMoneyString(res.reversal.value)} reversed`,
+          sub: 'A negative twin copies the value and quantity exactly, so section consumption nets to nothing. Both rows stay on the record.',
+        })
         toast(`Voided — ${formatMoneyString(res.reversal.value)} reversed`)
         router.refresh()
       } else {
@@ -36,6 +42,11 @@ export default function KitchenWastageList({ rows }: { rows: KitchenWastageRow[]
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <h2 className={sectionHeadCls}>Recent kitchen wastage</h2>
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-stone-500">Nothing yet. May it stay that way.</p>

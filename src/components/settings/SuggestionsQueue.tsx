@@ -21,10 +21,12 @@ import type { ListSuggestionRow } from '@/lib/lists'
 import { approveSuggestion, rejectSuggestion } from '@/server/settings-actions'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 export default function SuggestionsQueue({ rows }: { rows: ListSuggestionRow[] }) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function approve(row: ListSuggestionRow, kind?: 'controllable' | 'occupancy') {
@@ -33,6 +35,10 @@ export default function SuggestionsQueue({ rows }: { rows: ListSuggestionRow[] }
     try {
       const res = await approveSuggestion(row.id, kind)
       if (res.ok) {
+        setAck({
+          headline: `“${row.value}” is now on the ${row.list_key.replace(/_/g, ' ')} list`,
+          sub: `Typed ${row.seen_count} ${row.seen_count === 1 ? 'time' : 'times'} before anyone approved it. Entries already using the word keep it; it is simply offered from now on.`,
+        })
         toast(`“${row.value}” is now on the ${row.list_key.replace(/_/g, ' ')} list`)
         router.refresh()
       } else setError(res.error)
@@ -49,6 +55,10 @@ export default function SuggestionsQueue({ rows }: { rows: ListSuggestionRow[] }
     try {
       const res = await rejectSuggestion(row.id)
       if (res.ok) {
+        setAck({
+          headline: `“${row.value}” will not be offered again`,
+          sub: 'Nothing is rewritten — every entry that already used the word keeps it. It simply stops appearing in the picker.',
+        })
         toast(`“${row.value}” will not be offered again`)
         router.refresh()
       } else setError(res.error)
@@ -60,8 +70,16 @@ export default function SuggestionsQueue({ rows }: { rows: ListSuggestionRow[] }
   }
 
   if (rows.length === 0) {
+    // BOTH PATHS. Approving the last suggestion empties the list and lands
+    // here, so an ack rendered only on the main path would vanish at the exact
+    // moment it was earned.
     return (
       <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
         <h2 className={sectionHeadCls}>Nothing waiting</h2>
         <p className="mt-1.5 text-sm text-stone-700">
           Every word typed into a list field so far is already on its list.
@@ -72,6 +90,11 @@ export default function SuggestionsQueue({ rows }: { rows: ListSuggestionRow[] }
 
   return (
     <section className={`${cardCls} border-amber-300 bg-amber-50/30`}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>Waiting for you</h2>
         <span className="font-mono text-[10px] text-stone-400">list_suggestions</span>

@@ -36,6 +36,7 @@ import {
   moneyCls,
   sectionHeadCls,
 } from '@/components/ui'
+import SaveAck from '@/components/SaveAck'
 
 /** How far apart a statement line and a movement may sit and still be worth
  *  pointing at. Banks post a day or two late and a weekend stretches it. */
@@ -64,6 +65,7 @@ export default function MatchBoard({
 }) {
   const router = useRouter()
   const [lineId, setLineId] = useState('')
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [movement, setMovement] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -122,6 +124,7 @@ export default function MatchBoard({
       }
       // the amount is the whole point: a match asserts these two rows ARE
       // one transaction, and the figure is what makes that checkable
+setAck({ headline: `Matched ${formatPaise(decimalStringToPaise(chosenLine.amount))}`, sub: 'A match is a judgement that two rows are one transaction. Unmatching is possible from the matched list, and leaves nothing behind — a wrong judgement was never true.' })
       toast(`Matched ${formatPaise(decimalStringToPaise(chosenLine.amount))} — it cannot be undone from here`, 'ok')
       setLineId('')
       setMovement('')
@@ -136,6 +139,11 @@ export default function MatchBoard({
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>Match</h2>
         <span className="font-mono text-[10px] text-stone-400">

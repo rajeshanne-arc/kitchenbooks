@@ -26,6 +26,7 @@ import { fmtDate } from '@/lib/format'
 import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
 import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/components/ui'
+import SaveAck from '@/components/SaveAck'
 
 type Draft = { party: string; amount: string; note: string }
 
@@ -41,6 +42,7 @@ export default function PosReceivables({
 }) {
   const router = useRouter()
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
   if (rows.length === 0) return null
@@ -85,6 +87,11 @@ export default function PosReceivables({
 
   return (
     <section className={`${cardCls} border-amber-300 bg-amber-50/40`}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>The POS says we are owed money</h2>
         <span className="font-mono text-[11px] text-stone-400">sales_current</span>

@@ -26,6 +26,7 @@ import { formatMoneyString, formatPaise } from '@/lib/money'
 import Honesty from '@/components/Honesty'
 import { cardCls, heroNumCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 export default function InputTaxPanel({
   taxable,
@@ -52,6 +53,7 @@ export default function InputTaxPanel({
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
   // 'true' means creditable; ANYTHING else, including never having been
   // asked, means it is a cost. Read once, here, in one place.
@@ -67,6 +69,7 @@ export default function InputTaxPanel({
         toast(res.error, 'error')
         return
       }
+      setAck({ headline: next ? 'Input tax is recorded as a CREDIT' : 'Input tax is recorded as a COST', sub: 'This screen still states no net tax payable — output minus input is a filing position, and this app does not take one.' })
       toast(next ? 'Recorded as a credit' : 'Recorded as a cost', 'ok')
       router.refresh()
     } catch {
@@ -78,6 +81,11 @@ export default function InputTaxPanel({
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>Charged by suppliers</h2>
         <span className="font-mono text-[10px] text-stone-400">purchase_register</span>

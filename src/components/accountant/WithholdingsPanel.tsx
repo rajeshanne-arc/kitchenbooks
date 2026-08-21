@@ -33,6 +33,7 @@ import {
   selectCls,
 } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 /** What the payment WAS — a plain description, not a tax classification.
  *  The authority's own word for it goes in the code field instead. */
@@ -65,6 +66,7 @@ export default function WithholdingsPanel({
 }) {
   const router = useRouter()
   const [adding, setAdding] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [date, setDate] = useState(today)
   const [party, setParty] = useState('')
   const [entityType, setEntityType] = useState('payment')
@@ -111,6 +113,7 @@ export default function WithholdingsPanel({
       }
       // rate_pct is DERIVED for display and is never an input — saying it
       // back is the app reporting what was withheld, not advising a rate
+setAck({ headline: `${formatMoneyString(amount)} withheld from ${party}`, sub: 'The rate shown is DERIVED from the two amounts for display. No rate is ever computed here — that would be filing advice.' })
       toast(`${formatMoneyString(amount)} withheld from ${party} recorded`, 'ok')
       setParty('')
       setRegimeCode('')
@@ -135,6 +138,7 @@ export default function WithholdingsPanel({
         toast(res.error, 'error')
         return
       }
+setAck({ headline: `Deposited ${fmtDate(depDate)}`, sub: 'A tax deposit reaches the expense register and no cash or bank one — the view gives it no account, so it can never be reconciled against a statement.' })
       toast(`Deposited ${fmtDate(depDate)}${depRef === '' ? '' : ` · ${depRef}`}`, 'ok')
       setDepositing(null)
       setDepRef('')
@@ -155,6 +159,11 @@ export default function WithholdingsPanel({
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>Held back from payments</h2>
         <span className="font-mono text-[10px] text-stone-400">withholdings</span>

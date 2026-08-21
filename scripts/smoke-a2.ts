@@ -5145,6 +5145,123 @@ async function run() {
     )
   })
 
+  /* ── the save acknowledgement, every path ──────────────────────────── */
+  console.log('\nafter saving, the page does not sit still')
+
+  await check('every writing action acknowledges, or is exempt WITH A REASON', async () => {
+    // THIRD TIME A "FINISHED" SWEEP HAD A BUCKET LEFT IN IT, and all three
+    // were found by Rajesh using the app rather than by any gate. SaveAck
+    // reached the full-screen reveals and the navigators; the masters, the
+    // settings screens and the voids were left on a toast — and ItemEdit and
+    // VendorEdit on a literal `saved ✓` rendered at the TOP of a long form
+    // while the button sits at the bottom, so on a phone nothing in view
+    // changed at all.
+    //
+    // THE ACCEPTANCE TEST IS RAJESH'S: after saving, the page must not sit
+    // still. Three rules follow —
+    //   a) say NUMBERS, not a checkmark;
+    //   b) it must be visible FROM WHERE THE BUTTON IS;
+    //   c) say what is still missing, while somebody can still fix it.
+    //
+    // ENUMERATED, NEVER FILTERED. An exemption is printed with its reason so
+    // a reader can see the case was considered — the starter_library shape.
+    // Dropping a path from the count is how a sweep reports success over a
+    // bucket it never opened.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const WRITES = /insert into|update \w+\s+set|delete from|\bnextDocNo\(/i
+
+    // A path may skip SaveAck only for one of these reasons, and only because
+    // the page demonstrably CHANGES anyway.
+    const EXEMPT: Record<string, string> = {
+      'components/BillEntry.tsx': 'full-screen reveal — SaveReveal replaces the form with the bill',
+      'components/counts/CountEntry.tsx': 'full-screen reveal — the variance table replaces the sheet',
+      'components/cash/DayClose.tsx': 'full-screen reveal — the ladder and its WhatsApp text replace the form',
+      'components/recipes/CreateRecipe.tsx': 'navigates — a recipe with no lines is useless, so adding ingredients IS the next act',
+      'components/accountant/StatementImport.tsx': 'navigates — a statement is imported in order to be matched',
+      'components/accountant/PrepareRun.tsx': 'navigates — a run is approved on its own page',
+      // INLINE ROW CONTROLS. Each renders a <span> or a bare <button> inside a
+      // table row, and each acts on the row it sits in: unmatching moves the
+      // line back to the unmatched list, cancelling an indent flips its status
+      // and blanks its gap, settling a short takes it off the open list. The
+      // row itself changes on refresh, which is the page not sitting still —
+      // and an honesty band inside a table cell would be worse than the
+      // bottom-anchored toast they already carry.
+      'components/accountant/UnmatchButton.tsx': 'inline row control — the line moves back to the unmatched list, which IS the change',
+      'components/kitchen/CancelIndent.tsx': 'inline row control — the indent flips to cancelled and its gap column stops reading as a shortage',
+      'components/store/SettleShort.tsx': 'inline row control — the short leaves the open list, which is the whole finding it was on',
+    }
+
+    const server = walk('src/server')
+    const ui = [...walk('src/components'), ...walk('src/app')]
+    const srcOf = new Map(ui.map((f) => [f, readFileSync(f, 'utf8')]))
+
+    const actions: { name: string; file: string }[] = []
+    for (const f of server) {
+      const src = readFileSync(f, 'utf8')
+      if (!/^['"]use server['"]/m.test(src)) continue
+      const starts = [...src.matchAll(/export async function (\w+)/g)]
+      for (const [i, m] of starts.entries()) {
+        const body = src.slice(m.index as number, (starts[i + 1]?.index as number) ?? src.length)
+        if (WRITES.test(body)) actions.push({ name: m[1], file: f })
+      }
+    }
+    assert.ok(actions.length > 50, `only ${actions.length} writing actions found — the scan is not reaching them`)
+
+    const failing: string[] = []
+    const exempted = new Set<string>()
+    let acked = 0
+    let noSite = 0
+    for (const a of actions) {
+      const sites = ui.filter((f) => new RegExp(`\\b${a.name}\\s*\\(`).test(srcOf.get(f) as string))
+      if (sites.length === 0) {
+        noSite++
+        continue
+      }
+      for (const site of sites) {
+        const key = site.replace('src/', '')
+        if (EXEMPT[key] !== undefined) {
+          exempted.add(key)
+          continue
+        }
+        // A REAL JSX BOUNDARY, not a substring. `/<SaveAck/` also matches
+        // `<SaveAckX`, so renaming the component would have left this green —
+        // which is the exact flaw already recorded for `<DateLink`, made again
+        // here in the gate written to prevent a recurrence.
+        if (/<SaveAck[\s/>]/.test(srcOf.get(site) as string)) {
+          acked++
+          continue
+        }
+        failing.push(`${a.name} -> ${key}`)
+      }
+    }
+
+    // No exemption may be dead: an entry naming a file that no longer calls a
+    // writing action is a reason nobody re-examined.
+    assert.deepEqual(
+      Object.keys(EXEMPT).filter((k) => !exempted.has(k)),
+      [],
+      'these exemptions no longer apply to any writing action — remove them rather than leaving a reason nobody re-read',
+    )
+
+    console.log(
+      `      ${actions.length} writing actions · ${acked} acknowledged · ${exempted.size} exempt · ${noSite} with no UI call site`,
+    )
+    for (const k of [...exempted].sort()) console.log(`        exempt: ${k} — ${EXEMPT[k]}`)
+    assert.deepEqual(
+      [...new Set(failing)].sort(),
+      [],
+      'these save paths leave the page sitting still — no SaveAck, and not on the exempt list',
+    )
+  })
+
   /* ── stock: three jobs, three orderings of one table ───────────────── */
   console.log('\nstock: three jobs, three orderings of one table')
 

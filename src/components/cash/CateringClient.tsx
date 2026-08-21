@@ -37,6 +37,7 @@ import {
 import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
 import { useBusinessToday } from '@/components/BusinessDay'
+import SaveAck from '@/components/SaveAck'
 
 export default function CateringClient({
   events,
@@ -58,6 +59,7 @@ export default function CateringClient({
     note: '',
   })
   const [expenseFor, setExpenseFor] = useState<string | null>(null)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   // Revenue arrives AFTER the event — the cheque clears days later — so it
   // is the one figure editable in place. Cost never is: it is the issues.
   const [revFor, setRevFor] = useState<string | null>(null)
@@ -76,6 +78,7 @@ export default function CateringClient({
     try {
       const res = await saveCateringEvent(f)
       if (res.ok) {
+setAck({ headline: `${res.event.name} created`, sub: 'Its cost comes only from issues stamped with this event. Until one is, the margin reads as revenue — which looks like a wildly profitable job rather than an uncosted one.' })
         toast(`${res.event.name} created`)
         setF((s) => ({ ...s, name: '', customer: '', contact: '', covers: '', revenueCollected: '', note: '' }))
         router.refresh()
@@ -107,6 +110,11 @@ export default function CateringClient({
 
   return (
     <div className="space-y-4">
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>New event</h2>
         <p className="mt-0.5 text-xs text-stone-500">

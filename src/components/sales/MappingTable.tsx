@@ -24,6 +24,7 @@ import { mapPosItem } from '@/server/sales-actions'
 import { formatMoneyString, decimalStringToPaise } from '@/lib/money'
 import Honesty from '@/components/Honesty'
 import { cardCls, codeCls, heroNumCls, sectionHeadCls, selectCls } from '@/components/ui'
+import SaveAck from '@/components/SaveAck'
 
 /** How much of the revenue the top N rows carry. The line this feeds —
  *  "the next 7 carry another 10%" — is what turns an endless queue into a
@@ -177,6 +178,7 @@ export default function MappingTable({
   const [busy, setBusy] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [done, setDone] = useState<Record<string, string>>({})
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [cov, setCov] = useState(coverage)
 
   const remaining = useMemo(() => unmapped.filter((u) => done[u.pos_item_id] === undefined), [unmapped, done])
@@ -202,6 +204,14 @@ export default function MappingTable({
             ? `${res.map.recipe_code} · ${res.map.recipe_name}`
             : `${res.map.section_code} · ${res.map.section_name} (department only — no cost)`
         setDone((d) => ({ ...d, [u.pos_item_id]: label }))
+        // COVERAGE IS THE HEADLINE, not a count. "218 unmapped" reads as an
+        // impossible chore; a rising share of revenue attributed reads as
+        // progress — and it is the honest metric, because mapping a water
+        // bottle and mapping the biryani are not the same act.
+        setAck({
+          headline: `${u.item_name} → ${label}`,
+          sub: `${formatMoneyString(u.revenue)} of revenue now has a department. ${remaining.length - 1} POS ${remaining.length - 1 === 1 ? 'item is' : 'items are'} still unattributed.`,
+        })
         setCov(res.coverage)
         router.refresh()
       } else {
@@ -227,6 +237,11 @@ export default function MappingTable({
 
   return (
     <div className="mt-4 space-y-4">
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       {cov !== null && <Coverage c={cov} />}
 
       <section className={cardCls}>

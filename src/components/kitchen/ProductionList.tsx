@@ -12,10 +12,12 @@ import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 export default function ProductionList({ rows }: { rows: ProductionRow[] }) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
   async function onVoid(id: string) {
     if (busy !== null) return
@@ -23,6 +25,10 @@ export default function ProductionList({ rows }: { rows: ProductionRow[] }) {
     try {
       const res = await voidProduction(id)
       if (res.ok) {
+        setAck({
+          headline: `Batch voided — ${formatMoneyString(res.reversal.value)} reversed`,
+          sub: 'A negative twin copies the frozen unit cost exactly — never re-snapshotted, so a rate change between making and voiding leaves no residue.',
+        })
         toast(`Voided — ${formatMoneyString(res.reversal.value)} reversed`)
         router.refresh()
       } else {
@@ -37,6 +43,11 @@ export default function ProductionList({ rows }: { rows: ProductionRow[] }) {
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <h2 className={sectionHeadCls}>Recent productions</h2>
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-stone-500">Nothing recorded yet. A batch of gravy or dough goes here.</p>

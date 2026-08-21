@@ -14,6 +14,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { updateVendor } from '@/server/books-actions'
 import type { VendorDetail } from '@/lib/types'
+import SaveAck from '@/components/SaveAck'
 import { formatMoneyString } from '@/lib/money'
 import { cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
 import { LockedField } from './Locked'
@@ -56,13 +57,13 @@ export default function VendorEdit({ vendor }: { vendor: VendorDetail }) {
     notes: vendor.notes ?? '',
   })
   const [busy, setBusy] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [ack, setAck] = useState<VendorDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => {
     setF((s) => ({ ...s, [k]: v }))
-    setSaved(false)
+    setAck(null)
   }
 
   const canSave = !busy && f.name.trim() !== ''
@@ -71,7 +72,7 @@ export default function VendorEdit({ vendor }: { vendor: VendorDetail }) {
     if (!canSave) return
     setBusy(true)
     setError(null)
-    setSaved(false)
+    setAck(null)
     try {
       const res = await updateVendor(vendor.id, {
         name: f.name.trim(),
@@ -113,7 +114,7 @@ export default function VendorEdit({ vendor }: { vendor: VendorDetail }) {
           openingBalance: v.opening_balance === '0' ? '' : v.opening_balance,
           notes: v.notes ?? '',
         })
-        setSaved(true)
+        setAck(v)
         router.refresh()
       } else {
         setError(res.error)
@@ -125,11 +126,47 @@ export default function VendorEdit({ vendor }: { vendor: VendorDetail }) {
     }
   }
 
+  // `saved ✓` sat at the TOP of a long form whose button is at the bottom, so
+  // on a phone nothing in view changed. SaveAck scrolls itself into view and
+  // says what landed — including the banking fields somebody retypes into a
+  // bank app under time pressure, where a silent save is worst.
+  const banked = ack !== null && ack.account_no !== null && ack.ifsc !== null
+
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck
+            headline={`${ack.name} saved`}
+            sub={
+              <>
+                {ack.phone === null ? 'no phone' : ack.phone}
+                {' · '}
+                {banked ? `${ack.bank_name ?? 'bank'} ${ack.account_no}` : 'no bank details'}
+                {ack.payment_terms === null ? '' : ` · ${ack.payment_terms}`}
+              </>
+            }
+            missing={
+              banked
+                ? undefined
+                : [
+                    {
+                      verdict: 'no bank details',
+                      text: (
+                        <>
+                          Account number and IFSC are what somebody copies into a bank app when this vendor is
+                          owed money. Without them the payment screen has nothing to hand over.
+                        </>
+                      ),
+                    },
+                  ]
+            }
+            onDismiss={() => setAck(null)}
+          />
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3">
         <h3 className={sectionHeadCls}>Vendor details</h3>
-        {saved && <span className="text-xs font-medium text-emerald-700">saved ✓</span>}
       </div>
 
       <div className="mt-3 space-y-4">

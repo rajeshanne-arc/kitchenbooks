@@ -31,6 +31,7 @@ import {
 } from '@/components/ui'
 import { LockedField } from '@/components/books/Locked'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 const KIND_LABEL: Record<MoneyAccountKind, string> = {
   cash: 'Cash',
@@ -88,6 +89,7 @@ export default function AccountsEditor({
   const [draft, setDraft] = useState<SaveMoneyAccountInput>(blank)
   const [adding, setAdding] = useState(initialAccounts.length === 0)
   const [busy, setBusy] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
   const balanceOf = (id: string) => balances.find((b) => b.account_id === id) ?? null
 
@@ -105,6 +107,15 @@ export default function AccountsEditor({
         return [...rest, res.account].sort(
           (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
         )
+      })
+      // WHAT LANDED and what still has no answer. An account with no opening
+      // balance is not wrong, but it is the reason a balance later looks short.
+      setAck({
+        headline: `${res.account.name} — ${KIND_LABEL[res.account.kind].toLowerCase()}${res.account.is_till ? ', the till' : ''}`,
+        sub:
+          res.account.opening_balance === '0' || res.account.opening_balance === null
+            ? 'No opening balance, so its balance is movements only — anything held before the books started is not counted.'
+            : `Opened at ${formatMoneyString(res.account.opening_balance)}${res.account.opening_date === null ? '' : ` on ${fmtDate(res.account.opening_date)}`}.`,
       })
       toast(editing === null ? `${res.account.name} added` : `${res.account.name} saved`, 'ok')
       setEditing(null)
@@ -136,6 +147,7 @@ export default function AccountsEditor({
 
   return (
     <div className="space-y-4">
+      {ack !== null && <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />}
       {accounts.length === 0 && !adding && (
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>No accounts yet</h2>

@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { updateItem } from '@/server/books-actions'
 import type { ItemDetail, StorageLocation, Unit, VendorHit } from '@/lib/types'
+import SaveAck from '@/components/SaveAck'
 import { formatMoneyString } from '@/lib/money'
 import { cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
 import { LockedField } from './Locked'
@@ -65,13 +66,13 @@ export default function ItemEdit({
     notes: item.notes ?? '',
   })
   const [busy, setBusy] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [ack, setAck] = useState<ItemDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => {
     setF((s) => ({ ...s, [k]: v }))
-    setSaved(false)
+    setAck(null)
   }
 
   const convNum = num(f.conversionFactor)
@@ -81,7 +82,7 @@ export default function ItemEdit({
     if (!canSave) return
     setBusy(true)
     setError(null)
-    setSaved(false)
+    setAck(null)
     try {
       const res = await updateItem(item.id, {
         name: f.name.trim(),
@@ -115,7 +116,7 @@ export default function ItemEdit({
           itemType: i.item_type ?? '',
           notes: i.notes ?? '',
         })
-        setSaved(true)
+        setAck(i)
         router.refresh()
       } else {
         setError(res.error)
@@ -127,11 +128,59 @@ export default function ItemEdit({
     }
   }
 
+  // WHAT LANDED, and what it unlocks. `saved ✓` sat at the TOP of this form
+  // while the button is at the bottom — so on a phone nothing in view changed
+  // at all. SaveAck scrolls itself into view, which is the whole point of it.
+  const placed = locations.find((l) => l.id === ack?.storage_location_id)
+
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck
+            headline={`${ack.name} saved`}
+            sub={
+              <>
+                {placed === undefined ? 'not placed on any shelf' : `${placed.name} · in the count sheet's walk`}
+                {ack.reorder_level === null
+                  ? ' · no reorder level'
+                  : ` · reorders at ${ack.reorder_level} ${ack.purchase_unit}`}
+              </>
+            }
+            missing={[
+              ...(placed === undefined
+                ? [
+                    {
+                      verdict: 'not placed',
+                      text: (
+                        <>
+                          This item has no storage location, so the count sheet cannot put it on anybody&apos;s
+                          route — it sits at the bottom under “Not placed yet”, where it gets walked past.
+                        </>
+                      ),
+                    },
+                  ]
+                : []),
+              ...(ack.reorder_level === null
+                ? [
+                    {
+                      verdict: 'no reorder level',
+                      text: (
+                        <>
+                          Without one this item can never appear on Reorder, however low it runs. That list is
+                          empty because the question has not been asked, not because the store is full.
+                        </>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+            onDismiss={() => setAck(null)}
+          />
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3">
         <h3 className={sectionHeadCls}>Item details</h3>
-        {saved && <span className="text-xs font-medium text-emerald-700">saved ✓</span>}
       </div>
 
       <div className="mt-3 space-y-4">

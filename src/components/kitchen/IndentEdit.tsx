@@ -29,6 +29,7 @@ import {
 } from '@/components/ui'
 import IssueItemPicker from '@/components/store/IssueItemPicker'
 import { toast } from '@/components/Toasts'
+import SaveAck from '@/components/SaveAck'
 
 /** an existing line carries the item it was raised for; a new one gets it
  *  from the same picker the create form uses, and keeps the whole hit so the
@@ -63,6 +64,7 @@ export default function IndentEdit({
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [date, setDate] = useState(indent.indent_date)
   const [sectionId, setSectionId] = useState(indent.section_id)
   const [session, setSession] = useState(indent.session)
@@ -127,6 +129,7 @@ export default function IndentEdit({
       })
       if (res.ok) {
         setOpen(false)
+        setAck({ headline: 'Request updated — the store sees the new list', sub: 'Editable only while it is open and nothing has been issued against it. The moment an issue stamps it, the asked-versus-given gap acquires meaning and this freezes.' })
         toast('Request updated — the store sees the new list')
         router.refresh()
       } else {
@@ -149,6 +152,11 @@ export default function IndentEdit({
 
   return (
     <section className={cardCls}>
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <h2 className={sectionHeadCls}>Edit the request</h2>
         <span className="text-xs text-stone-500">nobody has issued against it yet</span>

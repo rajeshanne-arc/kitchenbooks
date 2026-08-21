@@ -30,6 +30,7 @@ import {
   thNumCls,
   trCls,
 } from '@/components/ui'
+import SaveAck from '@/components/SaveAck'
 
 /** A bill the credit could be set against. Shaped here rather than imported:
  *  the query it comes from is server-only. */
@@ -55,6 +56,7 @@ export default function VendorReturnList({
 }) {
   const router = useRouter()
   const [openRef, setOpenRef] = useState<string | null>(null)
+  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
   const [confirmVoid, setConfirmVoid] = useState<VendorReturnRow | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -65,6 +67,7 @@ export default function VendorReturnList({
     try {
       const res = await voidVendorReturn(row.id)
       if (res.ok) {
+setAck({ headline: 'Return voided', sub: 'The credit is cancelled and the goods are back on the book. Every view over those lines filters on the parent, so the quantity comes off once and not twice.' })
         toast('Return voided — the credit is cancelled and the goods are back on the book')
         setConfirmVoid(null)
         router.refresh()
@@ -82,6 +85,11 @@ export default function VendorReturnList({
 
   return (
     <div className="space-y-4">
+      {ack !== null && (
+        <div className="mb-3">
+          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+        </div>
+      )}
       <section className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>Waiting on a credit note</h2>
