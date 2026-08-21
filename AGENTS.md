@@ -5614,3 +5614,49 @@ fine; SELECTING a quantity from it would put the book on the counter's screen
 and turn a blind count into a confirmation of it.** A gate reads the query's
 source and fails if any quantity column reaches its select list — the ordering
 may use the book, the sheet may never show it.
+
+## A FIELD THAT BLOCKS A FEATURE DOES NOT GO BEHIND A FOLD
+
+`ItemNew` grew a "＋ More details" fold so a create form could carry every
+INSERT-granted column without becoming a wall. That was right, and it put two
+fields in the wrong place.
+
+**The evidence is in the data: every item had no reorder level AND no storage
+location.** Both were behind the fold, and both switch a whole tab on — no
+reorder level means the Reorder tab can never show anything, no location means
+the count sheet is one "Not placed yet" band. A fold does not merely hide a
+field; on the fields that gate a feature it decides whether the feature exists.
+
+So the test is not "is this field important" — every field's author thinks so —
+it is **does anything break if it stays empty**:
+
+| | | |
+|---|---|---|
+| storage location | promoted | *where it lives — sets the order you walk when counting* |
+| reorder level | promoted | *when stock falls to this, it appears on Reorder* |
+| conversion, GST, item type, notes | stay folded | nothing breaks if they are blank |
+
+Each promoted field carries ONE LINE saying what it unlocks, because a field
+somebody does not understand is a field they skip, and a fold is not the only
+way to make something invisible.
+
+`ItemEdit` has no fold at all, so both were already on screen there; its copy is
+now the same two sentences word for word. **The same wording in both places is
+not tidiness — a field that means one thing on create and another on edit is two
+fields.**
+
+This is the readiness card's principle applied one layer earlier: **ask for what
+the app cannot work without WHERE IT WILL BE ANSWERED, not where it is tidy.**
+The card tells you afterwards that nobody placed the items; the form is what
+stops it happening.
+
+### And the reason he could not see it at all
+
+Both candidates were true, and the larger one was not the fold. **Production was
+serving a commit from before the work existed** — `b06919d`, with ten commits
+sitting local-only. Checked from Vercel deployment metadata rather than local
+HEAD, which is the only way to answer "is it deployed": `git log` describes a
+laptop.
+
+**Check what is SERVED before diagnosing what is RENDERED.** A UI question asked
+against undeployed code has an answer that is true and useless.

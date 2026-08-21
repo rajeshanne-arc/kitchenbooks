@@ -245,11 +245,12 @@ export default function ItemEdit({
           </Wide>
         </FormGroup>
 
-        <FormGroup
-          title="Ordering"
-          hint="Set a reorder level and this item starts appearing on the Reorder tab when stock falls to it."
-        >
-          <Field label="Reorder level" hint="Stock at or below this asks to be bought.">
+        {/* NO FOLD ON THIS FORM — every group is visible, so these two are
+            already where they will be answered. The copy matches the create
+            form word for word: a field that blocks a feature says what it
+            unlocks, in one line, wherever it appears. */}
+        <FormGroup title="Ordering" hint="The two fields here each switch a whole tab on.">
+          <Field label="Reorder level" hint="When stock falls to this, it appears on Reorder.">
             <input
               value={f.reorderLevel}
               onChange={(e) => set('reorderLevel', e.target.value.replace(/[^\d.]/g, ''))}
@@ -268,7 +269,7 @@ export default function ItemEdit({
           <Wide>
             <Field
               label="Where it is kept"
-              hint="The count sheet walks the store in location order. Left blank, this item sits at the bottom under “Not placed yet” — where it gets walked past."
+              hint="Where it lives — sets the order you walk when counting. Left blank, it sits at the bottom of the sheet under “Not placed yet”, where it gets walked past."
             >
               <select
                 value={f.storageLocationId}

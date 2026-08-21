@@ -171,13 +171,58 @@ export default function ItemNew({
           </label>
         </div>
 
+        {/* A FIELD THAT BLOCKS A FEATURE DOES NOT GO BEHIND A FOLD.
+            Both of these were inside "＋ More details", and the data said what
+            that costs: every item had neither. No reorder level means the
+            Reorder tab can never show anything; no location means the count
+            sheet is one "Not placed yet" band. Conversion, GST, item type and
+            notes stay folded — they block nothing.
+
+            Same principle as the readiness card: ask for what the app cannot
+            work without WHERE IT WILL BE ANSWERED, not where it is tidy. */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className={fieldLabelCls}>Where it is kept</span>
+            <select
+              value={x.storageLocationId}
+              onChange={(e) => setX((v) => ({ ...v, storageLocationId: e.target.value }))}
+              className={selectCls}
+            >
+              <option value="">— not placed yet —</option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs text-stone-500">
+              {locations.length === 0
+                ? 'No location exists yet — a manager or owner adds them under Locations.'
+                : 'Where it lives — sets the order you walk when counting.'}
+            </span>
+          </label>
+          <label className="block">
+            <span className={fieldLabelCls}>Reorder level (optional)</span>
+            <input
+              value={x.reorderLevel}
+              onChange={(e) => setX((v) => ({ ...v, reorderLevel: e.target.value.replace(/[^\d.]/g, '') }))}
+              inputMode="decimal"
+              placeholder="0"
+              className={`${numCls} w-full text-right font-mono tabular-nums`}
+            />
+            <span className="mt-1 block text-xs text-stone-500">
+              When stock falls to this, it appears on Reorder.
+            </span>
+          </label>
+        </div>
+
         <button
           type="button"
           onClick={() => setMore((m) => !m)}
           aria-expanded={more}
           className="w-full rounded-xl border border-dashed border-stone-300 py-2.5 text-sm font-medium text-stone-600 hover:border-emerald-400 hover:text-emerald-700"
         >
-          {more ? '− Fewer details' : '＋ More details — units, costing, ordering'}
+          {more ? '− Fewer details' : '＋ More details — units, costing, supplier, notes'}
         </button>
 
         {more && (
@@ -232,43 +277,7 @@ export default function ItemNew({
               </label>
             </FormGroup>
 
-            <FormGroup
-              title="Ordering"
-              hint="Set a reorder level now and this item joins the Reorder tab the moment stock falls to it."
-            >
-              {/* ASKED AT CREATE, not only on edit. A field nobody fills on
-                  the way past is a field nobody ever fills — and an item with
-                  no location is one the count sheet cannot put on anybody's
-                  route, so it gets walked past. */}
-              <label className="block">
-                <span className={fieldLabelCls}>Where it is kept</span>
-                <select
-                  value={x.storageLocationId}
-                  onChange={(e) => setX((v) => ({ ...v, storageLocationId: e.target.value }))}
-                  className={selectCls}
-                >
-                  <option value="">— not placed yet —</option>
-                  {locations.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-                <span className="mt-1 block text-xs text-stone-500">
-                  {locations.length === 0
-                    ? 'No storage location exists yet — an owner or manager adds them under Locations.'
-                    : 'The count sheet walks the store in this order. Left blank, this item sits at the bottom under “Not placed yet”.'}
-                </span>
-              </label>
-              <label className="block">
-                <span className={fieldLabelCls}>Reorder level</span>
-                <input
-                  value={x.reorderLevel}
-                  onChange={(e) => setX((v) => ({ ...v, reorderLevel: e.target.value.replace(/[^\d.]/g, '') }))}
-                  inputMode="decimal"
-                  className={`${numCls} w-full text-right font-mono tabular-nums`}
-                />
-              </label>
+            <FormGroup title="Ordering" hint="Par level and the usual supplier — neither blocks anything.">
               <label className="block">
                 <span className={fieldLabelCls}>Par level</span>
                 <input
