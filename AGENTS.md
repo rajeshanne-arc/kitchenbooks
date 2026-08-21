@@ -4778,3 +4778,50 @@ broken in the smallest possible way. The drill lives where it is legal: the
 sheet's own prev/next and its strip of recent days, which is also the range
 grain one tap away — `day_summary` summed over a period IS the owner
 dashboard, and one row of it is this page.
+
+## A PAGE NOTHING LINKS TO IS A PAGE NOBODY OPENS
+
+The day sheet shipped with `DateLink` mounted only on its own prev/next and
+recent-days strip. **It linked to itself and nothing linked to it** — Rajesh
+could reach it only by typing the URL.
+
+**That failure is invisible to every other gate.** The page rendered, its
+queries ran, its preconditions were right, and it was dead. So the assertion
+is not "the page works" but **"a door exists, somewhere that is not the room
+itself"**: `smoke:a2` counts the files mounting `DateLink` and requires at
+least one OUTSIDE `src/app/owner/day/`, plus the owner dashboard specifically,
+since that is the front door.
+
+The matcher is `/<DateLink[\s/>]/`, a real JSX boundary — the first version
+used `.includes('<DateLink')` and passed against a perturbation that renamed
+the component to `<DateLinkX`, because that string contains the other. The
+same flaw the PersonLink sweep had, made twice.
+
+**Where the doors are now:** the owner dashboard's RECENT DAYS strip (the last
+seven days with revenue — a way in, so it is period-independent), the
+days-not-closed card, the business-day disagreement rows, the staff
+dashboard's attendance sentences, and every marked cell on an employee's
+attendance strip.
+
+`/owner/pnl` has none, and that is not an omission: `pnl_diagnostics` reports
+`(month, severity, what)` and a month is not a day.
+
+### DateLink GATES ITSELF; PersonLink does not — and that is the same rule
+
+`Card` on the owner dashboard is a `<Link>`, so anything that is itself a door
+goes in a new `footer` slot rendered OUTSIDE that anchor. A link inside a link
+is invalid, and the days-not-closed card is exactly where that bites: the card
+exists to send somebody somewhere and used to name a date with no way to act
+on it.
+
+**And `audit:matrix` caught the real one on its first run: the ACCOUNTANT can
+open an employee profile and cannot open `/owner/day`**, so the attendance
+strip was handing them thirty dead links. A runtime guard in the page does not
+satisfy that gate either — the exemption is per-HREF and keyed to the file
+holding the literal, which is `DateLink.tsx`.
+
+So `DateLink` asks the matrix itself: a denied reader gets the same text,
+unlinked. That is the right shape here and the wrong shape for `PersonLink`,
+and the difference is the rule above — **the profile gates a FIELD, so any
+reader who reaches it belongs there; the day sheet gates ITSELF, so the
+component must check before offering the door.**

@@ -18,6 +18,7 @@ import { fmtDate } from '@/lib/format'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import Unassessed from '@/components/dashboard/Unassessed'
 import Honesty from '@/components/Honesty'
+import DateLink from '@/components/dashboard/DateLink'
 import { RetiredBadge } from '@/components/books/Badges'
 import {
   cardCls,
@@ -129,7 +130,15 @@ function dayTitle(date: string, day: AttendanceDay): string {
 /** The day-by-day strip. A day nobody filed is a BLANK cell, drawn as the
  *  honesty meter's empty cell rather than as an absence — the same law the
  *  sheet states above itself: unmarked is not absent. */
-function DayStrip({ days, from, to }: { days: AttendanceDay[]; from: string; to: string }) {
+function DayStrip({
+  days,
+  from,
+  to,
+}: {
+  days: AttendanceDay[]
+  from: string
+  to: string
+}) {
   const byDate = new Map(days.map((d) => [d.att_date, d]))
   const cells: { date: string; day: AttendanceDay | undefined }[] = []
   for (let t = new Date(`${from}T00:00:00Z`); t <= new Date(`${to}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + 1)) {
@@ -152,12 +161,12 @@ function DayStrip({ days, from, to }: { days: AttendanceDay[]; from: string; to:
           )
         }
         const s = STATUS_STYLE[day.status]
-        return (
-          <span
-            key={date}
-            title={dayTitle(date, day)}
-            className={`relative flex h-7 w-7 items-center justify-center rounded-md border text-[11px] font-semibold ${s.cls}`}
-          >
+        // A MARKED DAY IS A DOOR — DateLink asks the matrix itself, so a
+        // reader who cannot open the day sheet gets the same cell unlinked.
+        // A BLANK cell is never a link either way: nothing was filed.
+        const cellCls = `relative flex h-7 w-7 items-center justify-center rounded-md border text-[11px] font-semibold ${s.cls}`
+        const body = (
+          <>
             {s.label}
             {/* a late night, and a correction — both are facts about the day
                 that the letter alone cannot carry */}
@@ -167,7 +176,12 @@ function DayStrip({ days, from, to }: { days: AttendanceDay[]; from: string; to:
             {day.filings > 1 && (
               <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-white bg-amber-500" />
             )}
-          </span>
+          </>
+        )
+        return (
+          <DateLink key={date} date={date} title={dayTitle(date, day)} className={cellCls}>
+            {body}
+          </DateLink>
         )
       })}
     </div>

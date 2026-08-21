@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import PersonLink from '@/components/labour/PersonLink'
+import DateLink from '@/components/dashboard/DateLink'
 import { getRestaurant } from '@/server/queries'
 import { businessToday } from '@/server/business-day'
 import { readPeriodParam, resolvePeriod, monthLabel } from '@/lib/period'
@@ -327,7 +328,7 @@ export default async function StaffDashboardPage({
                 verdict="not marked"
                 action={{ href: '/staff/people/attendance', label: 'Take the register' }}
               >
-                Nobody has been marked for {fmtDate(today)}. Attendance is what the wage bill is worked out
+                Nobody has been marked for <DateLink date={today} className="font-medium" />. Attendance is what the wage bill is worked out
                 from, so an unmarked day pays nobody.
               </Honesty>
             ) : taken.marked < taken.active ? (
@@ -336,11 +337,12 @@ export default async function StaffDashboardPage({
                 meter={{ filled: taken.marked, total: taken.active, unit: 'marked today' }}
                 action={{ href: '/staff/people/attendance', label: 'Finish the register' }}
               >
-                {taken.active - taken.marked} of {taken.active} have no mark for {fmtDate(today)}.
+                {taken.active - taken.marked} of {taken.active} have no mark for{' '}
+                <DateLink date={today} className="font-medium" />.
               </Honesty>
             ) : (
               <p className="text-sm text-emerald-800">
-                Everyone is marked for {fmtDate(today)}.
+                Everyone is marked for <DateLink date={today} className="font-medium" />.
               </p>
             )}
           </div>

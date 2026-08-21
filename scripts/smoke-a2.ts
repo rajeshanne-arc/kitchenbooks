@@ -5462,6 +5462,65 @@ async function run() {
     )
   })
 
+
+  await check('the day sheet is REACHABLE — something other than itself links to it', async () => {
+    // THE FAILURE THIS CATCHES: the sheet shipped with DateLink mounted only
+    // on its own prev/next and recent-days strip, so it linked to itself and
+    // nothing linked to it. Rajesh could reach it only by typing the URL.
+    //
+    // A page nobody can reach is invisible to every other gate here: it
+    // renders, its queries run, its preconditions are right, and it is still
+    // dead. So the assertion is not "the page works" — it is "a door exists,
+    // somewhere that is not the room itself".
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const files = [...walk('src/app'), ...walk('src/components')]
+    // A REAL JSX BOUNDARY, not a substring: `<DateLinkX` contains `<DateLink`,
+    // and the first version of this matcher passed against exactly that
+    // perturbation. Same flaw the PersonLink sweep had.
+    const MOUNT = /<DateLink[\s/>]/
+    const mounts = files.filter((f) => MOUNT.test(readFileSync(f, 'utf8')))
+    const external = mounts.filter((f) => !f.startsWith('src/app/owner/day/'))
+
+    assert.ok(mounts.length > 0, 'nothing mounts DateLink at all')
+    assert.ok(
+      external.length > 0,
+      'DateLink is mounted ONLY inside the day sheet — it links to itself and nothing links to it',
+    )
+    assert.ok(
+      mounts.includes('src/app/owner/page.tsx'),
+      'the owner dashboard does not link to a day sheet — that is the front door',
+    )
+
+    const dl = readFileSync('src/components/dashboard/DateLink.tsx', 'utf8')
+    assert.ok(dl.includes('/owner/day/${date}'), 'DateLink no longer points at the day sheet')
+
+    // LAW 1 IS NOT IN QUESTION HERE and must stay that way: /owner/day is
+    // manager+owner, so every mount must be on a surface one of them can
+    // open. audit:matrix polices the href; this names the rule beside it so
+    // the next person does not mount it on a cashier screen.
+    const { canAccess } = await import('../src/lib/roles')
+    assert.ok(canAccess('owner', '/owner/day/2026-08-20'), 'the owner cannot open the day sheet')
+    assert.ok(canAccess('manager', '/owner/day/2026-08-20'), 'the manager cannot open the day sheet')
+    for (const r of ['cashier', 'chef', 'store'] as const) {
+      assert.ok(
+        !canAccess(r, '/owner/day/2026-08-20'),
+        `${r} can open the day sheet — every DateLink mount must be rechecked`,
+      )
+    }
+    console.log(
+      `      ${mounts.length} file(s) mount DateLink, ${external.length} outside the sheet itself: ` +
+        external.map((f) => f.replace('src/', '')).join(', '),
+    )
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

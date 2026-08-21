@@ -25,6 +25,8 @@ import { countOrdersWithTime, getBusinessDayDisagreements } from '@/server/busin
 import { cardCls, heroNumCls, moneyCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import Honesty, { HonestyPill } from '@/components/Honesty'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
+import DateLink from '@/components/dashboard/DateLink'
+import { listRecentDays } from '@/server/day-queries'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import PartialMonths from '@/components/dashboard/PartialMonths'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
@@ -98,6 +100,7 @@ function Card({
   sentence,
   level = 'calm',
   children,
+  footer,
 }: {
   title: string
   source: string
@@ -105,6 +108,9 @@ function Card({
   sentence: React.ReactNode
   level?: Level
   children?: React.ReactNode
+  /** RENDERED OUTSIDE THE CARD'S OWN LINK. Anything that is itself a door — a
+   *  date, a person — goes here rather than in `children`. */
+  footer?: React.ReactNode
 }) {
   const tone =
     level === 'alarm'
@@ -114,8 +120,8 @@ function Card({
         : level === 'unassessable'
           ? unassessedToneCls
           : 'border-rule bg-cell hover:border-emerald-400'
-  return (
-    <Link href={href} className={`${cardCls} block ${tone}`}>
+  const inner = (
+    <>
       <div className="flex items-baseline justify-between gap-2">
         <h2 className={`${sectionHeadCls} ${level === 'alarm' ? 'text-red-700' : ''}`}>{title}</h2>
         <span className="font-mono text-[10px] text-stone-400">{source} →</span>
@@ -134,7 +140,25 @@ function Card({
         {sentence}
       </p>
       {children !== undefined && <div className="mt-2">{children}</div>}
-    </Link>
+    </>
+  )
+  // A CARD IS A LINK, AND A LINK INSIDE A LINK IS INVALID. So a footer made
+  // of doors — the dates on "days not closed" — is rendered OUTSIDE the
+  // card's own anchor, in a wrapper that keeps the card's look.
+  if (footer === undefined) {
+    return (
+      <Link href={href} className={`${cardCls} block ${tone}`}>
+        {inner}
+      </Link>
+    )
+  }
+  return (
+    <div className={`rounded-2xl border ${tone}`}>
+      <Link href={href} className="block p-4 sm:p-5">
+        {inner}
+      </Link>
+      <div className="border-t border-rule-soft px-4 pb-4 pt-3 sm:px-5">{footer}</div>
+    </div>
   )
 }
 
@@ -197,6 +221,7 @@ export default async function DashboardPage({
     staff,
     dayGaps,
     timed,
+    recentDays,
   ] = await Promise.all([
     getEntryPulse(restaurant.id, period.from, period.to),
     getSalesSeries(restaurant.id, period.from, period.to),
@@ -213,6 +238,7 @@ export default async function DashboardPage({
     getStaffCard(restaurant.id, today),
     getBusinessDayDisagreements(restaurant.id),
     countOrdersWithTime(restaurant.id),
+    listRecentDays(restaurant.id, 7),
   ])
 
   // What the sales-dependent cards rest on, stated ONCE so five of them ask
@@ -292,15 +318,21 @@ export default async function DashboardPage({
           href="/accounts"
           level="alarm"
           sentence={`${check.data} ${plural(check.data, 'order')} sits on a different date in Petpooja than it does here, so those days cannot be reconciled against their dashboard.`}
+          footer={
+            // THE DATE WE SAY is the one whose sheet exists, so that is the
+            // door. Petpooja's own date is named beside it and is NOT a link:
+            // it is a fact about their system, and we have no page for it.
+            <ul className="space-y-1">
+              {dayGaps.slice(0, 4).map((r) => (
+                <li key={`${r.pos_says}-${r.we_say}`} className="text-sm text-stone-700">
+                  POS says {fmtDate(r.pos_says)} · we say{' '}
+                  <DateLink date={r.we_say} className="font-medium text-red-800" /> —{' '}
+                  <span className="font-mono">{r.orders}</span>
+                </li>
+              ))}
+            </ul>
+          }
         >
-          <ul className="mt-1 space-y-1">
-            {dayGaps.slice(0, 4).map((r) => (
-              <li key={`${r.pos_says}-${r.we_say}`} className="text-sm text-stone-700">
-                POS says {fmtDate(r.pos_says)} · we say {fmtDate(r.we_say)} —{' '}
-                <span className="font-mono">{r.orders}</span>
-              </li>
-            ))}
-          </ul>
           <Honesty level="alarm" verdict="cutover disagrees" compact>
             The likely cause is business_day_start not matching how the POS was configured. Neither
             side is wrong on its own; they are simply cutting the night in different places.
@@ -388,9 +420,18 @@ export default async function DashboardPage({
           href="/sales"
           level="alarm"
           sentence={`${missing.length} ${plural(missing.length, 'day')} sold food and never had ${plural(missing.length, 'its', 'their')} cash counted. A shortage belongs to the day it happened.`}
-        >
-          <p className="text-xs text-stone-600">{missing.slice(0, 8).map((d) => fmtDate(d)).join(' · ')}</p>
-        </Card>
+          footer={
+            // THE CARD EXISTS TO SEND SOMEBODY SOMEWHERE, and it used to name
+            // a date and offer no way to act on it. Each date is now its own
+            // day sheet — outside the card's link, because a link inside a
+            // link is invalid.
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {missing.slice(0, 8).map((d) => (
+                <DateLink key={d} date={d} className="text-xs font-medium text-red-800" />
+              ))}
+            </div>
+          }
+        />
       ) : (
         <Card
           title="Days not closed"
@@ -887,6 +928,42 @@ export default async function DashboardPage({
       <div className="mb-4">
         <PartialMonths period={period} />
       </div>
+
+      {/* THE FRONT DOOR TO THE DAY SHEET. It shipped reachable only by typing
+          its URL — a page nothing links to is a page nobody opens, and that
+          failure is invisible to a gate that only checks the page renders.
+          Period-independent on purpose: it is a way IN, not a measurement, so
+          it does not move when the period does. */}
+      {recentDays.length > 0 && (
+        <section className={`${cardCls} mb-4`}>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>Recent days</h2>
+            <span className="font-mono text-[10px] text-stone-400">day_summary</span>
+          </div>
+          <ul className="mt-2 divide-y divide-rule-soft">
+            {recentDays.map((d) => (
+              <li key={d.business_date} className="flex items-baseline justify-between gap-3 py-1.5">
+                <DateLink date={d.business_date} className="text-sm font-medium text-stone-900" />
+                <span className="flex items-baseline gap-2 text-sm">
+                  {d.revenue === null ? (
+                    <span className="text-stone-300">not fetched</span>
+                  ) : (
+                    <span className="font-mono tabular-nums text-stone-900">{formatMoneyString(d.revenue)}</span>
+                  )}
+                  {!d.day_closed && (
+                    <span className="rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+                      not closed
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-stone-400">
+            One day at a time — the same view this dashboard sums over a period.
+          </p>
+        </section>
+      )}
 
       {/* The honest empty state. Two bills and no sales is the ordinary
           starting condition, not a catastrophic month, and the page says so

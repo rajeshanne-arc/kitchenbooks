@@ -112,6 +112,28 @@ export async function getDayLabour(
     order by labour_cost desc`
 }
 
+/**
+ * THE FRONT DOOR to the day sheet. The last N business days with what each
+ * one took — a strip of links on the owner dashboard, because a page that
+ * nothing links to is a page nobody opens. The sheet shipped reachable only
+ * by typing its URL, which is a failure mode invisible to any gate that only
+ * checks the page renders.
+ */
+export async function listRecentDays(
+  restaurantId: string,
+  limit = 7,
+): Promise<{ business_date: string; revenue: string | null; orders: number | null; day_closed: boolean }[]> {
+  return tsql<{ business_date: string; revenue: string | null; orders: number | null; day_closed: boolean }[]>`
+    select business_date::text as business_date,
+           revenue::text as revenue,
+           orders::int as orders,
+           day_closed
+    from day_summary
+    where restaurant_id = ${restaurantId}
+    order by business_date desc
+    limit ${limit}`
+}
+
 /** Every business date that has a day_summary row, newest first — the date
  *  list the sheet pages through. */
 export async function listDayDates(restaurantId: string, limit = 60): Promise<string[]> {
