@@ -5474,6 +5474,66 @@ async function run() {
     )
   })
 
+  await check('On hand offers TWO views, and both are real orderings', async () => {
+    // TWO OPTIONS, NOT THREE. There is deliberately no "by shelf": Count
+    // already walks by location, and the three-jobs argument maps to the three
+    // TABS rather than to three toggles inside one of them. A third option
+    // here would be Count duplicated inside On hand.
+    //
+    // BY VALUE IS NOT A LESSER VIEW. At a few hundred items "what are my ten
+    // biggest holdings" is a different question from "what is Dry Goods
+    // worth", and grouping HIDES it — so the two orderings must genuinely
+    // differ, asserted by finding a pair that swaps between them rather than
+    // by trusting the SQL.
+    const { listStock } = await import('../src/server/store-queries')
+    const { readStockView } = await import('../src/lib/types')
+    const rid = process.env.KB_LIVE_TENANT as string
+
+    assert.equal(readStockView(undefined), 'by-category', 'the default view is not by-category')
+    assert.equal(readStockView('by-value'), 'by-value')
+    // A pasted URL with a typo must show the page, not throw.
+    assert.equal(readStockView('by-shelf'), 'by-category', 'an unknown view does not fall back')
+
+    const byCat = await listStock(rid, '', 'by-category')
+    const byVal = await listStock(rid, '', 'by-value')
+    assert.equal(byCat.length, byVal.length, 'the two views return different rows — a view must not filter')
+    assert.deepEqual(
+      [...byCat.map((r) => r.code)].sort(),
+      [...byVal.map((r) => r.code)].sort(),
+      'the two views hold different items',
+    )
+
+    // by-value is monotonically descending; by-category is not (it restarts
+    // per group), and if they ever agreed row-for-row the toggle would be
+    // decoration.
+    let prev = Number.POSITIVE_INFINITY
+    for (const r of byVal) {
+      assert.ok(Number(r.on_hand_value) <= prev + 1e-9, `${r.code} breaks value order in by-value`)
+      prev = Number(r.on_hand_value)
+    }
+    assert.notDeepEqual(
+      byCat.map((r) => r.code),
+      byVal.map((r) => r.code),
+      'both views return the same order — grouping is hiding nothing, so this fixture cannot tell them apart',
+    )
+
+    // ONE READER for two mounts, and the control must preserve other params:
+    // FilterInput rebuilt the URL from pathname + q alone, so typing in the
+    // filter silently reset the view beside it.
+    const { readFileSync } = await import('node:fs')
+    for (const f of ['src/app/store/stock/on-hand/page.tsx', 'src/app/kitchen/books/stock/page.tsx']) {
+      assert.ok(readFileSync(f, 'utf8').includes('readStockView('), `${f} reads ?view= by hand instead of the shared reader`)
+    }
+    for (const f of ['src/components/ViewToggle.tsx', 'src/components/books/FilterInput.tsx']) {
+      const src = readFileSync(f, 'utf8')
+      assert.ok(
+        src.includes('new URLSearchParams(sp.toString())'),
+        `${f} rebuilds the URL instead of preserving the params already on it`,
+      )
+    }
+    console.log(`      ${byCat.length} rows both ways · the orderings differ · one reader, params preserved`)
+  })
+
   await check('days on hand is WITHHELD below seven days of history', async () => {
     // One issue ever gives max = min, so a naive average reads the whole
     // quantity as a single day's usage — and 23.5 kg would report as "one

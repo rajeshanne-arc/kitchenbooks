@@ -6,10 +6,11 @@ import { getRestaurant } from '@/server/queries'
 import { listStock, stockTotalValue } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import Honesty, { HonestyPill } from '@/components/Honesty'
+import ViewToggle from '@/components/ViewToggle'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
-import type { StockRow } from '@/lib/types'
+import type { StockRow, StockView as StockViewMode } from '@/lib/types'
 import { AbcBadge } from '@/components/stock/Abc'
 
 /**
@@ -19,14 +20,25 @@ import { AbcBadge } from '@/components/stock/Abc'
  * trying to be three. This one answers value; Reorder answers what to buy and
  * groups by VENDOR because an order goes to a vendor; Count answers what is
  * physically there and walks by LOCATION. Same table, three orderings, three
- * screens.
- *
- * Grouped by CATEGORY because that is how inventory is presented in every
- * accounting standard — the grouping is not a preference, it is the shape the
- * reader already knows. Value orders within each group.
+ * SCREENS — which is why there are only TWO options in the toggle below and no
+ * "by shelf": that would duplicate Count inside On hand, and two answers to one
+ * question is the fault this codebase keeps removing.
  *
  * Mounted in two groups — the chef reads it, the store owns it.
  */
+
+const VIEWS = [
+  {
+    value: 'by-category' as const,
+    label: 'By category',
+    hint: 'Grouped with subtotals — how inventory is presented in every accounting standard.',
+  },
+  {
+    value: 'by-value' as const,
+    label: 'By value',
+    hint: 'One flat list, biggest holding first — the question grouping hides.',
+  },
+]
 
 /** Days of cover, or the reason there is no answer. NEVER a number below
  *  seven days of history: one issue makes max = min, and the average would
@@ -48,7 +60,79 @@ function Cover({ row }: { row: StockRow }) {
   )
 }
 
-export default async function StockView({ q = '' }: { q?: string }) {
+/**
+ * ONE ROW DEFINITION, rendered grouped and flat alike. Two copies would be two
+ * places for the next change — the argument that already made AbcBadge shared.
+ * `showCategory` is the only difference: inside a category card it would repeat
+ * the heading, and in the flat list it is the missing context.
+ */
+function StockLine({
+  r,
+  canOpenItems,
+  showCategory,
+}: {
+  r: StockRow
+  canOpenItems: boolean
+  showCategory: boolean
+}) {
+  const negative = Number(r.on_hand_qty) < 0
+  return (
+    <li className={r.status === 'inactive' ? 'opacity-60' : ''}>
+      <div className="py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <AbcBadge abc={r.abc} />
+              {canOpenItems ? (
+                <Link
+                  href={`/store/masters/items/${r.item_id}`}
+                  className="truncate text-[15px] font-medium text-stone-900 hover:underline"
+                >
+                  {r.name}
+                </Link>
+              ) : (
+                <span className="truncate text-[15px] font-medium text-stone-900">{r.name}</span>
+              )}
+              {r.status === 'inactive' && <RetiredBadge />}
+              {Number(r.issued_qty) === 0 && Number(r.purchased_qty) > 0 && (
+                <HonestyPill level="alarm">never issued</HonestyPill>
+              )}
+            </div>
+            <div className="mt-0.5 text-xs text-stone-500">
+              <span className="font-mono">{r.code}</span>
+              {showCategory && <> · {r.category_name}</>} · <Cover row={r} />
+              {r.issue_cost !== null && (
+                <>
+                  {' '}
+                  · avg {formatMoneyString(r.issue_cost)}/{r.purchase_unit}
+                </>
+              )}
+              {r.pct_of_value !== null && <> · {r.pct_of_value}% of stock value</>}
+            </div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className={`text-[15px] font-bold tabular-nums ${negative ? 'text-red-700' : 'text-stone-900'}`}>
+              {r.on_hand_qty} {r.purchase_unit}
+            </div>
+            <div className={`text-xs tabular-nums ${negative ? 'text-red-600' : 'text-stone-500'}`}>
+              {formatMoneyString(r.on_hand_value)}
+            </div>
+          </div>
+        </div>
+        {negative && (
+          <div className="mt-2">
+            <Honesty level="alarm" verdict="impossible" compact>
+              More has been issued than was ever bought on record. Stock cannot go below zero — a bill is
+              missing.
+            </Honesty>
+          </div>
+        )}
+      </div>
+    </li>
+  )
+}
+
+export default async function StockView({ q = '', view = 'by-category' }: { q?: string; view?: StockViewMode }) {
   const restaurant = await getRestaurant()
   // LAW 1: the chef reads this page but owns neither the item master nor the
   // bill screen, so those links are not painted for them — the numbers still
@@ -56,26 +140,30 @@ export default async function StockView({ q = '' }: { q?: string }) {
   const user = await getSessionUser()
   const canOpenItems = user !== null && canAccess(user.role, '/store/masters/items')
   const canEnterBill = user !== null && canAccess(user.role, '/store/receive/purchase')
-  const [rows, total] = await Promise.all([listStock(restaurant.id, q.slice(0, 60)), stockTotalValue(restaurant.id)])
+  const [rows, total] = await Promise.all([
+    listStock(restaurant.id, q.slice(0, 60), view),
+    stockTotalValue(restaurant.id),
+  ])
 
   const totalPaise = decimalStringToPaise(total)
 
   // The query already orders category → value, so grouping is a fold rather
   // than a sort: the view's ordering survives to the screen untouched.
   const groups: { category: string; rows: StockRow[]; value: number }[] = []
-  for (const r of rows) {
-    const last = groups[groups.length - 1]
-    const v = decimalStringToPaise(r.on_hand_value)
-    if (last && last.category === r.category_name) {
-      last.rows.push(r)
-      last.value += v
-    } else groups.push({ category: r.category_name, rows: [r], value: v })
+  if (view === 'by-category') {
+    for (const r of rows) {
+      const last = groups[groups.length - 1]
+      const v = decimalStringToPaise(r.on_hand_value)
+      if (last && last.category === r.category_name) {
+        last.rows.push(r)
+        last.value += v
+      } else groups.push({ category: r.category_name, rows: [r], value: v })
+    }
   }
 
   // BOUGHT AND NEVER ISSUED — computed from the ledger, never asserted, and
-  // deliberately not gas-specific: it will catch the next one too. Four gas
-  // cylinders at ₹12,100 are 26% of this store's value and have never reached
-  // a department's consumption; grouping must not bury that.
+  // deliberately not gas-specific: it will catch the next one too. Grouping
+  // must not bury it, and neither must a flat list, so it sits above both.
   const neverIssued = rows.filter((r) => Number(r.issued_qty) === 0 && Number(r.purchased_qty) > 0)
   const neverIssuedPaise = neverIssued.reduce((n, r) => n + decimalStringToPaise(r.on_hand_value), 0)
 
@@ -106,6 +194,16 @@ export default async function StockView({ q = '' }: { q?: string }) {
       )}
 
       <Suspense>
+        <ViewToggle
+          param="view"
+          value={view}
+          options={VIEWS}
+          defaultValue="by-category"
+          label="How to order stock on hand"
+        />
+      </Suspense>
+
+      <Suspense>
         <FilterInput placeholder="Filter stock by item name or code" />
       </Suspense>
 
@@ -131,6 +229,18 @@ export default async function StockView({ q = '' }: { q?: string }) {
             </>
           )}
         </div>
+      ) : view === 'by-value' ? (
+        <section className={`${cardCls} mt-3`}>
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className={sectionHeadCls}>Biggest holdings first</h3>
+            <span className="font-mono text-[11px] text-stone-400">{rows.length} items</span>
+          </div>
+          <ul className="mt-1 divide-y divide-rule-soft">
+            {rows.map((r) => (
+              <StockLine key={r.item_id} r={r} canOpenItems={canOpenItems} showCategory />
+            ))}
+          </ul>
+        </section>
       ) : (
         <div className="mt-3 space-y-3">
           {groups.map((g) => {
@@ -159,75 +269,21 @@ export default async function StockView({ q = '' }: { q?: string }) {
                 </div>
 
                 <ul className="mt-1 divide-y divide-rule-soft">
-                  {g.rows.map((r) => {
-                    const negative = Number(r.on_hand_qty) < 0
-                    return (
-                      <li key={r.item_id} className={r.status === 'inactive' ? 'opacity-60' : ''}>
-                        <div className="py-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <AbcBadge abc={r.abc} />
-                                {canOpenItems ? (
-                                  <Link
-                                    href={`/store/masters/items/${r.item_id}`}
-                                    className="truncate text-[15px] font-medium text-stone-900 hover:underline"
-                                  >
-                                    {r.name}
-                                  </Link>
-                                ) : (
-                                  <span className="truncate text-[15px] font-medium text-stone-900">{r.name}</span>
-                                )}
-                                {r.status === 'inactive' && <RetiredBadge />}
-                                {Number(r.issued_qty) === 0 && Number(r.purchased_qty) > 0 && (
-                                  <HonestyPill level="alarm">never issued</HonestyPill>
-                                )}
-                              </div>
-                              <div className="mt-0.5 text-xs text-stone-500">
-                                <span className="font-mono">{r.code}</span> · <Cover row={r} />
-                                {r.issue_cost !== null && (
-                                  <>
-                                    {' '}
-                                    · avg {formatMoneyString(r.issue_cost)}/{r.purchase_unit}
-                                  </>
-                                )}
-                                {r.pct_of_value !== null && <> · {r.pct_of_value}% of stock value</>}
-                              </div>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <div
-                                className={`text-[15px] font-bold tabular-nums ${
-                                  negative ? 'text-red-700' : 'text-stone-900'
-                                }`}
-                              >
-                                {r.on_hand_qty} {r.purchase_unit}
-                              </div>
-                              <div className={`text-xs tabular-nums ${negative ? 'text-red-600' : 'text-stone-500'}`}>
-                                {formatMoneyString(r.on_hand_value)}
-                              </div>
-                            </div>
-                          </div>
-                          {negative && (
-                            <div className="mt-2">
-                              <Honesty level="alarm" verdict="impossible" compact>
-                                More has been issued than was ever bought on record. Stock cannot go below zero — a
-                                bill is missing.
-                              </Honesty>
-                            </div>
-                          )}
-                        </div>
-                      </li>
-                    )
-                  })}
+                  {g.rows.map((r) => (
+                    <StockLine key={r.item_id} r={r} canOpenItems={canOpenItems} showCategory={false} />
+                  ))}
                 </ul>
               </section>
             )
           })}
-          <p className="px-1 text-xs text-stone-400">
-            A, B and C are shares of value, not judgements about items: roughly the few things carrying most of the
-            money, the middle, and the long tail. They set how often each is counted — weekly, fortnightly, monthly.
-          </p>
         </div>
+      )}
+
+      {rows.length > 0 && (
+        <p className="mt-3 px-1 text-xs text-stone-400">
+          A, B and C are shares of value, not judgements about items: roughly the few things carrying most of the
+          money, the middle, and the long tail. They set how often each is counted — weekly, fortnightly, monthly.
+        </p>
       )}
     </section>
   )

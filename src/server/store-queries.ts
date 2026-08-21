@@ -19,6 +19,7 @@ import type {
   SectionConsumptionDay,
   SectionMonthRow,
   StockRow,
+  StockView,
   StockSnap,
   StoreLogRow,
   WastageDetail,
@@ -152,13 +153,27 @@ export async function getSectionFrequentItems(
  * Ordering is category, then value within it, so the group's own list still
  * leads with what matters.
  *
+ * TWO VIEWS, NOT THREE. By category is the owner's monthly question and the
+ * default; BY VALUE is a flat list, value descending, and it is not a lesser
+ * view — at a few hundred items "what are my ten biggest holdings" is a
+ * different question from "what is Dry Goods worth", and grouping HIDES it.
+ *
+ * There is deliberately no "by shelf": Count already walks by location, and
+ * the three-jobs argument maps to the three TABS rather than to three toggles
+ * inside one of them. Two answers to one question is the fault this codebase
+ * keeps removing.
+ *
  * `abc` and `days_on_hand` are LEFT JOINed and stay NULL rather than being
  * coalesced: an item absent from stock_abc has no share of the value, and
  * days_on_hand is deliberately NULL below 7 days of issue history because one
  * issue makes max = min and the average would read the whole quantity as a
  * single day's usage. The screen says "not enough history" in both cases.
  */
-export async function listStock(restaurantId: string, q: string): Promise<StockRow[]> {
+export async function listStock(
+  restaurantId: string,
+  q: string,
+  view: StockView = 'by-category',
+): Promise<StockRow[]> {
   const like = `%${q}%`
   return tsql<StockRow[]>`
     select s.item_id, s.code, s.name, s.category, c.name as category_name, s.purchase_unit, i.status,
@@ -179,7 +194,8 @@ export async function listStock(restaurantId: string, q: string): Promise<StockR
     left join stock_days_on_hand d on d.restaurant_id = s.restaurant_id and d.item_id = s.item_id
     where s.restaurant_id = ${restaurantId}
       and (s.name ilike ${like} or s.code ilike ${like})
-    order by c.name asc, s.on_hand_value desc, s.code asc`
+    order by ${view === 'by-category' ? sql`c.name asc,` : sql``}
+             s.on_hand_value desc, s.code asc`
 }
 
 /** Items nobody has placed on a shelf. Counted for the store dashboard's

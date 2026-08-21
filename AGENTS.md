@@ -5790,3 +5790,47 @@ what marks them — with `categories` exempt and its reason printed. A twelfth
 master fails until somebody says. Proved able to fail both ways: removing one
 registration named it as unprotected, and making one listing query filter to
 active named it as hiding.
+
+## THE VIEW TOGGLE — two options, and where the third would have gone wrong
+
+`/store/stock/on-hand` carries **By category** (default) and **By value**. No
+third option, and the reason generalises: the three-jobs argument maps to the
+three **TABS**, not to three toggles inside one of them. "By shelf" here would
+be Count duplicated inside On hand — two answers to one question, which is the
+fault this codebase keeps removing.
+
+**By value is not a lesser view.** At a few hundred items "what are my ten
+biggest holdings" is a different question from "what is Dry Goods worth", and
+grouping HIDES it. Live proof at six items: `PLT-001` (₹7,442) sits below
+`MET-001` (₹4,263) grouped, and above it flat.
+
+`src/components/ViewToggle.tsx` is the shared segmented control, built once
+because a dozen of these are coming — dishes vs subs, detail vs summary, draft
+vs approved vs paid. Twelve copies would be twelve places for the next change,
+the same argument as PersonLink, DateLink and the ABC badge.
+
+**The choice lives in the URL and the DEFAULT WRITES NO PARAM.** A clean URL is
+the common case, and `?view=by-category` on every link would be noise meaning
+"unchanged". `readStockView` is the one front door for both mounts — a
+hand-written ternary in each route file is two chances to disagree, the same
+reason `readPeriodParam` exists. An unrecognised value falls back rather than
+throwing: a pasted URL with a typo should show the page, not a 500.
+
+### The bug the toggle would have introduced
+
+`FilterInput` rebuilt its URL from `pathname` + `q` **alone**, so it silently
+dropped every other param. On a page with one control that is invisible; the
+moment a second control shares the URL, typing in the filter resets the view
+beside it.
+
+> **A control that writes to the URL must preserve the params already on it.**
+> Rebuilding from its own value works until the day a second control exists,
+> and then it looks like the other control is broken.
+
+Both controls now start from `new URLSearchParams(sp.toString())`, and the gate
+asserts that in source — the failure is silent, so nothing else would catch it.
+
+The gate also asserts the two orderings genuinely DIFFER, by finding a pair that
+swaps between them. A toggle whose two states return the same rows is
+decoration, and that is exactly what a careless `order by` edit would leave
+behind.
