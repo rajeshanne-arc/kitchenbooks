@@ -74,7 +74,7 @@ async function main() {
   const [{ next_i: expectedItemN }] = await sql<{ next_i: number }[]>`
     select coalesce(max(nullif(split_part(code, '-', 2), '')::int), 0) + 1 as next_i
     from items where restaurant_id = ${rid} and code like 'VEG-%'`
-  const item = await createItem({ name: 'Zz Groups Item', category: 'VEG', purchaseUnit: 'kg', openingRate: '40', brand: '', stockUnit: '', conversionFactor: '', gstRate: '', parLevel: '', reorderLevel: '', defaultVendorId: '', itemType: '', notes: '' })
+  const item = await createItem({ name: 'Zz Groups Item', category: 'VEG', purchaseUnit: 'kg', openingRate: '40', brand: '', stockUnit: '', conversionFactor: '', gstRate: '', parLevel: '', reorderLevel: '', defaultVendorId: '', itemType: '', notes: '', storageLocationId: '' })
   assert.ok(item.ok, `createItem failed: ${item.ok === false ? item.error : ''}`)
   assert.equal(item.item.code, `VEG-${String(expectedItemN).padStart(3, '0')}`, 'item code continues the series')
   assert.equal(item.item.opening_rate, '40')

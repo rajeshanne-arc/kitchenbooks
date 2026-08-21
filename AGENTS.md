@@ -3075,6 +3075,10 @@ attendance roster is the computed roster order (dept_group → sort_order →
 grade → name), where a frequency rank would move a person between mornings and
 lose the marker's place.
 
+*(The count-sheet half of that was SUPERSEDED — see "A stock screen is not one
+job" at the end of this file. The value ordering was doing two jobs and ABC
+took one of them. The attendance half stands.)*
+
 **All six of the pickers the audit listed as unscoped are now built** — see the
 table above. **`searchComponents` on recipe lines is the one left**, and
 deliberately: the context available is the recipe being edited and its
@@ -5390,3 +5394,114 @@ If write access ever stops being wanted, Supabase's MCP takes
 and this one can both be connected at once, with near-identical tool names.
 They are not the same server: only this one is pinned to the project, and only
 this one is in the repo. Check which you are calling before it matters.
+
+## A STOCK SCREEN IS NOT ONE JOB — three orderings of one table
+
+Every mediocre inventory UI is one screen trying to be three. `stock_on_hand`
+answers three different people's questions and each wants a different order:
+
+| | grouped by | ordered by | whose question |
+|---|---|---|---|
+| **On hand** | CATEGORY | value | the owner's, monthly: what is it worth |
+| **Reorder** | VENDOR | urgency | the store's, weekly: what do I buy, and from whom |
+| **Count** | STORAGE LOCATION | walking order | the counter's: what is actually there |
+
+Category grouping on On hand is not a preference — it is how inventory is
+presented in every accounting standard, so it is the shape the reader already
+knows. **Value is deliberately absent from Reorder**: an order goes to a vendor
+and is filled or it is not, and what the stock is worth is a different screen.
+
+**REORDER WAS ALREADY GROUPED BY VENDOR** — that part predates this work and
+the comment arguing it ("the trip is the unit of work") was already there. What
+was missing was the ORDER: vendors sorted alphabetically and items by name,
+which cannot say that one item is out and another crossed its line an hour ago.
+Urgency is now defined in the query and stated on the screen — how much of the
+reorder level is still on the shelf, lowest first — and a vendor ranks by its
+most urgent line, because the decision the page drives is which call to make
+first.
+
+### The count sheet: a ruling superseded, and why
+
+This file recorded `on_hand_value desc` as a deliberate ordering that "must
+stay". It is replaced by walking order, and the argument matters more than the
+change:
+
+> **That ordering was doing TWO jobs — saying which items matter most, and
+> setting the order of the walk. It was good at the first and actively bad at
+> the second.**
+
+Value order sends a counter back and forth across the store. A count that is
+exhausting is a count that stops happening, and a count that does not happen is
+worth less than a slow one. `stock_abc` now does the first job *better*, because
+importance belongs in the **schedule** — A weekly, B fortnightly, C monthly —
+rather than in the row order. That frees the row order to be the walk. Value
+still orders within a location, where it costs no extra steps.
+
+**THE SCHEDULE IS THE POINT, NOT THE LETTER.** A badge on a row tells nobody
+anything they can act on. At a few hundred items, counting everything every week
+is a plan nobody keeps, and a plan nobody keeps produces no counts at all —
+which is worse than counting the expensive third often and the tail
+occasionally. So the sentence is on the Count tab in full, and the badge carries
+it in its tooltip. `src/components/stock/Abc.tsx` is the ONE definition, used by
+the stock list and the count sheet.
+
+**Items with NO location group LAST and loudly.** On a physical walk they are
+exactly what gets missed, so "Not placed yet" is a red band rather than a quiet
+tail. `storage_locations.sort_order` is WALKING ORDER, not alphabetical, and the
+edit screen says so — "sort order" on its own invites somebody to alphabetise
+it, which quietly undoes the whole feature. Reordering is therefore a first-class
+control, not an afterthought, and a new location goes LAST in the walk rather
+than first: nobody knows where it sits on the route until they say so.
+
+### storage_locations is a MASTER, not a list key
+
+The third time this distinction has decided a table, after `sections` and
+`partners`. **Items POINT AT a location**: a rename has to follow every item
+that points at it, and nothing can point at a list value. `kind` is a SHAPE —
+ambient / chilled / frozen / other — never a temperature or a brand, which is
+what lets it describe a kitchen nobody here has seen.
+
+**A FOREIGN KEY IS NOT A TENANT CHECK.** `items.storage_location_id` references
+`storage_locations`, and a foreign-key check runs as the table owner — so it is
+NOT filtered by the row-level policy. A uuid from another tenant would satisfy
+the constraint and place one restaurant's item on another's shelf.
+`assertLocation` scopes by `restaurant_id` explicitly and is called on both
+write paths; a gate asserts both. That is the keyed-read lesson on the write
+side: **the key is not the check.**
+
+### Two honesty rules the views already publish, kept on screen
+
+**`days_on_hand` is NULL below seven days of issue history and the screen says
+why.** One issue ever gives max = min, so a naive average reads the whole
+quantity as a single day's usage — 23.5 kg would report as one day's cover on
+the strength of a single line. 2 of 6 items are answerable today; the rest say
+"not enough history" or "never issued". A gate asserts no row states cover on
+fewer than seven days of history, and asserts that at least one row is
+*un*answerable, so the withholding path is exercised rather than assumed.
+
+**"Bought, never issued" is computed, not gas-specific.** Four cylinders at
+₹12,100 are 26% of this store's value and have never reached a department's
+consumption. Grouping by category would have buried that under "Fuel", so the
+stock page carries a strip naming every item bought and never issued, with its
+share of total value — and it will catch the next one too, which a gas-shaped
+rule would not.
+
+### The gate that passed while broken
+
+The walking-order assertion **passed with the ordering deliberately reversed**,
+because every live item is unplaced: `location_order` was null on all six rows
+and the loop examined nothing. The vacuous-assertion family again, and caught
+only by perturbing it.
+
+It now places three items on the PROBE tenant inside a rolled-back transaction,
+arranged so **walking order contradicts alphabetical order** — A on the last
+shelf, B on the first, C unplaced — which is the only arrangement that can tell
+the two apart. `listCountableItems` gained an optional handle (the
+`getClosePrefill` shape) so the gate calls the APP'S OWN QUERY rather than a
+hand-written copy of it.
+
+And a new risk that ordering created: the sheet now JOINS `stock_on_hand` to
+sort by value within a location. **Joining is fine; selecting a quantity would
+put the book on the counter's screen and turn a count into a confirmation of
+it.** A gate reads the query's source and fails if any quantity column appears
+in its select list.

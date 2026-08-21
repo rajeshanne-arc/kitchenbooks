@@ -5149,6 +5149,181 @@ async function run() {
     )
   })
 
+  /* ── stock: three jobs, three orderings of one table ───────────────── */
+  console.log('\nstock: three jobs, three orderings of one table')
+
+  await check('each stock screen orders for ITS OWN job', async () => {
+    // A STOCK SCREEN IS NOT ONE JOB, and every mediocre inventory UI is one
+    // screen trying to be three. Asserted by VALUE against the live database,
+    // because an ordering is exactly the kind of thing that reads correct in
+    // source and arrives wrong on screen.
+    const { listStock, listReorderDue } = await import('../src/server/store-queries')
+    const { listCountableItems } = await import('../src/server/counts-queries')
+    const rid = process.env.KB_LIVE_TENANT as string
+
+    // ON HAND — the owner's question: what is it worth. Category, then value
+    // within it, which is how inventory is presented in every accounting
+    // standard.
+    const stock = await listStock(rid, '')
+    assert.ok(stock.length > 1, 'not enough stock rows to test an ordering')
+    const seen = new Set<string>()
+    let prevCat = ''
+    let prevVal = Number.POSITIVE_INFINITY
+    for (const r of stock) {
+      if (r.category_name !== prevCat) {
+        assert.ok(!seen.has(r.category_name), `category ${r.category_name} appears twice — the grouping would split it`)
+        seen.add(r.category_name)
+        prevCat = r.category_name
+        prevVal = Number.POSITIVE_INFINITY
+      }
+      assert.ok(
+        Number(r.on_hand_value) <= prevVal + 1e-9,
+        `${r.code} breaks value order inside ${r.category_name}`,
+      )
+      prevVal = Number(r.on_hand_value)
+    }
+
+    // COUNT — the walk. Location sort_order is WALKING ORDER, and unplaced
+    // items come LAST because on a physical walk they are what gets missed.
+    //
+    // TESTED ON THE PROBE TENANT WITH ITEMS DELIBERATELY PLACED, because the
+    // live tenant has nothing placed yet — so this loop examined zero rows and
+    // PASSED while the ordering was broken. That is the vacuous-assertion
+    // family, caught by perturbing it. The probe places three items so that
+    // walking order contradicts alphabetical order, which is the only
+    // arrangement that can tell the two apart.
+    let sheetOrder: string[] = []
+    try {
+      await onProbe(() =>
+        txn(async (tx) => {
+          const prid = process.env.KB_PROBE_TENANT as string
+          const locs = await tx<{ id: string; sort_order: number }[]>`
+            select id, sort_order from storage_locations
+            where restaurant_id = ${prid} and status = 'active' order by sort_order`
+          assert.ok(locs.length >= 2, 'the probe tenant needs two storage locations to test a walk')
+          const first = locs[0].id
+          const last = locs[locs.length - 1].id
+          // A sorts LAST in the walk, B sorts FIRST, C is unplaced.
+          for (const [code, name, loc] of [
+            ['ZZW-001', 'Zz walk A', last],
+            ['ZZW-002', 'Zz walk B', first],
+            ['ZZW-003', 'Zz walk C', null],
+          ] as const) {
+            await tx`
+              insert into items (restaurant_id, code, name, category, purchase_unit, storage_location_id)
+              values (${prid}, ${code}, ${name}, 'DRY', 'kg', ${loc})`
+          }
+          // THE APP'S OWN QUERY, lent this transaction's handle.
+          const rows = await listCountableItems(prid, tx as unknown as typeof import('../src/lib/db').tsql)
+          sheetOrder = rows.filter((r) => r.code.startsWith('ZZW-')).map((r) => r.code)
+          throw new Error('KB_ROLLBACK')
+        }),
+      )
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.deepEqual(
+      sheetOrder,
+      ['ZZW-002', 'ZZW-001', 'ZZW-003'],
+      'the sheet is not in walking order — B is on the first shelf, A on the last, C is unplaced and must come last',
+    )
+
+    // and the live sheet must never put a placed item after an unplaced one
+    const sheet = await listCountableItems(rid)
+    assert.ok(sheet.length > 0, 'nothing countable — this ordering could not be tested')
+    let prevOrd = Number.NEGATIVE_INFINITY
+    let sawUnplaced = false
+    for (const i of sheet) {
+      if (i.location_order === null) {
+        sawUnplaced = true
+        continue
+      }
+      assert.ok(!sawUnplaced, `${i.code} is placed but sorts after an unplaced item`)
+      assert.ok(i.location_order >= prevOrd, `${i.code} breaks walking order`)
+      prevOrd = i.location_order
+    }
+
+    // REORDER — what to buy. Urgency, so "out" outranks "just crossed the
+    // line". Alphabetical order cannot say that.
+    const due = await listReorderDue(rid)
+    let prevU = Number.NEGATIVE_INFINITY
+    let sawNull = false
+    for (const r of due) {
+      if (r.urgency === null) {
+        sawNull = true
+        continue
+      }
+      assert.ok(!sawNull, `${r.code} has an urgency but sorts after a row without one`)
+      assert.ok(Number(r.urgency) >= prevU - 1e-9, `${r.code} breaks urgency order`)
+      prevU = Number(r.urgency)
+    }
+    console.log(
+      `      on hand ${stock.length} rows in ${seen.size} categories · walk proved on the probe (${sheetOrder.join(' → ')}) · ${due.length} due by urgency`,
+    )
+  })
+
+  await check('days on hand is WITHHELD below seven days of history', async () => {
+    // One issue ever gives max = min, so a naive average reads the whole
+    // quantity as a single day's usage — and 23.5 kg would report as "one
+    // day's cover" on the strength of a single line. The view returns NULL
+    // and the screen says "not enough history" rather than printing it.
+    const { listStock } = await import('../src/server/store-queries')
+    const rows = await listStock(process.env.KB_LIVE_TENANT as string, '')
+    let answered = 0
+    for (const r of rows) {
+      if (r.days_on_hand === null) continue
+      answered++
+      assert.ok(
+        r.days_of_history !== null && r.days_of_history >= 7,
+        `${r.code} states ${r.days_on_hand} days of cover on ${r.days_of_history} days of history`,
+      )
+    }
+    assert.ok(rows.length > answered, 'every row is answerable — the withholding path is untested here')
+    console.log(`      ${answered} of ${rows.length} answerable; the rest say why instead`)
+  })
+
+  await check('the count sheet still cannot leak a book quantity', async () => {
+    // THE COUNT IS BLIND, and this ordering change made that newly fragile:
+    // listCountableItems now JOINS stock_on_hand and stock_abc to sort by
+    // value within a location. Joining is fine; SELECTING a quantity would
+    // put the answer on the counter's screen and turn a count into a
+    // confirmation of the book.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/counts-queries.ts', 'utf8')
+    const at = src.indexOf('export async function listCountableItems')
+    assert.ok(at > 0, 'listCountableItems has been renamed')
+    const body = src.slice(at, src.indexOf('\n}', at))
+    for (const leak of ['on_hand_qty', 'on_hand_value', 's.issue_cost', 'book_qty']) {
+      assert.ok(!body.includes(`as ${leak}`) && !new RegExp(`select[^\`]*\\b${leak}\\b`, 's').test(body.split('order by')[0]),
+        `listCountableItems selects ${leak} — the count would stop being blind`)
+    }
+    const rows = (await import('../src/lib/types')) as unknown
+    void rows
+    console.log('      joins stock_on_hand for ordering, selects no quantity from it')
+  })
+
+  await check('a storage location from another tenant is refused', async () => {
+    // items.storage_location_id has a FOREIGN KEY, and a foreign-key check
+    // runs as the table owner — so it is NOT filtered by the row-level
+    // policy. A uuid from another tenant would satisfy the constraint and put
+    // one restaurant's item on another's shelf. The keyed-read lesson on the
+    // write side: the key is not the check.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/books-actions.ts', 'utf8')
+    assert.ok(/async function assertLocation/.test(src), 'assertLocation has gone')
+    assert.ok(
+      /where id = \$\{locationId\} and restaurant_id = \$\{restaurantId\}/.test(src),
+      'assertLocation no longer scopes by restaurant — the FK alone does not',
+    )
+    for (const fn of ['updateItem', 'createItem']) {
+      const at = src.indexOf(`export async function ${fn}`)
+      assert.ok(at > 0, `${fn} has been renamed`)
+      const body = src.slice(at, at + 4000)
+      assert.ok(body.includes('assertLocation('), `${fn} writes a location without checking it belongs here`)
+    }
+    console.log('      assertLocation is scoped by restaurant and called on both write paths')
+  })
+
   /* ── meters ────────────────────────────────────────────────────────── */
   console.log('\nmeters: gas is a choice, a span is never divided, a rate is never truth')
 

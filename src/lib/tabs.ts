@@ -189,6 +189,10 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     { key: 'meters', href: '/owner/meters', label: 'Meters' },
     { key: 'users', href: '/owner/users', label: 'Users' },
     { key: 'lists', href: '/owner/lists', label: 'Lists' },
+    // Beside Lists because it is the same kind of thing — the restaurant's own
+    // words for its own building — and NOT inside Lists because a location is
+    // an entity items point at, not a value.
+    { key: 'locations', href: '/owner/locations', label: 'Locations' },
     { key: 'settings', href: '/owner/settings', label: 'Settings' },
   ],
   // The accountant's group. Review comes first and always will: their

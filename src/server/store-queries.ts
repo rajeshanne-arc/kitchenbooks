@@ -143,22 +143,55 @@ export async function getSectionFrequentItems(
   }))
 }
 
+/**
+ * Stock on hand, ordered so the screen can GROUP BY CATEGORY.
+ *
+ * A STOCK SCREEN IS NOT ONE JOB, and this is the owner's: what is it worth.
+ * Category is how inventory is presented in every accounting standard, so the
+ * grouping is not a preference — it is the shape the reader already knows.
+ * Ordering is category, then value within it, so the group's own list still
+ * leads with what matters.
+ *
+ * `abc` and `days_on_hand` are LEFT JOINed and stay NULL rather than being
+ * coalesced: an item absent from stock_abc has no share of the value, and
+ * days_on_hand is deliberately NULL below 7 days of issue history because one
+ * issue makes max = min and the average would read the whole quantity as a
+ * single day's usage. The screen says "not enough history" in both cases.
+ */
 export async function listStock(restaurantId: string, q: string): Promise<StockRow[]> {
   const like = `%${q}%`
   return tsql<StockRow[]>`
-    select s.item_id, s.code, s.name, c.name as category_name, s.purchase_unit, i.status,
+    select s.item_id, s.code, s.name, s.category, c.name as category_name, s.purchase_unit, i.status,
            s.purchased_qty::text as purchased_qty,
            s.issued_qty::text as issued_qty,
            s.wasted_qty::text as wasted_qty,
            s.on_hand_qty::text as on_hand_qty,
            s.issue_cost::text as issue_cost,
-           s.on_hand_value::text as on_hand_value
+           s.on_hand_value::text as on_hand_value,
+           a.abc,
+           a.pct_of_value::text as pct_of_value,
+           d.days_on_hand::text as days_on_hand,
+           d.days_of_history::int as days_of_history
     from stock_on_hand s
     join items i on i.id = s.item_id
     join categories c on c.code = s.category
+    left join stock_abc a on a.restaurant_id = s.restaurant_id and a.item_id = s.item_id
+    left join stock_days_on_hand d on d.restaurant_id = s.restaurant_id and d.item_id = s.item_id
     where s.restaurant_id = ${restaurantId}
       and (s.name ilike ${like} or s.code ilike ${like})
-    order by s.on_hand_value desc, s.code asc`
+    order by c.name asc, s.on_hand_value desc, s.code asc`
+}
+
+/** Items nobody has placed on a shelf. Counted for the store dashboard's
+ *  readiness block, beside "no item carries a reorder level": a thing that is
+ *  empty until somebody does it, and that blocks nothing until the first
+ *  count — at which point an unplaced item is one that gets walked past. */
+export async function countUnplacedItems(restaurantId: string): Promise<{ unplaced: number; total: number }> {
+  const [row] = await tsql<{ unplaced: number; total: number }[]>`
+    select count(*) filter (where storage_location_id is null)::int as unplaced,
+           count(*)::int as total
+    from items where restaurant_id = ${restaurantId} and status = 'active'`
+  return { unplaced: row?.unplaced ?? 0, total: row?.total ?? 0 }
 }
 
 export async function stockTotalValue(restaurantId: string): Promise<string> {
@@ -412,10 +445,17 @@ export async function listReorderDue(restaurantId: string): Promise<ReorderRow[]
            par_level::text as par_level,
            suggested_qty::text as suggested_qty,
            usual_vendor, vendor_id,
-           issue_cost::text as issue_cost
+           issue_cost::text as issue_cost,
+           -- URGENCY, DEFINED HERE AND STATED ON SCREEN: how much of the
+           -- reorder level is still on the shelf. Out of stock ranks above
+           -- "just crossed the line", which alphabetical order cannot say.
+           -- A zero or absent level cannot produce a ratio, so it sorts last
+           -- rather than dividing by zero.
+           case when reorder_level is null or reorder_level = 0 then null
+                else (on_hand_qty / reorder_level)::numeric end as urgency
     from reorder_due
     where restaurant_id = ${restaurantId}
-    order by usual_vendor nulls last, name asc`
+    order by urgency asc nulls last, name asc`
 }
 
 /** What the Stock tab's badge is counting, and which view to open. */

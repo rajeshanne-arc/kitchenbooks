@@ -12,7 +12,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { updateItem } from '@/server/books-actions'
-import type { ItemDetail, Unit, VendorHit } from '@/lib/types'
+import type { ItemDetail, StorageLocation, Unit, VendorHit } from '@/lib/types'
 import { formatMoneyString } from '@/lib/money'
 import { cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
 import { LockedField } from './Locked'
@@ -40,11 +40,14 @@ export default function ItemEdit({
   item,
   units,
   vendors,
+  locations,
 }: {
   item: ItemDetail
   units: Unit[]
   /** active vendors, for the usual-supplier picker */
   vendors: VendorHit[]
+  /** active storage locations, in walking order */
+  locations: StorageLocation[]
 }) {
   const [f, setF] = useState({
     name: item.name,
@@ -56,6 +59,7 @@ export default function ItemEdit({
     openingRate: item.opening_rate ?? '',
     status: item.status,
     reorderLevel: item.reorder_level ?? '',
+    storageLocationId: item.storage_location_id ?? '',
     defaultVendorId: item.default_vendor_id ?? '',
     itemType: item.item_type ?? '',
     notes: item.notes ?? '',
@@ -89,6 +93,7 @@ export default function ItemEdit({
         openingRate: f.openingRate.trim(),
         status: f.status,
         reorderLevel: f.reorderLevel.trim(),
+        storageLocationId: f.storageLocationId,
         defaultVendorId: f.defaultVendorId,
         itemType: f.itemType.trim(),
         notes: f.notes.trim(),
@@ -105,6 +110,7 @@ export default function ItemEdit({
           openingRate: i.opening_rate ?? '',
           status: i.status,
           reorderLevel: i.reorder_level ?? '',
+          storageLocationId: i.storage_location_id ?? '',
           defaultVendorId: i.default_vendor_id ?? '',
           itemType: i.item_type ?? '',
           notes: i.notes ?? '',
@@ -259,6 +265,25 @@ export default function ItemEdit({
               className={`${inputCls} text-right font-mono tabular-nums`}
             />
           </Field>
+          <Wide>
+            <Field
+              label="Where it is kept"
+              hint="The count sheet walks the store in location order. Left blank, this item sits at the bottom under “Not placed yet” — where it gets walked past."
+            >
+              <select
+                value={f.storageLocationId}
+                onChange={(e) => set('storageLocationId', e.target.value)}
+                className={selectCls}
+              >
+                <option value="">— not placed yet —</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </Wide>
           <Wide>
             <Field label="Usual vendor" hint="Groups this item onto one supplier's reorder list.">
               <select

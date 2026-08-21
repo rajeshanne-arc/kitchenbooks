@@ -186,6 +186,33 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
 
 // ------------------------------------------------------------- edit masters
 
+/**
+ * A LOCATION MUST BELONG TO THIS RESTAURANT, and RLS does not check it.
+ *
+ * `items.storage_location_id` has a foreign key to `storage_locations`, and a
+ * foreign-key check runs as the table owner — so it is NOT filtered by the
+ * row-level policy. A uuid from another tenant would satisfy the constraint
+ * and place one restaurant's item on another's shelf. That is the keyed-read
+ * lesson on the write side: the key is not the check.
+ *
+ * The handle is OPTIONAL so a caller already inside a transaction lends its
+ * own — the same shape as getClosePrefill. A bare `tsql` inside a `txn`
+ * callback opens a second connection while holding the first, which is the
+ * pool deadlock in a new costume, and a gate forbids it.
+ */
+async function assertLocation(
+  restaurantId: string,
+  locationId: string,
+  handle: typeof tsql = tsql,
+): Promise<string | null> {
+  if (locationId === '') return null
+  const rows = await handle<{ id: string }[]>`
+    select id from storage_locations
+    where id = ${locationId} and restaurant_id = ${restaurantId}`
+  if (!rows[0]) throw new BooksError('That storage location is not on this restaurant’s list')
+  return locationId
+}
+
 const trimmedOrNull = (s: string): string | null => (s.trim() === '' ? null : s.trim())
 
 // Every column kb_app may UPDATE on vendors. code and primary_category are
@@ -278,6 +305,7 @@ const ItemSchema = z.object({
   defaultVendorId: z.union([z.literal(''), z.string().regex(UUID)]),
   itemType: z.string().trim().max(40),
   notes: z.string().trim().max(2000),
+  storageLocationId: z.union([z.literal(''), z.string().regex(UUID)]),
 })
 
 export async function updateItem(id: string, raw: UpdateItemInput): Promise<UpdateItemResult> {
@@ -317,7 +345,8 @@ export async function updateItem(id: string, raw: UpdateItemInput): Promise<Upda
         reorder_level = ${input.reorderLevel === '' ? null : input.reorderLevel}::numeric,
         default_vendor_id = ${input.defaultVendorId === '' ? null : input.defaultVendorId},
         item_type = ${trimmedOrNull(input.itemType)},
-        notes = ${trimmedOrNull(input.notes)}
+        notes = ${trimmedOrNull(input.notes)},
+        storage_location_id = ${await assertLocation(rid, input.storageLocationId)}
       where id = ${id} and restaurant_id = ${rid}
       returning id`
     if (!updated[0]) throw new BooksError('Item not found — nothing was changed')
@@ -417,6 +446,7 @@ const CreateItemSchema = z.object({
   defaultVendorId: z.union([z.literal(''), z.string().regex(UUID)]),
   itemType: z.string().trim().max(40),
   notes: z.string().trim().max(2000),
+  storageLocationId: z.union([z.literal(''), z.string().regex(UUID)]),
 })
 
 export async function createItem(raw: CreateItemInput): Promise<CreateItemResult> {
@@ -445,7 +475,7 @@ export async function createItem(raw: CreateItemInput): Promise<CreateItemResult
       const [row] = await tx<{ id: string }[]>`
         insert into items (restaurant_id, code, name, category, purchase_unit, opening_rate, brand,
                            stock_unit, conversion_factor, gst_rate, par_level, reorder_level,
-                           default_vendor_id, item_type, notes)
+                           default_vendor_id, item_type, notes, storage_location_id)
         values (${rid}, ${icode}, ${input.name}, ${input.category}, ${input.purchaseUnit},
                 ${input.openingRate === '' ? null : input.openingRate}::numeric, ${trimmedOrNull(input.brand)},
                 ${input.stockUnit === '' ? null : input.stockUnit},
@@ -454,7 +484,8 @@ export async function createItem(raw: CreateItemInput): Promise<CreateItemResult
                 ${input.parLevel === '' ? null : input.parLevel}::numeric,
                 ${input.reorderLevel === '' ? null : input.reorderLevel}::numeric,
                 ${input.defaultVendorId === '' ? null : input.defaultVendorId},
-                ${trimmedOrNull(input.itemType)}, ${trimmedOrNull(input.notes)})
+                ${trimmedOrNull(input.itemType)}, ${trimmedOrNull(input.notes)},
+                ${await assertLocation(rid, input.storageLocationId, tx as unknown as typeof tsql)})
         returning id`
       return { id: row.id }
     })

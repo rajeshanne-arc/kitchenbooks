@@ -102,6 +102,7 @@ async function main() {
     defaultVendorId: '',
     itemType: '',
     notes: '',
+    storageLocationId: '',
   })
   assert.ok(upd.ok, `updateItem failed: ${upd.ok === false ? upd.error : ''}`)
   const persisted = await getItemDetail(restaurant.id, itemId)

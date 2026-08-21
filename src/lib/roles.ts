@@ -48,6 +48,12 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // group; the owner tab strip filters to it on its own.
   ['/owner/meters', ['owner', 'accountant']],
   ['/owner/lists', ['manager', 'owner']],
+  // STORAGE LOCATIONS: a master, beside Lists and gated the same. Items point
+  // at a row here, so a rename follows them — which is exactly why it is not a
+  // list_options key. The store manager who walks the store is the person most
+  // likely to know the right walking order, and they reach it through their
+  // manager account.
+  ['/owner/locations', ['manager', 'owner']],
   ['/owner/settings', ['manager', 'owner']],
   ['/owner/snapshots', ['owner']],
   ['/owner', ['manager', 'owner']],

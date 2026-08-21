@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { Category, ItemDetail, Unit, VendorHit } from '@/lib/types'
+import type { Category, ItemDetail, StorageLocation, Unit, VendorHit } from '@/lib/types'
 import { createItem } from '@/server/books-actions'
 import { cardCls, fieldLabelCls, inputCls, numCls, selectCls } from '@/components/ui'
 import { FormGroup, Wide } from '@/components/books/FormGroup'
@@ -21,10 +21,13 @@ export default function ItemNew({
   categories,
   units,
   vendors,
+  locations,
 }: {
   categories: Category[]
   units: Unit[]
   vendors: VendorHit[]
+  /** active storage locations, in walking order */
+  locations: StorageLocation[]
 }) {
   const router = useRouter()
   const [name, setName] = useState('')
@@ -39,6 +42,7 @@ export default function ItemNew({
     gstRate: '',
     parLevel: '',
     reorderLevel: '',
+    storageLocationId: '',
     defaultVendorId: '',
     itemType: '',
     notes: '',
@@ -78,6 +82,7 @@ export default function ItemNew({
           gstRate: '',
           parLevel: '',
           reorderLevel: '',
+          storageLocationId: '',
           defaultVendorId: '',
           itemType: '',
           notes: '',
@@ -231,6 +236,30 @@ export default function ItemNew({
               title="Ordering"
               hint="Set a reorder level now and this item joins the Reorder tab the moment stock falls to it."
             >
+              {/* ASKED AT CREATE, not only on edit. A field nobody fills on
+                  the way past is a field nobody ever fills — and an item with
+                  no location is one the count sheet cannot put on anybody's
+                  route, so it gets walked past. */}
+              <label className="block">
+                <span className={fieldLabelCls}>Where it is kept</span>
+                <select
+                  value={x.storageLocationId}
+                  onChange={(e) => setX((v) => ({ ...v, storageLocationId: e.target.value }))}
+                  className={selectCls}
+                >
+                  <option value="">— not placed yet —</option>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1 block text-xs text-stone-500">
+                  {locations.length === 0
+                    ? 'No storage location exists yet — an owner or manager adds them under Locations.'
+                    : 'The count sheet walks the store in this order. Left blank, this item sits at the bottom under “Not placed yet”.'}
+                </span>
+              </label>
               <label className="block">
                 <span className={fieldLabelCls}>Reorder level</span>
                 <input

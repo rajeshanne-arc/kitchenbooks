@@ -22,6 +22,7 @@ import {
   trCls,
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
+import { countUnplacedItems } from '@/server/store-queries'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import PeriodControl from '@/components/dashboard/PeriodControl'
@@ -88,9 +89,10 @@ export default async function StoreHome({
   // checking out connections alongside this page — ten at once is already the
   // most this screen may safely ask for. These two only decide whether the
   // cards above are answerable, so they can wait a round trip.
-  const [vendors, anyIndent] = await Promise.all([
+  const [vendors, anyIndent, placement] = await Promise.all([
     listActiveVendors(restaurant.id),
     listIndents(restaurant.id, 1),
+    countUnplacedItems(restaurant.id),
   ])
 
   const purchaseTotal = purchases.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
@@ -361,16 +363,40 @@ export default async function StoreHome({
         </section>
       </div>
 
-      {/* reorder honesty — an empty list is not a full store */}
-      {reorderCount === 0 && itemsWithLevel === 0 && (
+      {/* READINESS — things that are empty until somebody does them, and that
+          block nothing until the day they matter. An empty list here is never
+          evidence that all is well; it is evidence nobody has been asked. */}
+      {(placement.unplaced > 0 || (reorderCount === 0 && itemsWithLevel === 0)) && (
         <section className={`${cardCls} mt-3`}>
-          <h2 className={sectionHeadCls}>Reorder is not set up</h2>
-          <div className="mt-2">
-            <Honesty verdict="not set up" compact>
-              No item carries a reorder level, so nothing can ever appear on the Reorder tab. That list is empty
-              because the question has not been asked — not because the store is full. Set levels under Masters →
-              Items.
-            </Honesty>
+          <h2 className={sectionHeadCls}>Still to set up</h2>
+          <div className="mt-2 space-y-2">
+            {reorderCount === 0 && itemsWithLevel === 0 && (
+              <Honesty verdict="no reorder levels" compact>
+                No item carries a reorder level, so nothing can ever appear on the Reorder tab. That list is empty
+                because the question has not been asked — not because the store is full. Set levels under Masters →
+                Items.
+              </Honesty>
+            )}
+            {/* PLACE YOUR ITEMS. Nothing is blocked by this until the first
+                physical count — and then an unplaced item is one the sheet
+                cannot put on anybody's route, so it gets walked past. */}
+            {placement.unplaced > 0 && (
+              <Honesty
+                verdict="items not placed"
+                meter={{
+                  filled: placement.total - placement.unplaced,
+                  total: placement.total,
+                  unit: 'items placed',
+                }}
+                action={{ href: '/store/masters/items', label: 'Place them on the item master' }}
+              >
+                {placement.unplaced} of {placement.total} active{' '}
+                {placement.unplaced === 1 ? 'item has' : 'items have'} no storage location. The count sheet walks the
+                store in location order, so {placement.unplaced === 1 ? 'it lands' : 'they land'} at the bottom under
+                “Not placed yet” — which on a real walk means walked past. Nothing else is affected until somebody
+                counts.
+              </Honesty>
+            )}
           </div>
         </section>
       )}

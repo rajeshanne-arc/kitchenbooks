@@ -25,6 +25,17 @@ export const dynamic = 'force-dynamic'
 // What to buy, grouped by who to buy it from — because the trip is the unit
 // of work, not the item. One card per vendor is one phone call or one visit.
 //
+// AND ORDERED BY URGENCY, not by name. Alphabetical order cannot say that one
+// item is out and another merely crossed its line an hour ago. Urgency is
+// defined in the query and stated on this screen: how much of the reorder
+// level is still on the shelf, lowest first. A vendor's place in the list is
+// its MOST urgent item, because the decision this page drives is which call to
+// make first — not which vendor comes first in the alphabet.
+//
+// VALUE IS DELIBERATELY ABSENT. An order goes to a vendor and is filled or it
+// is not; what the stock is worth belongs to On hand, which is the owner's
+// question. Three jobs, three orderings of one table.
+//
 // Every figure here is reorder_due's: on hand, the level it crossed, and the
 // suggested quantity. Nothing is recomputed on this page.
 
@@ -43,10 +54,18 @@ export default async function ReorderPage() {
     if (g) g.rows.push(r)
     else groups.set(key, { vendor: r.usual_vendor, vendorId: r.vendor_id, rows: [r] })
   }
+  // A vendor ranks by its MOST urgent line. `rows` arrives already sorted by
+  // urgency, so that is simply the first one — the query's ordering survives
+  // to the screen rather than being re-derived here.
+  const urgencyOf = (g: { rows: typeof rows }): number => {
+    const u = g.rows[0]?.urgency
+    return u === null || u === undefined ? Number.POSITIVE_INFINITY : Number(u)
+  }
   const ordered = [...groups.values()].sort((a, b) => {
     if (a.vendor === null) return 1 // "no usual vendor" sinks to the bottom
     if (b.vendor === null) return -1
-    return a.vendor.localeCompare(b.vendor)
+    const d = urgencyOf(a) - urgencyOf(b)
+    return d !== 0 ? d : (a.vendor ?? '').localeCompare(b.vendor ?? '')
   })
 
   return (
@@ -54,7 +73,8 @@ export default async function ReorderPage() {
       <header className="pb-4">
         <h1 className={pageTitleCls}>Reorder</h1>
         <p className={pageSubCls}>
-          {restaurant.name} — items at or below their reorder level, grouped by who supplies them
+          {restaurant.name} — items at or below their reorder level, grouped by who supplies them, most
+          urgent supplier first
         </p>
       </header>
 

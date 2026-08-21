@@ -5,10 +5,11 @@
 // empty shelf is information. Book quantity and cost are frozen server-side
 // at save; the variance appears in the reveal, worst shortage first.
 
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import Link from 'next/link'
 import type { CountableItem, SaveCountResult } from '@/lib/types'
 import { saveCount } from '@/server/counts-actions'
+import { AbcBadge } from '@/components/stock/Abc'
 import { decimalStringToPaise, formatMoneyString, parseQty } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import {
@@ -53,6 +54,35 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
     if (q === '') return items
     return items.filter((i) => i.name.toLowerCase().includes(q) || i.code.toLowerCase().includes(q))
   }, [items, filter])
+
+  /**
+   * THE SHEET WALKS THE STORE. `listCountableItems` orders by the location's
+   * sort_order — which is WALKING ORDER, not alphabetical — so grouping here
+   * is a fold and never a re-sort: the order the query argued for survives to
+   * the screen.
+   *
+   * Items with NO location come last and say so loudly. On a physical walk
+   * they are exactly the ones nobody passes.
+   */
+  const groups = useMemo(() => {
+    const out: { key: string; name: string | null; kind: string | null; rows: CountableItem[] }[] = []
+    for (const i of visible) {
+      const key = i.location_id ?? '—'
+      const last = out[out.length - 1]
+      if (last && last.key === key) last.rows.push(i)
+      else out.push({ key, name: i.location_name, kind: i.location_kind, rows: [i] })
+    }
+    return out
+  }, [visible])
+
+  /** How many of each class are on the sheet — the schedule below is only
+   *  meaningful against real counts. */
+  const abcCount = useMemo(() => {
+    const n = { A: 0, B: 0, C: 0 }
+    for (const i of items) if (i.abc === 'A' || i.abc === 'B' || i.abc === 'C') n[i.abc]++
+    return n
+  }, [items])
+  const unplaced = useMemo(() => items.filter((i) => i.location_id === null).length, [items])
 
   const filled = Object.entries(qtys).filter(([, v]) => v.trim() !== '')
   const allValid = filled.every(([, v]) => parseQty(v.trim()) !== null)
@@ -189,6 +219,41 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
           </span>
         </div>
 
+        {/* THE SCHEDULE IS THE POINT, NOT THE LETTER. A badge on a row tells
+            somebody nothing they can act on; "A weekly, B fortnightly, C
+            monthly" is the difference between counting happening and counting
+            being theatre. At a few hundred items, counting everything every
+            week is a plan nobody keeps — and a plan nobody keeps produces no
+            counts at all, which is worse than counting the expensive third
+            often and the tail occasionally. */}
+        {abcCount.A + abcCount.B + abcCount.C > 0 && (
+          <div className="mt-3 rounded-xl border border-rule bg-stone-50 px-3 py-2.5">
+            <p className="text-[13px] text-stone-700">
+              <b>Count A weekly, B fortnightly, C monthly.</b> {abcCount.A} {abcCount.A === 1 ? 'item' : 'items'} carry
+              most of the value here, {abcCount.B} sit in the middle and {abcCount.C} are the long tail. Counting
+              everything every week is a plan nobody keeps, and a plan nobody keeps produces no counts at all.
+            </p>
+            <p className="mt-1 text-[11px] text-stone-400">
+              Classes are shares of stock value, recomputed every time this page loads · stock_abc
+            </p>
+          </div>
+        )}
+
+        {unplaced > 0 && (
+          <div className="mt-3">
+            <Honesty
+              level="alarm"
+              verdict="not placed yet"
+              meter={{ filled: items.length - unplaced, total: items.length, unit: 'items placed' }}
+            >
+              {unplaced} of {items.length} {unplaced === 1 ? 'item has' : 'items have'} no storage location, so the
+              sheet cannot put {unplaced === 1 ? 'it' : 'them'} on your route — {unplaced === 1 ? 'it is' : 'they are'}{' '}
+              grouped at the bottom instead. On a walk round the store, those are the ones nobody passes. An owner
+              sets locations under Settings; the item form asks for one.
+            </Honesty>
+          </div>
+        )}
+
         {/* A SHEET, not a search box. Rajesh's paper count lists every item
             with a box against it and you work down; a screen that makes you
             search for each one in turn is slower than the paper it replaces.
@@ -205,12 +270,38 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
               </tr>
             </thead>
             <tbody>
-          {visible.map((i) => {
+          {groups.map((g) => (
+            <Fragment key={g.key}>
+              <tr>
+                <td
+                  colSpan={5}
+                  className={`border-b border-rule px-3 py-1.5 ${
+                    g.name === null ? 'bg-red-50' : 'bg-stone-100'
+                  }`}
+                >
+                  <span
+                    className={`font-display text-[11px] font-semibold uppercase tracking-[0.08em] ${
+                      g.name === null ? 'text-red-800' : 'text-stone-600'
+                    }`}
+                  >
+                    {g.name ?? 'Not placed yet'}
+                  </span>
+                  <span className="ml-2 text-[11px] text-stone-400">
+                    {g.name === null
+                      ? `${g.rows.length} ${g.rows.length === 1 ? 'item has' : 'items have'} no shelf — you will walk past ${g.rows.length === 1 ? 'it' : 'them'}`
+                      : `${g.kind} · ${g.rows.length} ${g.rows.length === 1 ? 'item' : 'items'}`}
+                  </span>
+                </td>
+              </tr>
+              {g.rows.map((i) => {
             const v = qtys[i.id] ?? ''
             const bad = v.trim() !== '' && parseQty(v.trim()) === null
             return (
               <tr key={i.id} className="h-11 hover:bg-stone-50">
-                <td className={tdCls}>{i.name}</td>
+                <td className={tdCls}>
+                  <AbcBadge abc={i.abc} className="mr-1.5" />
+                  {i.name}
+                </td>
                 <td className={tdCodeCls}>{i.code}</td>
                 <td className={`${tdCls} text-stone-500`}>{i.category_name}</td>
                 <td className="border-b border-rule-soft px-1 py-1.5">
@@ -226,7 +317,9 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
                 <td className={`${tdCls} text-stone-500`}>{i.purchase_unit}</td>
               </tr>
             )
-          })}
+              })}
+            </Fragment>
+          ))}
               {visible.length === 0 && (
                 <tr>
                   <td colSpan={5} className={`${tdCls} text-stone-400`}>

@@ -187,7 +187,7 @@ export async function getItemDetail(restaurantId: string, id: string): Promise<I
            i.brand, i.status, i.created_at::text as created_at,
            i.reorder_level::text as reorder_level,
            i.default_vendor_id, dv.name as default_vendor_name,
-           i.item_type, i.notes,
+           i.item_type, i.notes, i.storage_location_id,
            r.prefill_rate::text as prefill_rate,
            r.last_rate::text as last_rate,
            r.last_rate_date::text as last_rate_date

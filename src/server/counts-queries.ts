@@ -20,18 +20,51 @@ export async function getIssueHistoryDays(restaurantId: string): Promise<number>
   return rows[0]?.days ?? 0
 }
 
-/** Every active item in stock order (value desc, like the stock page) — the
- * counter walks the store richest shelf first. Book quantities are not
- * shown; the count is blind and the variance appears after the save. */
-export async function listCountableItems(restaurantId: string): Promise<CountableItem[]> {
-  return tsql<CountableItem[]>`
-    select i.id, i.code, i.name, i.purchase_unit, u.name as unit_name, c.name as category_name
+/**
+ * Every active item IN WALKING ORDER — storage location first, and value
+ * within each location.
+ *
+ * THIS SUPERSEDES `on_hand_value desc`, which was a deliberate ruling and is
+ * recorded as one in AGENTS.md, so the argument matters. That ordering was
+ * doing TWO jobs: saying which items matter most, and setting the order of
+ * the walk. It was good at the first and actively bad at the second — value
+ * order sends a counter back and forth across the store, and a count that is
+ * exhausting is a count that stops happening.
+ *
+ * `stock_abc` now does the first job better, because importance belongs in
+ * the SCHEDULE (A weekly, B fortnightly, C monthly) rather than in the row
+ * order. That frees the row order to be the walk. Value still orders within a
+ * location, where it costs no extra steps.
+ *
+ * Items with NO location sort LAST and the sheet says so loudly: on a physical
+ * walk they are the ones that get missed.
+ *
+ * Book quantities are still absent by construction — the count is blind and
+ * `CountableItem` does not carry one.
+ */
+export async function listCountableItems(
+  restaurantId: string,
+  // OPTIONAL HANDLE so a caller inside a transaction can lend its own — the
+  // getClosePrefill shape. It is what lets a gate place items, run THIS
+  // function, and roll back, instead of testing a hand-written copy of it.
+  db: typeof tsql = tsql,
+): Promise<CountableItem[]> {
+  return db<CountableItem[]>`
+    select i.id, i.code, i.name, i.purchase_unit, u.name as unit_name, c.name as category_name,
+           i.storage_location_id as location_id,
+           l.name as location_name, l.kind as location_kind,
+           l.sort_order as location_order,
+           a.abc
     from items i
     join units u on u.code = i.purchase_unit
     join categories c on c.code = i.category
-    left join stock_on_hand s on s.item_id = i.id
+    left join storage_locations l
+      on l.id = i.storage_location_id and l.restaurant_id = ${restaurantId}
+    left join stock_on_hand s on s.item_id = i.id and s.restaurant_id = ${restaurantId}
+    left join stock_abc a on a.item_id = i.id and a.restaurant_id = ${restaurantId}
     where i.restaurant_id = ${restaurantId} and i.status = 'active'
-    order by s.on_hand_value desc nulls last, i.code asc`
+    order by l.sort_order asc nulls last, l.name asc nulls last,
+             s.on_hand_value desc nulls last, i.code asc`
 }
 
 const HEADER_SELECT = `

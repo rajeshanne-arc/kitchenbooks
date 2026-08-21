@@ -268,6 +268,8 @@ export type ItemDetail = {
   prefill_rate: string | null
   last_rate: string | null
   last_rate_date: string | null
+  /** where it physically sits — null means nobody has placed it */
+  storage_location_id: string | null
 }
 
 export type ItemHistoryRow = {
@@ -319,6 +321,9 @@ export type UpdateItemInput = {
   defaultVendorId: string
   itemType: string
   notes: string
+  /** WHERE IT PHYSICALLY SITS — '' means not placed, which is a real answer
+   *  and not a default. The count sheet groups unplaced items last and loudly. */
+  storageLocationId: string
 }
 
 export type PaymentInput = {
@@ -404,6 +409,7 @@ export type StockRow = {
   item_id: string
   code: string
   name: string
+  category: string
   category_name: string
   purchase_unit: string
   status: 'active' | 'inactive'
@@ -413,6 +419,20 @@ export type StockRow = {
   on_hand_qty: string
   issue_cost: string | null
   on_hand_value: string
+  /** Pareto class from stock_abc. NULL only when the item is absent from that
+   *  view — it covers rows with value, so a zero-value item has no class. */
+  abc: 'A' | 'B' | 'C' | null
+  /** this item's share of total stock value, as published by stock_abc */
+  pct_of_value: string | null
+  /** QUANTITY DIVIDED BY AVERAGE DAILY USAGE — the number that says whether
+   *  23.5 kg is sensible, which no absolute quantity can.
+   *
+   *  NULL below 7 days of issue history and the screen must SAY SO rather
+   *  than print a figure: with one issue ever, max = min, and a naive average
+   *  reads the whole quantity as a single day's usage. */
+  days_on_hand: string | null
+  /** days of issue history behind days_on_hand — null when there is none */
+  days_of_history: number | null
 }
 
 /** A department (the sections table) with what already depends on it. */
@@ -554,6 +574,9 @@ export type ReorderRow = {
   usual_vendor: string | null
   vendor_id: string | null
   issue_cost: string | null
+  /** proportion of the reorder level still on hand — lower is more urgent.
+   *  NULL where no level is set, which sorts last. */
+  urgency: string | null
 }
 
 export type SaveIssueInput = {
@@ -1543,6 +1566,35 @@ export type CountableItem = {
   purchase_unit: string
   unit_name: string
   category_name: string
+  /** WHERE IT PHYSICALLY IS. Null means nobody has placed it, and the sheet
+   *  groups those LAST and loudly — an unplaced item is missed on a walk. */
+  location_id: string | null
+  location_name: string | null
+  location_kind: string | null
+  /** walking order, not alphabetical — see storage_locations.sort_order */
+  location_order: number | null
+  abc: 'A' | 'B' | 'C' | null
+}
+
+/** Where stock physically sits. A MASTER, not a list value: items point at a
+ *  row, so a rename has to follow them, and nothing can point at a list
+ *  value. Same reasoning as sections and partners. */
+export type StorageLocation = {
+  id: string
+  name: string
+  kind: string
+  sort_order: number
+  note: string | null
+  status: 'active' | 'inactive'
+  /** how many items are placed here — the reason reordering matters */
+  item_count: number
+}
+
+export type SaveLocationInput = {
+  name: string
+  kind: string
+  note: string
+  status: 'active' | 'inactive'
 }
 
 export type SaveCountInput = {
@@ -2505,6 +2557,9 @@ export type CreateItemInput = {
   defaultVendorId: string
   itemType: string
   notes: string
+  /** asked at CREATE as well as on edit — a field nobody fills on the way past
+   *  is a field nobody ever fills, and an unplaced item is walked past */
+  storageLocationId: string
 }
 
 export type CreateItemResult = { ok: true; item: ItemDetail } | { ok: false; error: string }
