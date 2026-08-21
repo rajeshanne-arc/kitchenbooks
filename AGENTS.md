@@ -4609,3 +4609,57 @@ property.
 Also caught while checking orphans: `pos_lines` with no surviving order would
 be the signature of a cascade that silently stopped working, so the gate
 counts them and requires zero.
+
+## AN ASSERTION THAT PASSES BECAUSE NOTHING COULD HAVE DIFFERED IS NOT AN ASSERTION
+
+Three times now, in three costumes:
+
+| | Why it could not fail |
+|---|---|
+| the converging attendance probe | the row it checked had been written by an EARLIER run |
+| the extra-hours gate | it wrote its own insert, so the app's column list was never exercised |
+| the prune's invisibility check | both generations carried IDENTICAL figures, so "byte-identical before and after" was true whatever the prune did |
+
+**The fix has been the same all three times: make the two sides genuinely
+different before comparing them.** A different value this run, a write through
+the app's own front door, a second generation whose numbers differ. If you
+cannot say what the assertion would look like when it fails, it is not
+asserting anything.
+
+## THE VIEWS RAN AS THEIR OWNER — 22 of them, and 13 leaked across tenants
+
+Found while answering a question about sentinel rows: `day_summary` returned
+TWO rows for one date, and the two labour figures were ₹40,000/31 and
+₹24,000/31 — salaries from **two different restaurants**.
+
+**A view without `security_invoker` runs as its OWNER.** The owner here is
+`postgres`, which has BYPASSRLS, so every policy on every base table is
+skipped and the view hands back every tenant's rows. Measured as kb_app with
+bypassrls off, announcing the probe tenant and counting the live one's rows:
+
+    attendance_current 15 · labour_cost_daily 15 · day_summary 11 ·
+    vendor_supplied_items 7 · vendor_dues 5 · vendor_performance 5 ·
+    attendance_summary 3 · labour_hours_by_section 3 ·
+    sales_per_labour_hour 3 · section_frequent_items 3 ·
+    headcount_by_section 2 · advances_outstanding 1 ·
+    business_day_disagreements 1
+
+Vendor balances, attendance, staff advances and a whole day's trading.
+
+**NINE MORE CARRY THE SAME DEFECT AND DID NOT LEAK, WHICH IS WORSE THAN
+LEAKING.** They were saved by an INNER view that happens to be scoped —
+`sales_current` joins `latest_fetches`, which has the option, so the join came
+back empty. Nothing about those nine is safe; they are one migration to a
+neighbouring view away.
+
+**Why the app did not leak anyway, and why that is not reassuring:** every
+read in `src/server` names its tenant in a WHERE clause, and tier 2 of
+`audit:tenancy` asserts it — 0 unkeyed reads. So the app was protected by its
+own discipline and NOT by RLS. That is precisely the backstop RLS exists to
+be, and one forgotten `and restaurant_id = …` would have made it live.
+
+**THE GATE WALKED 65 TABLES AND NEVER ONCE LOOKED AT A VIEW** — the eighth
+instance in this project of a check structurally incapable of finding what it
+exists to find, and the most expensive. `audit:tenancy` has a fourth tier now,
+and it stays red under `--strict` until
+`migrations/views_security_invoker.sql` is applied.

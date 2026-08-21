@@ -242,10 +242,52 @@ async function main() {
     console.log(`  ✓ RLS enabled, forced and policied on all ${rls.length} tenant tables\n`)
   }
 
+  // ── TIER 4: EVERY VIEW RUNS AS ITS CALLER ────────────────────────────
+  //
+  // THIS GATE WALKED 65 TABLES AND NEVER ONCE LOOKED AT A VIEW — the eighth
+  // instance in this project of a check structurally incapable of finding
+  // what it exists to find, and the most expensive one. A view without
+  // `security_invoker` runs as its OWNER, which here is `postgres` with
+  // BYPASSRLS: every policy on every base table is skipped and the view
+  // hands back EVERY TENANT'S ROWS.
+  //
+  // Measured as kb_app with bypassrls off, announcing the probe tenant and
+  // counting rows belonging to the live one: attendance_current 15,
+  // labour_cost_daily 15, day_summary 11, vendor_supplied_items 7,
+  // vendor_dues 5, vendor_performance 5, advances_outstanding 1, and six
+  // more. Vendor balances, attendance and staff advances across the boundary.
+  //
+  // NINE MORE CARRIED THE SAME DEFECT AND DID NOT LEAK, which is worse than
+  // leaking: they were saved by an INNER view that happens to be scoped
+  // (sales_current joins latest_fetches, so the join came back empty). They
+  // are one migration to a neighbouring view away from leaking too.
+  //
+  // The APP did not leak, because tier 2 above requires every read to name
+  // its tenant — so it was protected by discipline and NOT by RLS, which is
+  // exactly the backstop RLS exists to be.
+  const views = await sql<{ relname: string; inv: boolean }[]>`
+    select c.relname,
+           coalesce((select true from pg_options_to_table(c.reloptions)
+                     where option_name = 'security_invoker'
+                       and lower(option_value) in ('on', 'true')), false) as inv
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relkind = 'v'
+    order by c.relname`
+  const invokerless = views.filter((v) => !v.inv).map((v) => v.relname)
+  if (invokerless.length > 0) {
+    console.log(`  ${invokerless.length} VIEWS RUN AS THEIR OWNER, NOT THEIR CALLER — these bypass RLS entirely:`)
+    for (const v of invokerless) console.log(`    ${v}`)
+    console.log('\n  Apply migrations/views_security_invoker.sql.\n')
+  } else {
+    console.log(`  ✓ all ${views.length} views run as their caller (security_invoker)\n`)
+  }
+
   const strict = process.argv.includes('--strict')
   // Writes are a hard failure whatever the flags say: an insert with no
   // tenant does not leak data, it loses it — the save simply refuses.
-  const fatal = writes.length > 0 || (strict && (unkeyed.length > 0 || unprotected.length > 0))
+  const fatal =
+    writes.length > 0 ||
+    (strict && (unkeyed.length > 0 || unprotected.length > 0 || invokerless.length > 0))
   if (!fatal && writes.length === 0 && unkeyed.length === 0) {
     console.log('  ✓ every query on a tenant table says which tenant it means\n')
   }
