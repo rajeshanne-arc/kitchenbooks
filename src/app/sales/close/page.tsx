@@ -3,7 +3,9 @@ import { getClosePrefill, getLadder } from '@/server/cash-queries'
 import { getDifferenceTrend } from '@/server/cashier-queries'
 import { getNameHistory } from '@/server/settings'
 import { listMoneyAccounts } from '@/server/accounts-queries'
+import { getUnreadMeters, listReadableMeters } from '@/server/meters-queries'
 import DayClose from '@/components/cash/DayClose'
+import MeterReadingEntry from '@/components/meters/MeterReadingEntry'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
@@ -14,13 +16,25 @@ export const dynamic = 'force-dynamic'
 export default async function CashPage() {
   const restaurant = await getRestaurant()
   const today = await businessToday()
-  const [prefill, handedToNames, trend, ladder, accounts] = await Promise.all([
+  const [prefill, handedToNames, trend, ladder, accounts, meters, unread] = await Promise.all([
     getClosePrefill(restaurant.id, today),
     getNameHistory(restaurant.id, 'handed_to'),
     getDifferenceTrend(restaurant.id, 14),
     getLadder(restaurant.id, 7),
     listMoneyAccounts(restaurant.id),
+    // UTILITIES DO NOT BELONG TO SALES. What puts a meter reading on this
+    // screen is that somebody is already standing here at a fixed time every
+    // night — the same principle as the cash voucher: whoever is physically
+    // there records it. It is a SEPARATE card with a SEPARATE save, above the
+    // close and outside its form, so a forgotten meter can never hold up the
+    // nightly cash close, which has a hard chain of its own.
+    listReadableMeters(restaurant.id),
+    getUnreadMeters(restaurant.id, today),
   ])
+  // Only meters that may actually be read tonight; a mode edited in the
+  // database must not leave an unread nag for a meter nobody may file against.
+  const readableIds = new Set(meters.map((m) => m.id))
+  const unreadReadable = unread.filter((m) => readableIds.has(m.id))
 
   return (
     <>
@@ -31,6 +45,11 @@ export default async function CashPage() {
 
       <div className="space-y-4">
         <DayClose defaultDate={today} initialPrefill={prefill} restaurantName={restaurant.name} handedToNames={handedToNames} accounts={accounts} />
+
+        {/* Renders NOTHING when no meter is set up — this restaurant is on
+            cylinders and does not meter electricity, which is the ordinary
+            state and not a gap. */}
+        <MeterReadingEntry meters={meters} unread={unreadReadable} date={today} />
 
         {trend.length > 0 && (
           <section className={cardCls}>

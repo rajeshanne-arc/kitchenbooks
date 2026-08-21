@@ -69,6 +69,11 @@ const EVENT_TABLES = [
   'cash_vouchers', 'other_income', 'day_closes', 'expenses', 'contract_bills', 'casual_labour',
   'staff_advances', 'payroll_runs', 'payroll_lines', 'vendor_returns', 'vendor_return_lines',
   'purchase_line_shorts', 'non_revenue', 'off_book_orders', 'due_payments', 'partner_settlements',
+  // joined the list once RLS was enabled on it: the census reads each table
+  // with no WHERE and relies on the policy to scope it, so an unprotected
+  // table would have counted every tenant's rows and read a probe write as a
+  // write to the live books.
+  'meter_readings',
 ]
 
 async function census(tenant: string): Promise<Record<string, number>> {
@@ -4896,6 +4901,478 @@ async function run() {
     assert.ok(/label="Extra hours"/.test(page), 'extra hours has left the stat row')
     assert.ok(/sm:grid-cols-7/.test(page), 'the stat row is not wide enough to hold it')
     console.log('      tooltip in words · extra hours is the seventh column')
+  })
+
+  /* ── grants that a write path silently depends on ──────────────────── */
+  console.log('\ngrants: every insert path can reach the sequence behind it')
+
+  await check('kb_app can USE every sequence its INSERT grants depend on', async () => {
+    // FOUND BY A GATE GOING RED, and it was a live production break rather
+    // than a test failure: `permission denied for sequence
+    // meter_readings_seq_seq`.
+    //
+    // `bigserial` is not a type. It is a bigint whose DEFAULT calls nextval()
+    // on a sequence created as a side effect, and **a role needs USAGE on
+    // that sequence to insert the row**. Adding `seq` to attendance,
+    // day_closes, kitchen_closings and meter_readings therefore broke every
+    // insert into all four — attendance marking, the nightly day close,
+    // kitchen closings and meter readings, which is a restaurant's whole
+    // evening — and it broke at the moment of SAVING, after the sheet had
+    // been keyed.
+    //
+    // `GENERATED ALWAYS AS IDENTITY` would have needed no grant: an identity
+    // column's sequence is reached through the table's own INSERT privilege.
+    // Two spellings of one intention, one of which quietly needs a second
+    // grant, and nothing in `information_schema.table_privileges` shows the
+    // difference — which is why this is asked of pg_depend instead.
+    //
+    // THE CLASS, NOT THE INSTANCE: every table kb_app may INSERT into, every
+    // column of it whose default is a nextval(), and whether kb_app may use
+    // that sequence.
+    const rows = await tsql<{ table_name: string; column_name: string; sequence_name: string; usage: boolean }[]>`
+      select t.table_name, a.attname as column_name, s.relname as sequence_name,
+             has_sequence_privilege('kb_app', s.oid, 'USAGE') as usage
+      from information_schema.table_privileges t
+      join pg_class c on c.relname = t.table_name
+      join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+      join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+      join pg_attrdef d on d.adrelid = c.oid and d.adnum = a.attnum
+      join pg_depend dep on dep.refobjid = c.oid and dep.refobjsubid = a.attnum
+                        and dep.classid = 'pg_class'::regclass and dep.deptype = 'a'
+      join pg_class s on s.oid = dep.objid and s.relkind = 'S'
+      where t.grantee = 'kb_app' and t.privilege_type = 'INSERT' and t.table_schema = 'public'
+        and pg_get_expr(d.adbin, d.adrelid) like 'nextval%'
+      order by 1, 2`
+    // It must be capable of failing: a schema with no sequence-backed insert
+    // path would pass this vacuously, and that is not the same as safe.
+    assert.ok(
+      rows.length > 0,
+      'no INSERT path is backed by a sequence — this check found nothing to check and cannot fail',
+    )
+    const broken = rows.filter((r) => !r.usage)
+    assert.deepEqual(
+      broken.map((r) => `${r.table_name}.${r.column_name} -> ${r.sequence_name}`),
+      [],
+      'kb_app cannot use the sequence behind these columns, so every insert into those tables is refused ' +
+        '— apply migrations/kb_app_sequence_usage.sql',
+    )
+    console.log(`      ${rows.length} sequence-backed insert path(s), all reachable`)
+  })
+
+  /* ── meters ────────────────────────────────────────────────────────── */
+  console.log('\nmeters: gas is a choice, a span is never divided, a rate is never truth')
+
+  await check('THE SPAN IS NEVER DIVIDED — the view states two days whole', async () => {
+    // RULE (a), proved rather than described. Read on the 1st and again on the
+    // 3rd and the 3rd's figure covers TWO DAYS. The failure this guards is the
+    // tempting one: dividing by days_spanned to get "a daily figure", which
+    // invents the 2nd out of nothing.
+    //
+    // ROLLED BACK, and deliberately so. `meter_readings` is INSERT-only with
+    // no DELETE grant, so a committed probe row could never be tidied — and
+    // once RLS lands, `meter_readings` joins the census below, where a
+    // committed probe row would read as a write to the live books.
+    type Span = {
+      units: string | null
+      days: number | null
+      cost: string | null
+      baselineUnits: string | null
+      baselineDays: number | null
+      corrected: string | null
+    }
+    let seen: Span | null = null
+    try {
+      await onProbe(() =>
+        txn(async (tx) => {
+          const prid = process.env.KB_PROBE_TENANT as string
+          const [m] = await tx<{ id: string }[]>`
+            insert into meters (restaurant_id, name, kind, unit, assumed_rate)
+            values (${prid}, 'Zz span probe', 'water', 'kL', 8.5)
+            returning id`
+          // 1st: 1000. 3rd: 1120. 120 kL across two days at 8.5 = 1020.
+          await tx`
+            insert into meter_readings (restaurant_id, meter_id, read_date, reading, entered_by)
+            values (${prid}, ${m.id}, '2099-03-01'::date, 1000, 'gate')`
+          await tx`
+            insert into meter_readings (restaurant_id, meter_id, read_date, reading, entered_by)
+            values (${prid}, ${m.id}, '2099-03-03'::date, 1120, 'gate')`
+          const [span] = await tx<{ units: string; days: number; cost: string }[]>`
+            select units::text as units, days_spanned::int as days, estimated_cost::text as cost
+            from meter_consumption where meter_id = ${m.id} and read_date = '2099-03-03'::date`
+          const [base] = await tx<{ units: string | null; days: number | null }[]>`
+            select units::text as units, days_spanned::int as days
+            from meter_consumption where meter_id = ${m.id} and read_date = '2099-03-01'::date`
+          // A CORRECTION IS A NEW ROW and the latest filing for a date wins.
+          // A PLAIN INSERT, deliberately — the same statement the app makes.
+          // It ties on created_at inside this transaction and `seq` resolves
+          // it, so this line also exercises the tiebreak on the ordinary path
+          // rather than only in the assertion written for it.
+          await tx`
+            insert into meter_readings (restaurant_id, meter_id, read_date, reading, entered_by)
+            values (${prid}, ${m.id}, '2099-03-03'::date, 1150, 'gate')`
+          const [fixed] = await tx<{ units: string }[]>`
+            select units::text as units from meter_consumption
+            where meter_id = ${m.id} and read_date = '2099-03-03'::date`
+          seen = {
+            units: span.units,
+            days: span.days,
+            cost: span.cost,
+            baselineUnits: base?.units ?? null,
+            baselineDays: base?.days ?? null,
+            corrected: fixed?.units ?? null,
+          }
+          throw new Error('KB_ROLLBACK')
+        }),
+      )
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    const got = seen as Span | null
+    assert.ok(got !== null, 'the span probe never ran')
+    assert.equal(Number(got!.units), 120, 'the view did not report the whole 120 kL')
+    assert.notEqual(Number(got!.units), 60, 'the span was HALVED — a day nobody measured has been invented')
+    assert.equal(got!.days, 2, 'days_spanned does not say the figure covers two days')
+    assert.equal(Number(got!.cost), 1020, 'estimated_cost is not units x the rate')
+    // THE FIRST READING IS A BASELINE, NOT A ZERO. Four NULLs, and every
+    // surface says "nothing to compare" rather than printing 0.
+    assert.equal(got!.baselineUnits, null, 'a meter’s first reading reports consumption out of nothing')
+    assert.equal(got!.baselineDays, null, 'a meter’s first reading claims a span')
+    assert.equal(Number(got!.corrected), 150, 'a re-filed reading did not win — latest per (meter, date) is broken')
+    console.log('      120 kL over 2 days = ₹1020 · first reading NULL · re-file 1150 wins (150)')
+  })
+
+  await check('NOTHING IN THE APP DIVIDES BY THE SPAN', async () => {
+    // The rule, held structurally rather than by copy-matching a sentence.
+    // A span is stated whole; the moment somebody writes `/ days_spanned` to
+    // get "per day", rule (a) is gone and no screen would look wrong.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    // COMMENTS COME OUT FIRST, and the first version of this check did not do
+    // that — so `*/` at the end of a doc comment, followed by a newline and
+    // `daysSpanned:` on the next line, read as a division. It reported two
+    // false positives on correct code, which is how a gate teaches people to
+    // ignore it. The match is same-line for the same reason.
+    const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, ' ')
+    const offenders: string[] = []
+    let scanned = 0
+    // src only: the app is what has to obey the rule. A gate's own regex
+    // mentioning the span is not the app dividing by it.
+    for (const f of walk('src')) {
+      const src = strip(readFileSync(f, 'utf8'))
+      if (!/days_spanned|daysSpanned|days_covered/.test(src)) continue
+      scanned++
+      const bad = src.match(/\/[ \t]*\(?[ \t]*(?:Number\()?[ \t]*[\w.]*(?:days_spanned|daysSpanned|days_covered)/g)
+      if (bad) offenders.push(`${f}: ${bad.join(', ')}`)
+    }
+    assert.ok(scanned > 0, 'no file mentions the span at all — this check could not fail')
+    assert.deepEqual(
+      offenders,
+      [],
+      `these divide by the span, which invents the days nobody measured:\n      ${offenders.join('\n      ')}`,
+    )
+    console.log(`      ${scanned} file(s) mention a span; none divides by it`)
+  })
+
+  await check('LATEST-WINS ORDERS created_at THEN seq — and created_at still leads', async () => {
+    // FOUND BY A PROBE, NOT BY READING. The meter span probe filed a
+    // correction for a date it had just written and asserted it won. It did
+    // not: all four "latest filing wins" views ended `ORDER BY …, created_at
+    // DESC`, created_at defaults to now(), and now() is the TRANSACTION
+    // timestamp — so two filings written together carried the identical
+    // instant and tied, with the winner whichever Postgres returned first.
+    //
+    // FOUR VIEWS WERE WRONG THE SAME WAY and none had ever been tested.
+    // Reading them would not have found it; only writing a correction and
+    // watching it lose did.
+    //
+    // `..._and_latest_wins_tiebreak` fixed it STRUCTURALLY rather than relying
+    // on the app: attendance, day_closes, kitchen_closings and meter_readings
+    // each gained a bigserial `seq`, and all four views now order by
+    // `created_at desc, seq desc`. This assertion is kept because it is what
+    // would catch a FIFTH view written the old way — and it now also holds the
+    // ORDER of the two keys, which is the part a careless rewrite would lose.
+    const CURRENTS = [
+      'attendance_current',
+      'day_close_current',
+      'kitchen_closing_current',
+      'meter_reading_current',
+    ]
+    for (const v of CURRENTS) {
+      const [d] = await tsql<{ d: string }[]>`select pg_get_viewdef(${'public.' + v}::regclass, true) as d`
+      assert.match(
+        d.d,
+        /created_at DESC,\s*seq DESC/i,
+        `${v} does not resolve the latest filing by created_at then seq — a tie inside one transaction is unresolved again`,
+      )
+    }
+
+    // THE TWO HALVES, PROVED SEPARATELY AND IN A ROLLED-BACK TRANSACTION.
+    //
+    //   1. created_at still TIES inside one transaction — the fact that made
+    //      a tiebreak necessary at all, and the thing that silently returns
+    //      if `seq` is ever dropped.
+    //   2. seq resolves that tie: the later-INSERTED row wins.
+    //   3. created_at LEADS. A row written first (lower seq) but stamped
+    //      later in time must still win — which is what an `order by seq
+    //      desc` alone, or the two keys swapped, would break. seq only
+    //      decides ties inside one transaction; across transactions the clock
+    //      is the truth.
+    let tied: boolean | null = null
+    let byTie: number | null = null
+    let byClock: number | null = null
+    try {
+      await onProbe(() =>
+        txn(async (tx) => {
+          const prid = process.env.KB_PROBE_TENANT as string
+          const meter = async (name: string) =>
+            (
+              await tx<{ id: string }[]>`
+                insert into meters (restaurant_id, name, kind, unit)
+                values (${prid}, ${name}, 'water', 'kL') returning id`
+            )[0].id
+
+          // (1) + (2): two filings for one date, written together.
+          const a = await meter('Zz tie probe A')
+          for (const v of [10, 20]) {
+            await tx`
+              insert into meter_readings (restaurant_id, meter_id, read_date, reading, entered_by)
+              values (${prid}, ${a}, '2099-04-01'::date, ${v}, 'gate')`
+          }
+          const [same] = await tx<{ n: number }[]>`
+            select count(distinct created_at)::int as n from meter_readings where meter_id = ${a}`
+          tied = same.n === 1
+          const [t] = await tx<{ reading: string }[]>`
+            select reading::text as reading from meter_reading_current where meter_id = ${a}`
+          byTie = Number(t.reading)
+
+          // (3): the FIRST row written carries the LOWER seq and the LATER
+          // clock. If seq were leading, the second row would win.
+          const b = await meter('Zz tie probe B')
+          await tx`
+            insert into meter_readings (restaurant_id, meter_id, read_date, reading, entered_by, created_at)
+            values (${prid}, ${b}, '2099-04-01'::date, 10, 'gate', now() + interval '1 second')`
+          await tx`
+            insert into meter_readings (restaurant_id, meter_id, read_date, reading, entered_by)
+            values (${prid}, ${b}, '2099-04-01'::date, 20, 'gate')`
+          const [c] = await tx<{ reading: string }[]>`
+            select reading::text as reading from meter_reading_current where meter_id = ${b}`
+          byClock = Number(c.reading)
+
+          throw new Error('KB_ROLLBACK')
+        }),
+      )
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+    assert.equal(
+      tied,
+      true,
+      'two rows written in one transaction had DIFFERENT created_at — now() advanced, which it must not, and the tiebreak is being tested against nothing',
+    )
+    assert.equal(byTie, 20, 'seq did not break the tie — the later-written filing lost')
+    assert.equal(
+      byClock,
+      10,
+      'seq OVERTOOK created_at — a filing stamped earlier in time won because it was inserted later. created_at must lead; seq only decides ties inside one transaction',
+    )
+
+    // The app's side, still worth holding: one insert per call, so nothing
+    // batches filings for one key. That is no longer what makes the views
+    // correct — it is simply true, and a loop appearing here would mean
+    // somebody had stopped thinking about which filing wins.
+    const { readFileSync } = await import('node:fs')
+    const acts = readFileSync('src/server/meters-actions.ts', 'utf8')
+    assert.equal(
+      (acts.match(/insert into meter_readings/g) ?? []).length,
+      1,
+      'meters-actions writes meter_readings from more than one place',
+    )
+    console.log(
+      `      ${CURRENTS.length} views order created_at then seq · same-txn rows tie · seq breaks it (20) · the clock still leads (10)`,
+    )
+  })
+
+  await check('GAS IS A CHOICE — a reading is refused while the gas is in cylinders', async () => {
+    // Thrayam buys 19.2 kg cylinders. A cylinder is STOCK: it arrives on a
+    // bill and is consumed when it is ISSUED. A gas meter beside that counts
+    // the same gas twice, so the refusal is the whole feature.
+    //
+    // Both directions are asserted. A refusal that fires in every state is
+    // not a rule, it is a broken form.
+    const { assertMeterAllowed, MeteringRefusal, getMeteringMode } = await import(
+      '../src/server/meters-queries'
+    )
+    const prid = process.env.KB_PROBE_TENANT as string
+    const setMode = (gas: string, elec: string) =>
+      onProbe(() =>
+        txn(async (tx) => {
+          for (const [k, v] of [['gas_measurement', gas], ['electricity_metering', elec]] as const) {
+            await tx`insert into settings (restaurant_id, key, value) values (${prid}, ${k}, ${v})
+                     on conflict (restaurant_id, key) do update set value = excluded.value`
+          }
+        }),
+      )
+    const threw = async (kind: 'gas' | 'electricity' | 'water' | 'other') => {
+      try {
+        await onProbe(() => assertMeterAllowed(prid, kind))
+        return null
+      } catch (e) {
+        assert.ok(e instanceof MeteringRefusal, `${kind} refused with the wrong error type: ${String(e)}`)
+        return (e as Error).message
+      }
+    }
+    try {
+      await setMode('cylinders', 'off')
+      const gasOff = await threw('gas')
+      const elecOff = await threw('electricity')
+      assert.ok(gasOff !== null, 'a gas reading was ALLOWED while gas is measured in cylinders')
+      assert.match(gasOff as string, /cylinder/i, 'the gas refusal does not say why')
+      assert.match(gasOff as string, /twice/i, 'the gas refusal does not name the double count')
+      assert.ok(elecOff !== null, 'an electricity reading was allowed while metering is off')
+      assert.equal(await threw('water'), null, 'water was refused — the refusal is not kind-specific')
+
+      await setMode('meter', 'on')
+      const mode = await onProbe(() => getMeteringMode(prid))
+      assert.equal(mode.gas, 'meter')
+      assert.equal(mode.electricity, 'on')
+      assert.equal(await threw('gas'), null, 'a gas reading is STILL refused on a piped meter')
+      assert.equal(await threw('electricity'), null, 'electricity is still refused after switching on')
+
+      // A MALFORMED SETTING FALLS BACK TO THE CONSERVATIVE READING, never
+      // quietly switches metering on — the input_tax_creditable shape.
+      await setMode('METER', 'yes')
+      const junk = await onProbe(() => getMeteringMode(prid))
+      assert.equal(junk.electricity, 'off', "'yes' switched electricity metering on")
+      assert.equal(junk.gas, 'meter', "case-folding lost 'METER'")
+    } finally {
+      // The probe restores what it found. This one COMMITS by necessity —
+      // assertMeterAllowed reads through tsql, in its own transaction, so a
+      // rolled-back setting would be invisible to the thing under test.
+      await setMode('cylinders', 'off')
+    }
+    console.log('      refused on cylinders/off · allowed on meter/on · junk falls back to off')
+  })
+
+  await check('THE READING FORM NEVER PRICES ANYTHING', async () => {
+    // The cost rule, in its utilities form: the person reading the dial does
+    // not decide what a unit costs, exactly as the store manager never sees
+    // an issue cost. There is no rate field on the entry screen and there
+    // never will be — the rate lives on the master, with the owner and the
+    // accountant.
+    const { readFileSync } = await import('node:fs')
+    const entry = readFileSync('src/components/meters/MeterReadingEntry.tsx', 'utf8')
+    assert.ok(!/draft\.rate|rate:|setRate|name="rate"/.test(entry), 'a rate field has appeared on the reading form')
+    assert.ok(/saveMeterReading/.test(entry), 'the reading form no longer calls the action')
+
+    // AND IT IS A SEPARATE SAVE. The day close has a hard chain and a
+    // shortage belongs to its day; a forgotten meter must never stand between
+    // a cashier and going home.
+    const close = readFileSync('src/app/sales/close/page.tsx', 'utf8')
+    assert.ok(/<MeterReadingEntry/.test(close), 'the reading form is not on the day close screen')
+    const dayClose = readFileSync('src/components/cash/DayClose.tsx', 'utf8')
+    assert.ok(
+      !/MeterReadingEntry|saveMeterReading/.test(dayClose),
+      'the meter reading has been pulled INSIDE the day close — it must never block the cash close',
+    )
+    console.log('      no rate on the reader’s screen · a separate save beside the close')
+  })
+
+  await check('saveMeterReading names every column, and is gated', async () => {
+    // "A PROBE THAT WRITES ITS OWN INSERT CANNOT TEST THE APP'S COLUMN LIST."
+    // The span probe above writes its own SQL, so it proves the VIEW and
+    // proves nothing about what the ACTION writes. This reads the app's own
+    // column list out of the source and checks it against the database.
+    //
+    // The front-door WRITE cannot be exercised from a script: saveMeterReading
+    // opens with a role gate, and getSessionUser() returns null with no request
+    // scope. That gate is right — a server action is a public endpoint — so
+    // what is asserted here is the refusal half through the front door, plus
+    // the column list statically. Stated rather than papered over.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/meters-actions.ts', 'utf8')
+    const m = src.match(/insert into meter_readings \(([^)]*)\)/)
+    assert.ok(m !== null, 'saveMeterReading no longer inserts into meter_readings')
+    const named = (m as RegExpMatchArray)[1].split(',').map((c) => c.trim()).filter(Boolean)
+    for (const want of ['restaurant_id', 'meter_id', 'read_date', 'reading', 'note', 'entered_by']) {
+      assert.ok(named.includes(want), `the insert does not name ${want}`)
+    }
+    const real = await tsql<{ column_name: string }[]>`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'meter_readings'`
+    const have = new Set(real.map((r) => r.column_name))
+    for (const c of named) assert.ok(have.has(c), `the insert names ${c}, which meter_readings does not have`)
+
+    // Every write in this module is gated, and the gate is the ACTION's, not
+    // the route's. The reading is the cashier's; the master and the rate are
+    // the owner's and the accountant's; the MODE is the owner's alone,
+    // because it decides where a whole utility's cost lands.
+    for (const [fn, roles] of [
+      ['saveMeterReading', "'cashier', 'manager', 'owner'"],
+      ['createMeter', "'owner', 'accountant'"],
+      ['updateMeter', "'owner', 'accountant'"],
+      ['setMeteringMode', "'owner'"],
+    ] as const) {
+      const body = src.slice(src.indexOf(`export async function ${fn}`))
+      assert.ok(
+        body.slice(0, 900).includes(`actor([${roles}]`),
+        `${fn} does not open with actor([${roles}]) — a server action is a public endpoint`,
+      )
+    }
+
+    // THE REFUSAL HALF, through the front door: no session, no write.
+    const { saveMeterReading } = await import('../src/server/meters-actions')
+    const res = await onProbe(() =>
+      saveMeterReading({ meterId: '00000000-0000-4000-8000-000000000001', date: '2099-03-01', reading: '1', note: '' }),
+    )
+    assert.equal(res.ok, false, 'a sessionless caller was allowed to file a reading')
+    assert.match(
+      res.ok === false ? res.error : '',
+      /Sign in again/,
+      'the sessionless refusal is not the session gate — something else refused first',
+    )
+    console.log(`      ${named.length} columns named, all real · 4 actions gated · sessionless call refused`)
+  })
+
+  await check('THE METERS SCREEN HAS A DOOR, and the right two roles', async () => {
+    // A PAGE NOTHING LINKS TO IS A PAGE NOBODY OPENS. It is an owner tab, and
+    // the accountant — who has no owner tab strip of their own to browse —
+    // reaches it from where they hold the real bill: the expense screen.
+    const { readFileSync } = await import('node:fs')
+    const { canAccess } = await import('../src/lib/roles')
+    const { TAB_DEFAULTS } = await import('../src/lib/tabs')
+    assert.ok(
+      TAB_DEFAULTS.owner.some((t) => t.href === '/owner/meters'),
+      'Meters is not on the owner tab strip',
+    )
+    const expense = readFileSync('src/app/accounts/payments/expense/page.tsx', 'utf8')
+    assert.ok(
+      expense.includes('/owner/meters'),
+      'the accountant has no door to Meters from their own group — see the /owner/accounts precedent',
+    )
+    for (const r of ['owner', 'accountant'] as const) {
+      assert.ok(canAccess(r, '/owner/meters'), `${r} cannot open the meters screen`)
+    }
+    for (const r of ['manager', 'chef', 'store', 'cashier'] as const) {
+      assert.ok(!canAccess(r, '/owner/meters'), `${r} can open the meters screen`)
+    }
+    // Whoever the accountant's door sits behind must be able to walk through
+    // it — LAW 1, and the reason /store/issue is a PROP on that screen.
+    for (const r of ['owner', 'accountant'] as const) {
+      assert.ok(canAccess(r, '/accounts/payments/expense'), `${r} cannot open the screen the door is on`)
+    }
+    const meters = readFileSync('src/components/meters/MetersClient.tsx', 'utf8')
+    assert.ok(
+      !/href="\/store/.test(meters),
+      'the cylinder card links to /store literally — an accountant cannot open it, so it must be a prop',
+    )
+    console.log('      owner tab + accountant door on the expense screen · /store/issue stays a prop')
   })
 
   await check('NO GATE WROTE TO THE LIVE TENANT', async () => {

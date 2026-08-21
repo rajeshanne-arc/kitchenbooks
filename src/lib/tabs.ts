@@ -182,6 +182,11 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     // and naming an account wrong mislabels the books the way a stray list
     // value never could.
     { key: 'accounts', href: '/owner/accounts', label: 'Money accounts' },
+    // A METER IS A MASTER, NOT A SETTING — the partners argument again. A list
+    // row holds a name; a meter carries a unit and a rate, and the rate is the
+    // number every estimate on the screen turns on. So it sits with the other
+    // masters rather than under Settings.
+    { key: 'meters', href: '/owner/meters', label: 'Meters' },
     { key: 'users', href: '/owner/users', label: 'Users' },
     { key: 'lists', href: '/owner/lists', label: 'Lists' },
     { key: 'settings', href: '/owner/settings', label: 'Settings' },

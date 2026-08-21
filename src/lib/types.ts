@@ -3263,3 +3263,80 @@ export type UnclosedDishRow = {
   /** portions accounted for in tonight's winning closing — 0 when none */
   closed: string
 }
+
+// ─────────────────────────── meters ───────────────────────────────────────
+//
+// A meter is a MASTER, not a setting — the same argument that moved partners
+// out of list_options. A list row holds a name; a meter carries a unit and an
+// `assumed_rate`, and the rate is the number every estimate on the screen
+// turns on.
+
+export type MeterKind = 'electricity' | 'gas' | 'water' | 'other'
+
+export type MeterRow = {
+  id: string
+  name: string
+  kind: MeterKind
+  /** kWh, m³, kL — free text on purpose. The `units` table is bag/kg/litre:
+   *  purchase units for stock, which a meter does not have. */
+  unit: string
+  /** rupees per unit, or null when nobody has said. NULL is why an estimate
+   *  is withheld rather than printed as ₹0.00. */
+  assumed_rate: string | null
+  status: 'active' | 'inactive'
+}
+
+/**
+ * One reading and what it says about the span since the last one.
+ *
+ * `days_spanned` IS NEVER DIVIDED. Read on Monday and again on Wednesday and
+ * Wednesday's row carries two days of consumption; halving it would invent a
+ * Tuesday nobody measured. Every surface states the span and leaves the
+ * figure whole.
+ *
+ * The FIRST reading of a meter has no predecessor, so `previous_reading`,
+ * `units`, `days_spanned` and `estimated_cost` all arrive NULL. That is a
+ * baseline, not a zero.
+ */
+export type MeterConsumptionRow = {
+  meter_id: string
+  name: string
+  kind: MeterKind
+  unit: string
+  assumed_rate: string | null
+  read_date: string
+  reading: string
+  previous_reading: string | null
+  previous_date: string | null
+  units: string | null
+  days_spanned: number | null
+  /** units × assumed_rate. ALWAYS an estimate — electricity is slabbed, so
+   *  the true unit cost depends on the month's total. Reconcile against the
+   *  real bill. */
+  estimated_cost: string | null
+}
+
+/** How this restaurant measures each utility. Both are facts about the
+ *  plumbing, not opinions about accounting — see meters-queries.ts. */
+export type MeteringMode = {
+  gas: 'cylinders' | 'meter'
+  electricity: 'off' | 'on'
+}
+
+/**
+ * Gas bought as stock, and how much of it has ever been issued.
+ *
+ * COMPUTED, NEVER ASSERTED — the same law as the first-count warning. A
+ * cylinder is consumed on the day it is CONNECTED, so it reaches a
+ * department's consumption only when somebody issues it. Bought-but-never-
+ * issued is the finding this row exists to make visible.
+ */
+export type CylinderStockRow = {
+  code: string
+  name: string
+  unit: string
+  purchased: string
+  issued: string
+  on_hand: string
+  on_hand_value: string | null
+}

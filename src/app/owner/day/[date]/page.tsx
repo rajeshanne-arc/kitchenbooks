@@ -10,6 +10,7 @@ import {
   getDaySummary,
   listDayDates,
 } from '@/server/day-queries'
+import { getConsumptionForDate } from '@/server/meters-queries'
 import DateLink from '@/components/dashboard/DateLink'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -44,6 +45,13 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 const money = (v: string | null | undefined) => (v === null || v === undefined ? '—' : formatMoneyString(v))
 const paise = (v: string | null | undefined) => (v === null || v === undefined ? 0 : decimalStringToPaise(v))
+
+/** A numeric column comes back as 45231.500 — a precision the dial does not
+ *  have. Trailing zeros off, and never down to an empty string. */
+const trimNum = (s: string): string => {
+  const t = s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s
+  return t === '' || t === '-' ? '0' : t
+}
 
 function Card({ title, source, children }: { title: string; source: string; children: React.ReactNode }) {
   return (
@@ -102,13 +110,14 @@ export default async function DaySheetPage({ params }: { params: Promise<{ date:
   const restaurant = await getRestaurant()
   const today = await businessToday()
 
-  const [day, ev, channels, hours, labour, dates] = await Promise.all([
+  const [day, ev, channels, hours, labour, dates, meters] = await Promise.all([
     getDaySummary(restaurant.id, date),
     getDayEvidence(restaurant.id, date),
     getDayChannels(restaurant.id, date),
     getDayHours(restaurant.id, date),
     getDayLabour(restaurant.id, date),
     listDayDates(restaurant.id, 30),
+    getConsumptionForDate(restaurant.id, date),
   ])
   // A FLASH REPORT IS READ EVERY MORNING, so the neighbouring days are one tap
   // away. `dates` is newest first, so the NEXT day is the earlier index.
@@ -394,6 +403,56 @@ export default async function DaySheetPage({ params }: { params: Promise<{ date:
             </div>
           )}
         </Card>
+
+        {/* ── UTILITIES, beside labour ─────────────────────────────────
+            Silent when no meter was read — this restaurant may be on
+            cylinders and not metering electricity at all, which is the
+            ordinary state rather than a gap. Nothing here is divided: a
+            figure spanning two days says so and stays whole. */}
+        {meters.length > 0 && (
+          <Card title="Utilities" source="meter_consumption">
+            <ul className="divide-y divide-rule-soft">
+              {meters.map((m) => {
+                const backwards = m.units !== null && Number(m.units) < 0
+                return (
+                  <li key={m.meter_id} className="flex items-baseline justify-between gap-3 py-1.5 text-sm">
+                    <span className="text-stone-900">
+                      {m.name}
+                      <span className="ml-1.5 text-[11px] text-stone-400">
+                        {m.units === null
+                          ? 'first reading — nothing to compare'
+                          : backwards
+                            ? 'the meter went backwards'
+                            : `${trimNum(m.units)} ${m.unit}${
+                                m.days_spanned !== null && m.days_spanned > 1
+                                  ? ` over ${m.days_spanned} days`
+                                  : ''
+                              }`}
+                      </span>
+                    </span>
+                    <span className="font-mono tabular-nums text-stone-900">
+                      {m.estimated_cost === null || backwards ? '—' : money(m.estimated_cost)}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+            <p className="mt-2 text-[11px] text-stone-400">
+              Estimated at the rate on each meter — electricity is slabbed, so the real unit cost
+              depends on the month&apos;s total. A figure covering more than one night is left whole
+              and never split across the days it spans.
+            </p>
+            {meters.some((m) => (m.days_spanned ?? 1) > 1) && (
+              <div className="mt-3">
+                <Honesty verdict="a reading was missed">
+                  {meters.filter((m) => (m.days_spanned ?? 1) > 1).length} of these cover more than
+                  this one day, because no reading was taken the night before. They belong to the
+                  span, not to this date.
+                </Honesty>
+              </div>
+            )}
+          </Card>
+        )}
 
         {labour.length > 0 && (
           <Card title="Wages by department" source="labour_cost_daily">

@@ -17,7 +17,7 @@ import { ALL_ROLES, canAccess, navFor, type Role } from '../src/lib/roles'
 import { TAB_DEFAULTS, TAB_GROUPS } from '../src/lib/tabs'
 import { BOOKS } from '../src/lib/books'
 import { legacyTarget } from '../src/lib/legacy'
-import { formatPaise } from '../src/lib/money'
+import { formatPaise, formatRate } from '../src/lib/money'
 
 let failures = 0
 const check = (name: string, fn: () => void) => {
@@ -86,7 +86,26 @@ for (const [paise, text] of MONEY) {
 check('no rupee figure is ever grouped in thousands', () => {
   // the western grouping of 1,04,500 would read 104,500 — assert it never can
   assert.ok(!formatPaise(10450000).includes('104,500'))
+  assert.ok(!formatRate('104500.00').includes('104,500'))
 })
+
+// A RATE IS NOT AN AMOUNT. A slab tariff is quoted to four decimals and the
+// meter view multiplies by all four, so rounding it to paise would put a rate
+// on screen that is not the rate being applied. formatRate is the ONE place
+// that may show more than two decimals, and it shares formatPaise's grouping
+// rather than reimplementing it.
+const RATES: [text: string, out: string][] = [
+  ['8.4750', '₹8.475'],
+  ['8.5000', '₹8.50'],
+  ['7', '₹7.00'],
+  ['0.9500', '₹0.95'],
+  ['104500.1234', '₹1,04,500.1234'],
+  ['-8.4750', '-₹8.475'],
+  ['not a number', '—'],
+]
+for (const [text, out] of RATES) {
+  check(`rate ${text} -> ${out}`, () => assert.equal(formatRate(text), out))
+}
 
 /* ── 3. no stray hex ────────────────────────────────────────────────── */
 

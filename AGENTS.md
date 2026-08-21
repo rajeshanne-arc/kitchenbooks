@@ -4825,3 +4825,274 @@ unlinked. That is the right shape here and the wrong shape for `PersonLink`,
 and the difference is the rule above — **the profile gates a FIELD, so any
 reader who reaches it belongs there; the day sheet gates ITSELF, so the
 component must check before offering the door.**
+
+## A RULE ITS AUTHOR HAS TO REMEMBER IS NOT A RULE
+
+`meters_readings_and_attachments` was written four hours after the section
+above titled **"CREATE OR REPLACE VIEW SILENTLY DROPS reloptions"**, by the
+person who had just written it, and it created two views without
+`security_invoker`. That needed a second migration,
+`meter_views_security_invoker`, the same evening.
+
+That is the evidence, and Rajesh is right about what it proves. Tier 4 of
+`audit:tenancy` — which reads `pg_options_to_table` for every view in the
+schema — is not a belt on top of a habit. **It is the only thing holding the
+rule**, because the author of the rule broke it inside one working session.
+Do not remove it, and do not soften it to a warning.
+
+### It was worse than the view, and the same gate caught that too
+
+The same migration created **three tenant tables with no row-level security at
+all** — `meters`, `meter_readings` and `attachments`, each with a NOT NULL
+`restaurant_id` and a foreign key to `restaurants`, and
+`enabled=false forced=false policies=0` on every one.
+
+**A view faithfully running as its caller over base tables with no policies
+still returns every tenant's rows.** The option only decides WHOSE privileges
+apply; with RLS off there is nothing to apply. So the second migration fixed
+the visible half and bought nothing, and only tier 3 — which walks the tables
+— said so.
+
+Nothing has leaked: the tables hold zero rows everywhere, and every read the
+app makes names its tenant. **That is the app's discipline, not the database's
+backstop**, which is the exact state the whole RLS phase existed to leave
+behind. It also means the tier-2 keyed-read exemption is NOT safe on these
+three: `where id = $1` alone crosses the boundary today. Every query in
+`meters-queries.ts` names `restaurant_id` explicitly and says why in a comment.
+
+`migrations/meters_attachments_rls.sql` is **written and NOT applied**;
+`audit:tenancy --strict` stays red until it is. `smoke:a2` holds the general
+form instead of the instance: **every tenant table without RLS must be named in
+a written migration**. That passes now, passes after the migration lands, and
+fails the day a fourth table appears with neither.
+
+### THE THIRD `created_at` TIE — FOUND BY A PROBE, NOT BY READING
+
+The meter probe wrote a reading, then wrote a correction for the same date, and
+asserted the correction won. **It did not.** `meter_reading_current` was
+`DISTINCT ON (meter_id, read_date) … ORDER BY meter_id, read_date, created_at
+DESC`, `created_at` defaults to `now()`, and `now()` is the TRANSACTION
+timestamp — so both rows carried the identical instant and tied, with the
+winner whichever Postgres happened to return first.
+
+Checking the neighbours turned one meter bug into a schema-wide one: **all four
+"latest filing wins" views were wrong the same way** — `attendance_current`,
+`day_close_current`, `kitchen_closing_current` and `meter_reading_current`.
+Every one of them was correct only because the app happens to write one row per
+key per transaction, an unwritten property nobody had recorded or tested.
+
+**None of the four had ever been tested, and reading them would not have found
+it.** The only thing that did was filing a correction and watching it lose.
+That is the point worth keeping: three earlier `created_at` ties in this file
+were each found by reasoning about one table, and this one was found by a probe
+doing the ordinary thing a user does.
+
+**Fixed STRUCTURALLY rather than by relying on the app.** Migration
+`meters_attachments_rls_and_latest_wins_tiebreak` gave `attendance`,
+`day_closes`, `kitchen_closings` and `meter_readings` a `bigserial seq`, and all
+four views now order by `created_at desc, seq desc`. **`created_at` still
+leads**, because it is the truth across transactions; `seq` only decides ties
+inside one. So the rule holds regardless of what the app does.
+
+The assertion in `smoke:a2` is KEPT, because it is what would catch a fifth view
+written the old way — and it now also holds the ORDER of the two keys, which is
+what a careless rewrite loses: it proves the tie still exists in `created_at`,
+that `seq` resolves it, and that a row stamped later in time still beats one
+merely inserted later. An `order by seq desc` alone would pass the first two and
+fail the third.
+
+**Replacing those four views DROPPED `security_invoker` again**, and the same
+migration set it back. That is the rule working exactly as written — and it is
+the **second time in one day** it would have bitten silently. A habit could
+never have held it; tier 4 of `audit:tenancy` is what does.
+
+*(The local `meters_attachments_rls.sql` written here was discarded — the
+applied migration supersedes it. The `smoke:a2` check that asserted "every
+tenant table without RLS is named in a written migration" went with it: it
+existed only to hold pressure while a migration was unapplied, tier 3 of
+`audit:tenancy` is the permanent home for that rule, and a second
+implementation beside it is a copy that can drift. Same reasoning as the
+vendor-return refusal flag, which was deleted rather than flipped once the view
+was fixed.)*
+
+## `bigserial` NEEDS ITS OWN GRANT — four write paths broke on production
+
+The tiebreak migration was correct in every respect except one nobody looks at,
+and it took out **attendance marking, the nightly day close, kitchen closings
+and meter readings** — a restaurant's whole evening — at the moment of SAVING,
+after the sheet had already been keyed.
+
+**`bigserial` is not a type.** It is a bigint whose DEFAULT calls `nextval()` on
+a sequence the statement creates as a side effect, and **a role needs USAGE on
+that sequence to insert the row.** `kb_app` was granted none:
+
+    attendance.seq        -> attendance_seq_seq         USAGE=false
+    day_closes.seq        -> day_closes_seq_seq         USAGE=false
+    kitchen_closings.seq  -> kitchen_closings_seq_seq   USAGE=false
+    meter_readings.seq    -> meter_readings_seq_seq     USAGE=false
+
+    insert into attendance (…)
+      -> permission denied for sequence attendance_seq_seq
+
+Proved through the app's own front door, not a hand-written insert:
+`saveAttendance` refused a valid mark.
+
+**`GENERATED ALWAYS AS IDENTITY` would have needed NO grant at all.** An
+identity column's sequence is reached through the table's own INSERT privilege;
+a `serial`'s default calls `nextval()` directly and therefore needs its own.
+Two spellings of one intention, one of which quietly requires a second grant.
+**Prefer IDENTITY for the next one.**
+
+This is the same family as `column_privileges` not showing DELETE: the catalogue
+people check does not contain the answer. `information_schema.table_privileges`
+says `kb_app` may INSERT into `attendance`, and that is true and useless — the
+insert still fails. The privilege that decides it lives on the sequence, and the
+link from the column to the sequence is in `pg_depend`.
+
+`migrations/kb_app_sequence_usage.sql` is written and **NOT applied**;
+`smoke:a2` is red until it is. The gate holds the CLASS rather than these four:
+it walks every table `kb_app` may INSERT into, finds every column whose default
+is a `nextval()`, and fails naming any whose sequence `kb_app` cannot use — so
+the fifth one is caught the day it lands, including a sequence created by a role
+`alter default privileges` would not cover. It asserts it found at least one
+such path first, because a schema with none would pass it vacuously.
+
+## Phase E — meters, and gas as a CHOICE rather than an addition
+
+### GAS IS ALREADY IN THE BOOKS
+
+Measured live before anything was built: `GAS-001 · GAS 19.2 Kg · 4 cans ·
+₹12,100`, bought 11 Aug, and **0 ever issued**. A cylinder is STOCK — it
+arrives on a bill, sits in `stock_on_hand`, and reaches a department's
+consumption when it is ISSUED. Put a gas meter beside that and the same gas is
+counted twice: once as an issued can inside COGS and once as an estimated
+rupee figure outside it.
+
+So `settings.gas_measurement` is `cylinders` (default) or `meter`, and a gas
+reading is **REFUSED** while it says cylinders, in words that name the double
+count and say what to do instead. `settings.electricity_metering` is `off` by
+default and readings are refused until it is on.
+
+**Is that a legal setting?** This file forbids any setting that could make two
+restaurants' food cost percentages mean different things, and this one is close
+enough to the line to need the argument written down. It passes because **it
+does not let a restaurant CHOOSE how gas is treated — it records which of two
+physical situations is true.** A place on cylinders genuinely holds gas in
+stock; a place on a piped supply genuinely does not. And it cannot be set
+against the plumbing without the app refusing the entries that would follow,
+which is what makes it a fact rather than an opinion. `electricity_metering` is
+a plain capability flag and changes no number's meaning.
+
+Switching a utility OFF while one of its meters is still active is refused by
+name, in **both** directions. Otherwise the meter survives as a form that
+refuses every entry typed into it — the state that made `expense_category`
+unusable in production.
+
+**The cylinder habit is TAUGHT, and computed rather than asserted.** With gas
+on cylinders the Meters screen carries a live table — bought, issued, on hand,
+value, straight from the ledger with voided bills and reversal issues excluded
+on both sides — and an alarm strip when something has been bought and never
+issued: *"the money is on the shelf, not in the food cost."* No new feature;
+the issue form already does it. The link to `/store/issue` is a **PROP, never a
+literal**, because the accountant can open this page and cannot open that one.
+
+### THE TWO RULES THAT HAD TO REACH THE SCREEN
+
+**a) A MISSED READING BREAKS TWO DAYS, and the figure is left WHOLE.** Read on
+Monday and again on Wednesday and Wednesday's row covers two days.
+`meter_consumption.days_spanned` says so, and nothing divides by it — halving
+would invent a Tuesday nobody measured. Every surface states the span in words
+("over 2 days", "first reading"), and the period totals report `days_covered`
+— the days actually spanned by readings — rather than scaling up to the length
+of the period.
+
+`smoke:a2` holds this **structurally, not by matching copy**: it strips
+comments from every file in `src` and fails on any division whose divisor is
+`days_spanned` / `daysSpanned` / `days_covered`. (Its first version did not
+strip comments, so `*/` at the end of a doc comment followed by `daysSpanned:`
+on the next line read as a division — two false positives on correct code,
+which is how a gate teaches people to ignore it.)
+
+**b) THE RATE IS AN ESTIMATE, said everywhere a rupee appears.** Electricity is
+slabbed, so the true unit cost depends on the month's total and is not known
+until the bill arrives. A meter with no rate records units and **no rupee
+figure at all** — an estimate of ₹0.00 would read as free electricity.
+
+A reading BELOW the previous one is **accepted and said loudly**, never
+refused: a five-digit dial really does roll over and a replaced meter really
+does start again, so refusing would stop honest work and a "too big a drop"
+threshold would be a magic number. What the app owes instead is never to
+present the negative subtraction as consumption — every surface renders it as
+"the meter went backwards" and withholds both the units and the cost.
+
+### WHERE IT IS ENTERED, AND WHY THERE
+
+The reading form is on **the day close** (`/sales/close`) — not because
+utilities belong to Sales, but because somebody is already standing at that
+screen at a fixed time every night, and that is the whole of why a reading
+happens. The same principle as the cash voucher: whoever is physically there
+records it.
+
+**IT IS A SEPARATE CARD WITH A SEPARATE SAVE, outside the close's form.** The
+close has a hard chain — date D refuses while D-1 is unclosed — and a shortage
+belongs to its day. A forgotten meter must never stand between a cashier and
+going home, and the card says so on screen. `smoke:a2` asserts
+`MeterReadingEntry` is mounted on that page and is NOT imported by
+`DayClose.tsx`.
+
+**There is no rate field on the reader's screen and there never will be** —
+the utilities form of the cost rule that keeps an issue cost off the store
+manager's form. Gated.
+
+The master, the rate and the analysis are **owner and accountant**, at
+`/owner/meters` — a MASTER, not a setting, by the same argument that moved
+partners out of `list_options`: a list row holds a name, and a meter carries a
+unit and the rate every estimate turns on. The accountant is admitted for
+exactly the reason they are admitted to `/owner/accounts`, and their door is on
+**Payments → Expense**, where the real electricity bill is entered and where
+holding the estimate up against it is the actual job. `meters.kind` has no
+UPDATE grant and is shown locked with its reason: every reading already filed
+belongs to that utility.
+
+Readings show on the day sheet beside labour, silent when no meter was read —
+most restaurants have none, and that is the ordinary state rather than a gap.
+
+### Attachments: the table exists, NOTHING is built
+
+`attachments(entity_type, entity_id, kind, storage_key, …)` is polymorphic like
+`queries`, and `storage_key` holds a key and never bytes. **No storage backend
+has been chosen**, so no UI exists — see the written proposal. Two facts that
+belong with the decision: `kb_app` holds INSERT + SELECT and **no DELETE**, so
+an attachment row cannot be removed once written (only its `caption` is
+updatable); and the table has no RLS until the migration above is applied.
+
+## The two rulings — decided
+
+**Attachments: Vercel Blob with OIDC. APPROVED.** The argument that decided it
+is not convenience: a Supabase `sb_secret_…` key is the documented replacement
+for `service_role`, which bypasses RLS project-wide — a master key to every
+restaurant's books, `app_users` included, introduced in order to store a
+photograph of a meter. No documented way to scope one to Storage alone means no
+acceptable version of that trade. **Check an ap-south region is offered before
+creating the store** — non-blocking, since photo upload latency is not critical,
+but know it rather than discover it.
+
+The rules stand and are not negotiable at build time: **server-side uploads
+only** (the browser never holds a token), **per-tenant paths enforced by the
+app** because no storage backend knows about our tenants, and **signed,
+expiring reads**. See `docs/attachments-storage-decision.md`, including the
+open ruling on whether an attachment may be removed at all — the recommendation
+is a status column and retire, never a DELETE grant.
+
+**Role SOPs: version 1. APPROVED.** Prose carries the job, the app carries the
+facts that drift, and a gate asserts every moment names a route that exists and
+that the role can open. No generated fields, no generated refusals. See
+`docs/role-sops-proposal.md`.
+
+**AND THE PROSE WAITS FOR THE FIRST REAL WEEK.** Nobody but Rajesh has used this
+app. An SOP for the store manager written today describes a workflow no store
+manager has ever run, and the first day of real use will change it — so writing
+it now produces a document that is confidently wrong about the one thing it
+exists to describe. **Build the mechanism if you like; hold the words.** This is
+the same rule the app already applies to itself: never compute a figure to fill
+a gap, and never state what has not arrived.

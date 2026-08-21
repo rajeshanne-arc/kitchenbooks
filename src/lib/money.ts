@@ -99,4 +99,23 @@ export function formatPaise(paise: number): string {
 /** Format a numeric::text straight from the database */
 export const formatMoneyString = (s: string): string => formatPaise(decimalStringToPaise(s))
 
+/**
+ * A RATE IS NOT AN AMOUNT — ₹8.4750 per kWh, not ₹8.48.
+ *
+ * A slab tariff really is quoted to four decimals, and the meter view
+ * multiplies by all four of them. Rounding it to paise for display would put a
+ * rate on screen that is not the rate being applied, and somebody who typed
+ * 8.4750 would reasonably think the app had lost it.
+ *
+ * Grouping stays here rather than being reimplemented at a call site: formatPaise
+ * is still THE money formatter, and this shares its one grouping rule.
+ */
+export function formatRate(s: string): string {
+  const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(s.trim())
+  if (!m) return '—'
+  const [, sign, int, frac = ''] = m
+  const trimmed = frac.replace(/0+$/, '')
+  return `${sign}₹${groupIndian(int)}.${trimmed.length >= 2 ? trimmed : trimmed.padEnd(2, '0')}`
+}
+
 export const formatMicro = (v: bigint): string => formatPaise(microToPaise(v))

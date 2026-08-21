@@ -41,6 +41,12 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // of the same master under their own group. It is reached from
   // /accounts/money; the owner tab strip filters to it on its own.
   ['/owner/accounts', ['owner', 'accountant']],
+  // METERS: the master, the rate and the analysis. Admitted to the accountant
+  // for exactly the reason /owner/accounts is — the rate is the number every
+  // estimate turns on, and they are the one holding the real electricity bill
+  // up against it at month end. One copy of the screen, reached from their own
+  // group; the owner tab strip filters to it on its own.
+  ['/owner/meters', ['owner', 'accountant']],
   ['/owner/lists', ['manager', 'owner']],
   ['/owner/settings', ['manager', 'owner']],
   ['/owner/snapshots', ['owner']],
