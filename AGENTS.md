@@ -4173,6 +4173,44 @@ tell "clean" from "not looking".
 A render site is a WHOLE JSX CHILD — `>{r.name}<`. That definition is what
 makes the check precise enough to be worth having.
 
+## LINK TO A PAGE THAT GATES A FIELD; DO NOT LINK TO A PAGE THAT GATES ITSELF
+
+The rule that decides whether an entity becomes a door, and it is the
+distinction that separates `PersonLink` from `DateLink`.
+
+**`PersonLink` works because the employee profile exists for EVERY role that
+can reach it and gates a BLOCK WITHIN IT.** A manager opens it and simply does
+not receive the identity fields — the page is theirs, minus one card. So the
+name can be a link on any surface a manager or owner can open, and
+`audit:matrix` is enough to police it.
+
+**The flash report gates the WHOLE PAGE.** `/owner/day` is manager+owner, so a
+date link on a cashier surface is a link to a wall. "Dates are links
+everywhere" was therefore withdrawn: it could not be satisfied without
+breaking LAW 1, and **an assertion that would require a LAW 1 violation to
+satisfy is a bad assertion.** None was written.
+
+**WHAT REPLACES IT: a date links to the day view its reader is allowed to
+see — a per-surface decision, not a global rule.** Nobody is missing a view;
+each role already has its own.
+
+| Reader | Their day view |
+|---|---|
+| owner, manager | `/owner/day/<date>` — the flash report |
+| cashier | the day's sales and the close ladder, which are cashier surfaces |
+| chef | the kitchen dashboard and the department pages |
+
+So `DateLink` stays exactly where it is: the sheet's own prev/next and its
+strip of recent days, both on an owner-only surface.
+
+**And the flash report is NOT made role-aware**, for two reasons. A page that
+differs by role is a different page, so "looks identical every day" — the
+property the whole artifact rests on — would be false. And a flash report is
+read fast AND COMPARED AGAINST YESTERDAY'S: a version that differs by who is
+holding the phone is a different report wearing the same name.
+
+Ask of the next linkable entity: does its page gate a FIELD, or gate ITSELF?
+
 ## The tooltip says it in words, and the hours are a column
 
 "19 Aug 2026 — present +2h · corrected ×1" became "19 Aug 2026 · present ·
