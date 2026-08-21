@@ -5241,3 +5241,49 @@ it now produces a document that is confidently wrong about the one thing it
 exists to describe. **Build the mechanism if you like; hold the words.** This is
 the same rule the app already applies to itself: never compute a figure to fill
 a gap, and never state what has not arrived.
+
+## The Supabase MCP is PROJECT-scoped, and it is not kb_app
+
+`.mcp.json` is committed. Project scope rather than user scope, so anybody
+working in this repo gets the same server without configuring one, and two
+properties earn that:
+
+- **It is PINNED** — `project_ref=xvnreydzveicnzmhkire` is in the URL, so it
+  cannot be pointed at another Supabase project by accident.
+- **It survives a headless run.** An interactively-authenticated,
+  account-level integration may simply be absent in a cron or background run;
+  a file is not.
+
+**No credential material is in the file.** Auth is OAuth and lives outside the
+repo, which is what makes it safe to commit. Each person authenticates once:
+`claude /mcp` → supabase → Authenticate, in a real terminal rather than an IDE
+extension.
+
+**IT AUTHENTICATES AS THE OPERATOR'S OWN SUPABASE ACCOUNT, NOT AS `kb_app`.**
+That is the sentence to hold. With `database` and `development` in the feature
+list it executes SQL and applies migrations, carrying exactly the privileges
+`kb_app` is deliberately denied: UPDATE and DELETE on any table, and it
+bypasses RLS. That is correct — it is how every migration in this project has
+been applied — but it means **nothing you do through the MCP is subject to the
+guarantees the rest of this file describes.** The append-only rule, the column
+grants, the five deletable tables, the tenant policies: all of them are
+properties of `kb_app`, and none of them constrains this tool.
+
+So the discipline is the reverse of everywhere else in this repo. Elsewhere the
+database refuses what the app must not do. Here the database will not refuse,
+and the care has to be yours.
+
+**It is a different KIND of risk from the `service_role` key** in
+`docs/service-role-decision.md`, and the distinction is worth keeping: this is
+a tool somebody drives deliberately, one statement at a time, watching the
+result. That one is a credential whose entire danger is that it can be
+published or leaked and then used by somebody who is not watching anything.
+Deciding about one says nothing about the other.
+
+If write access ever stops being wanted, Supabase's MCP takes
+`&read_only=true` in that URL — a one-line change to `.mcp.json`.
+
+**You may see TWO Supabase tool sets.** An account-level claude.ai integration
+and this one can both be connected at once, with near-identical tool names.
+They are not the same server: only this one is pinned to the project, and only
+this one is in the repo. Check which you are calling before it matters.
