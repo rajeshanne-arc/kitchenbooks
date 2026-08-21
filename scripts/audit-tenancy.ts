@@ -22,6 +22,11 @@
 //    makes that row invisible first. An UNKEYED read — a list, a scan —
 //    with no tenant named is the real leak, and is what --strict fails on.
 //
+// 5. FOREIGN KEYS — an FK check runs as the table owner, so RLS does not
+//    filter it. Every tenant-to-tenant key must be composite (restaurant_id,
+//    id) or a foreign uuid satisfies it and lands one restaurant's row on
+//    another's parent.
+//
 // 3. RLS — the keyed exemption in tier 2 rests entirely on the policies
 //    being on. So the gate asserts that, rather than assuming it. If RLS
 //    is ever dropped from a table, the exemption stops being true and this
@@ -282,12 +287,103 @@ async function main() {
     console.log(`  ✓ all ${views.length} views run as their caller (security_invoker)\n`)
   }
 
+  // ── TIER 5: A FOREIGN KEY IS NOT A TENANT CHECK ──────────────────────
+  //
+  // A foreign-key check runs as the TABLE OWNER, so RLS does not filter it. A
+  // uuid belonging to another restaurant satisfies a single-column FK
+  // perfectly — the row exists, the policy never gets a say — and one
+  // restaurant's item lands on another's shelf.
+  //
+  // Found on `items.storage_location_id` and fixed there in code; the CLASS
+  // was 99 foreign keys across 51 tables. `composite_tenant_foreign_keys`
+  // made every one of them reference `(restaurant_id, id)`, so a foreign uuid
+  // cannot satisfy the constraint because the PAIR does not exist in the
+  // parent. That is the RLS argument again: 99 places to remember is not a
+  // backstop.
+  //
+  // This tier exists because a future migration undoes it without noticing —
+  // several tables were created that week with single-column FKs and nobody
+  // saw.
+  const fks = await sql<{
+    conname: string
+    child: string
+    parent: string
+    child_cols: string[]
+    parent_cols: string[]
+    matchtype: string
+  }[]>`
+    select con.conname, ch.relname as child, pa.relname as parent,
+           con.confmatchtype::text as matchtype,
+           (select array_agg(a.attname order by k.ord)
+              from unnest(con.conkey) with ordinality k(attnum, ord)
+              join pg_attribute a on a.attrelid = con.conrelid and a.attnum = k.attnum) as child_cols,
+           (select array_agg(a.attname order by k.ord)
+              from unnest(con.confkey) with ordinality k(attnum, ord)
+              join pg_attribute a on a.attrelid = con.confrelid and a.attnum = k.attnum) as parent_cols
+    from pg_constraint con
+    join pg_class ch on ch.oid = con.conrelid
+    join pg_class pa on pa.oid = con.confrelid
+    join pg_namespace n on n.oid = ch.relnamespace and n.nspname = 'public'
+    where con.contype = 'f'
+      -- both sides are tenant tables, so the pair is available to reference
+      and exists (select 1 from pg_attribute a where a.attrelid = con.conrelid
+                    and a.attname = 'restaurant_id' and a.attnum > 0 and not a.attisdropped)
+      and exists (select 1 from pg_attribute a where a.attrelid = con.confrelid
+                    and a.attname = 'restaurant_id' and a.attnum > 0 and not a.attisdropped)
+    order by ch.relname, con.conname`
+  const singleFk = fks.filter(
+    (f) => !(f.child_cols.includes('restaurant_id') && f.parent_cols.includes('restaurant_id')),
+  )
+  // MATCH SIMPLE skips the check when ANY child column is NULL, which is
+  // right for an optional reference (storage_location_id, reverses_id,
+  // default_vendor_id) and is only safe because restaurant_id is NOT NULL
+  // everywhere — so the pair can never be half-null and skip the check with a
+  // real id in it. That precondition is asserted rather than assumed.
+  const nullableTenant = await sql<{ relname: string }[]>`
+    select c.relname
+    from pg_attribute a
+    join pg_class c on c.oid = a.attrelid and c.relkind = 'r'
+    join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+    where a.attname = 'restaurant_id' and a.attnum > 0 and not a.attisdropped and not a.attnotnull
+    order by c.relname`
+
+  if (fks.length === 0) {
+    console.log('  NO TENANT-TO-TENANT FOREIGN KEY FOUND — this tier checked nothing and cannot fail.\n')
+  } else if (singleFk.length > 0 || nullableTenant.length > 0) {
+    if (singleFk.length > 0) {
+      console.log(
+        `  ${singleFk.length} FOREIGN KEY(S) ACCEPT A UUID FROM ANOTHER TENANT — an FK check runs as the table owner, so RLS does not filter it:`,
+      )
+      for (const f of singleFk) {
+        console.log(`    ${f.child}(${f.child_cols.join(', ')}) -> ${f.parent}(${f.parent_cols.join(', ')})`)
+      }
+      console.log('    Each must reference (restaurant_id, id) so a foreign uuid has no matching PAIR.\n')
+    }
+    if (nullableTenant.length > 0) {
+      console.log(
+        `  ${nullableTenant.length} TABLE(S) ALLOW A NULL restaurant_id, which lets MATCH SIMPLE skip the tenant half of a composite key:`,
+      )
+      for (const t of nullableTenant) console.log(`    ${t.relname}`)
+      console.log('')
+    }
+  } else {
+    console.log(
+      `  ✓ all ${fks.length} tenant-to-tenant foreign keys are composite (restaurant_id, id), and restaurant_id is NOT NULL on every table that carries it\n`,
+    )
+  }
+
   const strict = process.argv.includes('--strict')
   // Writes are a hard failure whatever the flags say: an insert with no
   // tenant does not leak data, it loses it — the save simply refuses.
   const fatal =
     writes.length > 0 ||
-    (strict && (unkeyed.length > 0 || unprotected.length > 0 || invokerless.length > 0))
+    (strict &&
+      (unkeyed.length > 0 ||
+        unprotected.length > 0 ||
+        invokerless.length > 0 ||
+        singleFk.length > 0 ||
+        nullableTenant.length > 0 ||
+        fks.length === 0))
   if (!fatal && writes.length === 0 && unkeyed.length === 0) {
     console.log('  ✓ every query on a tenant table says which tenant it means\n')
   }

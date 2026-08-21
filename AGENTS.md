@@ -5495,13 +5495,11 @@ that points at it, and nothing can point at a list value. `kind` is a SHAPE —
 ambient / chilled / frozen / other — never a temperature or a brand, which is
 what lets it describe a kitchen nobody here has seen.
 
-**A FOREIGN KEY IS NOT A TENANT CHECK.** `items.storage_location_id` references
-`storage_locations`, and a foreign-key check runs as the table owner — so it is
-NOT filtered by the row-level policy. A uuid from another tenant would satisfy
-the constraint and place one restaurant's item on another's shelf.
-`assertLocation` scopes by `restaurant_id` explicitly and is called on both
-write paths; a gate asserts both. That is the keyed-read lesson on the write
-side: **the key is not the check.**
+**A FOREIGN KEY IS NOT A TENANT CHECK** — found here, on
+`items.storage_location_id`, and it turned out to be the whole schema. See the
+rule of that name at the end of this file. `assertLocation` stays as defence in
+depth and for its named refusal, but it is no longer the only thing standing
+between tenants.
 
 ### Two honesty rules the views already publish, kept on screen
 
@@ -5539,3 +5537,80 @@ sort by value within a location. **Joining is fine; selecting a quantity would
 put the book on the counter's screen and turn a count into a confirmation of
 it.** A gate reads the query's source and fails if any quantity column appears
 in its select list.
+
+## A FOREIGN KEY IS NOT A TENANT CHECK
+
+> **A foreign-key check runs as the TABLE OWNER, so RLS does not filter it. A
+> uuid belonging to another restaurant satisfies a single-column FK perfectly —
+> the row exists, the policy never gets a say.**
+
+Found on one column: `items.storage_location_id`, where a foreign uuid would
+have placed one restaurant's item on another's shelf. `assertLocation` fixed
+that column. **The class was 99 foreign keys across 51 tables.**
+
+And that is the RLS argument again, in a third costume: *99 places to remember
+is not a backstop*. The same sentence has now been earned by a missing
+`and restaurant_id = …` in a WHERE clause, by views running as their owner, and
+by this.
+
+`composite_tenant_foreign_keys` made every one reference **`(restaurant_id,
+id)`** instead of `(id)`, so a foreign uuid cannot satisfy the constraint
+because **the PAIR does not exist in the parent**. Measured after: 99 composite,
+0 single, `pos_lines` still CASCADE, live reads unaffected — and a direct
+attempt to place a Thrayam item on the probe tenant's shelf refused by the
+database with `23503 … violates foreign key constraint
+items_storage_location_id_fkey`.
+
+**MATCH SIMPLE, and the precondition it rests on.** A NULL in any child column
+skips the check entirely, which is right for an optional reference —
+`storage_location_id`, `reverses_id`, `default_vendor_id`. It is only safe
+because `restaurant_id` is NOT NULL on all 69 base tables that carry it, so the
+pair can never be half-null and skip the check while holding a real id. Tier 5
+asserts that precondition rather than assuming it.
+
+**Keep the app-side refusals anyway.** `assertLocation` is defence in depth and
+gives a NAMED refusal — "that storage location is not on this restaurant's
+list" — where the constraint gives a `foreign_key_violation` nobody can read.
+The database decides; the app explains.
+
+**Tier 5 of `audit:tenancy`** asserts every FK whose child and parent both carry
+`restaurant_id` is composite, because this is exactly the kind of thing a future
+migration undoes without noticing — several tables were created the same week
+with single-column keys and nobody saw. Proved able to fail both ways: pointing
+its column test at a name that does not exist made it name all 99 and exit 1,
+and scoping it to an empty schema made the vacuity guard fire rather than
+passing on nothing.
+
+## A FIXTURE THAT CANNOT TELL TWO ANSWERS APART IS NOT A FIXTURE
+
+The walking-order gate **passed with the ordering deliberately reversed**. Every
+live item was unplaced, so `location_order` was null on all six rows, the loop
+`continue`d on every one, and it asserted nothing while reporting a tick.
+
+Fourth of its family, and the family is now clear enough to state as one rule:
+
+| | Why it could not fail |
+|---|---|
+| the converging attendance probe | the row it checked had been written by an EARLIER run |
+| the extra-hours gate | it wrote its own insert, so the app's column list was never exercised |
+| the prune's invisibility check | both generations carried IDENTICAL figures |
+| the walking-order gate | every item was unplaced, so it examined ZERO rows |
+
+**The fix is always the same: make the two sides genuinely different, and make
+the fixture capable of distinguishing them.** Here that meant placing three
+items on the probe tenant inside a rolled-back transaction, arranged so that
+**walking order CONTRADICTS alphabetical order** — A on the last shelf, B on the
+first, C unplaced. Any arrangement where the two orderings agree would have
+passed under either implementation and proved nothing.
+
+Two details that made it real rather than approximate: `listCountableItems`
+gained an optional handle (the `getClosePrefill` shape) so the gate calls the
+APP'S OWN QUERY rather than a hand-written copy of it; and the probe rolls back,
+so nothing accumulates in a tenant nobody is watching.
+
+**And the new risk that ordering created, worth its own sentence.** The sheet
+now JOINS `stock_on_hand` to order by value within a location. **Joining is
+fine; SELECTING a quantity from it would put the book on the counter's screen
+and turn a blind count into a confirmation of it.** A gate reads the query's
+source and fails if any quantity column reaches its select list — the ordering
+may use the book, the sheet may never show it.
