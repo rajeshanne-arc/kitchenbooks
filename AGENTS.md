@@ -5130,19 +5130,25 @@ the enumeration answered it.** `rolbypassrls` was left alone deliberately:
 bypassing RLS on a table you have no privilege to touch grants nothing, so the
 riskier role-attribute change buys nothing.
 
-**AND ONE HALF DID NOT LAND.** Sequences (0/5), functions (0/4) and the default
-privileges were revoked; **tables and views were not**. All 147 relations still
-carry `service_role=arwdDxtm/postgres` — a direct grant of all eight
-privileges, no role membership involved — so that key still holds SELECT and
-DELETE on everything. One line closes it:
-`revoke all on all tables in schema public from service_role;` (`all tables`
-covers views; there are no materialized views here, which it would not have
-covered). `smoke:a2` is red until it lands.
+**IT TOOK TWO MIGRATIONS, and the second one is the interesting one.**
+`revoke_service_role_from_public` revoked sequences (0/5), functions (0/4) and
+the default privileges — and **`revoke all on all tables in schema public from
+service_role` reported success and changed no `relacl`**, in the same
+migration, while the sequence and function revokes beside it took effect. A
+targeted revoke on a single table worked immediately. **Cause not
+established.** `revoke_service_role_tables_per_relation` fixed it one relation
+at a time, covering relkinds `r/p/v/m/f` rather than trusting `ALL TABLES` —
+there are no materialized views today and `ALL TABLES` would not have covered
+one if there were.
 
-**The two gates disagreed, and that is the argument for two gates.** The
-current-state check went red and the recurrence check stayed green, because the
-two halves of one migration landed differently. A single combined assertion
-would have reported one failure and hidden which half was intact.
+Final state, read from `relacl`: **0 relations name `service_role`, `anon` or
+`authenticated`; 147 name `kb_app`** — SELECT 147, INSERT 67, DELETE 5, each of
+the five argued. `kb_app` is the only role holding anything in `public`.
+
+**The two gates disagreed and that settled the argument for two gates.** The
+current-state check went red while the recurrence check stayed green, because
+the two halves of one migration landed differently. A single combined
+assertion would have reported one failure and hidden which half was intact.
 
 See `docs/service-role-decision.md`. It holds SELECT and DELETE on 147/147
 relations AND `rolbypassrls`, so a leaked `sb_secret_…` key is total access to
@@ -5152,6 +5158,55 @@ consumes it — no edge functions, no webhooks, no HTTP-calling triggers, no
 pg_cron, zero non-internal triggers in `public`, and this app has no Supabase
 SDK — so the only plausible consumer is Supabase's own Dashboard, which cannot
 be tested from here.
+
+## A STATEMENT THAT SUCCEEDS IS NOT A STATEMENT THAT DID SOMETHING
+
+Third time in this project, and it is now a rule rather than three stories:
+
+| | Reported success | Actually did |
+|---|---|---|
+| `git push -q` to a stale branch | quiet exit 0 | pushed nothing |
+| `revoke … from PUBLIC` on Supabase | success | left the explicit `anon` / `authenticated` / `service_role` grants standing |
+| `revoke all on all tables … from service_role` | success | changed no `relacl` at all |
+
+**Every time, the only proof was reading the state afterwards.** Not the
+statement's exit status, not the absence of an error, not the fact that the
+neighbouring statements in the same migration worked — the third case had
+sequence and function revokes take effect in the very same transaction while
+the table revoke did nothing.
+
+So: after any privileged or bulk operation, **read back the thing you meant to
+change**, and read it from the authority rather than from a convenience view.
+
+### AND THE CHECK THAT CONFIRMS A FIX CAN BE THE THING THAT IS WRONG
+
+This one was the sharpest instance, because the verification failed rather than
+the fix. The revoke was confirmed by querying
+`information_schema.role_table_grants`, which returned nothing for
+`service_role` — while `relacl` said the grant was on all 147 relations.
+
+The mechanism, measured on this database as `kb_app`:
+
+    information_schema.role_table_grants, grantee=kb_app     219 rows
+    information_schema.role_table_grants, grantee=postgres     0 rows
+    pg_class.relacl,                      grantee=postgres  1191 grants
+
+**Those views show only grants where the grantor or grantee is a CURRENTLY
+ENABLED role.** Another role's grants are not absent there — they are
+*invisible*. So "I looked and saw nothing" is exactly what you see whether or
+not the grant exists. `pg_class.relacl` has no such filter.
+
+That is the third member of the family below, and the first where it bit the
+instrument rather than the code. **Both grant gates therefore read `relacl` via
+`aclexplode`, and `smoke:a2` asserts that they do** — a source-level check, so
+that "simplifying" them to `information_schema` fails loudly instead of passing
+forever. Elsewhere in that file `information_schema` is fine: column existence
+is not a privilege.
+
+*(Its own first version sliced the wrong text — it searched for the check's
+NAME and found the first mention, which was inside its own array literal, and
+reported a correct gate as broken. Fixed to find the check DEFINITION. A gate
+that reads source has to be pointed at the right source.)*
 
 ## AN EXEMPTION MUST EXPIRE BY ITSELF
 

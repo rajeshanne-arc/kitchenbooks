@@ -1,6 +1,7 @@
 # service_role: what a leaked secret key would cost, and what revoking it might
 
-**Status: DECIDED — revoke. `revoke_service_role_from_public` applied.**
+**Status: DONE. `revoke_service_role_from_public`, then
+`revoke_service_role_tables_per_relation`.**
 
 Rajesh took it rather than deferring, and the reason is the enumeration below:
 he deferred originally because he could not test what consumes `service_role`,
@@ -12,7 +13,7 @@ was "is it testable", and enumerating the consumers answered it.
 privilege to touch grants nothing, so the riskier role-attribute change buys
 nothing.
 
-**ONE HALF DID NOT LAND — see the note at the foot of this file.**
+**It took two migrations — see the note at the foot of this file.**
 
 The reasoning below is kept as written, because the argument is what makes the
 decision reviewable later.
@@ -118,7 +119,7 @@ every tenant's ledger stops being able to.
 
 ---
 
-## Applied, and one half did not take
+## Applied — and why it took two migrations
 
 Measured after the migration:
 
@@ -127,7 +128,8 @@ Measured after the migration:
 | sequences (`USAGE`) | 5/5 | **0/5** ✓ |
 | functions (`EXECUTE`) | 4/4 | **0/4** ✓ |
 | default privileges in `public` | granted | **revoked** ✓ |
-| **tables and views** | 147/147 | **147/147 — unchanged** ✗ |
+| **tables and views** | 147/147 | **147/147 — unchanged by the first migration** ✗ |
+| tables and views, after the per-relation revoke | | **0/147** ✓ |
 
 All 147 relations still carry `service_role=arwdDxtm/postgres`: a direct grant
 of all eight privileges, straight from `postgres`, with no role membership
@@ -146,7 +148,16 @@ tables and 0 of 75 views. There are **no materialized views** in this schema,
 which `all tables` would *not* have covered; if one is ever added, it needs its
 own revoke.
 
-`smoke:a2` names this until it lands. Worth noting which gate caught it: the
+Done: `revoke_service_role_tables_per_relation` revoked one relation at a
+time across relkinds `r/p/v/m/f`. Read from `relacl`, 0 of 147 relations now
+name `service_role`, `anon` or `authenticated`; 147 name `kb_app`.
+
+**The bulk statement reported success and changed nothing, in the same
+migration where the sequence and function revokes took effect. Cause not
+established.** See "A STATEMENT THAT SUCCEEDS IS NOT A STATEMENT THAT DID
+SOMETHING" in AGENTS.md.
+
+Worth noting which gate caught it: the
 current-state check is red and the recurrence check is green, because the two
 halves of one migration landed differently — which is the argument for having
 written them as two checks rather than one.

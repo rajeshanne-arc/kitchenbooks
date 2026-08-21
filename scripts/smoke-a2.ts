@@ -4906,6 +4906,59 @@ async function run() {
   /* ── grants that a write path silently depends on ──────────────────── */
   console.log('\ngrants: every insert path can reach the sequence behind it')
 
+  await check('the grant gates read relacl, never information_schema', async () => {
+    // THE VERIFICATION WAS THE FAILURE, not just the revoke.
+    //
+    // `revoke all on all tables in schema public from service_role` reported
+    // success and changed no relacl. The check written to CONFIRM the fix
+    // looked at `information_schema.role_table_grants`, saw nothing for
+    // service_role, and called it done — while relacl said the grant was on
+    // all 147 relations.
+    //
+    // The mechanism, measured on this database as kb_app:
+    //
+    //   information_schema.role_table_grants, grantee=kb_app     219 rows
+    //   information_schema.role_table_grants, grantee=postgres     0 rows
+    //   relacl,                               grantee=postgres  1191 grants
+    //
+    // Those views show only grants where the grantor or grantee is a
+    // CURRENTLY ENABLED role. Another role's grants are not absent there, they
+    // are INVISIBLE — so "I looked and saw nothing" is exactly what you see
+    // whether or not the grant exists. `pg_class.relacl` has no such filter.
+    //
+    // So this asserts the instrument, not the state: the two grant checks
+    // above must read relacl, and must not reach for the view that cannot see
+    // what they are looking for. Elsewhere in this file information_schema is
+    // fine — column existence is not a privilege.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('scripts/smoke-a2.ts', 'utf8')
+    // Find the check DEFINITION, not the first mention of its name — the
+    // first mention is in the array literal on the line above, which is how
+    // the first version of this assertion sliced its own body and reported a
+    // correct gate as broken.
+    const starts = [...src.matchAll(/await check\(/g)].map((m) => m.index as number)
+    const bodyOf = (name: string): string | null => {
+      for (const [i, at] of starts.entries()) {
+        if (!src.slice(at, at + 160).includes(name)) continue
+        return src.slice(at, starts[i + 1] ?? src.length)
+      }
+      return null
+    }
+    for (const name of ['hold NOTHING in schema public', 'hands them back on the next object created']) {
+      const body = bodyOf(name)
+      assert.ok(body !== null, `the grant check "${name}" has been renamed or removed`)
+      assert.ok(
+        /aclexplode\(/.test(body as string),
+        `"${name}" no longer reads relacl — a privilege check that looks in the obvious place is not a privilege check`,
+      )
+      assert.ok(
+        !/information_schema/.test(body as string),
+        `"${name}" reads information_schema, which hides grants belonging to roles the caller is not a member of`,
+      )
+    }
+    console.log('      both grant checks read pg_class.relacl via aclexplode; neither touches information_schema')
+  })
+
   // THE ROLES THAT MUST HOLD NOTHING IN `public`, named once. kb_app is the
   // only role with any privilege here: SELECT 147, INSERT 67, DELETE 5, each
   // of the five argued in AGENTS.md.
