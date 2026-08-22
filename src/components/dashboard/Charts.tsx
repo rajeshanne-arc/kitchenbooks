@@ -216,7 +216,7 @@ export function HourlyLine({ points }: { points: { hour: number; revenue: string
 export function DivergingBars({
   rows,
   height = 176,
-  polarity = 'higher-is-good',
+  polarity,
 }: {
   rows: { label: string; value: number }[]
   height?: number
@@ -237,7 +237,12 @@ export function DivergingBars({
    * using less than its own recipes say is a recipe that overstates or stock
    * that left unrecorded, which is doubt, not good news.
    */
-  polarity?: 'higher-is-good' | 'higher-is-bad'
+  /* REQUIRED, WITH NO DEFAULT. A default is how a component ends up encoding
+   * a polarity rather than taking one: the next caller inherits margin's
+   * meaning silently, and the first time that is wrong it renders an overspend
+   * as good news. Two call sites is a cheap price for two deliberate answers.
+   */
+  polarity: 'higher-is-good' | 'higher-is-bad'
 }) {
   const fill = (v: number) =>
     polarity === 'higher-is-bad' ? (v > 0 ? RED : v < 0 ? GOLD : INK) : v < 0 ? RED : GREEN

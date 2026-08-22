@@ -28,13 +28,27 @@ function fail(e: unknown): { ok: false; error: string } {
 
 export type ListMutationResult = { ok: true; options: ListOptionRow[] } | { ok: false; error: string }
 
-const listKeySchema = z.string().refine((k): k is (typeof ALL_LIST_KEYS)[number] => (ALL_LIST_KEYS as string[]).includes(k), 'Unknown list')
+/**
+ * A LIST KEY IS CHECKED IN CODE, NOT IN A REFINE MESSAGE.
+ *
+ * `fail()` collapses every ZodError to one sentence, so the 'Unknown list'
+ * this used to carry as a refine message could never reach anybody: it was
+ * written, shipped and unread. A refine that carries a human-readable reason
+ * is a refine in the wrong place — the reason belongs where the error class
+ * survives.
+ */
+function assertListKey(k: string): (typeof ALL_LIST_KEYS)[number] {
+  if (!(ALL_LIST_KEYS as string[]).includes(k)) {
+    throw new SettingsError(`“${k}” is not a list this app keeps — nothing was saved`)
+  }
+  return k as (typeof ALL_LIST_KEYS)[number]
+}
 
 // ------------------------------------------------------------- add a value
 
 export async function addListOption(rawKey: string, rawValue: string): Promise<ListMutationResult> {
   try {
-    const key = listKeySchema.parse(rawKey)
+    const key = assertListKey(rawKey)
     const value = z.string().trim().min(1, 'Type the value first').max(60).parse(rawValue)
     const restaurant = await getRestaurant()
     const rid = restaurant.id
@@ -127,10 +141,11 @@ const TabsSchema = z.array(z.object({ key: z.string().min(1).max(30), label: z.s
 
 export async function saveTabsSetting(rawGroup: string, rawEntries: { key: string; label: string }[]): Promise<SaveTabsResult> {
   try {
-    const group = z
-      .string()
-      .refine((g): g is TabGroup => (TAB_GROUPS as string[]).includes(g), 'Unknown tab group')
-      .parse(rawGroup)
+    // Same rule as assertListKey: the reason has to survive fail().
+    if (!(TAB_GROUPS as string[]).includes(rawGroup)) {
+      throw new SettingsError(`“${rawGroup}” is not a tab group — nothing was saved`)
+    }
+    const group = rawGroup as TabGroup
     const entries = TabsSchema.parse(rawEntries)
     const validKeys = new Set(TAB_DEFAULTS[group].map((t) => t.key))
     const seen = new Set<string>()

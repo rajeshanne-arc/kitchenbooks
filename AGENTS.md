@@ -6012,29 +6012,49 @@ constant and must never become a setting: two restaurants setting it
 differently would make their variances mean different things, which is this
 file's own test for a setting that must not exist.
 
-### THE FLOOR IS STRUCTURALLY BLIND TO ONE CASE, AND IT IS LIVE TODAY
+### COSTABLE MEANS PRICEABLE PER PORTION — the bug, and the guard that stays
 
-`theoretical_food_cost` joins `dish_costs ON dc.recipe_id = m.recipe_id AND
-dc.dish_cost > 0`, and `cost_per_portion` is `total_cost / NULLIF(portions,
-0)`. So a dish with a real recipe cost and **no portion count** satisfies that
-join: its revenue counts as COSTABLE while `qty × NULL` contributes nothing to
-the cost.
+The view first joined `dish_costs ON dish_cost > 0`. The correct test is not
+"does this dish cost something" but **"can it be priced PER PORTION"** —
+`cost_per_portion IS NOT NULL`. A dish with a real batch cost and no portion
+count satisfied that join, counted as costable revenue, and contributed
+`qty × NULL`.
 
-Measured on the probe tenant, rolled back — mapping one portion-less dish:
+Measured on the probe tenant BEFORE the fix, rolled back — mapping one
+portion-less dish:
 
 | | costable_revenue | coverage | theoretical |
 |---|---|---|---|
 | dish with portions only | 2000 | 100.0% | 300 |
 | **+ the portion-less dish** | **3000** | **100.0%** | **300** |
 
-**Coverage reads 100% while a third of the revenue is costed at zero.** The
-variance then reads as overspending that is really a blank field on a dish
-card — the exact thing the floor exists to prevent, arriving by a route the
-floor cannot see. So it is a SEPARATE guard, checked BEFORE the floor: if the
-floor answered first, the dish would be forgotten the moment coverage improved.
+**Coverage read 100% while a third of the revenue was priced at zero.**
+Migration `costable_means_priceable_per_portion` fixed it: both joins now
+require a price (`cost_per_portion IS NOT NULL`, and `issue_cost IS NOT NULL`
+on the item side). The same fixture now reads costable held at 2000 and
+**coverage falling to 66.7%** — the honest answer.
 
-This is not hypothetical. Live today `SI-001 Chicken 65` costs ₹316.67 and has
-`portions = NULL` — **one mapping away from understating South Indian**.
+**THE SEPARATE GUARD IS WORTH MORE AFTER THE FIX, NOT LESS.** The view makes
+coverage honest; `getZeroCostDishes` is what tells the reader WHY it is low, by
+name. *"Chinese is 66.7% costed"* with nothing attached is a number nobody can
+act on; *"Chicken 65 sold ₹1,000 with no portion count"* is a job. And the
+ORDER stands — it is checked BEFORE the floor, because otherwise the dish is
+forgotten the moment coverage improves.
+
+Live today `SI-001 Chicken 65` costs ₹316.67 with `portions = NULL`.
+
+**`mapping_coverage.items_costed` was the same bug in a second place** — it
+filtered `recipe_id IS NOT NULL` and predated the item target, so a mapped and
+priced bottled water read as uncosted. Fixed to count both routes; the screen's
+workaround (counting item-mapped rows for itself) was deleted and it reads the
+view again.
+
+**It still means "points at a costing route", not "priceable through it".**
+Measured in the same probe: with three mappings, one of them the portion-less
+dish, `items_costed` reads 3/3 while that dish prices at zero. Not wrong — it
+answers whether a costing route has been CHOSEN — but the copy says which
+question it answers, because "costed" reading 3/3 over a dish worth nothing is
+the same overclaim one level down.
 
 ### A STOCK ITEM WITHOUT A DEPARTMENT LANDS ITS COST NOWHERE
 
@@ -6064,8 +6084,18 @@ every `ZodError` to *"Invalid input — nothing was saved"*, so a `.refine({
 message })` is written, shipped, and never read: the refusal names nothing. The
 two rules are thrown as `SalesError` in the action instead, and the schema
 validates SHAPE only. Same lesson as `AccountRefusal` — **a refusal nobody can
-read is not a refusal** — and worth checking wherever a `.refine()` message
-looks load-bearing.
+read is not a refusal, and a validation whose reason never arrives is a
+validation nobody can obey.**
+
+**MEASURED, THEN GATED.** All 24 `fail()` handlers in `src/server` collapse
+`ZodError` to one sentence — there is no file where a zod message reaches
+anybody — so the rule needs no judgement and has no exceptions: **a `.refine()`
+carrying a human-readable message is a refine in the wrong place.** The sweep
+found two more beside the one that prompted it (`'Unknown list'`, `'Unknown tab
+group'` in `settings-actions.ts`), both unreadable since the day they were
+written; both are thrown errors now, so their reasons arrive. The gate refuses
+any refine carrying a message positionally or as `{ message }`, and asserts it
+found refines and handlers at all, so it cannot pass by looking at nothing.
 
 ### DivergingBars WAS WRITTEN FOR MARGIN, WHERE THE OTHER SIDE IS THE BAD ONE
 
@@ -6073,8 +6103,11 @@ It hard-wired `value < 0 ? RED : GREEN`. For a variance, POSITIVE is the
 problem — rupees nobody can account for — so a chart inheriting the default
 **paints an overspend green**. That is the indent-gap fault in a new costume,
 where the page coloured `gap > 0` red while the view computed given − requested.
-`polarity` is now stated at each call site; the bar's side and its printed sign
-are unchanged, so the hue only ever agrees with them rather than carrying the
+**A COMPONENT THAT ENCODES A POLARITY RATHER THAN TAKING ONE GETS REUSED INTO
+A LIE.** So `polarity` is REQUIRED with no default — a default is exactly how
+the next caller inherits margin's meaning silently — and both call sites state
+which way round their subject reads. The bar's side and its printed sign are
+unchanged, so the hue only ever agrees with them rather than carrying the
 meaning. Under-consumption is GOLD, not green: using less than your own recipes
 say is a recipe that overstates or stock that left unrecorded.
 
@@ -6093,13 +6126,23 @@ sentence and the same count without it.
 Issued is not consumed — a kitchen draws ten kilos on Monday and cooks it over
 three days. The view returns NULL; a gate asserts nothing coalesces it away.
 
-### Seven perturbations, seven correct failures
+### Ten perturbations, ten correct failures
 
 Every guard was proved capable of failing before it was believed: removing the
 zero-cost guard, dropping the floor to 0, dropping the chart polarity, allowing
-an item with no department, coalescing the actual half, and — for the probe
-itself — removing each of the two fixture writes it depends on. The probe calls
+an item with no department, coalescing the actual half, restoring a message to a
+refine, giving `polarity` a default, dropping it from a call site, and — for the
+probe itself — removing each of the two fixture writes it depends on. The probe calls
 `getZeroCostDishes` **on the lent transaction handle**, because a `tsql` there
 would open a second connection, see none of the uncommitted fixture, find
 nothing and report a tick: the vacuous-probe family this file already records
 four times.
+
+**AND THE PROBE ANNOUNCED THE VIEW FIX ITSELF.** It was written as the
+INVARIANT — what the numbers are, not what the bug was — so the migration
+turned it red on the next run with the exact sentence *"the portion-less dish
+must still count as costable: 2000 !== 3000"*, and the fix was to state the new
+truth. That is the difference between a gate and a regression test: a test
+written from the original bug agrees with it forever, while an invariant says
+the day the world changed. Same shape as the vendor-return refusal gate, built
+to fail once the view was fixed.

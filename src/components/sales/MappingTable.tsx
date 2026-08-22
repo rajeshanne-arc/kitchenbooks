@@ -55,7 +55,7 @@ function nextChunk(rows: UnmappedPosItem[], totalPaise: number): { count: number
   return null
 }
 
-function Coverage({ c, itemMapped }: { c: MappingCoverage; itemMapped: number }) {
+function Coverage({ c }: { c: MappingCoverage }) {
   const pct = Number(c.pct_attributed)
   return (
     <section className={cardCls}>
@@ -86,27 +86,23 @@ function Coverage({ c, itemMapped }: { c: MappingCoverage; itemMapped: number })
           </>
         )}
       </p>
-      {/* `items_costed` COUNTS DISHES ONLY — its filter is `m.recipe_id IS NOT
-          NULL`, written before the stock-item target existed. An item mapping
-          DOES carry a cost, so the view's figure now understates and the
-          difference is split here using the rows this screen already holds,
-          rather than letting the word "costed" quietly mean something narrower
-          than it says. */}
-      {c.items_mapped > c.items_costed + itemMapped && (
+      {/* READ FROM THE VIEW AGAIN. `items_costed` counted `recipe_id IS NOT
+          NULL` alone when the stock-item target shipped, so a mapped and
+          priced bottled water read as uncosted and this screen counted
+          item-mapped rows for itself. The view now counts both routes and the
+          workaround is gone.
+
+          THE WORD IS STILL NARROWER THAN IT SOUNDS, and the copy says so: the
+          filter is "points at a recipe or an item", not "can be priced through
+          it". A dish with no portion count is counted here and still prices at
+          zero — which is why the variance card names those separately rather
+          than leaving a reader to infer them from a percentage. */}
+      {c.items_mapped > c.items_costed && (
         <div className="mt-3">
           <Honesty verdict="attributed, not costed" compact>
-            {c.items_mapped - c.items_costed - itemMapped} of the mapped items point at a DEPARTMENT alone, so
-            their revenue lands in the right place and no cost does. That is the honest answer where there is
-            neither a recipe nor a stock item behind the thing sold; where there is one, it is the fuller one.
-          </Honesty>
-        </div>
-      )}
-      {itemMapped > 0 && (
-        <div className="mt-3">
-          <Honesty verdict="costed as stock" compact>
-            {itemMapped} {itemMapped === 1 ? 'item is' : 'items are'} pointed at a stock item, so{' '}
-            {itemMapped === 1 ? 'its' : 'their'} cost reaches the theoretical at what the store paid for it.
-            The coverage view counts only dishes as costed, so this is not in its figure.
+            {c.items_mapped - c.items_costed} of the mapped items point at a DEPARTMENT alone, so their revenue
+            lands in the right place and no cost does. That is the honest answer where there is neither a
+            recipe nor a stock item behind the thing sold; where there is one, it is the fuller one.
           </Honesty>
         </div>
       )}
@@ -257,9 +253,6 @@ export default function MappingTable({
   const [cov, setCov] = useState(coverage)
 
   const remaining = useMemo(() => unmapped.filter((u) => done[u.pos_item_id] === undefined), [unmapped, done])
-  // Counted from the rows already on screen, not queried again: mapping_coverage
-  // has no column for it, because `items_costed` predates this target.
-  const itemMapped = useMemo(() => mapped.filter((m) => m.item_id !== null).length, [mapped])
   const remainingPaise = useMemo(
     () => remaining.reduce((n, u) => n + decimalStringToPaise(u.revenue), 0),
     [remaining],
@@ -324,7 +317,7 @@ export default function MappingTable({
           <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
         </div>
       )}
-      {cov !== null && <Coverage c={cov} itemMapped={itemMapped} />}
+      {cov !== null && <Coverage c={cov} />}
 
       {view === 'unmapped' && (
         <section className={cardCls}>

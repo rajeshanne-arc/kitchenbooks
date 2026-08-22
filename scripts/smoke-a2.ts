@@ -7117,7 +7117,7 @@ async function run() {
       const { getRestaurant } = await import('../src/server/queries')
       const r = await getRestaurant()
       const t = r.id
-      let out = { a: '', b: '' }
+      let out = { a: '', b: '', c: '' }
       await txn(async (tx) => {
         const [ch] = await tx<{ id: string }[]>`select id from sections where code='CH' and restaurant_id=${t}`
         const [v] = await tx<{ id: string }[]>`insert into vendors (restaurant_id, code, name, primary_category) values (${t},'V-ZZ-98','Zz Variance Probe','PLT') returning id`
@@ -7138,10 +7138,15 @@ async function run() {
         await tx`insert into issue_lines (restaurant_id, issue_id, item_id, qty, unit_cost) values (${t},${iss.id},${chick.id},4,300)`
         await tx`insert into kitchen_closings (restaurant_id, section_id, close_date, closing_value) values (${t},${ch.id},'2099-03-28'::date,200)`
 
-        type Row = { costable_revenue: string | null; coverage_pct: string | null; theoretical_cost: string }
+        type Row = {
+          revenue: string
+          costable_revenue: string | null
+          coverage_pct: string | null
+          theoretical_cost: string
+        }
         const ch_ = async (): Promise<Row | undefined> => {
           const rows = await tx<Row[]>`
-            select costable_revenue::text, coverage_pct::text, theoretical_cost::text
+            select revenue::text, costable_revenue::text, coverage_pct::text, theoretical_cost::text
             from food_cost_variance where restaurant_id=${t} and month=${M}::date and section_code='CH'`
           return rows[0]
         }
@@ -7151,25 +7156,46 @@ async function run() {
         assert.equal(Number(one?.costable_revenue), 2000, 'the costed dish did not reach the section')
         assert.equal(Number(one?.theoretical_cost), 300, '10 portions at 30 must be 300')
 
-        // ── FINDING A: a portion-less dish raises COSTABLE REVENUE and adds
-        //    NOTHING to the theoretical, while coverage still reads 100%.
+        // ── FINDING A, AFTER THE VIEW WAS FIXED. The join now requires
+        //    `cost_per_portion IS NOT NULL`, so a portion-less dish is NOT
+        //    costable: its revenue lands in the denominator and nowhere else,
+        //    and COVERAGE FALLS. That is the honest answer, and it is what
+        //    this assertion holds in place.
+        //
+        //    The earlier version of this probe asserted the OPPOSITE — that
+        //    costable rose to 3000 with coverage still at 100% — and went red
+        //    on the first run after the migration, naming the change. A gate
+        //    written as the invariant rather than as a pinned bug is what
+        //    makes a view fix announce itself.
         await tx`insert into pos_item_map (restaurant_id, pos_item_id, item_name, recipe_id) values (${t},'ZZV-NOPORT','Zz Probe NoPortions',${nop.id})`
         const two = await ch_()
-        assert.equal(Number(two?.costable_revenue), 3000, 'the portion-less dish must still count as costable')
+        assert.equal(Number(two?.revenue), 3000, 'the portion-less dish must still be REVENUE')
+        assert.equal(
+          Number(two?.costable_revenue), 2000,
+          'a dish with no portion count must NOT count as costable — cost_per_portion is what makes it priceable',
+        )
         assert.equal(Number(two?.theoretical_cost), 300, 'a portion-less dish must add NOTHING to the theoretical')
-        assert.equal(two?.coverage_pct, '100.0', 'coverage must read 100% — this is why the floor cannot see it')
-        out.a = `costable ${one?.costable_revenue}→${two?.costable_revenue}, theoretical unchanged at ${two?.theoretical_cost}, coverage ${two?.coverage_pct}%`
+        assert.equal(
+          two?.coverage_pct, '66.7',
+          'coverage must FALL when a portion-less dish is mapped — that is the whole of the fix',
+        )
+        out.a = `revenue ${one?.revenue}→${two?.revenue}, costable held at ${two?.costable_revenue}, coverage ${one?.coverage_pct}%→${two?.coverage_pct}%`
 
-        // and the app's own query must FIND it
+        // ── AND THE GUARD IS WHAT MAKES THAT FALL READABLE. The view now
+        //    refuses to price the dish; only this query can say WHICH dish,
+        //    and a coverage of 66.7% with no name attached is a number nobody
+        //    can act on. Through the app's own query on the LENT HANDLE — a
+        //    tsql here would open a second connection, see none of this
+        //    uncommitted fixture, find nothing and report a tick.
         const { getZeroCostDishes } = await import('../src/server/variance-queries')
-        // THROUGH THE APP'S OWN QUERY, on the lent handle. A tsql here would
-        // open a second connection that cannot see this uncommitted fixture,
-        // find nothing, and report a tick — which is the vacuous-probe family
-        // this file already records four times.
         const found = await getZeroCostDishes(t, M, tx as never)
         assert.ok(
           found.some((d) => d.code === 'CH-802'),
-          'getZeroCostDishes did not find the portion-less dish the view is silently pricing at zero',
+          'getZeroCostDishes cannot name the dish that dragged coverage down',
+        )
+        assert.equal(
+          Number(found.find((d) => d.code === 'CH-802')?.revenue), 1000,
+          'the guard must carry the revenue the dish sold, so the reader can size the gap',
         )
 
         // ── FINDING B: an item with no section lands in the Unmapped bucket.
@@ -7184,13 +7210,131 @@ async function run() {
         assert.equal(Number(four?.theoretical_cost), 500, '20 units at 10 must reach the department once it has one')
         out.b = `item alone → theoretical ${three?.theoretical_cost}; item + department → ${four?.theoretical_cost}`
 
+        // ── items_costed COUNTS BOTH ROUTES NOW, so the screen reads the view
+        //    again instead of counting item-mapped rows for itself.
+        //
+        //    AND THE WORD IS NARROWER THAN IT SOUNDS: the filter is
+        //    `recipe_id IS NOT NULL OR item_id IS NOT NULL` — a mapping that
+        //    POINTS at a costing route, not one that is priceable through it.
+        //    The portion-less dish is counted here and still prices at zero,
+        //    which is exactly why the separate guard is what names it.
+        const [cov] = await tx<{ items_costed: number; items_mapped: number }[]>`
+          select items_costed::int as items_costed, items_mapped::int as items_mapped
+          from mapping_coverage where restaurant_id = ${t}`
+        assert.equal(cov.items_mapped, 3, 'three POS items are mapped in this fixture')
+        assert.equal(
+          cov.items_costed, 3,
+          'items_costed must count the stock item too — a priced bottled water is not uncosted',
+        )
+        out.c = `items_costed ${cov.items_costed}/${cov.items_mapped} — counts the item route, and counts the portion-less dish it cannot price`
+
         throw new Error('ROLLBACK-VARIANCE-PROBE')
       }).catch((e: unknown) => {
         if ((e as Error).message !== 'ROLLBACK-VARIANCE-PROBE') throw e
       })
       console.log(`      A: ${out.a}`)
       console.log(`      B: ${out.b}`)
+      console.log(`      C: ${out.c}`)
     })
+  })
+
+
+  await check('no zod refine carries a reason the user can never read', async () => {
+    // A VALIDATION WHOSE REASON NEVER ARRIVES IS A VALIDATION NOBODY CAN OBEY.
+    //
+    // Every fail() in this app collapses ZodError to one sentence — measured:
+    // all 24 handlers in src/server do it, either "Invalid input — nothing was
+    // saved" or the bill's own variant. So a `.refine()` carrying a message
+    // writes words that are shipped and never shown. It was silently true of
+    // the "pick a dish or a department" refine from the day it was written,
+    // and of two 'Unknown list' / 'Unknown tab group' refines beside it.
+    //
+    // The rule is therefore unconditional and needs no judgement: a refine may
+    // narrow a SHAPE, and the REASON belongs where the error class survives.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const files = [...walk('src/server'), ...walk('src/lib')]
+    const offenders: string[] = []
+    let refines = 0
+    let handlers = 0
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8')
+      if (src.includes('ZodError')) handlers++
+      // every .refine( call, with its argument list up to the closing paren of
+      // the call — good enough to see whether a message rides along
+      const re = /\.refine\(/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(src)) !== null) {
+        refines++
+        // scan forward, balancing parens, to the end of this call
+        let depth = 0
+        let i = m.index + '.refine'.length
+        let end = i
+        for (; i < src.length; i++) {
+          if (src[i] === '(') depth++
+          else if (src[i] === ')') {
+            depth--
+            if (depth === 0) { end = i; break }
+          }
+        }
+        const call = src.slice(m.index, end + 1)
+        // a message rides either as { message: '…' } or as a positional string
+        const hasMessage = /message\s*:/.test(call) || /,\s*['"`]/.test(call)
+        if (hasMessage) offenders.push(`${f}: ${call.replace(/\s+/g, ' ').slice(0, 110)}`)
+      }
+    }
+    assert.ok(refines > 0, 'the sweep found no .refine( at all — it is looking at the wrong tree')
+    assert.ok(handlers > 5, 'the sweep found almost no ZodError handlers — recheck the rule this rests on')
+    assert.equal(
+      offenders.length,
+      0,
+      `a refine carries a message fail() will discard — move the reason to a thrown error:\n      ${offenders.join('\n      ')}`,
+    )
+    console.log(`      ${refines} refine(s) across ${files.length} files, none carrying a message · ${handlers} ZodError handlers`)
+  })
+
+  await check('a chart takes its polarity rather than encoding one', async () => {
+    // DivergingBars hard-wired `value < 0 ? RED : GREEN`, which is correct for
+    // a MARGIN and paints an OVERSPEND green. A component that encodes a
+    // polarity rather than taking one gets reused into a lie eventually — so
+    // the prop is required with NO DEFAULT, and every call site states which
+    // way round its subject reads.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const charts = readFileSync('src/components/dashboard/Charts.tsx', 'utf8')
+    assert.ok(
+      !/polarity\s*=\s*'higher-is-good'/.test(charts),
+      'polarity has a default again — the next caller inherits margin’s meaning silently',
+    )
+    assert.ok(charts.includes("polarity: 'higher-is-good' | 'higher-is-bad'"), 'polarity is no longer required')
+
+    // and EVERY mount states it. A boundary match, not a prefix: `<DivergingBarsX`
+    // contains `<DivergingBars`, which is the flaw this file records twice.
+    const mounts = [...walk('src/app'), ...walk('src/components')].filter((f) =>
+      /<DivergingBars[\s/>]/.test(readFileSync(f, 'utf8')),
+    )
+    assert.ok(mounts.length > 0, 'nothing mounts DivergingBars — the sweep is looking at the wrong tree')
+    for (const f of mounts) {
+      const src = readFileSync(f, 'utf8')
+      const opens = src.split(/<DivergingBars[\s/>]/).length - 1
+      const stated = (src.match(/polarity="higher-is-(good|bad)"/g) ?? []).length
+      assert.equal(stated, opens, `${f} mounts DivergingBars ${opens}× and states a polarity ${stated}×`)
+    }
+    console.log(`      ${mounts.length} file(s) mount DivergingBars, every mount states its polarity`)
   })
 
   console.log(

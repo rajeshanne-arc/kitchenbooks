@@ -1184,13 +1184,15 @@ export type ItemOption = {
  *  `revenue_mapped` is NULL, not 0, when nothing is mapped — a sum over no
  *  rows.
  *
- *  `items_costed` COUNTS DISHES ONLY — its filter is `m.recipe_id IS NOT
- *  NULL`, which predates the stock-item target and does not know about it.
- *  A POS item pointed at a stock item DOES carry a cost into
- *  theoretical_food_cost, so this figure now understates. The mapping screen
- *  counts item-mapped rows itself from the rows it already holds rather than
- *  letting the view's word "costed" quietly mean something narrower than it
- *  says. */
+ *  `items_costed` counts BOTH costing routes — `recipe_id IS NOT NULL OR
+ *  item_id IS NOT NULL`. It briefly counted dishes alone, which made a mapped
+ *  and priced bottled water read as uncosted.
+ *
+ *  IT STILL MEANS "POINTS AT A COSTING ROUTE", NOT "CAN BE PRICED THROUGH IT":
+ *  a dish with no portion count is counted here and contributes nothing to
+ *  theoretical_food_cost, whose join requires `cost_per_portion IS NOT NULL`.
+ *  Those dishes are named individually on the variance card rather than left
+ *  for a reader to infer from a percentage. */
 export type MappingCoverage = {
   items_seen: number
   items_mapped: number

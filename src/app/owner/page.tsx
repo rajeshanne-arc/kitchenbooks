@@ -896,8 +896,11 @@ export default async function DashboardPage({
           sentence={sentence}
         >
           <>
+            {/* A MARGIN'S BAD SIDE IS THE NEGATIVE ONE — stated, not assumed,
+                because the card below reads the opposite way. */}
             <DivergingBars
               rows={earning.slice(0, 6).map((s) => ({ label: s.section_name, value: Number(s.margin) }))}
+              polarity="higher-is-good"
               height={Math.max(120, Math.min(earning.length, 6) * 30 + 40)}
             />
             {unearning.length > 0 && (
