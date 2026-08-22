@@ -13,22 +13,35 @@ import {
 import { periodParamValue, readPeriodParam, resolvePeriod } from '@/lib/period'
 import { fmtDate } from '@/lib/format'
 import RegisterTable from '@/components/accountant/RegisterTable'
+import RegisterSummary from '@/components/accountant/RegisterSummary'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import { cardCls, pageSubCls, pageTitleCls } from '@/components/ui'
 import { businessToday } from '@/server/business-day'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
 
 export const dynamic = 'force-dynamic'
+
+// DETAIL is the register — line by line, the shape every accountant already
+// reads. SUMMARY totals the same rows by party, which is the question you ask
+// before you ask for the lines: who did most of this. Both come from the same
+// query; nothing is re-fetched and no total is computed twice.
+const VIEWS = [
+  { value: 'detail' as const, label: 'Detail', hint: 'Line by line, in date order — the register itself.' },
+  { value: 'summary' as const, label: 'Summary', hint: 'The same rows totalled by party, biggest first.' },
+]
 
 export default async function RegisterPage({
   params,
   searchParams,
 }: {
   params: Promise<{ key: string }>
-  searchParams: Promise<{ period?: string }>
+  searchParams: Promise<{ period?: string; view?: string }>
 }) {
   const { key } = await params
   if (!isRegisterKey(key)) notFound()
-  const { period: periodParam } = await searchParams
+  const { period: periodParam, view: viewParam } = await searchParams
+  const view = readView('register', viewParam)
   // ONE front door for ?period=, so preset/custom precedence is decided in
   // one place rather than in twelve hand-written ternaries.
   const periodToday = await businessToday()
@@ -48,6 +61,14 @@ export default async function RegisterPage({
         </p>
       </header>
 
+      <ViewToggle
+        param="view"
+        value={view}
+        options={VIEWS}
+        defaultValue={VIEW_KEYS.register[0]}
+        label="How to read this register"
+      />
+
       <div className="pb-4">
         <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath={`/accounts/registers/${key}`} />
       </div>
@@ -58,8 +79,10 @@ export default async function RegisterPage({
             Nothing in this register for {fmtDate(period.from)} — {fmtDate(period.to)}. An empty
             register is a real answer; it is not the same as a register that failed to load.
           </p>
-        ) : (
+        ) : view === 'detail' ? (
           <RegisterTable rows={rows} />
+        ) : (
+          <RegisterSummary rows={rows} />
         )}
       </section>
 

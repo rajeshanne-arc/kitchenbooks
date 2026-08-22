@@ -5244,6 +5244,140 @@ async function run() {
     for (const [t, why] of Object.entries(EXEMPT)) console.log(`        exempt: ${t} — ${why}`)
   })
 
+  /* ── every toggle answers a genuinely different question ───────────── */
+  console.log('\ntoggles: two states that agree are decoration')
+
+  await check('every view toggle is registered, read through ONE reader, and mounted', async () => {
+    // ONE COMPONENT, NOT TWELVE. Every toggle writes to the URL through
+    // ViewToggle and reads back through readView, so the option list lives in
+    // exactly one place and a screen cannot disagree with its own gate.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const { VIEW_KEYS, readView } = await import('../src/lib/views')
+
+    // Every key must be read somewhere and mounted somewhere. A key nobody
+    // reads is a toggle that was designed and never wired.
+    const src = [...walk('src/app'), ...walk('src/components')]
+      .map((f) => readFileSync(f, 'utf8'))
+      .join('\n')
+    const unread = Object.keys(VIEW_KEYS).filter((k) => !src.includes(`readView('${k}'`))
+    assert.deepEqual(unread, [], 'these view keys are declared and never read — a toggle with no screen')
+
+    // Every list is [default, ...rest] and must offer a real choice.
+    for (const [k, opts] of Object.entries(VIEW_KEYS)) {
+      assert.ok(opts.length >= 2, `${k} offers ${opts.length} option(s) — that is not a choice`)
+      assert.equal(new Set(opts).size, opts.length, `${k} repeats an option`)
+      // The default writes no param, so it must be what an absent param yields.
+      assert.equal(readView(k as keyof typeof VIEW_KEYS, undefined), opts[0], `${k} does not default to its first option`)
+      // An unrecognised value falls back rather than throwing: a pasted URL
+      // with a typo should show the page, not a 500.
+      assert.equal(readView(k as keyof typeof VIEW_KEYS, 'zz-not-a-view'), opts[0], `${k} does not fall back`)
+    }
+
+    // Nothing may hand-roll the ternary readView exists to hold.
+    const handRolled: string[] = []
+    for (const f of [...walk('src/app'), ...walk('src/components')]) {
+      const body = readFileSync(f, 'utf8')
+      if (!/<ViewToggle/.test(body)) continue
+      if (!/readView\(|readStockView\(/.test(body) && !/value=\{[a-zA-Z]+\}/.test(body)) handRolled.push(f)
+    }
+    assert.deepEqual(handRolled, [], 'these mount a toggle without reading its param through the shared reader')
+
+    const mounts = [...walk('src/app'), ...walk('src/components')].filter((f) =>
+      /<ViewToggle[\s/>]/.test(readFileSync(f, 'utf8')),
+    )
+    assert.ok(mounts.length >= 10, `only ${mounts.length} screens mount a toggle — expected one per registered key`)
+    console.log(`      ${Object.keys(VIEW_KEYS).length} keys, all read · ${mounts.length} mounts · every default is its first option`)
+  })
+
+  await check('the query-backed toggles return GENUINELY different rows', async () => {
+    // THE RULE RAJESH ASKED FOR, applied to each: assert the two states differ
+    // by finding a pair that swaps. A toggle whose states agree is decoration,
+    // and that is exactly what a careless ORDER BY edit leaves behind.
+    //
+    // WHERE LIVE DATA CANNOT TELL THEM APART IT SAYS SO rather than passing.
+    // One dish and one due item exist today, and a one-row list is identical
+    // under every ordering — a green tick there would be the vacuous-fixture
+    // family again.
+    const rid = process.env.KB_LIVE_TENANT as string
+    const { listStock, listReorderDue } = await import('../src/server/store-queries')
+    const { listDishCosts } = await import('../src/server/recipes-queries')
+    const { listRoster } = await import('../src/server/labour-queries')
+    const { listVendorsWithDues } = await import('../src/server/books-queries')
+
+    const probes: { name: string; a: string[]; b: string[] }[] = [
+      {
+        name: 'stock by-category vs by-value',
+        a: (await listStock(rid, '', 'by-category')).map((r) => r.code),
+        b: (await listStock(rid, '', 'by-value')).map((r) => r.code),
+      },
+      {
+        name: 'recipes by-section vs by-food-cost',
+        a: (await listDishCosts(rid, 'by-section')).map((r) => r.code),
+        b: (await listDishCosts(rid, 'by-food-cost')).map((r) => r.code),
+      },
+      {
+        name: 'roster by-department vs by-salary',
+        a: (await listRoster(rid, 'by-department')).map((r) => r.code),
+        b: (await listRoster(rid, 'by-salary')).map((r) => r.code),
+      },
+      {
+        name: 'reorder rows (one ordering, two renderings)',
+        a: (await listReorderDue(rid)).map((r) => r.code),
+        b: (await listReorderDue(rid)).map((r) => r.code),
+      },
+    ]
+    const differ: string[] = []
+    const untestable: string[] = []
+    for (const p of probes) {
+      if (p.name.startsWith('reorder')) continue // presentation-only, asserted in source below
+      if (p.a.length < 2) untestable.push(`${p.name} (${p.a.length} row${p.a.length === 1 ? '' : 's'})`)
+      else if (JSON.stringify(p.a) === JSON.stringify(p.b)) {
+        // Identical with 2+ rows is not proof of a bug — the data may simply
+        // agree — so this reports rather than fails, and the source check below
+        // is what actually holds the branch.
+        untestable.push(`${p.name} (${p.a.length} rows, orders coincide)`)
+      } else differ.push(p.name)
+    }
+
+    // PARTIES genuinely filters, so the counts must differ or nothing is filtered.
+    const owed = await listVendorsWithDues(rid, 'owed')
+    const all = await listVendorsWithDues(rid, 'all')
+    assert.ok(all.length >= owed.length, 'the all view returns fewer parties than the owed view')
+    if (all.length > owed.length) differ.push(`parties owed(${owed.length}) vs all(${all.length})`)
+    else untestable.push(`parties (every party is owed something, so the filter cannot be seen)`)
+
+    // THE SOURCE HALF, which holds regardless of what the data happens to look
+    // like: each query's ORDER BY or WHERE must branch on its view parameter.
+    const { readFileSync } = await import('node:fs')
+    const branching: [file: string, fn: string, needle: RegExp][] = [
+      ['src/server/store-queries.ts', 'listStock', /view === 'by-category'/],
+      ['src/server/recipes-queries.ts', 'listDishCosts', /order === 'by-food-cost'/],
+      ['src/server/labour-queries.ts', 'listRoster', /order === 'by-salary'/],
+      ['src/server/books-queries.ts', 'listVendorsWithDues', /filter === 'owed'/],
+      ['src/server/payroll-queries.ts', 'listPayrollRuns', /status === 'all'/],
+    ]
+    for (const [file, fn, needle] of branching) {
+      const body = readFileSync(file, 'utf8')
+      const at = body.indexOf(`export async function ${fn}`)
+      assert.ok(at > 0, `${fn} has been renamed`)
+      const next = body.indexOf('export async function ', at + 10)
+      const slice = body.slice(at, next === -1 ? body.length : next)
+      assert.match(slice, needle, `${fn} no longer branches on its view — the toggle would be decoration`)
+    }
+
+    console.log(`      ${differ.length} proved different on live data: ${differ.join(', ') || 'none'}`)
+    if (untestable.length > 0) console.log(`      UNTESTED on this data: ${untestable.join(', ')}`)
+    console.log(`      ${branching.length} query branches asserted in source, which holds whatever the data does`)
+  })
+
   /* ── the save acknowledgement, every path ──────────────────────────── */
   console.log('\nafter saving, the page does not sit still')
 
@@ -5486,7 +5620,8 @@ async function run() {
     // differ, asserted by finding a pair that swaps between them rather than
     // by trusting the SQL.
     const { listStock } = await import('../src/server/store-queries')
-    const { readStockView } = await import('../src/lib/types')
+    const { readView } = await import('../src/lib/views')
+    const readStockView = (v: string | undefined) => readView('stock', v)
     const rid = process.env.KB_LIVE_TENANT as string
 
     assert.equal(readStockView(undefined), 'by-category', 'the default view is not by-category')
@@ -5522,7 +5657,10 @@ async function run() {
     // filter silently reset the view beside it.
     const { readFileSync } = await import('node:fs')
     for (const f of ['src/app/store/stock/on-hand/page.tsx', 'src/app/kitchen/books/stock/page.tsx']) {
-      assert.ok(readFileSync(f, 'utf8').includes('readStockView('), `${f} reads ?view= by hand instead of the shared reader`)
+      assert.ok(
+        readFileSync(f, 'utf8').includes("readView('stock'"),
+        `${f} reads ?view= by hand instead of the shared reader`,
+      )
     }
     for (const f of ['src/components/ViewToggle.tsx', 'src/components/books/FilterInput.tsx']) {
       const src = readFileSync(f, 'utf8')

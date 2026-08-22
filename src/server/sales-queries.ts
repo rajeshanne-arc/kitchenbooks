@@ -227,3 +227,39 @@ export async function getQtySold(restaurantId: string, monthStart: string): Prom
       and date_trunc('month', sc.business_date)::date = ${monthStart}::date
     group by m.recipe_id`
 }
+
+/**
+ * WHAT ACTUALLY SOLD, by POS item name — and deliberately NOT through
+ * `pos_item_map`.
+ *
+ * `getQtySold` answers "how much of each DISH sold", which needs a mapping and
+ * is therefore silent about 94% of revenue today. This answers "what did the
+ * till ring up", which needs nothing but the fetch — so it works on day one and
+ * is the list somebody uses to DO the mapping.
+ *
+ * Revenue only: cancelled and complimentary orders are out of the money by the
+ * same whitelist every other sales figure uses.
+ */
+export async function getSalesByItem(
+  restaurantId: string,
+  from: string,
+  to: string,
+  limit = 200,
+): Promise<{ pos_item_id: string; item_name: string; qty: string; revenue: string; mapped: boolean }[]> {
+  return tsql`
+    select pl.pos_item_id,
+           coalesce(max(pl.item_name), pl.pos_item_id) as item_name,
+           sum(pl.qty)::text as qty,
+           sum(pl.amount)::text as revenue,
+           bool_or(m.pos_item_id is not null) as mapped
+    from sales_current sc
+    join pos_lines pl on pl.order_id = sc.id
+    left join pos_item_map m
+      on m.restaurant_id = sc.restaurant_id and m.pos_item_id = pl.pos_item_id
+    where sc.restaurant_id = ${restaurantId}
+      and sc.status_class = 'revenue'
+      and sc.business_date >= ${from}::date and sc.business_date <= ${to}::date
+    group by pl.pos_item_id
+    order by sum(pl.amount) desc, item_name asc
+    limit ${limit}`
+}

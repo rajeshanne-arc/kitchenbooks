@@ -18,6 +18,8 @@ import {
 } from '@/components/ui'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import { businessToday } from '@/server/business-day'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,12 +42,24 @@ const chip = (active: boolean) =>
       : 'border-rule bg-cell text-stone-700 hover:border-emerald-400'
   }`
 
+// BY TIME is the log and the default — what happened, in order, which is what
+// a log is for. The other two are the questions somebody actually arrives with:
+// "what did Haseeb do" and "every void this week". The FILTERS already narrow
+// to one person or one type; grouping answers it without having to pick one
+// first, which is the difference between interrogating a list and reading it.
+const VIEWS = [
+  { value: 'by-time' as const, label: 'By time', hint: 'Newest first — the log itself.' },
+  { value: 'by-person' as const, label: 'By person', hint: 'Grouped by who did it, busiest first.' },
+  { value: 'by-type' as const, label: 'By type', hint: 'Grouped by what was done — every void this week, in one block.' },
+]
+
 export default async function ActivityPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; who?: string; what?: string }>
+  searchParams: Promise<{ period?: string; who?: string; what?: string; view?: string }>
 }) {
-  const { period: periodParam, who, what } = await searchParams
+  const { period: periodParam, who, what, view: viewParam } = await searchParams
+  const view = readView('activity', viewParam)
   // ONE front door for ?period=, so preset/custom precedence is decided in
   // one place rather than in twelve hand-written ternaries.
   const periodToday = await businessToday()
@@ -62,6 +76,23 @@ export default async function ActivityPage({
     }),
     getActivityFacets(restaurant.id),
   ])
+
+  // GROUPED IN THE PAGE, not re-fetched: the log is already the right rows for
+  // the period and the filters, and a second query would be one filter change
+  // away from grouping a different set than the list beneath it.
+  const grouped: { key: string; rows: typeof rows }[] = []
+  if (view !== 'by-time') {
+    const by = new Map<string, typeof rows>()
+    for (const r of rows) {
+      const k = view === 'by-person' ? (r.entered_by ?? 'not recorded') : r.what
+      by.set(k, [...(by.get(k) ?? []), r])
+    }
+    grouped.push(
+      ...[...by.entries()]
+        .map(([key, rs]) => ({ key, rows: rs }))
+        .sort((a, b) => b.rows.length - a.rows.length || a.key.localeCompare(b.key)),
+    )
+  }
 
   const q = (extra: Record<string, string | undefined>) => {
     const p = new URLSearchParams()
@@ -83,6 +114,14 @@ export default async function ActivityPage({
           {restaurant.name} — what was entered, when, and by whom
         </p>
       </header>
+
+      <ViewToggle
+        param="view"
+        value={view}
+        options={VIEWS}
+        defaultValue={VIEW_KEYS.activity[0]}
+        label="How to group the log"
+      />
 
       <div className="space-y-3 pb-4">
         <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/owner/activity" />
@@ -147,7 +186,25 @@ export default async function ActivityPage({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {(view === 'by-time'
+                  ? [{ key: null as string | null, rows }]
+                  : grouped.map((g) => ({ key: g.key as string | null, rows: g.rows }))
+                ).flatMap((g) => [
+                  ...(g.key === null
+                    ? []
+                    : [
+                        <tr key={`band-${g.key}`}>
+                          <td colSpan={5} className="border-b border-rule bg-stone-100 px-3 py-1.5">
+                            <span className="font-display text-[11px] font-semibold uppercase tracking-[0.08em] text-stone-600">
+                              {g.key}
+                            </span>
+                            <span className="ml-2 text-[11px] text-stone-400">
+                              {g.rows.length} {g.rows.length === 1 ? 'entry' : 'entries'}
+                            </span>
+                          </td>
+                        </tr>,
+                      ]),
+                  ...g.rows.map((r) => (
                   <tr key={`${r.what}-${r.id}`} className={`${trCls} ${r.is_reversal ? 'bg-stone-50' : ''}`}>
                     <td className={tdCls}>
                       {r.what}
@@ -168,7 +225,8 @@ export default async function ActivityPage({
                       )}
                     </td>
                   </tr>
-                ))}
+                  )),
+                ])}
               </tbody>
             </table>
           </div>

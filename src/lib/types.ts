@@ -2,7 +2,6 @@
 // All money values travel as Postgres numeric::text strings — never floats.
 
 import type { Role } from '@/lib/roles'
-import { readOneOf } from '@/lib/views'
 
 export type Category = { code: string; name: string; kind: 'ingredient' | 'operational'; sort_order: number }
 export type Unit = { code: string; name: string }
@@ -3331,15 +3330,9 @@ export type UnclosedDishRow = {
  *  third: Count already walks by location. */
 export type StockView = 'by-category' | 'by-value'
 
-/** THE ONE FRONT DOOR for `?view=` on stock. Two route files mount StockView,
- *  and a hand-written ternary in each is two chances to disagree — the same
- *  argument that made readPeriodParam a single function. Anything unrecognised
- *  falls back to the default rather than throwing: a pasted URL with a typo
- *  should show the page, not a 500. */
-export function readStockView(v: string | undefined): StockView {
-  // Delegates so the option list lives in exactly one place — see VIEW_KEYS.
-  return readOneOf(v, ['by-category', 'by-value'] as const, 'by-category')
-}
+/* readStockView is GONE. It was a second front door for one screen while every
+ * other toggle went through readView — and two doors is the thing the shared
+ * reader exists to remove. See VIEW_KEYS.stock in src/lib/views.ts. */
 
 export type MeterKind = 'electricity' | 'gas' | 'water' | 'other'
 
