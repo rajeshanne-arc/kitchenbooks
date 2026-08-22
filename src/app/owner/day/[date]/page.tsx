@@ -18,6 +18,9 @@ import { HourlyLine } from '@/components/dashboard/Charts'
 import Unassessed from '@/components/dashboard/Unassessed'
 import Honesty from '@/components/Honesty'
 import { cardCls, heroNumCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
+import { UNIT_OPTIONS, type Units } from '@/lib/units'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,24 +79,38 @@ function Figure({ label, value, tone = '', sub }: { label: string; value: string
 }
 
 /** A ratio is stated only when its numerator AND denominator are both real.
- *  Everything on this page that divides goes through here. */
+ *  Everything on this page that divides goes through here.
+ *
+ *  THE RUPEES SIDE IS THE HALF THAT WAS MISSING. The percentage refuses
+ *  without a denominator — correctly — and then says nothing about the money,
+ *  which is a figure that EXISTS and is worth reading on exactly the days the
+ *  ratio cannot be formed. So under ₹ the amount shows even where the percent
+ *  could not: the numerator was never the missing part. */
 function Ratio({
   label,
   pct,
+  amountPaise,
   needs,
   why,
   tone,
+  units,
 }: {
   label: string
   pct: number | null
+  /** the numerator in paise — null only when nothing was recorded at all */
+  amountPaise: number | null
   needs: string
   why: string
   tone?: (p: number) => string
+  units: Units
 }) {
+  const showMoney = units === 'rupees' && amountPaise !== null
   return (
     <div className="rounded-xl border border-rule bg-cell p-3">
       <div className="text-[11px] font-medium uppercase tracking-wide text-stone-400">{label}</div>
-      {pct === null ? (
+      {showMoney ? (
+        <div className={`${heroNumCls} mt-0.5 text-3xl text-stone-900`}>{formatPaise(amountPaise)}</div>
+      ) : pct === null ? (
         <div className="mt-1.5">
           <Unassessed needs={needs}>{why}</Unassessed>
         </div>
@@ -104,8 +121,15 @@ function Ratio({
   )
 }
 
-export default async function DaySheetPage({ params }: { params: Promise<{ date: string }> }) {
+export default async function DaySheetPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ date: string }>
+  searchParams: Promise<{ units?: string }>
+}) {
   const { date } = await params
+  const units = readView('units', (await searchParams).units) as Units
   if (!DATE_RE.test(date)) notFound()
   const restaurant = await getRestaurant()
   const today = await businessToday()
@@ -141,6 +165,10 @@ export default async function DaySheetPage({ params }: { params: Promise<{ date:
   const labourPaise = ev.marks > 0 ? paise(day?.labour) : null
   const labourPct = labourPaise !== null && revenuePaise > 0 ? (labourPaise / revenuePaise) * 100 : null
   const primePct = foodPct !== null && labourPct !== null ? foodPct + labourPct : null
+  // The rupee numerator behind each ratio. Prime cost only when BOTH of its
+  // parts are real: the sum of a real number and a missing one is not a
+  // smaller number, in rupees exactly as in percent.
+  const primePaise = consumed !== null && labourPaise !== null ? consumed + labourPaise : null
 
   const busiest = hours.reduce<(typeof hours)[number] | null>(
     (best, h) => (best === null || decimalStringToPaise(h.revenue) > decimalStringToPaise(best.revenue) ? h : best),
@@ -303,10 +331,19 @@ export default async function DaySheetPage({ params }: { params: Promise<{ date:
 
         {/* ── THE THREE RATIOS — the point of the page ─────────────────── */}
         <Card title="The three ratios" source="day_summary">
-          <div className="grid gap-3 sm:grid-cols-3">
+          <ViewToggle
+            param="units"
+            value={units}
+            options={UNIT_OPTIONS}
+            defaultValue={VIEW_KEYS.units[0]}
+            label="Show the three ratios as rupees or as a share of sales"
+          />
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
             <Ratio
               label="Food cost"
               pct={foodPct}
+              amountPaise={consumed}
+              units={units}
               tone={(p) => (p > 40 ? 'text-red-700' : p > 35 ? 'text-doubt' : 'text-stone-900')}
               needs={
                 !salesReal
@@ -328,6 +365,8 @@ export default async function DaySheetPage({ params }: { params: Promise<{ date:
             <Ratio
               label="Labour"
               pct={labourPct}
+              amountPaise={labourPaise}
+              units={units}
               tone={(p) => (p > 35 ? 'text-red-700' : p > 25 ? 'text-doubt' : 'text-stone-900')}
               needs={!salesReal ? 'no sales' : 'nobody marked'}
               why={
@@ -339,6 +378,8 @@ export default async function DaySheetPage({ params }: { params: Promise<{ date:
             <Ratio
               label="Prime cost"
               pct={primePct}
+              amountPaise={primePaise}
+              units={units}
               tone={(p) => (p > 65 ? 'text-red-700' : p > 60 ? 'text-doubt' : 'text-stone-900')}
               needs="food or labour missing"
               why="Prime cost is food plus labour. It is stated only when both of them are, because the sum of a real number and a missing one is not a smaller number."

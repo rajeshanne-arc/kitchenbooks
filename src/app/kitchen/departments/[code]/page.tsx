@@ -35,6 +35,9 @@ import {
   thNumCls,
   trCls,
 } from '@/components/ui'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
+import { UNIT_OPTIONS, type Units } from '@/lib/units'
 
 export const dynamic = 'force-dynamic'
 
@@ -117,10 +120,11 @@ export default async function DepartmentPage({
   searchParams,
 }: {
   params: Promise<{ code: string }>
-  searchParams: Promise<{ period?: string }>
+  searchParams: Promise<{ period?: string; units?: string }>
 }) {
   const { code: raw } = await params
-  const { period: periodParam } = await searchParams
+  const { period: periodParam, units: unitsParam } = await searchParams
+  const units = readView('units', unitsParam) as Units
   if (!DEPT_CODE.test(raw)) notFound()
 
   const restaurant = await getRestaurant()
@@ -423,12 +427,27 @@ export default async function DepartmentPage({
           </Unassessed>
         ) : (
           <>
-            <div className="flex flex-wrap items-end gap-6">
+            <ViewToggle
+              param="units"
+              value={units}
+              options={UNIT_OPTIONS}
+              defaultValue={VIEW_KEYS.units[0]}
+              label="Show food cost as rupees or as a share of sales"
+            />
+            <div className="mt-3 flex flex-wrap items-end gap-6">
               {/* THE FIGURE IS COLOURED ABSOLUTELY — a dish or a department at
                   44% is expensive whatever it is. Amber over 35, red over 40. */}
+              {/* THE RUPEES SIDE IS THE CONSUMPTION ITSELF, which is real
+                  whether or not any sales were ever attributed to this
+                  department — and with 94% of revenue unmapped that is most of
+                  them. The percent refuses; the money does not have to. */}
               <Figure
-                label={`Food cost · ${monthLabel(period.reportMonth)}`}
-                value={`${Number(fc.food_cost_pct).toFixed(1)}%`}
+                label={
+                  units === 'rupees'
+                    ? `Consumed · ${monthLabel(period.reportMonth)}`
+                    : `Food cost · ${monthLabel(period.reportMonth)}`
+                }
+                value={units === 'rupees' ? money(fc.consumed_total) : `${Number(fc.food_cost_pct).toFixed(1)}%`}
                 tone={
                   Number(fc.food_cost_pct) > 40
                     ? 'text-red-700'

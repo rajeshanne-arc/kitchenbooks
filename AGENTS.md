@@ -5768,7 +5768,7 @@ only active is correct and intended. Two more were pure false positives:
 - `listUsers`'s `status = 'active'` is inside its **ORDER BY**, sorting active
   first — the opposite of hiding.
 
-### READ A PROMPT AS "CHECK WHETHER X", NOT AS "X IS TRUE"
+### A BRIEF STATING A PREMISE IS A BRIEF ASKING WHETHER IT HOLDS
 
 Rajesh's own note, recorded because it is the more useful half:
 
@@ -5791,8 +5791,8 @@ written by somebody following the rule — so "the rule implies X" and "the code
 does X" agree far more often than not, which is exactly what makes the
 occasional disagreement invisible.
 
-**So a brief that states a premise is a brief asking whether the premise
-holds.** Check it, in the source, before building on it — and say so plainly
+**A BRIEF STATING A PREMISE IS A BRIEF ASKING WHETHER IT HOLDS.** Check it, in
+the source, before building on it — and say so plainly
 when it does not, because the check is often worth more than the build. Three
 of the four above ended with nothing built and something learned.
 
@@ -5930,6 +5930,68 @@ is not ₹0.00 any more than it is 0%.
 Built last and deliberately not held for the data: it is ready the moment the
 mapping queue is worked, with no change here.
 
+**Five screens, and the fifth was argued out.** The P&L routes every cell
+through one `Money` component. The day sheet's three ratios, the staff
+dashboard's labour card and the department food-cost card each gained the
+RUPEES side — and on all three the money shows *even where the percentage
+refuses*, because the missing half is the DENOMINATOR: the wage bill and the
+consumption are real, and on the days no POS has been fetched they are the only
+figures there are.
+
+**The owner dashboard did NOT get the toggle**, and that is a decision rather
+than an omission. Its two ratio-shaped cards are "Food cost % against target"
+and "Margin by section" — the second is already in rupees, and the first is a
+TARGET COMPARISON, where rupees has no reference line to compare against. A
+units toggle there would draw a bar chart against a target that means nothing.
+The consumed rupees are one tap away on the card's own href and on the
+department pages, which now carry the lens.
+
+**And the gate's first version cried wolf.** A repo-wide sweep for
+percentages flagged three files that were already correct — a dish card
+rendering a dash, a guarded settlement ternary, and a stock row whose
+`toFixed(1)` is DAYS of cover, not a percent at all. The instrument was wrong,
+not the code, so it is scoped to the screens that actually offer the lens. And
+the rule it asserts is the REFUSAL, not the function: `requires()` +
+`<Unassessed>` guards a percentage as well as `asUnits` does, and on a
+dashboard it does it better, because its sentence is screen-specific where a
+shared formatter can only be generic.
+
 *(Named `units.ts` — `src/lib/share.ts` has been the WhatsApp day-close summary
 since phase 11, and writing the new module there first overwrote it. Restored
 from git. Check whether a filename is taken before claiming it.)*
+
+## THE TOOL DID EXACTLY WHAT I TOLD IT, AND WHAT I TOLD IT WAS NOT WHAT I MEANT
+
+Three of these now, and they are one entry because they are one shape. None is
+a bug in a tool; each is an instruction that was obeyed literally and meant
+something else.
+
+| | What was written | What it did |
+|---|---|---|
+| the SaveAck gate | `/<SaveAck/` | matched `<SaveAckX` too, so a rename left the gate green |
+| a SQL comment | ``-- filtering on `balance <> 0` …`` inside a `` sql`…` `` template | the backtick CLOSED the template, mid-comment |
+| a new module | `cat > src/lib/share.ts` | silently overwrote the WhatsApp day-close summary, which had lived there since phase 11 |
+
+Every one passed its immediate check. The regex compiled and matched. The
+comment was valid SQL. The write succeeded and reported nothing. **A tool
+succeeding is not the tool doing what was intended** — which is the same
+sentence as *a statement that succeeds is not a statement that did something*,
+one layer up, about the author rather than the database.
+
+**The check is the same in all three: read what is already there, and read what
+the delimiter does, before writing.**
+
+- Before matching a name, ask what ELSE the pattern matches — a prefix always
+  matches its own extensions, so anchor on a boundary.
+- Before nesting text inside a delimiter, ask what characters END that
+  delimiter. A backtick is not punctuation inside a template literal; it is the
+  terminator. So is a quote inside a quoted string and `*/` inside a block
+  comment.
+- Before claiming a filename, LOOK. `ls` costs nothing; a silent overwrite of a
+  module nothing in the current task mentions costs a restore from git and, if
+  it had been uncommitted, the file.
+
+The last one is worth stating on its own, because it is the only one of the
+three that destroys rather than misleads: **`cat >` and `Write` do not ask.**
+Every other footgun here announced itself the moment a gate ran; this one was
+found only because TypeScript happened to notice two exports had vanished.

@@ -5424,17 +5424,33 @@ async function run() {
       }
       return out
     }
+    // THE INVARIANT IS THE REFUSAL, NOT THE FUNCTION. `asUnits` is one way to
+    // guard a percentage; `requires()` + <Unassessed> is the other, and on the
+    // dashboards it is the BETTER one — its sentences are screen-specific
+    // ("no POS day has been fetched for this period") where a shared formatter
+    // can only say something generic. So the rule is "never print a share of
+    // sales you have not guarded", not "call this function".
+    //
+    // SCOPED TO THE SCREENS THAT OFFER THE LENS, deliberately. A repo-wide
+    // sweep for percentages produced three false positives on correctly
+    // guarded code — a dish card that already renders a dash, a settlement
+    // ternary, and a stock row whose `toFixed(1)` is DAYS of cover and not a
+    // percentage at all. A gate that cries wolf is one people stop reading,
+    // and the instrument was the thing that was wrong.
     const mounts = [...walk('src/app'), ...walk('src/components')].filter((f) =>
       /UNIT_OPTIONS/.test(readFileSync(f, 'utf8')),
     )
-    assert.ok(mounts.length > 0, 'no screen offers the rupees/percent lens — the formatter has no reader')
-    for (const f of mounts) {
-      assert.match(
-        readFileSync(f, 'utf8'),
-        /asUnits\(/,
-        `${f} offers the lens and formats the figures itself instead of through asUnits`,
-      )
-    }
+    assert.ok(mounts.length >= 4, `only ${mounts.length} screen(s) offer the lens — expected the P&L and the four dashboards`)
+    const unguarded = mounts.filter((f) => {
+      const body = readFileSync(f, 'utf8')
+      return !/asUnits\(|Unassessed|requires\(/.test(body)
+    })
+    assert.deepEqual(
+      unguarded.map((f) => f.replace('src/', '')),
+      [],
+      'these offer the rupees/percent lens and guard the percentage nowhere — 0% and "we do not know" would look identical',
+    )
+
     console.log(`      24.0% vs 60.0% on the same cost · 3 distinct refusals, never 0% · ${mounts.length} screen(s) on the lens`)
   })
 

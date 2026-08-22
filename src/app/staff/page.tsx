@@ -28,6 +28,9 @@ import {
   thNumCls,
   trCls,
 } from '@/components/ui'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
+import { UNIT_OPTIONS, type Units } from '@/lib/units'
 
 export const dynamic = 'force-dynamic'
 
@@ -77,9 +80,10 @@ function Card({ title, source, children }: { title: string; source: string; chil
 export default async function StaffDashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>
+  searchParams: Promise<{ period?: string; units?: string }>
 }) {
-  const { period: periodParam } = await searchParams
+  const { period: periodParam, units: unitsParam } = await searchParams
+  const units = readView('units', unitsParam) as Units
   const restaurant = await getRestaurant()
   const today = await businessToday()
   // Staff was the only group with no period control at all.
@@ -215,7 +219,22 @@ export default async function StaffDashboardPage({
 
         {/* ── 2 ── */}
         <Card title="Is it in line" source="labour_summary">
-          {pct.assessable ? (
+          <ViewToggle
+            param="units"
+            value={units}
+            options={UNIT_OPTIONS}
+            defaultValue={VIEW_KEYS.units[0]}
+            label="Show labour as rupees or as a share of sales"
+          />
+          {/* THE RUPEES SIDE SHOWS EVEN WHERE THE PERCENT CANNOT. The missing
+              half is the DENOMINATOR — the wage bill itself is real, and on the
+              days no POS has been fetched it is the only figure there is. */}
+          {units === 'rupees' && spend.assessable ? (
+            <Figure
+              label={`Wage bill · ${monthLabel(period.reportMonth)}`}
+              value={formatPaise(spend.data.totalLabour)}
+            />
+          ) : pct.assessable ? (
             <>
               <Figure
                 label={`Labour as a share of sales · ${monthLabel(period.reportMonth)}`}
