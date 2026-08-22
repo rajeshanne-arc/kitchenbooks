@@ -5378,6 +5378,66 @@ async function run() {
     console.log(`      ${branching.length} query branches asserted in source, which holds whatever the data does`)
   })
 
+  await check('percent NEVER prints without a denominator', async () => {
+    // THE PRECONDITION IS THE WHOLE FEATURE. Food cost, labour and prime cost
+    // are quoted as percentages by universal convention, and a P&L in rupees
+    // alone cannot be compared to a benchmark or to last month at a different
+    // volume. But a percentage needs a denominator, and 94% of this
+    // restaurant's revenue is unmapped — so most department percentages are
+    // unanswerable today and MUST say so.
+    //
+    // 0% is the failure this guards. It is the difference between "labour was
+    // free" and "we do not know what we sold".
+    const { asUnits } = await import('../src/lib/units')
+
+    // Rajesh's own example, by value: the same cost is excellent or ruinous
+    // depending only on the denominator, which is why the lens exists.
+    const txt = (a: { kind: string } & Record<string, unknown>) => (a.kind === 'unassessable' ? null : a.text)
+    assert.equal(txt(asUnits(12_000_000, 50_000_000, 'percent')), '24.0%')
+    assert.equal(txt(asUnits(12_000_000, 20_000_000, 'percent')), '60.0%')
+    assert.equal(txt(asUnits(12_000_000, 50_000_000, 'rupees')), '₹1,20,000.00')
+
+    // THREE DISTINCT REFUSALS, because they are three different facts and the
+    // reader must be able to tell which: no sales figure at all, a real
+    // measured zero, and nothing recorded to state in the first place.
+    const noSales = asUnits(12_000_000, null, 'percent')
+    const nilSales = asUnits(12_000_000, 0, 'percent')
+    const nothing = asUnits(null, 50_000_000, 'percent')
+    for (const [label, r] of [['no sales', noSales], ['nil sales', nilSales], ['nothing', nothing]] as const) {
+      assert.equal(r.kind, 'unassessable', `${label} produced a figure instead of a refusal`)
+    }
+    assert.equal(new Set([noSales, nilSales, nothing].map((r) => (r as { needs: string }).needs)).size, 3,
+      'the three refusals share wording — a reader cannot tell which one they are looking at')
+
+    // AND IT IS A REFUSAL IN RUPEES TOO when nothing was recorded: an absent
+    // figure is not ₹0.00 any more than it is 0%.
+    assert.equal(asUnits(null, 50_000_000, 'rupees').kind, 'unassessable')
+
+    // Nothing anywhere may render a percentage from a missing denominator by
+    // hand — the whole point of one formatter.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const mounts = [...walk('src/app'), ...walk('src/components')].filter((f) =>
+      /UNIT_OPTIONS/.test(readFileSync(f, 'utf8')),
+    )
+    assert.ok(mounts.length > 0, 'no screen offers the rupees/percent lens — the formatter has no reader')
+    for (const f of mounts) {
+      assert.match(
+        readFileSync(f, 'utf8'),
+        /asUnits\(/,
+        `${f} offers the lens and formats the figures itself instead of through asUnits`,
+      )
+    }
+    console.log(`      24.0% vs 60.0% on the same cost · 3 distinct refusals, never 0% · ${mounts.length} screen(s) on the lens`)
+  })
+
   /* ── the save acknowledgement, every path ──────────────────────────── */
   console.log('\nafter saving, the page does not sit still')
 

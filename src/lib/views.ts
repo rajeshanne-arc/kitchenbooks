@@ -48,6 +48,8 @@ export const VIEW_KEYS = {
   payroll: ['all', 'draft', 'approved', 'paid'],
   /** Activity: "what did Haseeb do" vs "every void this week" */
   activity: ['by-time', 'by-person', 'by-type'],
+  /** Money as rupees or as a share of sales — see src/lib/share.ts */
+  units: ['rupees', 'percent'],
 } as const
 
 export type ViewKeys = typeof VIEW_KEYS

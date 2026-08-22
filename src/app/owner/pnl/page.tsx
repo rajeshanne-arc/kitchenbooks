@@ -16,6 +16,9 @@ import {
   trCls,
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
+import ViewToggle from '@/components/ViewToggle'
+import { readView, VIEW_KEYS } from '@/lib/views'
+import { asUnits, UNIT_OPTIONS, type Units } from '@/lib/units'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,12 +32,41 @@ export const dynamic = 'force-dynamic'
 
 const p = (s: string | null) => (s === null ? null : decimalStringToPaise(s))
 
-function Money({ value, bold = false }: { value: string | null; bold?: boolean }) {
+/** ONE CELL, both lenses. Every P&L figure goes through here, so the units
+ *  toggle reaches all of them from one place — and so the refusal is worded
+ *  once. A percentage with no denominator renders as a dash with the reason on
+ *  hover, NEVER as 0%: that is the difference between "labour was free" and
+ *  "we do not know what we sold". */
+function Money({
+  value,
+  bold = false,
+  units = 'rupees',
+  sales = null,
+}: {
+  value: string | null
+  bold?: boolean
+  units?: Units
+  /** net sales for this row — the denominator, and null when there is none */
+  sales?: string | null
+}) {
   if (value === null) return <span className="text-stone-400">—</span>
-  return <span className={bold ? 'font-semibold' : ''}>{formatMoneyString(value)}</span>
+  const a = asUnits(p(value), sales === null ? null : p(sales), units)
+  if (a.kind === 'unassessable') {
+    return (
+      <span className="text-stone-400" title={a.why}>
+        {a.needs === 'no sales to divide into' ? 'no sales' : a.needs === 'sales are zero' ? 'nil sales' : '—'}
+      </span>
+    )
+  }
+  return <span className={bold ? 'font-semibold' : ''}>{a.text}</span>
 }
 
-export default async function PnlPage() {
+export default async function PnlPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ units?: string }>
+}) {
+  const units = readView('units', (await searchParams).units) as Units
   const restaurant = await getRestaurant()
   const [rows, diagnostics] = await Promise.all([
     getPnlMonthly(restaurant.id),
@@ -63,6 +95,14 @@ export default async function PnlPage() {
         <h1 className={pageTitleCls}>P&amp;L</h1>
         <p className={pageSubCls}>{restaurant.name} — pnl_monthly, month by month</p>
       </header>
+
+      <ViewToggle
+        param="units"
+        value={units}
+        options={UNIT_OPTIONS}
+        defaultValue={VIEW_KEYS.units[0]}
+        label="Show money as rupees or as a share of sales"
+      />
 
       {rows.length === 0 ? (
         <section className={cardCls}>
@@ -150,28 +190,28 @@ export default async function PnlPage() {
                       <tr key={r.month} className={trCls}>
                         <td className={tdCls}>{monthLabel(r.month)}</td>
                         <td className={tdNumCls}>
-                          <Money value={r.food_beverage} />
+                          <Money value={r.food_beverage} units={units} sales={r.net_sales} />
                         </td>
                         <td className={tdNumCls}>
-                          <Money value={r.off_book} />
+                          <Money value={r.off_book} units={units} sales={r.net_sales} />
                         </td>
                         <td className={tdNumCls}>
-                          <Money value={r.net_sales} bold />
+                          <Money value={r.net_sales} bold units={units} sales={r.net_sales} />
                         </td>
                         <td className={tdNumCls}>
-                          <Money value={r.purchases} />
+                          <Money value={r.purchases} units={units} sales={r.net_sales} />
                         </td>
                         <td className={tdNumCls}>
-                          <Money value={r.cogs} />
+                          <Money value={r.cogs} units={units} sales={r.net_sales} />
                         </td>
                         <td className={tdNumCls}>
-                          <Money value={r.staff_food} />
+                          <Money value={r.staff_food} units={units} sales={r.net_sales} />
                         </td>
                         <td className={tdNumCls}>
-                          <Money value={r.total_labour} />
+                          <Money value={r.total_labour} units={units} sales={r.net_sales} />
                         </td>
                         <td className={tdNumCls}>
-                          <Money value={r.total_expenses} />
+                          <Money value={r.total_expenses} units={units} sales={r.net_sales} />
                         </td>
                         <td
                           className={`${tdNumCls} font-semibold ${

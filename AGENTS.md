@@ -5862,3 +5862,74 @@ The gate also asserts the two orderings genuinely DIFFER, by finding a pair that
 swaps between them. A toggle whose two states return the same rows is
 decoration, and that is exactly what a careless `order by` edit would leave
 behind.
+
+## TWELVE TOGGLES, ONE CONTROL, ONE READER
+
+`ViewToggle` writes to the URL; `VIEW_KEYS` in `src/lib/views.ts` holds every
+option list; `readView` narrows a param against it. Twelve screens, one
+component, one reader — the argument that already made `PersonLink`,
+`DateLink`, the ABC badge and `readPeriodParam` single things.
+
+**`readStockView` was deleted rather than kept.** It was a second front door
+for one screen while every other toggle went through `readView`, and two doors
+is exactly what a shared reader exists to remove. The gate asserts every key is
+read, that each offers a real choice, that the default is what an absent param
+yields, and that an unrecognised value falls back rather than throwing.
+
+**Each toggle is a genuinely different question, argued per screen** — the
+by-shelf reasoning applies everywhere: a second answer to a question already
+answered is the fault, not a convenience.
+
+| screen | and why the second state is not the first |
+|---|---|
+| On hand | grouping HIDES the biggest holdings |
+| Reorder | vendor is the trip; urgency is the risk |
+| Recipes | "what is in Chinese" is not "what is expensive" — two independent toggles, not one |
+| Sales books | by-item reads POS names straight from the lines, so it works with nothing mapped |
+| Mapping | reviewing a decision is not working a 218-row queue |
+| Parties | `balance <> 0` is right for a QUEUE and hides a live party at zero |
+| Registers | the summary totals the detail's OWN rows, so they cannot disagree |
+| Attendance | "who is absent most" cannot be paged out of a day sheet |
+| Employees | the roster order must not move between mornings; the wage bill is elsewhere |
+| Payroll | what is waiting on me, across three people's stages |
+| Activity | grouping answers it without having to pick a filter first |
+
+### The gate, and where it says UNTESTED
+
+The rule: **assert the two states differ by finding a pair that swaps.** A
+toggle whose states agree is decoration, and that is what a careless `ORDER BY`
+edit leaves behind.
+
+But live data often cannot tell two orderings apart — one dish and two staff
+are identical under every sort — so the gate **reports UNTESTED rather than
+passing**, and the load-bearing half is a SOURCE assertion that each query's
+`ORDER BY` or `WHERE` still branches on its view parameter. That holds whatever
+the data happens to look like. It already found something real: **parties
+owed(4) vs all(5)** — a live vendor at exactly zero that the payment queue was
+hiding, which is the case that made the toggle worth building.
+
+## RUPEES · PERCENT — the lens, and the refusal that is the point
+
+`src/lib/units.ts`. Food cost, labour and prime cost are quoted as percentages
+by universal convention, because a P&L in rupees alone cannot be compared to a
+benchmark or to last month at a different volume: **₹1,20,000 of food is 24% on
+₹5,00,000 of sales and 60% on ₹2,00,000.** Both asserted by value.
+
+**THE PRECONDITION IS THE FEATURE.** A percentage needs a denominator, and 94%
+of this restaurant's revenue is unmapped — so most department percentages are
+unanswerable today and say so. `asUnits` returns a REFUSAL, never 0%, which is
+the difference between "labour was free" and "we do not know what we sold".
+
+**Three refusals, deliberately distinct**, because they are three different
+facts: *no sales figure exists*, *sales were measured as zero*, and *nothing
+was recorded to state at all*. The gate asserts all three are unassessable AND
+that their wording differs — one shared sentence would leave a reader unable to
+tell which they are looking at. An absent figure is a refusal in RUPEES too: it
+is not ₹0.00 any more than it is 0%.
+
+Built last and deliberately not held for the data: it is ready the moment the
+mapping queue is worked, with no change here.
+
+*(Named `units.ts` — `src/lib/share.ts` has been the WhatsApp day-close summary
+since phase 11, and writing the new module there first overwrote it. Restored
+from git. Check whether a filename is taken before claiming it.)*
