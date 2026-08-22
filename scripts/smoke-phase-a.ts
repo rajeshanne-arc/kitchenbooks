@@ -14,9 +14,9 @@ import assert from 'node:assert/strict'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ALL_ROLES, canAccess, navFor, type Role } from '../src/lib/roles'
-import { TAB_DEFAULTS, TAB_GROUPS } from '../src/lib/tabs'
+import { chipsOf, TAB_DEFAULTS, TAB_GROUPS } from '../src/lib/tabs'
 import { BOOKS } from '../src/lib/books'
-import { legacyTarget } from '../src/lib/legacy'
+import { legacyTarget, RETIRED_URLS } from '../src/lib/legacy'
 import { formatPaise, formatRate } from '../src/lib/money'
 
 let failures = 0
@@ -50,13 +50,117 @@ for (const role of ALL_ROLES) {
   })
 }
 
+/* ── 1b. the owner strip, by value ──────────────────────────────────── */
+//
+// NINE TABS TO FOUR, and asserted by value because a count cannot see a
+// reorder or a rename — the same reason PERIOD_KEYS.length === 3 was replaced
+// by naming every key.
+
+console.log('\nowner: four tabs, five chips, one divider')
+
+check('the owner strip is exactly Dashboard · P&L · Activity · Setup', () => {
+  assert.deepEqual(
+    TAB_DEFAULTS.owner.map((t) => t.label),
+    ['Dashboard', 'P&L', 'Activity', 'Setup'],
+  )
+  // THE THREE THAT ARE READ COME FIRST. The point of the collapse was that
+  // five rarely-visited masters made the three that matter one third of the
+  // strip; if a master is ever promoted back, this says so.
+  assert.equal(TAB_DEFAULTS.owner.filter((t) => t.chips === undefined).length, 3)
+})
+
+check('Setup holds the five masters, Settings last and after a rule', () => {
+  const chips = chipsOf('owner', 'setup')
+  assert.deepEqual(
+    chips.map((c) => c.label),
+    ['Money accounts', 'Meters', 'Users', 'Lists', 'Settings'],
+  )
+  // SETTINGS LAST, AFTER A DIVIDER. The four before it ADD ROWS; this one
+  // changes what every number in the app MEANS. The rule says that without a
+  // sentence, and it is the only one in the app — if a second appears, the
+  // distinction has stopped meaning anything.
+  assert.equal(chips[chips.length - 1].key, 'settings', 'Settings is no longer last')
+  assert.equal(chips[chips.length - 1].separatorBefore, true, 'the divider before Settings is gone')
+  const dividers = TAB_GROUPS.flatMap((g) =>
+    TAB_DEFAULTS[g].flatMap((t) => (t.chips ?? []).filter((c) => c.separatorBefore === true)),
+  )
+  assert.equal(dividers.length, 1, `${dividers.length} dividers in the app — it means one thing or nothing`)
+})
+
+check('Setup resolves per role — no reader is sent to a chip they cannot open', () => {
+  // THE ONLY CHIP ROW IN THE APP THAT SPANS A ROLE BOUNDARY. The owner opens
+  // five, the manager two, the accountant two OTHERS — and manager ∩
+  // accountant is EMPTY, which is why the tab cannot have one fixed first
+  // child. This is the resolution GroupTabs and /owner/setup both perform.
+  const first = (role: Role) =>
+    chipsOf('owner', 'setup').find((c) => canAccess(role, `/owner/setup/${c.key}`))?.key
+  assert.equal(first('owner'), 'accounts')
+  assert.equal(first('accountant'), 'accounts')
+  assert.equal(first('manager'), 'lists', 'a manager would be sent to Money accounts — a link to a wall')
+  for (const r of ['chef', 'store', 'cashier'] as const) {
+    assert.equal(first(r), undefined, `${r} can open a Setup chip`)
+    assert.ok(!canAccess(r, '/owner/setup'), `${r} can open Setup at all`)
+  }
+  // and manager and accountant really do share nothing, which is the whole
+  // reason the resolution exists rather than a reordering of the chips
+  const mine = (role: Role) =>
+    chipsOf('owner', 'setup').filter((c) => canAccess(role, `/owner/setup/${c.key}`)).map((c) => c.key)
+  assert.deepEqual(mine('manager'), ['lists', 'settings'])
+  assert.deepEqual(mine('accountant'), ['accounts', 'meters'])
+  assert.deepEqual(
+    mine('manager').filter((k) => mine('accountant').includes(k)),
+    [],
+    'manager and accountant now share a chip — a fixed first child may be simpler than the resolution',
+  )
+})
+
+check('locations is a store master, and the store may edit it', () => {
+  assert.deepEqual(
+    chipsOf('store', 'masters').map((c) => c.label),
+    ['Vendors', 'Items', 'Locations'],
+  )
+  // THE PERSON WHO WALKS THE SHELVES SETS THE ORDER THEY ARE WALKED IN. The
+  // count sheet reads it, so whoever counts must be able to fix one that is
+  // wrong — an owner would be setting a route they do not walk.
+  for (const r of ['store', 'manager', 'owner'] as const) {
+    assert.ok(canAccess(r, '/store/masters/locations'), `${r} cannot open locations`)
+  }
+  // The old path is a REDIRECT, not a screen. It stays open to every signed-in
+  // role like every other legacy prefix — it carries no data and decides
+  // nothing, and the target it lands on is matrix-checked like any other page.
+  assert.equal(legacyTarget('/owner/locations', 'owner'), '/store/masters/locations')
+  assert.equal(legacyTarget('/owner/locations', 'store'), '/store/masters/locations')
+  const { readFileSync } = require('node:fs') as typeof import('node:fs')
+  const actions = readFileSync('src/server/locations-actions.ts', 'utf8')
+  assert.ok(
+    actions.includes("user.role !== 'store'"),
+    'the store cannot WRITE a location — the route gate is not the check',
+  )
+})
+
 console.log('\nno surface offers a denied link')
 for (const role of ALL_ROLES) {
   check(`${role} tabs, chips and books all open`, () => {
     for (const g of TAB_GROUPS) {
       for (const t of TAB_DEFAULTS[g]) {
         if (!canAccess(role, t.href)) continue
-        for (const c of t.chips ?? []) {
+        // A TAB A ROLE CAN OPEN MUST HAVE SOMEWHERE FOR THEM TO LAND. Chips
+        // are matrix-filtered at render now — Owner → Setup is the first row
+        // whose chips are not uniformly accessible, and no chip in it is
+        // common to the manager and the accountant — so the old assertion
+        // ("every registered chip opens") is no longer the invariant.
+        //
+        // THE STRONGER ONE TAKES ITS PLACE: whatever the filter leaves must
+        // be non-empty and must open. A tab admitting a role to an EMPTY chip
+        // row is a dead tab, which the old check could never have caught.
+        const chips = t.chips ?? []
+        if (chips.length === 0) continue
+        const mine = chips.filter((c) => canAccess(role, `${t.href}/${c.key}`))
+        assert.ok(
+          mine.length > 0,
+          `${role} is admitted to ${t.href} and can open none of its ${chips.length} chips — a dead tab`,
+        )
+        for (const c of mine) {
           assert.ok(canAccess(role, `${t.href}/${c.key}`), `${role} chip ${t.href}/${c.key}`)
         }
       }
@@ -214,27 +318,12 @@ check('the store dashboard still offers a one-click path to Loss', () => {
 /* ── 4. every retired URL still lands somewhere live ────────────────── */
 
 
-const RETIRED = [
-  '/books', '/books/bills', '/books/bills/abc', '/books/store', '/books/stock', '/books/counts',
-  '/books/counts/new', '/books/vendors', '/books/vendors/abc', '/books/items', '/books/items/new',
-  '/books/recipes', '/books/recipes/abc', '/books/sales', '/books/sales/mapping', '/books/cash',
-  '/books/sections', '/books/food-cost', '/books/staff', '/books/staff/abc', '/books/users',
-  '/books/snapshots/2026-08-01', '/books/issues/abc', '/books/wastage/abc',
-  '/bill', '/issue', '/wastage', '/store/payment',
-  // STORE RESTRUCTURE, eight tabs to six: Reorder, Count and Loss became views
-  // inside Stock, and Stock came out of Books. Subpaths are listed too —
-  // /store/count/new and a count id were both real, bookmarked URLs.
-  '/store/reorder', '/store/count', '/store/count/new', '/store/count/abc',
-  '/store/loss', '/store/books/stock',
-  '/cash', '/cash/vouchers', '/cash/other-income', '/cash/off-book', '/cash/non-revenue',
-  '/cash/dues', '/cash/settlements', '/cash/fetch',
-  // settlements moved INSIDE partners — a settlement is something a partner does
-  '/sales/settlements',
-  '/attendance', '/expenses', '/dashboard', '/pnl', '/settings',
-  // '/kitchen/production' is a REAL route again — production split out of
-  // End of shift — so it is no longer a retired URL and maps nowhere.
-  '/kitchen/shift/production', '/kitchen/closing', '/kitchen/wastage',
-]
+// DERIVED FROM legacy.ts, NOT COPIED. This gate kept its own list of 51 while
+// the source held 57 — six owner masters had moved and nothing here knew, which
+// is a drift whose only symptom is a 404 on somebody's bookmarked phone. The
+// two role-aware prefixes are resolved in code rather than listed, so they are
+// added by hand here and nowhere else.
+const RETIRED = [...RETIRED_URLS, '/books/stock', '/books/sections', '/books']
 
 console.log('\nevery retired URL still resolves, per role')
 for (const role of ALL_ROLES) {
@@ -243,7 +332,16 @@ for (const role of ALL_ROLES) {
       const target = legacyTarget(old, role)
       assert.ok(target !== null, `${old} maps nowhere`)
       assert.ok(resolves(target), `${old} -> ${target}, which is not a route`)
-      assert.ok(!target.startsWith('/books/'), `${old} -> ${target} is still a retired URL`)
+      // A RETIRED URL MUST LAND ON A LIVE ROUTE, NEVER ON A SECOND REDIRECT —
+      // in general, not just for /books. The old check named one prefix and
+      // would have sailed past `/settings -> /owner/settings` the day
+      // /owner/settings itself was retired, which is exactly what happened
+      // when the owner masters moved under Setup.
+      assert.equal(
+        legacyTarget(target, role),
+        null,
+        `${old} -> ${target}, which is ITSELF retired — a bookmark should not chain through two redirects`,
+      )
     }
   })
 }

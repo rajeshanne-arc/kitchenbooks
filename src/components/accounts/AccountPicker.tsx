@@ -56,7 +56,7 @@ export default function AccountPicker({
   // because a refusal with no next step IS broken. So this names the thing
   // that is missing, who creates it, and exactly where.
   //
-  // The link is a PROP and never a literal here: /owner/accounts is open to
+  // The link is a PROP and never a literal here: /owner/setup/accounts is open to
   // the owner and the accountant only, and a cashier shown a link they
   // cannot open is the invisibility law broken in the smallest possible way.
   if (accounts.length === 0) {
@@ -67,8 +67,8 @@ export default function AccountPicker({
           <p className="font-medium">No money accounts yet — this cannot be saved.</p>
           <p className="mt-1">
             Somebody names them once: the till, each bank account, each wallet. An owner does it under
-            Owner → Money accounts, and the accountant can from Accounts → Money. Until one exists the
-            books have nowhere to put this.
+            Owner → Setup → Money accounts, and the accountant reaches the same screen from Accounts →
+            Cash &amp; bank. Until one exists the books have nowhere to put this.
           </p>
           {manageHref !== null && (
             <Link

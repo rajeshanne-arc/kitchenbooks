@@ -418,7 +418,7 @@ export default function IssueEntry({
           <span className={fieldLabelCls}>Session</span>
           {sessions.length === 0 ? (
             <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              No sessions are set up — add them in Settings → Lists.
+              No sessions are set up — add them in Setup → Lists.
             </p>
           ) : (
             <div className="flex flex-wrap gap-2">
@@ -490,7 +490,7 @@ export default function IssueEntry({
         {direction === 'back' && returnReasons.length === 0 && (
           <p className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             No return reasons are set up yet — you can still type one on each line, and it will wait for an
-            owner in Settings → Lists.
+            owner in Setup → Lists.
           </p>
         )}
         {suggested.length > 0 && (

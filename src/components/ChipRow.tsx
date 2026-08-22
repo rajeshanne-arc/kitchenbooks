@@ -1,47 +1,36 @@
-'use client'
-
 // A chip row sits under a consolidated tab and swaps in ONE small focused
 // form. It is deliberately not a single large form with conditional fields:
 // one question at a time still rules. Each chip is a real URL, so a form can
 // be bookmarked, linked to and returned to.
-
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+//
+// MATRIX-FILTERED, LIKE EVERY OTHER SURFACE. LAW 1 names nav, home tiles,
+// Books tabs, group tab strips and quick links; chips were absent from that
+// list only because no chip row had ever crossed a role line. Setup is the
+// first that does — the owner sees five, the manager two, the accountant two
+// others — so the row asks the matrix rather than trusting each layout to
+// remember. The filtering happens HERE, on the server, so a denied chip is
+// never sent to the browser at all.
+import { getSessionUser } from '@/server/current-user'
+import { canAccess } from '@/lib/roles'
 import type { ChipDef } from '@/lib/tabs'
+import ChipRowClient from '@/components/ChipRowClient'
 
-export default function ChipRow({ base, chips }: { base: string; chips: ChipDef[] }) {
-  const pathname = usePathname()
-  if (chips.length === 0) return null
-  return (
-    // data-chrome: app furniture, and furniture does not print. A vendor
-    // holding a printed statement cannot navigate anywhere.
-    <div
-      data-chrome="true"
-      className="-mx-4 mb-4 flex gap-2 overflow-x-auto whitespace-nowrap px-4 sm:mx-0 sm:px-0"
-    >
-      {chips.map((c, i) => {
-        const href = `${base}/${c.key}`
-        // The parent URL now RENDERS the first chip instead of redirecting to
-        // it, so the first chip has to light up there too — otherwise a tab
-        // click lands on a screen with nothing marked and the row reads as
-        // broken. `base` itself is the first chip.
-        const active =
-          pathname === href || pathname.startsWith(`${href}/`) || (i === 0 && pathname === base)
-        return (
-          <Link
-            key={c.key}
-            href={href}
-            aria-current={active ? 'page' : undefined}
-            className={`inline-flex min-h-[40px] items-center rounded-full border px-3.5 text-[13px] font-medium transition-colors sm:text-sm ${
-              active
-                ? 'border-emerald-700 bg-emerald-700 text-white'
-                : 'border-rule bg-cell text-stone-600 hover:border-stone-400 hover:text-stone-900'
-            }`}
-          >
-            {c.label}
-          </Link>
-        )
-      })}
-    </div>
-  )
+/** Counts painted on chips, keyed by chip key. A chip with no entry, or a
+ *  count of zero, wears NO badge — the tab rule exactly: a "0" is a thing to
+ *  read and dismiss every time, where absence is silence. */
+export type ChipBadges = Partial<Record<string, number>>
+
+export default async function ChipRow({
+  base,
+  chips,
+  badges = {},
+}: {
+  base: string
+  chips: ChipDef[]
+  badges?: ChipBadges
+}) {
+  const user = await getSessionUser()
+  if (user === null) return null
+  const allowed = chips.filter((c) => canAccess(user.role, `${base}/${c.key}`))
+  return <ChipRowClient base={base} chips={allowed} badges={badges} />
 }

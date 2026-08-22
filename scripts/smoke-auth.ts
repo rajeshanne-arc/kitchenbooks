@@ -67,7 +67,7 @@ async function main() {
   for (const p of ['/books/users', '/books/snapshots', '/attendance', '/dashboard', '/bill', '/kitchen', '/cash']) {
     assert.ok(canAccess('owner', p), `owner opens everything: ${p}`)
   }
-  assert.ok(/owner/i.test(deniedHint('/owner/users')), 'denied names who to ask')
+  assert.ok(/owner/i.test(deniedHint('/owner/setup/users')), 'denied names who to ask')
   assert.ok(/manager or owner/i.test(deniedHint('/staff/people/attendance')))
   // Nav is the group list, matrix-filtered. The books strips, chip rows and
   // every literal href on every page are asserted exhaustively by

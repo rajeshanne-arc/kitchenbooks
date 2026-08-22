@@ -198,7 +198,7 @@ export default function IndentEdit({
         <span className={fieldLabelCls}>Session</span>
         {sessions.length === 0 ? (
           <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            No sessions are set up — add them in Settings → Lists.
+            No sessions are set up — add them in Setup → Lists.
           </p>
         ) : (
           <div className="flex flex-wrap gap-2">

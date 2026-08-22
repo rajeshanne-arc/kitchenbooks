@@ -16,8 +16,14 @@
 
 export type TabGroup = 'kitchen' | 'store' | 'sales' | 'staff' | 'owner' | 'accounts'
 
-/** A chip is one small form inside a tab, addressed as ?f=<key>. */
-export type ChipDef = { key: string; label: string }
+/** A chip is one small form inside a tab, addressed as `${tab.href}/${key}`.
+ *
+ *  `separatorBefore` draws a rule to its left. It exists for exactly one
+ *  distinction and should stay rare: the chips before it ADD ROWS, and the one
+ *  after it changes what every number in the app MEANS. A line says that
+ *  without needing a sentence.
+ */
+export type ChipDef = { key: string; label: string; separatorBefore?: boolean }
 
 export type TabDef = { key: string; href: string; label: string; chips?: ChipDef[] }
 
@@ -104,6 +110,14 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       chips: [
         { key: 'vendors', label: 'Vendors' },
         { key: 'items', label: 'Items' },
+        // LOCATIONS IS A STORE MASTER, NOT AN OWNER SETTING. The store manager
+        // places the items and walks the shelves, so he is the one who knows
+        // whether the freezer comes before the dry store — and the walking
+        // order is the whole point of the row. An owner setting it would be
+        // setting the order for a walk he does not do. It also belongs beside
+        // Items because an item POINTS at a location: the two are edited in
+        // the same sitting.
+        { key: 'locations', label: 'Locations' },
       ],
     },
     { key: 'books', href: '/store/books', label: 'Books' },
@@ -174,26 +188,43 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       ],
     },
   ],
+  // NINE TABS TO FOUR. The group mixed two kinds of thing: Dashboard, P&L and
+  // Activity are READ — opened often, scanned fast — while Money accounts,
+  // Meters, Users, Lists and Settings are CONFIGURED ONCE and forgotten. Nine
+  // top-level tabs where five were rarely-visited masters made the three that
+  // matter one third of the strip.
   owner: [
     { key: 'dashboard', href: '/owner', label: 'Dashboard' },
     { key: 'pnl', href: '/owner/pnl', label: 'P&L' },
     { key: 'activity', href: '/owner/activity', label: 'Activity' },
-    // Accounts sits beside Lists: both are masters every form reads from,
-    // and naming an account wrong mislabels the books the way a stray list
-    // value never could.
-    { key: 'accounts', href: '/owner/accounts', label: 'Money accounts' },
-    // A METER IS A MASTER, NOT A SETTING — the partners argument again. A list
-    // row holds a name; a meter carries a unit and a rate, and the rate is the
-    // number every estimate on the screen turns on. So it sits with the other
-    // masters rather than under Settings.
-    { key: 'meters', href: '/owner/meters', label: 'Meters' },
-    { key: 'users', href: '/owner/users', label: 'Users' },
-    { key: 'lists', href: '/owner/lists', label: 'Lists' },
-    // Beside Lists because it is the same kind of thing — the restaurant's own
-    // words for its own building — and NOT inside Lists because a location is
-    // an entity items point at, not a value.
-    { key: 'locations', href: '/owner/locations', label: 'Locations' },
-    { key: 'settings', href: '/owner/settings', label: 'Settings' },
+    {
+      // THE BADGE IS WHAT STOPS THIS BEING A PLACE NOBODY OPENS. One thing
+      // inside is not configuration at all: Lists has an APPROVAL QUEUE. A
+      // category somebody typed lands as a pending suggestion waiting on the
+      // owner, which is an ongoing task rather than a setup step. So Setup
+      // carries a count when suggestions are pending and is silent otherwise,
+      // and Lists carries the same count inside — the Stock mechanism exactly.
+      key: 'setup',
+      href: '/owner/setup',
+      label: 'Setup',
+      chips: [
+        { key: 'accounts', label: 'Money accounts' },
+        { key: 'meters', label: 'Meters' },
+        { key: 'users', label: 'Users' },
+        { key: 'lists', label: 'Lists' },
+        // SETTINGS LAST, AFTER A DIVIDER. The four before it ADD ROWS — an
+        // account, a meter, a user, a list value. This one changes what every
+        // number MEANS: which day a sale belongs to, whether input tax is a
+        // cost, when the financial year starts, how long a standard day is.
+        //
+        // It does NOT get its own tab, deliberately: that would make the three
+        // tabs actually read three of five rather than three of four, in order
+        // to surface the thing touched least. tabs.owner is settings-driven,
+        // so promoting it later is one config change if it turns out to be
+        // hunted for.
+        { key: 'settings', label: 'Settings', separatorBefore: true },
+      ],
+    },
   ],
   // The accountant's group. Review comes first and always will: their
   // screen is a QUEUE, not a form — what is incomplete, what needs asking

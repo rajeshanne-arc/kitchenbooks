@@ -206,7 +206,7 @@ export default function KitchenWastageForm({
         {wasteReasons.length === 0 && (
           <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             No waste reasons are set up, so nothing can be recorded yet. An owner or manager adds
-            them under Settings → Lists.
+            them under Setup → Lists.
           </p>
         )}
 

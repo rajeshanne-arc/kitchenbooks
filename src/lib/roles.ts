@@ -32,29 +32,35 @@ const RULES: [prefix: string, roles: Role[]][] = [
   ['/accounts', ['accountant', 'owner']],
 
   // --- owner group ---------------------------------------------------
-  ['/owner/users', ['owner']],
-  ['/owner/pnl', ['owner']],
+  //
+  // SETUP IS ONE TAB OVER FIVE CHIPS, AND IT IS THE FIRST CHIP ROW IN THE APP
+  // THAT SPANS A ROLE BOUNDARY. Every other row is uniform — all of /store is
+  // store+manager+owner, all of /accounts is accountant+owner — and here the
+  // owner sees five chips, the manager two (lists, settings) and the
+  // accountant two others (accounts, meters), with NO chip common to manager
+  // and accountant. That is why ChipRow filters through this matrix and why
+  // /owner/setup resolves per role instead of re-exporting a first child: a
+  // fixed first chip would send one of the three straight to /denied.
+  ['/owner/setup/users', ['owner']],
   // The money-account master. Every role uses the PICKER; only these two
   // decide what the accounts are called and what they opened at — opening
   // balances are an accountant's write, and this is the one screen that
   // holds them, so they are admitted here rather than given a second copy
   // of the same master under their own group. It is reached from
-  // /accounts/money; the owner tab strip filters to it on its own.
-  ['/owner/accounts', ['owner', 'accountant']],
+  // /accounts/money.
+  ['/owner/setup/accounts', ['owner', 'accountant']],
   // METERS: the master, the rate and the analysis. Admitted to the accountant
-  // for exactly the reason /owner/accounts is — the rate is the number every
-  // estimate turns on, and they are the one holding the real electricity bill
-  // up against it at month end. One copy of the screen, reached from their own
-  // group; the owner tab strip filters to it on its own.
-  ['/owner/meters', ['owner', 'accountant']],
-  ['/owner/lists', ['manager', 'owner']],
-  // STORAGE LOCATIONS: a master, beside Lists and gated the same. Items point
-  // at a row here, so a rename follows them — which is exactly why it is not a
-  // list_options key. The store manager who walks the store is the person most
-  // likely to know the right walking order, and they reach it through their
-  // manager account.
-  ['/owner/locations', ['manager', 'owner']],
-  ['/owner/settings', ['manager', 'owner']],
+  // for exactly the reason accounts is — the rate is the number every estimate
+  // turns on, and they are the one holding the real electricity bill up
+  // against it at month end. Reached from their own group, Payments → Expense.
+  ['/owner/setup/meters', ['owner', 'accountant']],
+  ['/owner/setup/lists', ['manager', 'owner']],
+  ['/owner/setup/settings', ['manager', 'owner']],
+  // The bare parent redirects the reader to the first chip THEY can open, so
+  // it admits everyone admitted to any chip. It decides nothing and holds no
+  // data; the target it lands on is matrix-checked like any other page.
+  ['/owner/setup', ['manager', 'owner', 'accountant']],
+  ['/owner/pnl', ['owner']],
   ['/owner/snapshots', ['owner']],
   ['/owner', ['manager', 'owner']],
 
@@ -111,6 +117,14 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // caller's own group (see app/(legacy)). They carry no data and decide
   // nothing, so they are open to every signed-in role; the target they land
   // on is matrix-checked like any other page.
+  // The owner masters moved under Setup, and storage locations moved to the
+  // store. Phones have all six bookmarked.
+  ['/owner/accounts', EVERYONE],
+  ['/owner/meters', EVERYONE],
+  ['/owner/users', EVERYONE],
+  ['/owner/lists', EVERYONE],
+  ['/owner/settings', EVERYONE],
+  ['/owner/locations', EVERYONE],
   ['/books', EVERYONE],
   ['/bill', EVERYONE],
   ['/issue', EVERYONE],

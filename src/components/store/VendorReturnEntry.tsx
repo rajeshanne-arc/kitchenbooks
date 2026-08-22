@@ -101,7 +101,7 @@ export default function VendorReturnEntry({
    *  on either for a vendor to credit. */
   bills: ReturnableBillRow[]
   /** the vendor_return_reason list. A typed value still saves and waits for an
-   *  owner in Settings → Lists — LAW 2 as amended, because the person holding a
+   *  owner in Setup → Lists — LAW 2 as amended, because the person holding a
    *  rotten crate at the van cannot wait for anybody to log in. */
   reasons: string[]
 }) {
@@ -577,7 +577,7 @@ export default function VendorReturnEntry({
         </p>
         {reasons.length === 0 && (
           <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            No vendor return reasons are set up yet — add them under Settings → Lists.
+            No vendor return reasons are set up yet — add them under Setup → Lists.
           </p>
         )}
       </section>

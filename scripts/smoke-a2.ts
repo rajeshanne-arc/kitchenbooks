@@ -1126,15 +1126,31 @@ async function run() {
     const { readFileSync } = await import('node:fs')
     const picker = readFileSync('src/components/accounts/AccountPicker.tsx', 'utf8')
     const empty = picker.slice(picker.indexOf('accounts.length === 0'), picker.indexOf('const groups'))
-    for (const must of ['Money accounts', 'Accounts → Money', 'cannot be saved']) {
-      assert.ok(empty.includes(must), `the empty state stopped saying "${must}"`)
+    // THE LABELS ARE READ FROM THE REGISTRY, NOT PINNED HERE. This gate used to
+    // require the literal "Accounts → Money" — a phrase that had ALREADY gone
+    // stale, because that tab was relabelled "Cash & bank" and the copy was
+    // not. Naming a screen the app no longer calls by that name is the same
+    // fault as a dead link, and pinning the old words in a gate is how it
+    // survives a rename. Both doors are named by their CURRENT labels, so a
+    // relabel that leaves this sentence behind fails here.
+    const { TAB_DEFAULTS: TD, chipsOf: chips } = await import('../src/lib/tabs')
+    const ownerDoor = chips('owner', 'setup').find((c) => c.key === 'accounts')?.label
+    const acctDoor = TD.accounts.find((t) => t.key === 'money')?.label
+    assert.ok(ownerDoor !== undefined && acctDoor !== undefined, 'a door this sentence names is gone')
+    // ENTITIES NORMALISED BEFORE COMPARING. "Cash &amp; bank" in JSX and
+    // "Cash & bank" in the registry are the same words on screen, and a gate
+    // that forced one spelling would be checking punctuation rather than
+    // whether the sentence still names a door that exists.
+    const said = empty.replace(/&amp;/g, '&')
+    for (const must of [ownerDoor, acctDoor, 'cannot be saved']) {
+      assert.ok(said.includes(must), `the empty state stopped saying "${must}"`)
     }
-    // and the route out is a PROP, never a literal — /owner/accounts is
+    // and the route out is a PROP, never a literal — /owner/setup/accounts is
     // owner-and-accountant only, so a cashier must not be shown that link
     // in QUOTES, not in prose — the comment above the empty state names the
     // route it deliberately does not hardcode, and that is not a violation
     assert.ok(
-      !/['"`]\/owner\/accounts/.test(picker),
+      !/['"`]\/owner\/(setup\/)?accounts/.test(picker),
       'AccountPicker must not hardcode a link nine roles see',
     )
     assert.ok(picker.includes('manageHref'), 'the route out is passed in, per the matrix')
@@ -1505,8 +1521,13 @@ async function run() {
     // the row must mark the first chip active there or nothing is selected
     // and the tab reads as broken.
     const { readFileSync } = await import('node:fs')
-    const row = readFileSync('src/components/ChipRow.tsx', 'utf8')
+    // ChipRow split in two when chips became matrix-filtered: the server half
+    // decides WHICH chips this reader gets, the client half paints them and
+    // lights the active one. The active-state rule lives in the client half.
+    const row = readFileSync('src/components/ChipRowClient.tsx', 'utf8')
     assert.match(row, /i === 0 && pathname === base/, 'the parent URL selects no chip')
+    const server = readFileSync('src/components/ChipRow.tsx', 'utf8')
+    assert.ok(server.includes('canAccess'), 'the server half no longer filters by role')
   })
 
   await check('create and edit agree about who may receive an indent', async () => {
@@ -3652,10 +3673,33 @@ async function run() {
         // notFound() — so it calls the child with the first chip's key. That
         // still has to BE the first chip's key, which is what is checked.
         const dyn = src.match(/params: Promise\.resolve\(\{ \w+: '([^']+)' \}\)/)
-        if (dyn === null) offenders.push(`${tab.href} neither re-exports a chip nor supplies one`)
-        else if (dyn[1] !== first.key) {
-          offenders.push(`${tab.href} supplies "${dyn[1]}" but marks "${first.key}" active`)
+        if (dyn !== null) {
+          if (dyn[1] !== first.key) {
+            offenders.push(`${tab.href} supplies "${dyn[1]}" but marks "${first.key}" active`)
+          }
+          continue
         }
+        // A SECOND DOCUMENTED EXCEPTION, and the condition that earns it: a
+        // chip row whose chips are NOT uniformly accessible has no first child
+        // that is right for every reader, so its parent resolves per role
+        // instead of rendering one. Owner → Setup is the only such row — the
+        // manager and the accountant share no chip at all — and a fixed first
+        // child would send one of them to /denied.
+        //
+        // THE EXEMPTION EXPIRES BY ITSELF: it is granted only while the chips
+        // really do span a role boundary. Make them uniform and this parent is
+        // required to render its first chip like every other.
+        const { ALL_ROLES: ROLES, canAccess: can } = await import('../src/lib/roles')
+        const spans = ROLES.some((r) => {
+          const mine = (tab.chips ?? []).filter((c) => can(r, `${tab.href}/${c.key}`))
+          return mine.length > 0 && mine.length < (tab.chips ?? []).length
+        })
+        if (spans && /redirect\(/.test(src) && src.includes('canAccess')) continue
+        offenders.push(
+          spans
+            ? `${tab.href} spans a role boundary and does not resolve per role`
+            : `${tab.href} neither re-exports a chip nor supplies one`,
+        )
       }
     }
     assert.deepEqual(offenders, [], 'these parents show one screen and highlight another')
@@ -6197,21 +6241,25 @@ async function run() {
     // reaches it from where they hold the real bill: the expense screen.
     const { readFileSync } = await import('node:fs')
     const { canAccess } = await import('../src/lib/roles')
-    const { TAB_DEFAULTS } = await import('../src/lib/tabs')
+    const { chipsOf } = await import('../src/lib/tabs')
+    // A CHIP OF SETUP NOW, not a tab of its own — the owner strip went from
+    // nine tabs to four and five masters moved inside. Still a door, and still
+    // the point of this assertion: the screen has to be reachable by browsing,
+    // not only by typing the URL.
     assert.ok(
-      TAB_DEFAULTS.owner.some((t) => t.href === '/owner/meters'),
-      'Meters is not on the owner tab strip',
+      chipsOf('owner', 'setup').some((c) => c.key === 'meters'),
+      'Meters is not reachable from the owner strip at all',
     )
     const expense = readFileSync('src/app/accounts/payments/expense/page.tsx', 'utf8')
     assert.ok(
-      expense.includes('/owner/meters'),
-      'the accountant has no door to Meters from their own group — see the /owner/accounts precedent',
+      expense.includes('/owner/setup/meters'),
+      'the accountant has no door to Meters from their own group — see the /owner/setup/accounts precedent',
     )
     for (const r of ['owner', 'accountant'] as const) {
-      assert.ok(canAccess(r, '/owner/meters'), `${r} cannot open the meters screen`)
+      assert.ok(canAccess(r, '/owner/setup/meters'), `${r} cannot open the meters screen`)
     }
     for (const r of ['manager', 'chef', 'store', 'cashier'] as const) {
-      assert.ok(!canAccess(r, '/owner/meters'), `${r} can open the meters screen`)
+      assert.ok(!canAccess(r, '/owner/setup/meters'), `${r} can open the meters screen`)
     }
     // Whoever the accountant's door sits behind must be able to walk through
     // it — LAW 1, and the reason /store/issue is a PROP on that screen.
@@ -7335,6 +7383,59 @@ async function run() {
       assert.equal(stated, opens, `${f} mounts DivergingBars ${opens}× and states a polarity ${stated}×`)
     }
     console.log(`      ${mounts.length} file(s) mount DivergingBars, every mount states its polarity`)
+  })
+
+
+  await check('the Setup badge fires on a pending suggestion, and only a pending one', async () => {
+    // SILENT AT ZERO IS NOT PROOF. The live tenant has no pending suggestion,
+    // so the badge is correctly invisible and correspondingly untested — the
+    // family this file records five times. So one is written on the probe
+    // tenant, inside a transaction that rolls back, and the count is read
+    // through the app's own query on the lent handle.
+    //
+    // THE BADGE IS THE WHOLE REASON SETUP GETS OPENED. Four of its five chips
+    // are configuration set once and forgotten; Lists holds an approval queue,
+    // and a category somebody typed is a decision waiting on the owner.
+    await onProbe(async () => {
+      const { txn } = await import('../src/lib/db')
+      const { getRestaurant } = await import('../src/server/queries')
+      const { countPendingSuggestions } = await import('../src/server/settings')
+      const r = await getRestaurant()
+      let seen = { before: -1, pending: -1, accepted: -1 }
+      await txn(async (tx) => {
+        seen.before = await countPendingSuggestions(r.id, tx as never)
+        await tx`insert into list_suggestions (restaurant_id, list_key, value, suggested_by, seen_count, status)
+                 values (${r.id}, 'waste_reason', 'Zz Probe Reason', 'gate', 1, 'pending')`
+        seen.pending = await countPendingSuggestions(r.id, tx as never)
+        await tx`update list_suggestions set status = 'accepted'
+                 where restaurant_id = ${r.id} and value = 'Zz Probe Reason'`
+        seen.accepted = await countPendingSuggestions(r.id, tx as never)
+        throw new Error('ROLLBACK-SUGGESTION-PROBE')
+      }).catch((e: unknown) => {
+        if ((e as Error).message !== 'ROLLBACK-SUGGESTION-PROBE') throw e
+      })
+      assert.equal(seen.pending, seen.before + 1, 'a pending suggestion does not reach the badge')
+      // THE NEGATIVE CASE IS THE ONE THAT CATCHES A BROKEN WHERE. A count that
+      // only ever goes up agrees with a query that has no status filter at all.
+      assert.equal(seen.accepted, seen.before, 'an ACCEPTED suggestion still counts — the badge would never clear')
+      console.log(`      ${seen.before} → ${seen.pending} on a pending row → ${seen.accepted} once accepted`)
+    })
+
+    // and the wiring: the layout must actually hand the count to the row, and
+    // the tab must actually carry it. Either half missing is a silent badge.
+    const { readFileSync } = await import('node:fs')
+    const layout = readFileSync('src/app/owner/setup/layout.tsx', 'utf8')
+    assert.ok(
+      layout.includes('countPendingSuggestions') && layout.includes('badges={{ lists:'),
+      'the Setup chip row is no longer given the pending count',
+    )
+    const tabs = readFileSync('src/components/GroupTabs.tsx', 'utf8')
+    const owner = tabs.slice(tabs.indexOf("if (group === 'owner')"), tabs.indexOf("if (group === 'accounts')"))
+    assert.ok(owner.includes('countPendingSuggestions'), 'the Setup TAB no longer carries the badge')
+    assert.ok(
+      owner.includes('canAccess(role,') && owner.includes('setup:'),
+      'the Setup tab no longer resolves its destination per role — a manager would be sent to Money accounts',
+    )
   })
 
   console.log(

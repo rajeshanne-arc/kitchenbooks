@@ -69,7 +69,19 @@ function reportFor(role: Role): RoleReport {
     const admitted = TAB_DEFAULTS[g].filter((t) => canAccess(role, t.href))
     if (admitted.length > 0) groupTabs[g] = admitted.map((t) => `${t.label} ${t.href}`)
     for (const t of admitted) {
-      for (const c of t.chips ?? []) chips.push(`${c.label} ${t.href}/${c.key}`)
+      // CHIPS ARE MATRIX-FILTERED AT RENDER, so this models the row that
+      // actually reaches the DOM rather than the registry behind it. Every
+      // chip row in the app was uniform until Owner → Setup: there the owner
+      // gets five, the manager two and the accountant two others, and no chip
+      // is common to manager and accountant.
+      //
+      // THE EXEMPTION EXPIRES BY ITSELF — the assertion below reads ChipRow
+      // and fails if the filtering goes, so this cannot quietly become a
+      // blind spot.
+      for (const c of t.chips ?? []) {
+        const href = `${t.href}/${c.key}`
+        if (canAccess(role, href)) chips.push(`${c.label} ${href}`)
+      }
     }
   }
   const booksTabs: string[] = []
@@ -243,6 +255,30 @@ function main(): void {
   if (review.length > 0) {
     console.log(`\n═══ GATED, FOR REVIEW ${'═'.repeat(39)}`)
     for (const v of review) console.log(`  ~ ${v.role} · ${v.where} · ${v.href}  (file calls canAccess)`)
+  }
+
+  // THE CHIP EXEMPTION, AND THE CONDITION THAT MAKES IT SAFE.
+  //
+  // Pass 1 now models the chip row AS RENDERED — filtered through the matrix —
+  // rather than as registered, because Owner → Setup is the first row whose
+  // chips are not uniformly accessible. That is only sound while ChipRow
+  // really does the filtering, so the condition is checked rather than
+  // remembered: if the filter goes, this fails on the same run.
+  const chipRow = readFileSync(join('src', 'components', 'ChipRow.tsx'), 'utf8')
+  const filters =
+    chipRow.includes('canAccess(user.role, `${base}/${c.key}`)') && chipRow.includes('chips.filter(')
+  if (!filters) {
+    violations.push({
+      where: 'ChipRow',
+      role: 'owner',
+      href: 'chips are no longer matrix-filtered — pass 1 models a row that is not what renders',
+    })
+  } else {
+    review.push({
+      where: 'chips',
+      role: 'owner' as Role,
+      href: 'row filtered through canAccess before render',
+    })
   }
 
   console.log(`\n═══ VIOLATIONS ${'═'.repeat(46)}`)

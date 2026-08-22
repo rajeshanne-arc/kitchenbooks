@@ -51,8 +51,8 @@ async function main() {
   assert.equal(canAccess('cashier', '/pnl'), false)
   assert.equal(canAccess('manager', '/pnl'), false, 'P&L is the owner’s, like Users and snapshots')
   assert.equal(canAccess('owner', '/pnl'), true)
-  assert.equal(canAccess('manager', '/owner/settings'), true)
-  assert.equal(canAccess('chef', '/owner/settings'), false)
+  assert.equal(canAccess('manager', '/owner/setup/settings'), true)
+  assert.equal(canAccess('chef', '/owner/setup/settings'), false)
   // Phase A: nav is the group list. A single-group role sees exactly one.
   assert.deepEqual(navFor('chef').map((l) => l.label), ['Kitchen'], 'chef nav = their world only')
   assert.deepEqual(navFor('cashier').map((l) => l.label), ['Sales'])

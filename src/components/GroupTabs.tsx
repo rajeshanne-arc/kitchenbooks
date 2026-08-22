@@ -8,7 +8,9 @@ import { tabsFor } from '@/server/settings'
 import { countOpenIndents, getStockBadge, stockBadgeHref } from '@/server/store-queries'
 import { listOpenQueries } from '@/server/accountant-queries'
 import { countMissingCloses } from '@/server/cashier-queries'
-import type { TabBadges, TabGroup, TabHrefs } from '@/lib/tabs'
+import { countPendingSuggestions } from '@/server/settings'
+import { canAccess, type Role } from '@/lib/roles'
+import { chipsOf, type TabBadges, type TabGroup, type TabHrefs } from '@/lib/tabs'
 import TabStrip from '@/components/TabStrip'
 
 /** Counts that belong on a group's tabs. Server-rendered with the strip
@@ -18,7 +20,25 @@ import TabStrip from '@/components/TabStrip'
 async function badgesFor(
   group: TabGroup,
   restaurantId: string,
+  role: Role,
 ): Promise<{ badges: TabBadges; hrefs: TabHrefs }> {
+  if (group === 'owner') {
+    // THE BADGE THAT KEEPS SETUP FROM BEING A PLACE NOBODY OPENS. Four of its
+    // five chips are configuration — set once, forgotten — and Lists is not:
+    // it holds an approval queue, and a category somebody typed is a decision
+    // waiting on the owner.
+    //
+    // AND THE HREF, because this is the one chip row that spans a role
+    // boundary. Setup's first chip is Money accounts, which a MANAGER cannot
+    // open; sending them there would be a link to a wall. The tab points at
+    // the first chip THIS reader can open — the same override the Stock badge
+    // uses, doing the same job for a different reason.
+    const first = chipsOf('owner', 'setup').find((c) => canAccess(role, `/owner/setup/${c.key}`))
+    return {
+      badges: { setup: await countPendingSuggestions(restaurantId) },
+      hrefs: first === undefined ? {} : { setup: `/owner/setup/${first.key}` },
+    }
+  }
   if (group === 'accounts') {
     // Everything unresolved, not just unanswered: an answer the accountant
     // has not read yet is still a question standing between them and a
@@ -57,7 +77,7 @@ export default async function GroupTabs({ group }: { group: TabGroup }) {
   const restaurant = await getRestaurant()
   const [tabs, { badges, hrefs }] = await Promise.all([
     tabsFor(restaurant.id, group, user.role),
-    badgesFor(group, restaurant.id),
+    badgesFor(group, restaurant.id, user.role),
   ])
   if (tabs.length === 0) return null
   return <TabStrip tabs={tabs} badges={badges} hrefs={hrefs} />

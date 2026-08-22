@@ -6146,3 +6146,109 @@ truth. That is the difference between a gate and a regression test: a test
 written from the original bug agrees with it forever, while an invariant says
 the day the world changed. Same shape as the vendor-return refusal gate, built
 to fail once the view was fixed.
+
+## OWNER: NINE TABS TO FOUR, and the first chip row that spans a role boundary
+
+**The group mixed two kinds of thing.** Dashboard, P&L and Activity are READ —
+opened often, scanned fast. Money accounts, Meters, Users, Lists, Locations and
+Settings are CONFIGURED ONCE and forgotten. Nine top-level tabs where five were
+rarely-visited masters made the three that matter one third of the strip.
+
+    Owner:  Dashboard · P&L · Activity · Setup ●
+    Setup:  Money accounts · Meters · Users · Lists ● | Settings
+
+**THE BADGE IS WHAT STOPS SETUP BEING A PLACE NOBODY OPENS.** One thing inside
+is not configuration: Lists holds an APPROVAL QUEUE, and a category somebody
+typed lands there as a pending suggestion waiting on the owner — an ongoing
+task, not a setup step. Setup carries the count, Lists carries it inside, both
+silent at zero. Same mechanism as Stock carrying the reorder badge.
+
+**SETTINGS LAST, AFTER A RULE.** The four before it ADD ROWS — an account, a
+meter, a user, a list value. Settings changes what every number MEANS: which
+day a sale belongs to, whether input tax is a cost, when the financial year
+starts. A separator says that without a sentence, and it is the app's ONLY one
+— a gate asserts that, because a second would make it mean nothing. Settings
+deliberately does NOT get its own tab: that would make the three tabs actually
+read three of five rather than three of four, to surface the thing touched
+least. `tabs.owner` is settings-driven, so promoting it later is one config
+change.
+
+### The row is not uniform, and nothing in the app had ever been
+
+Every chip row until now was accessible to exactly the roles of its tab — all
+of `/store` is store+manager+owner, all of `/accounts` is accountant+owner.
+Setup is the first that splits:
+
+| | chips they can open |
+|---|---|
+| owner | all five |
+| manager | lists, settings |
+| accountant | accounts, meters |
+
+**Manager ∩ accountant is EMPTY**, so there is no first child that is right for
+all three. Three things follow, and each is checked rather than remembered:
+
+1. **ChipRow is MATRIX-FILTERED**, server-side, so a denied chip never reaches
+   the browser. LAW 1 names nav, home tiles, Books tabs, tab strips and quick
+   links; chips were absent only because no row had crossed a role line.
+   ChipRow split in two — the server half decides *which*, the client half
+   paints and lights the active one.
+2. **The Setup TAB resolves its destination per role** through `TabHrefs`, the
+   same override the Stock badge uses. Without it a manager clicking Setup
+   lands on Money accounts, which is a link to a wall.
+3. **`/owner/setup` REDIRECTS rather than re-exporting its first child** — the
+   second documented exception to that rule, after the dynamic-route one. In
+   practice nobody arrives there, since the tab points straight at the right
+   chip; this is the fallback for a typed URL.
+
+**BOTH EXEMPTIONS EXPIRE BY THEMSELVES.** `audit:matrix` models the row AS
+RENDERED and fails if ChipRow stops filtering; the chip-parent gate grants the
+redirect exception only *while the chips genuinely span a role boundary*. Make
+them uniform and the parent is required to render its first chip like every
+other. And `smoke:phase-a`'s old assertion — "every registered chip opens" —
+was replaced by the stronger one it hid: **whatever the filter leaves must be
+non-empty**, because a tab admitting a role to an empty chip row is a dead tab,
+which the old check could never have caught.
+
+### LOCATIONS IS A STORE MASTER
+
+`/store/masters` → Vendors · Items · Locations. The store manager places the
+items and walks the shelves, so he is the one who knows whether the freezer
+comes before the dry store — and the walking order is the whole point of the
+row. An owner would be setting the order for a walk he does not do. It also
+belongs beside Items because an item POINTS at a location: the two are edited
+in one sitting. `locations-actions` admits the store to WRITE, because the
+count sheet reads that order and whoever counts should be able to fix one that
+is wrong — the route gate is not the check.
+
+### A HAND-COPIED LIST OF RETIRED URLS HAD ALREADY DRIFTED
+
+`smoke:phase-a` kept its own list of 51 beside `legacy.ts`'s 57. It is DERIVED
+now (`RETIRED_URLS`), and deriving it found **three dead bookmarks that predate
+this work**, all the same shape — a target that exists only as `[id]` or
+`[date]`, so a specific bookmark resolved and a bare one 404'd:
+
+    /books/snapshots -> /owner/snapshots   (only [date] exists)
+    /books/wastage   -> /store/books/wastage  (only [id])
+    /books/issues    -> /store/books/issues   (only [id])
+
+Each now lands on the list a reader with no id in mind actually wants —
+Recipes for the photographs, the store log for both others — while the prefix
+rules keep the specific ones working.
+
+**And the chain check was widened from one prefix to the rule.** It asserted
+`!target.startsWith('/books/')`; it now asserts `legacyTarget(target) === null`
+— a retired URL must never land on another one. That immediately caught
+`/books/sections`, whose role-aware fallback still pointed at
+`/staff/books/sections` after the simplification pass dropped the staff mount
+of `SectionsView`. **A branch that exists because a component is mounted twice
+must go when the second mount does.** It is a plain entry now.
+
+### A gate that pins COPY goes stale with the copy
+
+The AccountPicker empty-state gate required the literal `"Accounts → Money"` —
+a phrase that had ALREADY drifted, because that tab was relabelled *Cash &
+bank* and the sentence was not. It reads both door labels **from the tab
+registry** now, so a relabel that leaves the sentence behind fails here. Eleven
+occurrences of `"Settings → Lists"` were corrected to `Setup → Lists` in the
+same pass — the path they named has been wrong twice over.

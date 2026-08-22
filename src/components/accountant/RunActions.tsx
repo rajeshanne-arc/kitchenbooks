@@ -214,7 +214,7 @@ setAck({ headline: done, sub: 'draft → approved → paid, and no shortcut betw
           </select>
           <span className="mt-1 block text-xs text-stone-500">
             {modes.length === 0
-              ? 'No payment modes are on the list yet (Settings → Lists). The run can still be marked paid; it will simply not say how.'
+              ? 'No payment modes are on the list yet (Setup → Lists). The run can still be marked paid; it will simply not say how.'
               : 'One mode for the whole run — it lands on every line.'}
           </span>
         </label>

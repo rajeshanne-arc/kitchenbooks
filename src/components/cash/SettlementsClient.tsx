@@ -343,7 +343,7 @@ export default function SettlementsClient({
             )}
             {deductionTypes.length === 0 ? (
               <p className="mt-2 text-xs text-amber-900">
-                No deduction types are set up — add them in Settings → Lists.
+                No deduction types are set up — add them in Setup → Lists.
               </p>
             ) : (
               <button

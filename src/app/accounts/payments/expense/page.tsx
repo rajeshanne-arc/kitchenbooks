@@ -29,7 +29,7 @@ export default async function ExpensesPage() {
     // THE RECONCILIATION MOMENT. "rent, power, licences" — the real
     // electricity bill is entered on this screen, so the meter's estimate
     // belongs beside it rather than two groups away. Both roles who can open
-    // /accounts can also open /owner/meters, so the link below is a literal
+    // /accounts can also open /owner/setup/meters, so the link below is a literal
     // and audit:matrix checks it like any other.
     getConsumptionTotals(restaurant.id, month, today),
   ])
@@ -81,7 +81,7 @@ export default async function ExpensesPage() {
             <div className="mt-3">
               <Honesty
                 verdict="an estimate, not a bill"
-                action={{ href: '/owner/meters', label: 'Meters and their rates' }}
+                action={{ href: '/owner/setup/meters', label: 'Meters and their rates' }}
               >
                 Units × the rate typed on each meter. Electricity is slabbed, so the true unit cost
                 depends on the month&apos;s total and is not known until the bill arrives — hold the

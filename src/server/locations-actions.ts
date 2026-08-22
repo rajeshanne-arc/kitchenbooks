@@ -33,8 +33,14 @@ function fail(e: unknown): { ok: false; error: string } {
 async function actor(): Promise<void> {
   const user = await getSessionUser()
   if (!user) throw new LocationError('Sign in again — the session has expired')
-  if (user.role !== 'owner' && user.role !== 'manager') {
-    throw new LocationError('Only a manager or an owner can change storage locations — ask them')
+  // THE STORE EDITS THESE NOW. Locations moved out of the owner's settings and
+  // into Store → Masters, because the person who places the items and walks
+  // the shelves is the one who knows whether the freezer comes before the dry
+  // store — and the count sheet reads that order. Whoever counts should be
+  // able to fix an order that is wrong, rather than asking an owner to guess
+  // at a route they do not walk.
+  if (user.role !== 'owner' && user.role !== 'manager' && user.role !== 'store') {
+    throw new LocationError('Only the store, a manager or an owner can change storage locations — ask them')
   }
 }
 

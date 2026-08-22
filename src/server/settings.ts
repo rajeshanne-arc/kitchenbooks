@@ -107,6 +107,25 @@ export async function isAcceptedListValue(
 }
 
 /** Pending suggestions for the Settings screen, newest first. */
+/** How many typed values are waiting on an owner's decision.
+ *
+ *  Painted on the Setup tab and on the Lists chip inside it. Setup is
+ *  otherwise five screens of configuration nobody opens twice; this is the one
+ *  thing in there that is a TASK, and the badge is what makes it visible from
+ *  the strip. Silent at zero. */
+export async function countPendingSuggestions(
+  restaurantId: string,
+  // OPTIONAL HANDLE, the getClosePrefill shape — so the gate can write a
+  // suggestion, read the count through THIS function and roll back, rather
+  // than asserting against a hand-written copy of the query.
+  db: typeof tsql = tsql,
+): Promise<number> {
+  const rows = await db<{ n: number }[]>`
+    select count(*)::int as n from list_suggestions
+    where restaurant_id = ${restaurantId} and status = 'pending'`
+  return rows[0]?.n ?? 0
+}
+
 export async function getListSuggestions(restaurantId: string): Promise<ListSuggestionRow[]> {
   return tsql<ListSuggestionRow[]>`
     select s.id, s.list_key, s.value, s.suggested_by, s.seen_count, s.status,

@@ -5,7 +5,7 @@
 // over at the door. Same recordPayment, same payments table, same PAY
 // series: two screens because two people are in two places, not because
 // there are two kinds of payment. The account master itself lives at
-// /owner/accounts, which the matrix admits the accountant to precisely
+// /owner/setup/accounts, which the matrix admits the accountant to precisely
 // because it is reached from here — opening balances are their write and
 // there is only ever one copy of that screen.
 //
@@ -56,7 +56,7 @@ export default async function MoneyPage() {
               guess. Name them for the shape they are — cash, bank, wallet, card settlement, owner —
               never for a brand.
             </p>
-            <Link href="/owner/accounts" className={`${masterLinkCls} mt-2 inline-block`}>
+            <Link href="/owner/setup/accounts" className={`${masterLinkCls} mt-2 inline-block`}>
               Name the accounts
             </Link>
           </section>
@@ -76,7 +76,7 @@ export default async function MoneyPage() {
               keeps every rupee that ever moved through it. The total is the sum of the balances
               above and nothing more — not a statement of what the business is worth.
             </p>
-            <Link href="/owner/accounts" className={`${masterLinkCls} mt-2 inline-block`}>
+            <Link href="/owner/setup/accounts" className={`${masterLinkCls} mt-2 inline-block`}>
               Add an account, or set an opening balance
             </Link>
           </section>

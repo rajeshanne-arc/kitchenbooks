@@ -140,7 +140,7 @@ export default function PaymentForm({
           <span className={fieldLabelCls}>Mode</span>
           {modes.length === 0 ? (
             <p className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
-              No payment modes are set up — add them in Settings → Lists.
+              No payment modes are set up — add them in Setup → Lists.
             </p>
           ) : (
             <select value={mode} onChange={(e) => setMode(e.target.value)} className={selectCls}>
