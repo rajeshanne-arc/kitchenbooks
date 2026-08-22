@@ -185,17 +185,17 @@ const { businessYesterday } = await import('../src/server/business-day')
   }
   const dish = dishes[0]
 
-  const badMap = await mapPosItem({ posItemId: 'ZZT-1', itemName: 'Zz Paneer Tikka', recipeId: rid , sectionId: '' })
+  const badMap = await mapPosItem({ posItemId: 'ZZT-1', itemName: 'Zz Paneer Tikka', recipeId: rid, itemId: '', sectionId: '' })
   assert.ok(!badMap.ok && /dish/i.test(badMap.error), 'mapping to a non-dish id must refuse')
 
   const unmappedBefore = await countUnmapped(rid)
-  const mapRes = await mapPosItem({ posItemId: 'ZZT-1', itemName: 'Zz Paneer Tikka', recipeId: dish.id , sectionId: '' })
+  const mapRes = await mapPosItem({ posItemId: 'ZZT-1', itemName: 'Zz Paneer Tikka', recipeId: dish.id, itemId: '', sectionId: '' })
   assert.ok(mapRes.ok, `mapPosItem failed: ${mapRes.ok === false ? mapRes.error : ''}`)
   assert.equal(mapRes.map.recipe_code, dish.code)
   assert.equal(mapRes.unmappedLeft, unmappedBefore - 1, 'mapping one item shrinks the queue by one')
 
   // remap is the same move (upsert via the column-granted update)
-  const remap = await mapPosItem({ posItemId: 'ZZT-1', itemName: 'Zz Paneer Tikka', recipeId: dish.id , sectionId: '' })
+  const remap = await mapPosItem({ posItemId: 'ZZT-1', itemName: 'Zz Paneer Tikka', recipeId: dish.id, itemId: '', sectionId: '' })
   assert.ok(remap.ok)
   assert.equal(remap.unmappedLeft, unmappedBefore - 1)
 

@@ -6849,6 +6849,350 @@ async function run() {
     )
   })
 
+
+  /* ── actual vs theoretical ─────────────────────────────────────────── */
+  console.log('\nactual vs theoretical — the guards that decide whether it may be said')
+
+  await check('the refusals are asserted BY VALUE, including the one coverage cannot see', async () => {
+    const { assessVariance, COVERAGE_FLOOR } = await import('../src/lib/variance')
+    const base = {
+      section_code: 'CH',
+      section_name: 'Chinese',
+      month: '2026-08-01',
+      revenue: '100000',
+      costable_revenue: '100000',
+      coverage_pct: '100.0',
+      theoretical_cost: '30000',
+      theoretical_pct: '30.0',
+      actual_cost: '37150',
+      actual_pct: '37.2',
+      variance_value: '7150',
+      variance_pct: '7.2',
+      closing_filed: true,
+      no_consumption: false,
+      nothing_costable: false,
+    }
+    const M = 'August 2026'
+
+    // 1. THE HEADLINE. Above the floor with both halves real, it is stated.
+    const ok = assessVariance(base, [], 'Chinese', M)
+    assert.equal(ok.state, 'stated', 'a complete row must state its variance')
+    assert.equal(ok.state === 'stated' ? ok.variancePaise : 0, 715000, 'the variance is read from the view, in paise')
+
+    // 2. THE BRIEF'S OWN EXAMPLE, word for word: below the floor it refuses
+    //    and NAMES the figure, because "not enough data" teaches nobody how
+    //    far off it is.
+    const low = assessVariance({ ...base, coverage_pct: '43.0', costable_revenue: '43000' }, [], 'Chinese', M)
+    assert.equal(low.state, 'low-coverage')
+    assert.ok(
+      low.state === 'low-coverage' && low.why.includes('43.0% costed') && low.why.includes('not the kitchen'),
+      `the refusal must name the coverage: ${low.state === 'low-coverage' ? low.why : ''}`,
+    )
+
+    // 3. THE BOUNDARY, both sides. A floor asserted only in the middle is a
+    //    floor nobody has tested.
+    assert.equal(assessVariance({ ...base, coverage_pct: '90.0' }, [], 'Chinese', M).state, 'stated')
+    assert.equal(assessVariance({ ...base, coverage_pct: '89.9' }, [], 'Chinese', M).state, 'low-coverage')
+    assert.equal(COVERAGE_FLOOR, 90)
+
+    // 4. THE GUARD THE FLOOR STRUCTURALLY CANNOT SEE. A mapped dish with no
+    //    portion count prices at zero while its revenue still counts as
+    //    costable, so coverage reads 100% — and without this check a
+    //    knowingly understated theoretical would be shown as overspending.
+    const zero = assessVariance(
+      base,
+      [{ recipe_id: 'x', code: 'SI-001', name: 'Chicken 65', section_code: 'CH', revenue: '9000' }],
+      'Chinese',
+      M,
+    )
+    assert.equal(zero.state, 'zero-cost-dishes', 'a portion-less mapped dish must refuse EVEN at 100% coverage')
+    assert.ok(
+      zero.state === 'zero-cost-dishes' && zero.why.includes('Chicken 65') && zero.why.includes('zero'),
+      'the refusal must name the dish and say its cost lands as zero',
+    )
+
+    // 5. NEVER FROM ISSUES ALONE. No closing means no actual half, and the
+    //    sentence says so rather than substituting what was issued.
+    const noClose = assessVariance(
+      { ...base, actual_cost: null, variance_value: null, variance_pct: null, closing_filed: false },
+      [],
+      'Chinese',
+      M,
+    )
+    assert.equal(noClose.state, 'no-actual')
+    assert.ok(
+      noClose.state === 'no-actual' && noClose.needs === 'pending closing' && noClose.why.includes('Issued is not consumed'),
+      'a missing closing must say issued is not consumed',
+    )
+    // a closing filed with nothing issued is a DIFFERENT sentence
+    const noCons = assessVariance(
+      { ...base, actual_cost: null, variance_value: null, closing_filed: true },
+      [],
+      'Chinese',
+      M,
+    )
+    assert.equal(noCons.state === 'no-actual' ? noCons.needs : '', 'nothing consumed')
+
+    // 6. Nothing costable at all — coverage NULL, not zero.
+    const none = assessVariance(
+      { ...base, costable_revenue: null, coverage_pct: null, nothing_costable: true, theoretical_cost: '0' },
+      [],
+      'Chinese',
+      M,
+    )
+    assert.equal(none.state, 'nothing-costable')
+
+    // 7. ORDER MATTERS: with BOTH a portion-less dish and low coverage, the
+    //    zero-cost refusal must win — it is invisible to the floor, so if the
+    //    floor answered first the dish would be forgotten the moment coverage
+    //    improved.
+    const both = assessVariance(
+      { ...base, coverage_pct: '43.0' },
+      [{ recipe_id: 'x', code: 'SI-001', name: 'Chicken 65', section_code: 'CH', revenue: '9000' }],
+      'Chinese',
+      M,
+    )
+    assert.equal(both.state, 'zero-cost-dishes', 'the zero-cost guard must outrank the coverage floor')
+  })
+
+  await check('a total over SOME departments is not the restaurant’s variance', async () => {
+    const { totalVariance } = await import('../src/lib/variance')
+    const mk = (code: string, over: Record<string, unknown>) => ({
+      section_code: code, section_name: code, month: '2026-08-01',
+      revenue: '100000', costable_revenue: '100000', coverage_pct: '100.0',
+      theoretical_cost: '30000', theoretical_pct: '30.0',
+      actual_cost: '35000', actual_pct: '35.0', variance_value: '5000', variance_pct: '5.0',
+      closing_filed: true, no_consumption: false, nothing_costable: false, ...over,
+    })
+    const rows = [
+      mk('CH', {}),
+      // no closing: must be EXCLUDED, never counted as having consumed zero,
+      // which would drag the restaurant total towards a false underspend
+      mk('TD', { actual_cost: null, variance_value: null, closing_filed: false }),
+    ]
+    const t = totalVariance(rows as never, new Map(), 'August 2026')
+    assert.equal(t.stated.length, 1, 'a department with no closing must not be in the total')
+    assert.equal(t.excluded.length, 1)
+    assert.equal(t.variancePaise, 500000, 'the total is over the comparable departments only')
+    assert.equal(t.theoreticalPaise, 3000000)
+    assert.equal(t.actualPaise, 3500000)
+    assert.equal(t.excluded[0].verdict.needs, 'pending closing', 'the excluded one must carry its reason')
+  })
+
+  await check('the three new queries run against the live database', async () => {
+    const { getFoodCostVariance, getZeroCostDishes, getVariancePreconditions } = await import(
+      '../src/server/variance-queries'
+    )
+    const { getRestaurant } = await import('../src/server/queries')
+    const r = await getRestaurant()
+    const month = `${new Date().toISOString().slice(0, 7)}-01`
+    const rows = await getFoodCostVariance(r.id, month)
+    const zero = await getZeroCostDishes(r.id, month)
+    const needs = await getVariancePreconditions(r.id, month)
+    assert.ok(Array.isArray(rows) && Array.isArray(zero))
+    assert.ok(needs.itemsSeen >= 0 && needs.closableSections >= 0)
+    // The '—' bucket is a data gap, not a department, and must never be
+    // ranked beside real ones.
+    assert.ok(!rows.some((x) => x.section_code === '—'), 'the Unmapped bucket must not appear as a department')
+    console.log(
+      `      ${rows.length} department row(s) · ${zero.length} zero-cost dish(es) · ` +
+        `${needs.itemsMapped}/${needs.itemsSeen} mapped, ${needs.dishesCostable}/${needs.dishesTotal} dishes costable ` +
+        `(${needs.dishesNoPortions} with no portions), ${needs.issues} issue(s), ` +
+        `${needs.closingsFiled}/${needs.closableSections} closed`,
+    )
+  })
+
+  await check('the actual half is never coalesced away', async () => {
+    // A ZERO HERE WOULD READ AS "CONSUMED NOTHING", which is exactly the
+    // shortcut the brief forbids: issued is not consumed, and a kitchen draws
+    // ten kilos on Monday and cooks it over three days. The view already
+    // returns NULL; this asserts nothing on the way out fills it in.
+    const { readFileSync } = await import('node:fs')
+    const q = readFileSync('src/server/variance-queries.ts', 'utf8')
+    // PLAIN includes(), NOT a built RegExp. This file already records four
+    // assertions broken by backslash escaping through a generator, one of
+    // which was a NEGATIVE check and so passed forever while matching nothing
+    // — which is precisely the shape of this one.
+    const flat = q.toLowerCase().replace(/\s+/g, '')
+    for (const col of ['actual_cost', 'variance_value', 'variance_pct', 'coverage_pct', 'costable_revenue']) {
+      assert.ok(
+        !flat.includes(`coalesce(${col}`),
+        `${col} is being coalesced — a missing half would read as a zero`,
+      )
+    }
+    // AND THE MATCHER IS SHOWN CAPABLE OF FIRING, against a coalesce the file
+    // genuinely contains — `coalesce(revenue_mapped, 0)`, which is correct
+    // there and would prove nothing about a matcher that cannot see it.
+    assert.ok(flat.includes('coalesce(revenue_mapped'), 'the matcher is not reading the query text at all')
+  })
+
+  await check('an overspend is never painted green', async () => {
+    // THE INDENT-GAP FAULT IN A NEW COSTUME. DivergingBars was written for
+    // MARGIN, where negative is the problem, and hard-wired `value < 0 ? RED
+    // : GREEN`. A variance inverts that — positive is money nobody can
+    // account for — so a chart that inherited the default would colour an
+    // overspend as good news.
+    const { readFileSync } = await import('node:fs')
+    const charts = readFileSync('src/components/dashboard/Charts.tsx', 'utf8')
+    assert.ok(charts.includes("polarity === 'higher-is-bad'"), 'DivergingBars no longer knows which side is bad')
+    const owner = readFileSync('src/app/owner/page.tsx', 'utf8')
+    const card = owner.slice(owner.indexOf("key: 'variance'"), owner.indexOf("key: 'margin'"))
+    assert.ok(card.length > 200, 'the variance card was not found where this gate looks')
+    assert.ok(
+      card.includes('polarity="higher-is-bad"'),
+      'the variance chart is using the margin polarity — an overspend would render green',
+    )
+  })
+
+  await check('both surfaces state the coverage even when it passes', async () => {
+    // "STATE COVERAGE ALWAYS, even at 94%, so nobody reads it as 100%." The
+    // number is only trustworthy to the extent of what could be costed, and a
+    // figure printed bare invites the reader to assume all of it.
+    const { readFileSync } = await import('node:fs')
+    const dept = readFileSync('src/app/kitchen/departments/[code]/page.tsx', 'utf8')
+    assert.ok(
+      dept.includes('% of sales costed'),
+      'the department card no longer states coverage beside a stated variance',
+    )
+    const owner = readFileSync('src/app/owner/page.tsx', 'utf8')
+    const card = owner.slice(owner.indexOf("key: 'variance'"), owner.indexOf("key: 'margin'"))
+    assert.ok(
+      card.includes('not every department') && card.includes('meter'),
+      'the owner total no longer says which departments are in it',
+    )
+  })
+
+  await check('the preconditions are named with counts, and every link gates itself', async () => {
+    const { readFileSync } = await import('node:fs')
+    const pre = readFileSync('src/components/dashboard/VariancePreconditions.tsx', 'utf8')
+    // ALL FOUR, with a door each.
+    for (const href of [
+      '/sales/books/sales/mapping',
+      '/kitchen/recipes',
+      '/store/issue',
+      '/kitchen/shift/closing',
+    ]) {
+      assert.ok(pre.includes(href), `the ${href} precondition is missing`)
+    }
+    // LAW 1 IN THE SMALLEST POSSIBLE WAY: the chef can open this block on a
+    // department page and CANNOT open /store/issue. A literal href would be a
+    // link to a wall, so the matrix is asked per row.
+    assert.ok(pre.includes('canAccess(user.role, leg.href)'), 'the precondition links are not matrix-gated')
+    const { canAccess } = await import('../src/lib/roles')
+    assert.ok(!canAccess('chef', '/store/issue'), 'a chef can now open /store/issue — recheck this gate')
+    assert.ok(canAccess('chef', '/kitchen/shift/closing'), 'a chef cannot file a closing')
+    assert.ok(canAccess('chef', '/sales/books/sales/mapping'), 'the chef lost the mapping queue')
+  })
+
+  await check('a stock item is never mapped without the department that sold it', async () => {
+    // MEASURED, NOT ARGUED — see the probe below. An item with no section
+    // lands its cost in the Unmapped bucket, where the department that sold
+    // it never sees it. The picker asks for both; this is the refusal behind
+    // it, because a form is never the check.
+    const { mapPosItem } = await import('../src/server/sales-actions')
+    const res = await mapPosItem({
+      posItemId: 'ZZ-GATE-1',
+      itemName: 'Zz Gate Probe',
+      recipeId: '',
+      itemId: '00000000-0000-4000-8000-00000000beef',
+      sectionId: '',
+    })
+    assert.ok(!res.ok, 'an item with no department was accepted')
+    assert.ok(
+      !res.ok && /department that sold it/i.test(res.error),
+      `the refusal must name the missing department: ${res.ok ? '' : res.error}`,
+    )
+  })
+
+  await check('PROBE — the two view behaviours this report is guarded against', async () => {
+    // BOTH OF THESE WERE READ IN THE VIEW DEFINITION AND THEN MEASURED,
+    // because a definition read wrongly is exactly how the four earlier
+    // vacuous gates in this file came about. The fixture is built so the two
+    // sides genuinely differ: without the guards, both cases render a
+    // confident wrong number.
+    const M = '2099-03-01'
+    const D = '2099-03-05'
+    await onProbe(async () => {
+      const { txn } = await import('../src/lib/db')
+      const { getRestaurant } = await import('../src/server/queries')
+      const r = await getRestaurant()
+      const t = r.id
+      let out = { a: '', b: '' }
+      await txn(async (tx) => {
+        const [ch] = await tx<{ id: string }[]>`select id from sections where code='CH' and restaurant_id=${t}`
+        const [v] = await tx<{ id: string }[]>`insert into vendors (restaurant_id, code, name, primary_category) values (${t},'V-ZZ-98','Zz Variance Probe','PLT') returning id`
+        const [chick] = await tx<{ id: string }[]>`insert into items (restaurant_id, code, name, category, purchase_unit) values (${t},'ZZ-801','Zz Probe Chicken','PLT','kg') returning id`
+        const [water] = await tx<{ id: string }[]>`insert into items (restaurant_id, code, name, category, purchase_unit) values (${t},'ZZ-802','Zz Probe Water','PLT','pcs') returning id`
+        const [pur] = await tx<{ id: string }[]>`insert into purchases (restaurant_id, bill_date, vendor_id, goods_total) values (${t},${M}::date,${v.id},4000) returning id`
+        await tx`insert into purchase_lines (restaurant_id, purchase_id, item_id, qty, rate) values (${t},${pur.id},${chick.id},10,300),(${t},${pur.id},${water.id},100,10)`
+        const [dish] = await tx<{ id: string }[]>`insert into recipes (restaurant_id, code, name, kind, section_id, portions, selling_price) values (${t},'CH-801','Zz Probe Dish','dish',${ch.id},10,200) returning id`
+        const [nop] = await tx<{ id: string }[]>`insert into recipes (restaurant_id, code, name, kind, section_id, selling_price) values (${t},'CH-802','Zz Probe NoPortions','dish',${ch.id},200) returning id`
+        await tx`insert into recipe_lines (restaurant_id, recipe_id, component_item_id, qty) values (${t},${dish.id},${chick.id},1),(${t},${nop.id},${chick.id},1)`
+        const [f] = await tx<{ id: string }[]>`insert into pos_fetches (restaurant_id, business_date, order_count) values (${t},${D}::date,1) returning id`
+        const [o] = await tx<{ id: string }[]>`insert into pos_orders (fetch_id, restaurant_id, business_date, pos_order_id, status_raw, status_class, order_total) values (${f.id},${t},${D}::date,'ZZVAR1','Success','revenue',3900) returning id`
+        await tx`insert into pos_lines (restaurant_id, order_id, pos_item_id, item_name, qty, amount) values
+          (${t},${o.id},'ZZV-DISH','Zz Probe Dish',10,2000),
+          (${t},${o.id},'ZZV-NOPORT','Zz Probe NoPortions',5,1000),
+          (${t},${o.id},'ZZV-WATER','Zz Probe Water',20,400)`
+        const [iss] = await tx<{ id: string }[]>`insert into issues (restaurant_id, issue_date, section_id, session) values (${t},${D}::date,${ch.id},'Morning') returning id`
+        await tx`insert into issue_lines (restaurant_id, issue_id, item_id, qty, unit_cost) values (${t},${iss.id},${chick.id},4,300)`
+        await tx`insert into kitchen_closings (restaurant_id, section_id, close_date, closing_value) values (${t},${ch.id},'2099-03-28'::date,200)`
+
+        type Row = { costable_revenue: string | null; coverage_pct: string | null; theoretical_cost: string }
+        const ch_ = async (): Promise<Row | undefined> => {
+          const rows = await tx<Row[]>`
+            select costable_revenue::text, coverage_pct::text, theoretical_cost::text
+            from food_cost_variance where restaurant_id=${t} and month=${M}::date and section_code='CH'`
+          return rows[0]
+        }
+
+        await tx`insert into pos_item_map (restaurant_id, pos_item_id, item_name, recipe_id) values (${t},'ZZV-DISH','Zz Probe Dish',${dish.id})`
+        const one = await ch_()
+        assert.equal(Number(one?.costable_revenue), 2000, 'the costed dish did not reach the section')
+        assert.equal(Number(one?.theoretical_cost), 300, '10 portions at 30 must be 300')
+
+        // ── FINDING A: a portion-less dish raises COSTABLE REVENUE and adds
+        //    NOTHING to the theoretical, while coverage still reads 100%.
+        await tx`insert into pos_item_map (restaurant_id, pos_item_id, item_name, recipe_id) values (${t},'ZZV-NOPORT','Zz Probe NoPortions',${nop.id})`
+        const two = await ch_()
+        assert.equal(Number(two?.costable_revenue), 3000, 'the portion-less dish must still count as costable')
+        assert.equal(Number(two?.theoretical_cost), 300, 'a portion-less dish must add NOTHING to the theoretical')
+        assert.equal(two?.coverage_pct, '100.0', 'coverage must read 100% — this is why the floor cannot see it')
+        out.a = `costable ${one?.costable_revenue}→${two?.costable_revenue}, theoretical unchanged at ${two?.theoretical_cost}, coverage ${two?.coverage_pct}%`
+
+        // and the app's own query must FIND it
+        const { getZeroCostDishes } = await import('../src/server/variance-queries')
+        // THROUGH THE APP'S OWN QUERY, on the lent handle. A tsql here would
+        // open a second connection that cannot see this uncommitted fixture,
+        // find nothing, and report a tick — which is the vacuous-probe family
+        // this file already records four times.
+        const found = await getZeroCostDishes(t, M, tx as never)
+        assert.ok(
+          found.some((d) => d.code === 'CH-802'),
+          'getZeroCostDishes did not find the portion-less dish the view is silently pricing at zero',
+        )
+
+        // ── FINDING B: an item with no section lands in the Unmapped bucket.
+        await tx`insert into pos_item_map (restaurant_id, pos_item_id, item_name, item_id) values (${t},'ZZV-WATER','Zz Probe Water',${water.id})`
+        const three = await ch_()
+        assert.equal(
+          Number(three?.theoretical_cost), 300,
+          'an item mapped with NO department reached the department anyway — recheck the section rule',
+        )
+        await tx`update pos_item_map set section_id=${ch.id} where restaurant_id=${t} and pos_item_id='ZZV-WATER'`
+        const four = await ch_()
+        assert.equal(Number(four?.theoretical_cost), 500, '20 units at 10 must reach the department once it has one')
+        out.b = `item alone → theoretical ${three?.theoretical_cost}; item + department → ${four?.theoretical_cost}`
+
+        throw new Error('ROLLBACK-VARIANCE-PROBE')
+      }).catch((e: unknown) => {
+        if ((e as Error).message !== 'ROLLBACK-VARIANCE-PROBE') throw e
+      })
+      console.log(`      A: ${out.a}`)
+      console.log(`      B: ${out.b}`)
+    })
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

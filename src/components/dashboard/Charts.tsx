@@ -216,10 +216,31 @@ export function HourlyLine({ points }: { points: { hour: number; revenue: string
 export function DivergingBars({
   rows,
   height = 176,
+  polarity = 'higher-is-good',
 }: {
   rows: { label: string; value: number }[]
   height?: number
+  /**
+   * WHICH SIDE IS THE BAD SIDE — because it is not the same question twice.
+   *
+   * For a MARGIN, negative is the problem: a section that costs more than it
+   * earns. For a VARIANCE against recipes, POSITIVE is the problem: rupees of
+   * stock consumed that the recipes cannot account for. A single hard-wired
+   * `value < 0 ? RED : GREEN` paints an overspend green, which is the indent
+   * gap's inverted-convention bug in a new costume — that page coloured
+   * `gap > 0` red while the view computed given − requested, and spent a
+   * migration calling an over-issue a shortage.
+   *
+   * The bar's SIDE and the printed sign are unchanged either way, so the
+   * reader is never relying on the hue; this only stops the hue from
+   * contradicting them. Under-consumption is GOLD rather than green: a kitchen
+   * using less than its own recipes say is a recipe that overstates or stock
+   * that left unrecorded, which is doubt, not good news.
+   */
+  polarity?: 'higher-is-good' | 'higher-is-bad'
 }) {
+  const fill = (v: number) =>
+    polarity === 'higher-is-bad' ? (v > 0 ? RED : v < 0 ? GOLD : INK) : v < 0 ? RED : GREEN
   return (
     <div className="w-full" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -253,7 +274,7 @@ export function DivergingBars({
             label={{ position: 'right', formatter: labelSignedMoney, fill: INK, fontSize: 11 }}
           >
             {rows.map((r) => (
-              <Cell key={r.label} fill={r.value < 0 ? RED : GREEN} />
+              <Cell key={r.label} fill={fill(r.value)} />
             ))}
           </Bar>
         </BarChart>

@@ -1129,26 +1129,68 @@ export type UnmappedPosItem = {
   revenue: string
 }
 
+/**
+ * THREE TARGETS, and each answers a different amount of the question.
+ *
+ *   a DISH        gives the department AND the cost — the fullest answer
+ *   a STOCK ITEM  gives the cost, and needs a department beside it to say
+ *                 where it sold; bottled water is bought, stocked, issued and
+ *                 sold, so it has a real cost and will never have a recipe
+ *   a DEPARTMENT  gives the department alone — revenue lands in the right
+ *                 place and no cost does
+ *
+ * Without the item target, resold goods sit inside ACTUAL consumption and are
+ * absent from THEORETICAL, so every Bar variance is wrong by the price of the
+ * drinks.
+ */
 export type PosMapRow = {
   id: string
   pos_item_id: string
   item_name: string | null
   recipe_id: string | null
-  /** A DIRECT department, for anything that will never have a recipe —
-   *  bottled water is bought and resold. recipe_id WINS when both are set. */
+  /** A DIRECT department, for anything that will never have a recipe.
+   *  recipe_id WINS when both are set. */
   section_id: string | null
+  /** A STOCK ITEM — carries the cost. Always saved WITH a section, because
+   *  theoretical_food_cost groups on coalesce(recipe.section_id,
+   *  map.section_id): an item with no department lands its cost in the
+   *  Unmapped bucket, where the department that sold it never sees it.
+   *  Measured on the probe tenant, not inferred. */
+  item_id: string | null
   recipe_code: string | null
   recipe_name: string | null
   section_code: string | null
   section_name: string | null
+  item_code: string | null
+  /** The master item's own name, kept apart from `item_name`, which is what
+   *  the POS calls the thing. */
+  stock_item_name: string | null
+}
+
+/** An item a POS line can be pointed at — one that is bought and resold. */
+export type ItemOption = {
+  id: string
+  code: string
+  name: string
+  category: string
+  /** NULL when nothing has ever been bought and no opening rate is set: the
+   *  cost side would be blank, so the picker says so rather than offering it
+   *  as an equal answer. */
+  issue_cost: string | null
 }
 
 /** `mapping_coverage`. COVERAGE IS THE HEADLINE, NOT A COUNT.
  *
  *  `revenue_mapped` is NULL, not 0, when nothing is mapped — a sum over no
- *  rows. `items_costed` is the second number: an item mapped to a department
- *  only is attributed but not costed, which is most of the value and not all
- *  of it. */
+ *  rows.
+ *
+ *  `items_costed` COUNTS DISHES ONLY — its filter is `m.recipe_id IS NOT
+ *  NULL`, which predates the stock-item target and does not know about it.
+ *  A POS item pointed at a stock item DOES carry a cost into
+ *  theoretical_food_cost, so this figure now understates. The mapping screen
+ *  counts item-mapped rows itself from the rows it already holds rather than
+ *  letting the view's word "costed" quietly mean something narrower than it
+ *  says. */
 export type MappingCoverage = {
   items_seen: number
   items_mapped: number

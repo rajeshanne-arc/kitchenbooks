@@ -6,6 +6,7 @@
 import 'server-only'
 import { sql, tsql } from '@/lib/db'
 import type {
+  ItemOption,
   DishOption,
   MappingCoverage,
   PaymentSplitRow,
@@ -147,16 +148,40 @@ export async function listUnmapped(restaurantId: string): Promise<UnmappedPosIte
  */
 export async function listMappings(restaurantId: string): Promise<PosMapRow[]> {
   return tsql<PosMapRow[]>`
-    select m.id, m.pos_item_id, m.item_name, m.recipe_id, m.section_id,
+    select m.id, m.pos_item_id, m.item_name, m.recipe_id, m.section_id, m.item_id,
            r.code as recipe_code, r.name as recipe_name,
            coalesce(rs.code, ds.code) as section_code,
-           coalesce(rs.name, ds.name) as section_name
+           coalesce(rs.name, ds.name) as section_name,
+           i.code as item_code, i.name as stock_item_name
     from pos_item_map m
     left join recipes r on r.id = m.recipe_id
     left join sections rs on rs.id = r.section_id
     left join sections ds on ds.id = m.section_id
+    left join items i on i.id = m.item_id
     where m.restaurant_id = ${restaurantId}
     order by coalesce(m.item_name, m.pos_item_id) asc`
+}
+
+/**
+ * The stock items a POS line can be pointed at — the third mapping target.
+ *
+ * A bottled water is bought, stocked, issued and sold: a real cost with no
+ * recipe. `issue_cost` is carried so the picker can say which items have a
+ * cost behind them and which do not, rather than offering an item whose
+ * theoretical contribution would silently be nothing.
+ *
+ * EVERY ACTIVE ITEM, not only the ones with a cost. An item bought for the
+ * first time next week has no purchase line today, and hiding it would make
+ * the mapping impossible on the day somebody wants to make it — the scoping
+ * rule from the pickers phase: scope and rank, never exclude.
+ */
+export async function listItemOptions(restaurantId: string): Promise<ItemOption[]> {
+  return tsql<ItemOption[]>`
+    select i.id, i.code, i.name, i.category, ic.issue_cost::text as issue_cost
+    from items i
+    left join item_costs ic on ic.restaurant_id = i.restaurant_id and ic.item_id = i.id
+    where i.restaurant_id = ${restaurantId} and i.status = 'active'
+    order by (ic.issue_cost is null) asc, i.category asc, i.name asc`
 }
 
 export async function countUnmapped(restaurantId: string): Promise<number> {

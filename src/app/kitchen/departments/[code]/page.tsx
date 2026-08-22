@@ -11,13 +11,20 @@ import {
   getDepartmentEvidence,
 } from '@/server/department-queries'
 import { getFoodCost } from '@/server/kitchen-queries'
+import {
+  getFoodCostVariance,
+  getVariancePreconditions,
+  getZeroCostDishes,
+} from '@/server/variance-queries'
 import { listDishCosts } from '@/server/recipes-queries'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
+import { assessVariance, COVERAGE_FLOOR } from '@/lib/variance'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import PartialMonths from '@/components/dashboard/PartialMonths'
 import Unassessed from '@/components/dashboard/Unassessed'
+import VariancePreconditions from '@/components/dashboard/VariancePreconditions'
 import Honesty, { Doubted } from '@/components/Honesty'
 import GapCell from '@/components/kitchen/GapCell'
 import {
@@ -145,13 +152,17 @@ export default async function DepartmentPage({
   // ones: each `tsql` is BEGIN + SET LOCAL + the query + COMMIT, which is three
   // round trips, and this page renders inside a group layout that is already
   // holding connections from a max: 12 pool.
-  const [byCode, byId, evidence, foodCostAll, dishesAll] = await Promise.all([
-    getDepartmentByCode(restaurant.id, dept.code, period.months, period.from, period.to),
-    getDepartmentById(restaurant.id, dept.id, period.from, period.to),
-    getDepartmentEvidence(restaurant.id, dept.code, dept.id, period.from, period.to),
-    getFoodCost(restaurant.id, period.reportMonth),
-    listDishCosts(restaurant.id),
-  ])
+  const [byCode, byId, evidence, foodCostAll, dishesAll, varianceAll, zeroCostAll, needs] =
+    await Promise.all([
+      getDepartmentByCode(restaurant.id, dept.code, period.months, period.from, period.to),
+      getDepartmentById(restaurant.id, dept.id, period.from, period.to),
+      getDepartmentEvidence(restaurant.id, dept.code, dept.id, period.from, period.to),
+      getFoodCost(restaurant.id, period.reportMonth),
+      listDishCosts(restaurant.id),
+      getFoodCostVariance(restaurant.id, period.reportMonth),
+      getZeroCostDishes(restaurant.id, period.reportMonth),
+      getVariancePreconditions(restaurant.id, period.reportMonth),
+    ])
 
   // THE SWITCH IS THE CAPABILITY COLUMNS, NOT dept_kind. The brief said the
   // thinner page keys on dept_kind = 'operational', and that is nearly right —
@@ -228,6 +239,18 @@ export default async function DepartmentPage({
 
   /* ── 2. Food cost ──────────────────────────────────────────────────────── */
   const fc = foodCostAll.find((r) => r.section_code === dept.code) ?? null
+
+  /* ── actual vs theoretical, for this department ───────────────────────── */
+  //
+  // A ROW EXISTS ONLY WHERE SOMETHING WAS SOLD AND MAPPED. theoretical_food_cost
+  // groups POS lines by the section their mapping resolves to, so a department
+  // with no mapped sale this month has no row at all — which is a different
+  // fact from a row reading zero, and is why the missing case falls through to
+  // the preconditions rather than to a refusal about coverage.
+  const vr = varianceAll.find((r) => r.section_code === dept.code) ?? null
+  const vZero = zeroCostAll.filter((d) => d.section_code === dept.code)
+  const verdict =
+    vr === null ? null : assessVariance(vr, vZero, dept.name, monthLabel(period.reportMonth))
 
   /* ── 5. Indents ────────────────────────────────────────────────────────── */
   const indentDays = [...new Set(byCode.indents.map((r) => r.indent_id))]
@@ -463,6 +486,102 @@ export default async function DepartmentPage({
               Ingredients only — overhead is not in this ratio. Reported for {monthLabel(period.reportMonth)}
               alone; a percentage blended across months would not mean anything.
             </p>
+          </>
+        )}
+      </Card>
+
+      {/* ── 2b · ACTUAL VS THEORETICAL ──────────────────────────────────── */}
+      {/*
+        The sharpest thing on this page. Food cost says a department spent 34%;
+        this says it spent ₹7,150 MORE than its own recipes account for — which
+        is where over-portioning, unrecorded waste and theft actually show up.
+        Nothing here is computed: both halves are views, and the variance is a
+        published column.
+      */}
+      <Card title="Actual vs theoretical" source="food_cost_variance">
+        {!cooks ? (
+          <NotApplicable>
+            {dept.name} does not cook or hold stock, so there is no consumption to set against a recipe.
+            Nothing here is owed or missing.
+          </NotApplicable>
+        ) : !canSell ? (
+          <NotApplicable>
+            No dish carries {dept.name}&apos;s code, so nothing can ever be sold under it and there is no
+            theoretical cost to compare against — it consumes, and the comparison is not a question about it.
+          </NotApplicable>
+        ) : verdict === null ? (
+          <Unassessed needs="nothing mapped to this department">
+            <p>
+              Nothing sold in {monthLabel(period.reportMonth)} resolves to {dept.name}, so there is no
+              theoretical cost to set against what it consumed. What this report is waiting for:
+            </p>
+            <VariancePreconditions p={needs} />
+          </Unassessed>
+        ) : verdict.state !== 'stated' ? (
+          <Unassessed needs={verdict.needs}>
+            <p>{verdict.why}</p>
+            {/* COVERAGE IS STATED EVEN WHEN IT IS THE REASON — and especially
+                then. The refusal names the percentage so nobody has to guess
+                how far off it is. */}
+            {verdict.state === 'zero-cost-dishes' && (
+              <p className="mt-1.5">
+                {verdict.dishes.map((d) => `${d.code} ${d.name} (${money(d.revenue)} sold)`).join(' · ')} —
+                set the portion count on the dish card and this answers.
+              </p>
+            )}
+            <div className="mt-2">
+              <VariancePreconditions p={needs} />
+            </div>
+          </Unassessed>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-end gap-6">
+              {/* THE VARIANCE IS THE FINDING, so it is the hero figure and the
+                  two halves sit beside it as its working. Over the recipes is
+                  red — that is money nobody can account for; under is amber,
+                  not green, because a kitchen using LESS than its own recipes
+                  say is a recipe that is wrong or a portion that shrank, and
+                  neither is good news. */}
+              <Figure
+                label={`Variance · ${monthLabel(period.reportMonth)}`}
+                value={`${verdict.variancePaise > 0 ? '+' : ''}${formatMoneyString(verdict.row.variance_value ?? '0')}`}
+                tone={
+                  verdict.variancePaise > 0
+                    ? 'text-red-700'
+                    : verdict.variancePaise < 0
+                      ? 'text-amber-800'
+                      : 'text-stone-900'
+                }
+              />
+              <Figure label="Actual — opening + issued − closing" value={money(verdict.row.actual_cost)} />
+              <Figure label="Theoretical — what the recipes say" value={money(verdict.row.theoretical_cost)} />
+            </div>
+            <p className="mt-2 text-sm text-stone-700">
+              {verdict.variancePaise > 0 ? (
+                <>
+                  {dept.name} used <b>{formatMoneyString(verdict.row.variance_value ?? '0')} more</b> than its
+                  recipes account for
+                  {verdict.row.variance_pct !== null && <> — {verdict.row.variance_pct} points of its sales</>}.
+                </>
+              ) : verdict.variancePaise < 0 ? (
+                <>
+                  {dept.name} used {formatMoneyString(String(-Number(verdict.row.variance_value ?? '0')))} LESS
+                  than its recipes account for. Under is not good news: a recipe that overstates, a portion
+                  that shrank, or stock that left without being issued.
+                </>
+              ) : (
+                <>{dept.name} consumed exactly what its recipes account for.</>
+              )}
+            </p>
+            {/* STATE COVERAGE ALWAYS, even at 94%, so nobody reads it as 100%. */}
+            <div className="mt-3">
+              <Honesty verdict={`${verdict.row.coverage_pct}% of sales costed`} compact>
+                {money(verdict.row.costable_revenue)} of {money(verdict.row.revenue)} sold under {dept.name}{' '}
+                points at something with a cost. The theoretical is built from that much and no more, so the
+                variance is a statement about {verdict.row.coverage_pct}% of what it sold — stated because it
+                is above {COVERAGE_FLOOR}%, not because it is complete.
+              </Honesty>
+            </div>
           </>
         )}
       </Card>

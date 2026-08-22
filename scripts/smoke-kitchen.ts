@@ -195,7 +195,7 @@ async function main() {
   }
   const fetch1 = await persistFetch(rid, SALES_DATE, normalizePayload(payload, SALES_DATE))
   assert.equal(fetch1.insertedOrders, 1)
-  const mapped = await mapPosItem({ posItemId: 'ZZT-9', itemName: 'Zz Kitchen Item', recipeId: dish.id , sectionId: '' })
+  const mapped = await mapPosItem({ posItemId: 'ZZT-9', itemName: 'Zz Kitchen Item', recipeId: dish.id, itemId: '', sectionId: '' })
   assert.ok(mapped.ok, `mapPosItem failed: ${mapped.ok === false ? mapped.error : ''}`)
 
   fc = await getFoodCost(rid, MONTH)

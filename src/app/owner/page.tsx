@@ -4,6 +4,11 @@ import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
 import { getFoodCost } from '@/server/kitchen-queries'
 import {
+  getFoodCostVariance,
+  getVariancePreconditions,
+  getZeroCostDishes,
+} from '@/server/variance-queries'
+import {
   getEntryPulse,
   getMissingCloses,
   getOwed,
@@ -21,6 +26,7 @@ import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/mone
 import { fmtDate } from '@/lib/format'
 import { readPeriodParam, monthLabel, resolvePeriod } from '@/lib/period'
 import { requires, UNASSESSABLE_URGENCY } from '@/lib/precondition'
+import { COVERAGE_FLOOR, totalVariance, type ZeroCostDish } from '@/lib/variance'
 import { countOrdersWithTime, getBusinessDayDisagreements } from '@/server/business-day'
 import { cardCls, heroNumCls, moneyCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import Honesty, { HonestyPill } from '@/components/Honesty'
@@ -30,6 +36,7 @@ import { listRecentDays } from '@/server/day-queries'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import PartialMonths from '@/components/dashboard/PartialMonths'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
+import VariancePreconditions from '@/components/dashboard/VariancePreconditions'
 import {
   BilledVsClaimed,
   DivergingBars,
@@ -78,6 +85,10 @@ const URGENCY = {
   gap: 600, // an aggregator disagreeing with us
   unclaimed: 500, // revenue belonging to no section
   cash: 400,
+  // ACTUAL VS THEORETICAL, above the ratio it refines. "Food cost is 38%" is a
+  // level; "₹7,150 more than the recipes account for" is an amount nobody can
+  // explain, which is a sharper thing to be told first.
+  variance: 350,
   ratio: 300,
   margin: 250,
   waste: 200,
@@ -222,6 +233,9 @@ export default async function DashboardPage({
     dayGaps,
     timed,
     recentDays,
+    variance,
+    zeroCost,
+    varianceNeeds,
   ] = await Promise.all([
     getEntryPulse(restaurant.id, period.from, period.to),
     getSalesSeries(restaurant.id, period.from, period.to),
@@ -239,6 +253,9 @@ export default async function DashboardPage({
     getBusinessDayDisagreements(restaurant.id),
     countOrdersWithTime(restaurant.id),
     listRecentDays(restaurant.id, 7),
+    getFoodCostVariance(restaurant.id, period.reportMonth),
+    getZeroCostDishes(restaurant.id, period.reportMonth),
+    getVariancePreconditions(restaurant.id, period.reportMonth),
   ])
 
   // What the sales-dependent cards rest on, stated ONCE so five of them ask
@@ -727,6 +744,103 @@ export default async function DashboardPage({
                   {pending.map((f) => f.section_name).join(' · ')} moved stock with no closing filed, so{' '}
                   {plural(pending.length, 'its', 'their')} consumption is unfinished and{' '}
                   {plural(pending.length, 'it is', 'they are')} not in the bars above.
+                </Honesty>
+              </div>
+            )}
+          </>
+        </Card>
+      ),
+    })
+  }
+
+  /* ── actual vs theoretical, the restaurant total ─────────────────────── */
+  {
+    // ONE TOTAL OVER THE SECTIONS THAT CAN ANSWER, and the ones that cannot are
+    // named rather than silently folded in at zero. Summing a section whose
+    // closing has not been filed would read its consumption as nothing and
+    // flatter the whole restaurant — the same fault as a percentage over a
+    // missing denominator, one level up.
+    const byS = new Map<string, ZeroCostDish[]>()
+    for (const d of zeroCost) byS.set(d.section_code, [...(byS.get(d.section_code) ?? []), d])
+    const tot = totalVariance(variance, byS, monthLabel(period.reportMonth))
+    const over = tot.variancePaise > 0
+
+    const check = requires(
+      tot.stated.length > 0,
+      tot,
+      variance.length === 0 ? 'nothing costable sold' : 'no section can be compared',
+      variance.length === 0
+        ? `Nothing sold in ${monthLabel(period.reportMonth)} resolves to a department with a cost behind it, so there is no theoretical cost to set against what the kitchens consumed.`
+        : `No department has both a costable theoretical and a filed closing in ${monthLabel(period.reportMonth)}, so there is nothing to compare. What each one is waiting for is below.`,
+    )
+
+    const sentence = !check.assessable
+      ? check.why
+      : over
+        ? `${formatPaise(tot.variancePaise)} more was consumed than the recipes account for.`
+        : tot.variancePaise < 0
+          ? `${formatPaise(-tot.variancePaise)} LESS was consumed than the recipes account for — a recipe that overstates, or stock that left without being issued.`
+          : 'Consumption matches the recipes exactly.'
+
+    questions.push({
+      key: 'variance',
+      urgency: !check.assessable
+        ? UNASSESSABLE_URGENCY
+        : tot.variancePaise !== 0
+          ? URGENCY.variance
+          : HEALTHY_WITH_CONTENT,
+      node: !check.assessable ? (
+        <Card
+          title={`Actual vs theoretical — ${monthLabel(period.reportMonth)}`}
+          source="food_cost_variance"
+          href="/kitchen/books/food-cost"
+          level="unassessable"
+          sentence={check.why}
+          /* THE PRECONDITIONS CARRY LINKS, so they go in the footer — this
+             card is itself an anchor and a link inside a link is invalid. */
+          footer={<VariancePreconditions p={varianceNeeds} />}
+        >
+          <Unassessed needs={check.needs}>
+            What this report is waiting for, with what has arrived so far:
+          </Unassessed>
+        </Card>
+      ) : (
+        <Card
+          title={`Actual vs theoretical — ${monthLabel(period.reportMonth)}`}
+          source="food_cost_variance"
+          href="/kitchen/books/food-cost"
+          level={over ? 'alarm' : tot.variancePaise < 0 ? 'doubt' : 'calm'}
+          sentence={sentence}
+        >
+          <>
+            {/* OVERSPEND IS THE BAD SIDE HERE, the opposite of margin below —
+                so the polarity is stated rather than inherited. The bar's side
+                and its printed sign carry the fact; the hue only agrees. */}
+            <DivergingBars
+              rows={tot.stated.map((x) => ({
+                label: x.row.section_name,
+                value: x.variancePaise / 100,
+              }))}
+              polarity="higher-is-bad"
+              height={Math.max(120, Math.min(tot.stated.length, 6) * 30 + 40)}
+            />
+            <p className="mt-2 text-[13px] text-stone-600">
+              Actual {formatPaise(tot.actualPaise)} · theoretical {formatPaise(tot.theoreticalPaise)}, over{' '}
+              {tot.stated.length} of {variance.length} {plural(variance.length, 'department')}.
+            </p>
+            {/* STATE COVERAGE ALWAYS. A total over the comparable departments
+                is not the restaurant's variance, and the two figures that say
+                so travel with it rather than being implied by its absence. */}
+            {tot.excluded.length > 0 && (
+              <div className="mt-2">
+                <Honesty
+                  verdict="not every department"
+                  meter={{ filled: tot.stated.length, total: variance.length, unit: 'departments' }}
+                  compact
+                >
+                  {tot.excluded.map((e) => `${e.row.section_name} — ${e.verdict.needs}`).join(' · ')}. Their
+                  consumption is NOT in the figure above; a department with no closing filed would otherwise
+                  count as having consumed nothing.
                 </Honesty>
               </div>
             )}

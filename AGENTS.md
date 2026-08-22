@@ -5995,3 +5995,111 @@ The last one is worth stating on its own, because it is the only one of the
 three that destroys rather than misleads: **`cat >` and `Write` do not ask.**
 Every other footgun here announced itself the moment a gate ran; this one was
 found only because TypeScript happened to notice two exports had vanished.
+
+## ACTUAL VS THEORETICAL — and the guard the coverage floor cannot see
+
+The category's defining report, and the one every operational habit in this app
+exists to produce: not "food cost was 34%" but **"you used ₹7,150 more than the
+recipes say"**. Both halves already existed — `section_food_cost` is opening +
+issued − closing, `theoretical_food_cost` is qty sold × cost_per_portion —
+and nothing joined them. `food_cost_variance` is the join.
+
+**COVERAGE IS THE SAFETY MECHANISM.** Below 90% costable revenue the variance
+is not stated, and the refusal names the figure: *"Chinese is 43% costed — the
+variance would be measuring the mapping, not the kitchen."* Coverage is stated
+even when it PASSES, so nobody reads 94% as 100%. `COVERAGE_FLOOR` is a
+constant and must never become a setting: two restaurants setting it
+differently would make their variances mean different things, which is this
+file's own test for a setting that must not exist.
+
+### THE FLOOR IS STRUCTURALLY BLIND TO ONE CASE, AND IT IS LIVE TODAY
+
+`theoretical_food_cost` joins `dish_costs ON dc.recipe_id = m.recipe_id AND
+dc.dish_cost > 0`, and `cost_per_portion` is `total_cost / NULLIF(portions,
+0)`. So a dish with a real recipe cost and **no portion count** satisfies that
+join: its revenue counts as COSTABLE while `qty × NULL` contributes nothing to
+the cost.
+
+Measured on the probe tenant, rolled back — mapping one portion-less dish:
+
+| | costable_revenue | coverage | theoretical |
+|---|---|---|---|
+| dish with portions only | 2000 | 100.0% | 300 |
+| **+ the portion-less dish** | **3000** | **100.0%** | **300** |
+
+**Coverage reads 100% while a third of the revenue is costed at zero.** The
+variance then reads as overspending that is really a blank field on a dish
+card — the exact thing the floor exists to prevent, arriving by a route the
+floor cannot see. So it is a SEPARATE guard, checked BEFORE the floor: if the
+floor answered first, the dish would be forgotten the moment coverage improved.
+
+This is not hypothetical. Live today `SI-001 Chicken 65` costs ₹316.67 and has
+`portions = NULL` — **one mapping away from understating South Indian**.
+
+### A STOCK ITEM WITHOUT A DEPARTMENT LANDS ITS COST NOWHERE
+
+`pos_item_map.item_id` is the third target: a bottled water is bought, stocked,
+issued and sold — a real cost with no recipe — and without it those goods sit
+inside ACTUAL and are absent from THEORETICAL, so every Bar variance is wrong
+by the price of the drinks.
+
+But `theoretical_food_cost` groups on `coalesce(recipes.section_id,
+map.section_id)`, so an **item-only** row has no section to resolve to and puts
+its revenue AND its cost in the '—' Unmapped bucket, where the department that
+sold it never sees either. Measured, rolled back: item alone left Chinese at
+theoretical 300; item + department took it to 500. The picker asks for both and
+`mapPosItem` refuses by name — a form is never the check.
+
+**The mapping queue now offers three targets per row**: a dish (department and
+cost), a stock item + the department that sold it (cost), or a department alone
+(revenue only). `mapping_coverage.items_costed` filters `recipe_id IS NOT NULL`
+and predates the item target, so it **now understates** — the screen counts
+item-mapped rows itself rather than letting the view's word "costed" quietly
+mean something narrower than it says.
+
+### A ZOD `.refine()` MESSAGE CANNOT REACH THE USER
+
+Found by the gate, and it was true of an OLDER refine too. `fail()` collapses
+every `ZodError` to *"Invalid input — nothing was saved"*, so a `.refine({
+message })` is written, shipped, and never read: the refusal names nothing. The
+two rules are thrown as `SalesError` in the action instead, and the schema
+validates SHAPE only. Same lesson as `AccountRefusal` — **a refusal nobody can
+read is not a refusal** — and worth checking wherever a `.refine()` message
+looks load-bearing.
+
+### DivergingBars WAS WRITTEN FOR MARGIN, WHERE THE OTHER SIDE IS THE BAD ONE
+
+It hard-wired `value < 0 ? RED : GREEN`. For a variance, POSITIVE is the
+problem — rupees nobody can account for — so a chart inheriting the default
+**paints an overspend green**. That is the indent-gap fault in a new costume,
+where the page coloured `gap > 0` red while the view computed given − requested.
+`polarity` is now stated at each call site; the bar's side and its printed sign
+are unchanged, so the hue only ever agrees with them rather than carrying the
+meaning. Under-consumption is GOLD, not green: using less than your own recipes
+say is a recipe that overstates or stock that left unrecorded.
+
+### The empty state is the feature, and it names four errands with counts
+
+Live: **0 of 350 POS items mapped · ₹39,78,502 unattributed · 0 of 1 dishes
+costable (1 with no portion count) · 2 issues · 0 of 9 closings.** A generic
+"not enough data" makes weeks of entry invisible; naming the four with their
+figures is what makes it legible. Every link **gates itself through the
+matrix** — the chef reads this block on a department page and cannot open
+`/store/issue` — and that was exercised rather than asserted: on a month whose
+issues leg is still open, the owner gets the door and the chef gets the same
+sentence and the same count without it.
+
+**DO NOT compute a variance from issues alone when a closing is missing.**
+Issued is not consumed — a kitchen draws ten kilos on Monday and cooks it over
+three days. The view returns NULL; a gate asserts nothing coalesces it away.
+
+### Seven perturbations, seven correct failures
+
+Every guard was proved capable of failing before it was believed: removing the
+zero-cost guard, dropping the floor to 0, dropping the chart polarity, allowing
+an item with no department, coalescing the actual half, and — for the probe
+itself — removing each of the two fixture writes it depends on. The probe calls
+`getZeroCostDishes` **on the lent transaction handle**, because a `tsql` there
+would open a second connection, see none of the uncommitted fixture, find
+nothing and report a tick: the vacuous-probe family this file already records
+four times.

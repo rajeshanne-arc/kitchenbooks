@@ -12,14 +12,28 @@
 // the honest metric — mapping a water bottle and mapping the biryani are not
 // the same act, and a count says they are.
 //
-// EVERY ROW OFFERS BOTH TARGETS. A dish gives the department AND the cost; a
+// EVERY ROW OFFERS THREE TARGETS. A dish gives the department AND the cost; a
+// STOCK ITEM gives the cost for something bought and resold — a bottled water
+// is bought, stocked, issued and sold, and will never have a recipe — and a
 // department alone gives the department, which is most of the value and the
-// only honest answer for anything bought and resold. `items_costed` is the
-// second number that keeps those apart.
+// honest answer for anything with neither.
+//
+// AN ITEM IS SAVED WITH ITS DEPARTMENT, NEVER ALONE. theoretical_food_cost
+// groups on coalesce(recipe.section_id, map.section_id), so an item with no
+// department lands its revenue AND its cost in the Unmapped bucket, where the
+// department that sold it never sees either. Measured on the probe tenant, not
+// inferred; the server refuses it by name and this form asks for both.
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { DishOption, MappingCoverage, PosMapRow, Section, UnmappedPosItem } from '@/lib/types'
+import type {
+  DishOption,
+  ItemOption,
+  MappingCoverage,
+  PosMapRow,
+  Section,
+  UnmappedPosItem,
+} from '@/lib/types'
 import { mapPosItem } from '@/server/sales-actions'
 import { formatMoneyString, decimalStringToPaise } from '@/lib/money'
 import Honesty from '@/components/Honesty'
@@ -41,7 +55,7 @@ function nextChunk(rows: UnmappedPosItem[], totalPaise: number): { count: number
   return null
 }
 
-function Coverage({ c }: { c: MappingCoverage }) {
+function Coverage({ c, itemMapped }: { c: MappingCoverage; itemMapped: number }) {
   const pct = Number(c.pct_attributed)
   return (
     <section className={cardCls}>
@@ -72,12 +86,27 @@ function Coverage({ c }: { c: MappingCoverage }) {
           </>
         )}
       </p>
-      {c.items_mapped > c.items_costed && (
+      {/* `items_costed` COUNTS DISHES ONLY — its filter is `m.recipe_id IS NOT
+          NULL`, written before the stock-item target existed. An item mapping
+          DOES carry a cost, so the view's figure now understates and the
+          difference is split here using the rows this screen already holds,
+          rather than letting the word "costed" quietly mean something narrower
+          than it says. */}
+      {c.items_mapped > c.items_costed + itemMapped && (
         <div className="mt-3">
           <Honesty verdict="attributed, not costed" compact>
-            {c.items_mapped - c.items_costed} of the mapped items point at a DEPARTMENT and not a dish, so their
-            revenue lands in the right place and their food cost does not. That is the right answer for anything
-            bought and resold; for anything cooked, a dish is the fuller one.
+            {c.items_mapped - c.items_costed - itemMapped} of the mapped items point at a DEPARTMENT alone, so
+            their revenue lands in the right place and no cost does. That is the honest answer where there is
+            neither a recipe nor a stock item behind the thing sold; where there is one, it is the fuller one.
+          </Honesty>
+        </div>
+      )}
+      {itemMapped > 0 && (
+        <div className="mt-3">
+          <Honesty verdict="costed as stock" compact>
+            {itemMapped} {itemMapped === 1 ? 'item is' : 'items are'} pointed at a stock item, so{' '}
+            {itemMapped === 1 ? 'its' : 'their'} cost reaches the theoretical at what the store paid for it.
+            The coverage view counts only dishes as costed, so this is not in its figure.
           </Honesty>
         </div>
       )}
@@ -88,6 +117,7 @@ function Coverage({ c }: { c: MappingCoverage }) {
 function Row({
   u,
   dishes,
+  items,
   sections,
   busy,
   onPick,
@@ -95,11 +125,16 @@ function Row({
 }: {
   u: UnmappedPosItem
   dishes: DishOption[]
+  items: ItemOption[]
   sections: Section[]
   busy: boolean
-  onPick: (recipeId: string, sectionId: string) => void
+  onPick: (recipeId: string, itemId: string, sectionId: string) => void
   done: string | undefined
 }) {
+  // AN ITEM IS HALF AN ANSWER UNTIL ITS DEPARTMENT ARRIVES, so picking one
+  // holds rather than saves, and the department select beside it becomes the
+  // second half. A dish clears it: a dish already carries both.
+  const [item, setItem] = useState('')
   return (
     <li className="py-2.5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -114,7 +149,7 @@ function Row({
       {done !== undefined ? (
         <p className="mt-1 text-sm font-medium text-emerald-700">→ {done}</p>
       ) : (
-        <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+        <div className="mt-1.5 grid gap-2 sm:grid-cols-3">
           <label className="block">
             <span className="mb-0.5 block text-[11px] font-medium uppercase tracking-wide text-stone-400">
               A dish — department and cost
@@ -124,7 +159,10 @@ function Row({
               value=""
               disabled={busy}
               onChange={(e) => {
-                if (e.target.value !== '') onPick(e.target.value, '')
+                if (e.target.value !== '') {
+                  setItem('')
+                  onPick(e.target.value, '', '')
+                }
               }}
             >
               <option value="">— pick a dish —</option>
@@ -137,14 +175,37 @@ function Row({
           </label>
           <label className="block">
             <span className="mb-0.5 block text-[11px] font-medium uppercase tracking-wide text-stone-400">
-              Or a department — bought and resold
+              A stock item — bought and resold
+            </span>
+            <select
+              className={selectCls}
+              value={item}
+              disabled={busy}
+              onChange={(e) => setItem(e.target.value)}
+            >
+              <option value="">— pick an item —</option>
+              {items.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.code} · {i.name}
+                  {i.issue_cost === null ? ' (no cost yet)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span
+              className={`mb-0.5 block text-[11px] font-medium uppercase tracking-wide ${
+                item === '' ? 'text-stone-400' : 'text-emerald-700'
+              }`}
+            >
+              {item === '' ? 'Or a department — no cost' : 'Where it sold — needed'}
             </span>
             <select
               className={selectCls}
               value=""
               disabled={busy}
               onChange={(e) => {
-                if (e.target.value !== '') onPick('', e.target.value)
+                if (e.target.value !== '') onPick('', item, e.target.value)
               }}
             >
               <option value="">— pick a department —</option>
@@ -157,6 +218,12 @@ function Row({
           </label>
         </div>
       )}
+      {done === undefined && item !== '' && (
+        <p className="mt-1 text-[12px] text-emerald-800">
+          {items.find((i) => i.id === item)?.name} — now pick the department that sold it. An item on its own
+          has a cost and nowhere to put it, so nothing is saved until both are chosen.
+        </p>
+      )}
     </li>
   )
 }
@@ -165,6 +232,7 @@ export default function MappingTable({
   unmapped,
   mapped,
   dishes,
+  items,
   sections,
   coverage,
   view,
@@ -172,6 +240,7 @@ export default function MappingTable({
   unmapped: UnmappedPosItem[]
   mapped: PosMapRow[]
   dishes: DishOption[]
+  items: ItemOption[]
   sections: Section[]
   coverage: MappingCoverage | null
   /** UNMAPPED is the queue and the default. MAPPED is a different task —
@@ -188,13 +257,16 @@ export default function MappingTable({
   const [cov, setCov] = useState(coverage)
 
   const remaining = useMemo(() => unmapped.filter((u) => done[u.pos_item_id] === undefined), [unmapped, done])
+  // Counted from the rows already on screen, not queried again: mapping_coverage
+  // has no column for it, because `items_costed` predates this target.
+  const itemMapped = useMemo(() => mapped.filter((m) => m.item_id !== null).length, [mapped])
   const remainingPaise = useMemo(
     () => remaining.reduce((n, u) => n + decimalStringToPaise(u.revenue), 0),
     [remaining],
   )
   const chunk = useMemo(() => nextChunk(remaining, remainingPaise), [remaining, remainingPaise])
 
-  async function pick(u: UnmappedPosItem, recipeId: string, sectionId: string) {
+  async function pick(u: UnmappedPosItem, recipeId: string, itemId: string, sectionId: string) {
     setBusy(u.pos_item_id)
     setErrors((e) => ({ ...e, [u.pos_item_id]: '' }))
     try {
@@ -202,13 +274,16 @@ export default function MappingTable({
         posItemId: u.pos_item_id,
         itemName: u.item_name ?? '',
         recipeId,
+        itemId,
         sectionId,
       })
       if (res.ok) {
         const label =
           res.map.recipe_code !== null
             ? `${res.map.recipe_code} · ${res.map.recipe_name}`
-            : `${res.map.section_code} · ${res.map.section_name} (department only — no cost)`
+            : res.map.item_code !== null
+              ? `${res.map.item_code} · ${res.map.stock_item_name} in ${res.map.section_code} (costed as stock)`
+              : `${res.map.section_code} · ${res.map.section_name} (department only — no cost)`
         setDone((d) => ({ ...d, [u.pos_item_id]: label }))
         // COVERAGE IS THE HEADLINE, not a count. "218 unmapped" reads as an
         // impossible chore; a rising share of revenue attributed reads as
@@ -230,12 +305,13 @@ export default function MappingTable({
     }
   }
 
-  if (dishes.length === 0 && sections.length === 0) {
+  if (dishes.length === 0 && items.length === 0 && sections.length === 0) {
     return (
       <div className="mt-4 rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-10 text-center">
         <p className="text-[15px] font-semibold text-stone-900">Nothing to map to yet.</p>
         <p className="mx-auto mt-1 max-w-md text-sm text-stone-500">
-          A POS item points at a dish or a department. Create dishes under Recipes, or departments under Kitchen.
+          A POS item points at a dish, a stock item or a department. Create dishes under Recipes, items under
+          Store → Masters, or departments under Kitchen.
         </p>
       </div>
     )
@@ -248,7 +324,7 @@ export default function MappingTable({
           <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
         </div>
       )}
-      {cov !== null && <Coverage c={cov} />}
+      {cov !== null && <Coverage c={cov} itemMapped={itemMapped} />}
 
       {view === 'unmapped' && (
         <section className={cardCls}>
@@ -276,10 +352,11 @@ export default function MappingTable({
                   <Row
                     u={u}
                     dishes={dishes}
+                    items={items}
                     sections={sections}
                     busy={busy === u.pos_item_id}
                     done={done[u.pos_item_id]}
-                    onPick={(r, sec) => void pick(u, r, sec)}
+                    onPick={(r, it, sec) => void pick(u, r, it, sec)}
                   />
                   {errors[u.pos_item_id] && (
                     <p className="pb-2 text-xs font-medium text-red-700">{errors[u.pos_item_id]}</p>
@@ -314,6 +391,12 @@ export default function MappingTable({
                   {m.recipe_code !== null ? (
                     <>
                       → <span className={codeCls}>{m.recipe_code}</span> {m.recipe_name}
+                    </>
+                  ) : m.item_code !== null ? (
+                    <>
+                      → <span className={codeCls}>{m.item_code}</span> {m.stock_item_name} in{' '}
+                      <span className={codeCls}>{m.section_code}</span>
+                      <span className="ml-1 text-stone-400">costed as stock</span>
                     </>
                   ) : (
                     <>
