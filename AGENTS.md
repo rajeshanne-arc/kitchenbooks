@@ -6221,6 +6221,33 @@ in one sitting. `locations-actions` admits the store to WRITE, because the
 count sheet reads that order and whoever counts should be able to fix one that
 is wrong — the route gate is not the check.
 
+### WHY METERS STAYS — reasoned here, not received
+
+The brief that moved Locations out ended mid-heading at *"WHY METERS STAYS, so
+it is not moved by reflex"* and the paragraph never arrived. **The reasoning
+below is MINE**, worked out from the code, and is labelled as mine on purpose:
+
+> The meter equivalent of the store manager walking the shelves is already
+> served elsewhere: the cashier takes the reading on the day close, and what
+> the Setup chip holds is the RATE, which is set against a real electricity
+> bill by whoever reads that bill.
+
+The Locations test is WHO DOES THE PHYSICAL ACT — the person who places the
+items and walks the shelves sets the order they are walked in. Applied to
+meters, that person is the cashier, and they already have their surface:
+`MeterReadingEntry` sits on `/sales/close`, beside the count they are doing
+anyway, and there is deliberately no rate field on it. So the master is not the
+reader's screen at all. It is the rate-setter's — and the rate is held up
+against the real bill at month end by the owner or the accountant, which is
+exactly who `/owner/setup/meters` admits.
+
+**AND THE RULE THIS IS AN INSTANCE OF: never reconstruct a rationale and
+attribute it.** A reason in this file is read as settled by whoever comes next.
+One that was inferred and labelled as somebody else's is worse than an admitted
+gap — the gap invites the question, and the attribution closes it. Where a
+brief is truncated or a decision arrives without its argument, say so, and
+either ask or reason it out under your own name.
+
 ### A HAND-COPIED LIST OF RETIRED URLS HAD ALREADY DRIFTED
 
 `smoke:phase-a` kept its own list of 51 beside `legacy.ts`'s 57. It is DERIVED
@@ -6252,3 +6279,54 @@ bank* and the sentence was not. It reads both door labels **from the tab
 registry** now, so a relabel that leaves the sentence behind fails here. Eleven
 occurrences of `"Settings → Lists"` were corrected to `Setup → Lists` in the
 same pass — the path they named has been wrong twice over.
+
+
+## WHAT HAS NEVER TESTED IT — a rule that holds by accident is not a rule
+
+**Chips were never matrix-filtered.** LAW 1 has said since phase 12 that a role
+never SEES a link it cannot open, and it named nav, home tiles, Books tabs,
+group tab strips and quick links. The chip row obeyed it anyway, for phases,
+because every chip row in the app happened to be uniform — all of `/store` is
+store+manager+owner, all of `/accounts` is accountant+owner. Owner → Setup was
+the first row whose chips were not uniformly accessible, and it was therefore
+the first test the rule had ever had. It failed it.
+
+**Same shape as the 99 single-column foreign keys.** A foreign-key check runs
+as the table owner, so RLS never filtered it — and the schema was correct only
+because no row had ever pointed at another tenant's id. Same again as
+`mapping_coverage.items_costed` counting `recipe_id` alone: right until a
+second costing route existed. Same again as the four "latest filing wins"
+views, correct only because the app happens to write one row per key per
+transaction.
+
+So the question to ask of a rule that looks universal is not *is it true* — it
+will be — but **WHAT HAS NEVER TESTED IT.** Enumerate the cases the rule has
+actually met. If they are all one shape, it is a coincidence with a name, and
+the next shape is where it breaks. The corollary is that the FIRST instance of
+a new shape deserves a hard look at every rule it touches, because it is
+carrying all of them at once.
+
+## A CHECK WITH A HAND-MAINTAINED COPY OF THE THING IT CHECKS IS NOT CHECKING
+
+`smoke:phase-a` held a list of **51** retired URLs. `legacy.ts` held **57**.
+The gate walked its own copy, agreed with itself, and passed — while six owner
+masters had moved and three bookmarks had been dead since Phase A.
+
+Deriving the list from the source (`RETIRED_URLS`) found all three on the first
+run: `/books/snapshots`, `/books/wastage` and `/books/issues` each pointed at a
+route that exists only as `[id]` or `[date]`, so a specific bookmark resolved
+and a bare one 404'd. **None was caused by the work that found them.**
+
+**The tell is a literal that duplicates a source of truth** — a list of routes,
+of table names, of roles, of expected labels. If the thing under test can grow
+and the checker cannot see it grow, the checker is a snapshot of an old
+opinion. Derive it. The same run also replaced a gate that pinned the literal
+copy `"Accounts → Money"` with one that reads both door labels from the tab
+registry; the pinned phrase had already been wrong for a whole relabel.
+
+**The exception is narrow and worth stating, because it looks identical.** A
+GOLDEN fixture is deliberately a hand-copy — the 435-resolution period table
+exists precisely to disagree when the code changes, and is captured once and
+never regenerated. The difference is direction: a golden table is the past held
+still on purpose; a derived list is the present read fresh every run. What must
+not exist is the third thing — a hand-copy somebody updates when they remember.
