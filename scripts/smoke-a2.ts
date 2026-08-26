@@ -7620,38 +7620,30 @@ async function run() {
         assert.equal(Number(after?.gap), -2, 'ordered 16, delivered 14 — short 2')
         out.push(`sent + billed 14: gap ${after?.gap} — "Short 2 kg", in words`)
 
-        // A VOIDED DELIVERY STILL COUNTS — the FOURTH instance of a fault this
-        // project has recorded three times. po_fulfilment filters
-        // `pu.reverses_id is null`, which skips the REVERSAL row and not the
-        // bill it reversed; `vendor_supplied_items` and `bills.is_voided` both
-        // do both halves. So the goods come back and the order still says they
-        // arrived, which HIDES A SHORT — the direction that matters, because
-        // nobody chases a delivery the books say turned up.
+        // A VOIDED DELIVERY IS NOT A DELIVERY — and the assertion is the
+        // PERMANENT one, not the coupling that got us here.
         //
-        // WRITTEN AS AN INVARIANT, NOT A PINNED BUG: it couples the view's
-        // behaviour to the words on the screen, so it passes in both worlds
-        // and fails only when they disagree. The day
-        // migrations/po_fulfilment_skips_voided_bills.sql is applied this goes
-        // red and names the caption to delete — the vendor-return refusal
-        // pattern, which worked.
+        // This was the FOURTH instance of a fault this project has recorded
+        // three times: a reversed pair is TWO rows, and po_fulfilment filtered
+        // only the reversal, so the bill it reversed still counted. Measured
+        // here first — ordered 16, billed 14, voided, still reported delivered
+        // 14 — which HID A SHORT. Migration applied; the coupled invariant
+        // that held the honest caption in place went red on the next run and
+        // named the caption to delete, so both are gone and this stands in
+        // their place. A boolean left behind to remember a fixed bug is dead
+        // scaffolding; the invariant is what the numbers must be.
         const [rev] = await tx<{ id: string }[]>`insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, purchase_order_id, reverses_id) values (${t},'2099-04-03'::date,${v.id},-1400,${po.id},${pu.id}) returning id`
         await tx`insert into purchase_lines (restaurant_id, purchase_id, item_id, qty, rate) values (${t},${rev.id},${i.id},14,-100)`
         const voided = await gapRow()
-        const viewCountsVoided = Number(voided?.qty_delivered) !== 0
-        const { readFileSync: rf } = await import('node:fs')
-        const detail = rf('src/app/store/receive/orders/[id]/page.tsx', 'utf8')
-        const screenSaysSo = detail.includes('still counted here')
         assert.equal(
-          screenSaysSo,
-          viewCountsVoided,
-          viewCountsVoided
-            ? 'po_fulfilment counts a VOIDED bill as delivered and the screen no longer warns about it'
-            : 'po_fulfilment now skips voided bills — apply is done: delete the warning caption on the order page and this branch',
+          Number(voided?.qty_delivered), 0,
+          'a voided bill still counts as delivered — both halves of the reversed pair must be filtered',
         )
-        out.push(
-          `after voiding that bill: delivered ${voided?.qty_delivered}, gap ${voided?.gap}` +
-            (viewCountsVoided ? ' — STILL COUNTED, migration written and unapplied' : ' — correctly dropped'),
+        assert.equal(
+          Number(voided?.gap), -16,
+          'the gap must reopen to the whole order when the only delivery against it is voided',
         )
+        out.push(`after voiding that bill: delivered ${voided?.qty_delivered}, gap ${voided?.gap} — the short reopens`)
 
         await tx`update purchase_orders set status='cancelled' where id=${po.id}`
         const rows = await tx`select 1 from po_fulfilment where restaurant_id=${t} and po_id=${po.id}`

@@ -6394,9 +6394,16 @@ the view already computes — and land in editable fields.
 **RATES ARE THE VENDOR'S OWN, and a blank beats a borrowed one.**
 `vendor_supplied_items.last_rate` keys on (restaurant, vendor, item), which is
 why that view exists: measured, RR Chicken bills boneless at ₹330 and Sneha at
-₹300. Where this vendor has never billed an item the rate is left EMPTY and the
-document prints "to confirm" — a blank invites a question, a wrong number
-invites agreement.
+₹300.
+
+> **A BLANK INVITES A QUESTION, A WRONG NUMBER INVITES AGREEMENT.**
+
+That is why an unbilled item prints "to confirm" rather than borrowing somebody
+else's price — and **it is the same argument as the variance report refusing
+below 90% coverage.** In both places the app has something it could print and
+declines, because a figure that looks like an answer stops the reader asking
+the question that would have found the gap. Silence is legible; a plausible
+wrong number is not.
 
 ### DRAFT IS EDITABLE, SENT IS FROZEN — and the grants permit what the rule forbids
 
@@ -6489,33 +6496,47 @@ the print page carries none, and "save as PDF" in the print dialog is the PDF.
 A library would add a second layout to keep in step with this one for no gain a
 vendor could see.
 
-### A VOIDED DELIVERY STILL COUNTS — the fourth instance of one fault
+### A REVERSED PAIR IS TWO ROWS, AND FILTERING ONE OF THEM IS FILTERING NEITHER
 
-`po_fulfilment` filters `pu.reverses_id is null`, which skips the REVERSAL row
-and **not the bill it reversed**. `vendor_supplied_items` and `bills.is_voided`
-both do both halves; this one does not.
+The rule on its fourth outing, and it is the same rule every time. A bill is
+voided by a NEGATIVE TWIN — a reversal row carrying the same figures with the
+sign flipped — so a view over the line table must exclude **both** halves:
 
-**MEASURED ON THE PROBE TENANT, not read out of the definition.** Ordered 16,
-billed 14, then that bill voided: it still reports `delivered 14, gap −2`. The
-goods went back and the order says they arrived — **so a SHORT IS HIDDEN**,
-which is the direction that matters here, because nobody chases a delivery the
-books say turned up.
+    pu.reverses_id is null                        -- not the reversal row
+    and not exists (... x.reverses_id = pu.id)    -- and not the bill it reversed
 
-`migrations/po_fulfilment_skips_voided_bills.sql` is **written and NOT
-applied** — kb_app cannot replace a view, and every migration in this project
-is applied by Rajesh. It re-sets `security_invoker` in the same statement,
-because `create or replace view` silently drops it.
+`po_fulfilment` had the first and not the second. Excluding only the reversal
+leaves the original standing, and the pair nets to the ORIGINAL rather than to
+nothing — which is not half-right, it is exactly as wrong as no filter at all.
+Hence the name: filtering one of them is filtering neither.
 
-**Until it lands the screen says what is TRUE, not what it ought to be.** The
-order page carried the caption *"voided ones excluded"*, which was false the day
-it was written; it now says a voided bill is still counted and to check the
-bill list if a figure looks too good.
+**AND THE DIRECTION IS WHAT MAKES THIS ONE WORSE THAN THE THREE BEFORE IT.**
+The earlier instances OVERSTATED something — a doubled credit against a
+supplier, a doubled stock movement, an inflated returned value. **This one HID
+A SHORT.** A voided delivery read as arrived, the gap closed, and nobody chases
+goods the books say turned up. An overstated number is eventually argued about
+by somebody who disagrees with it; a finding that never appears is argued about
+by nobody. **A fault that hides a finding beats one that inflates a number.**
 
-**The gate is an INVARIANT, not a pinned bug** — it couples the view's behaviour
-to the words on the screen and asserts they agree, so it passes in both worlds
-and fails only when they diverge. The day the migration is applied it goes red
-naming the caption to delete. Same shape as the vendor-return refusal, which is
-the one that worked.
+Measured on the probe tenant before the fix: ordered 16, billed 14, that bill
+voided → still `delivered 14, gap −2`. After
+`po_fulfilment_skips_voided_bills` → `delivered 0, gap −16`, and the short
+reopens. That is the permanent assertion now.
+
+**The caption is the other half of this entry.** The order page said *"voided
+ones excluded"* — which was FALSE the day it was written, because it described
+what the query was FOR rather than what it did.
+
+> **A CAPTION THAT DESCRIBES THE INTENT RATHER THAN THE CODE IS THE WORST KIND
+> OF FALSE** — it makes a reader trust something the query does not do.
+> Coupling the gate to the CAPTION AND THE VIEW TOGETHER is right, because it
+> is the pair that has to stay true.
+
+That coupling worked exactly as designed: it held the honest wording in place
+while the view was wrong, went red on the first run after the migration, and
+named the caption to delete. Both are gone now and the permanent invariant
+stands in their place — **a boolean left behind to remember a fixed bug is dead
+scaffolding**, the same conclusion as the vendor-return refusal flag.
 
 ### Receiving: the shorts mechanism finally has something to compare against
 

@@ -204,21 +204,10 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             </table>
           </div>
         )}
-        {/* THE CAPTION SAID "VOIDED ONES EXCLUDED" AND THAT WAS FALSE.
-            po_fulfilment filters `pu.reverses_id is null`, which skips the
-            REVERSAL row and not the bill it reversed — so a voided delivery
-            still counts. Measured, not read: ordered 16, billed 14, voided,
-            still reports delivered 14. The migration is written and unapplied;
-            until it lands the screen says what is true rather than what it
-            ought to be, because a hidden short is one nobody chases. */}
         <p className="mt-2 text-xs text-stone-500">
-          Delivered counts bills entered against this order.{' '}
-          <b className="font-semibold text-amber-800">
-            A bill that was later voided is still counted here
-          </b>{' '}
-          — the view skips the reversal row and not the bill it reversed, so a cancelled delivery can hide a
-          shortfall. Check the bill list if a figure looks too good. A bill that cites no order is not counted
-          at all —{' '}
+          Delivered counts bills entered against this order, voided ones excluded — the view filters both
+          halves of a reversed pair, so goods that came back do not read as arrived. A bill that cites no
+          order is not counted at all —{' '}
           <Link href="/store/receive/purchase" className="text-emerald-700 hover:underline">
             enter one against it
           </Link>
