@@ -69,11 +69,11 @@ check('the owner strip is exactly Dashboard · P&L · Activity · Setup', () => 
   assert.equal(TAB_DEFAULTS.owner.filter((t) => t.chips === undefined).length, 3)
 })
 
-check('Setup holds the five masters, Settings last and after a rule', () => {
+check('Setup holds the masters, Settings last and after a rule', () => {
   const chips = chipsOf('owner', 'setup')
   assert.deepEqual(
     chips.map((c) => c.label),
-    ['Money accounts', 'Meters', 'Users', 'Lists', 'Settings'],
+    ['Money accounts', 'Meters', 'Users', 'Lists', 'Letterhead', 'Settings'],
   )
   // SETTINGS LAST, AFTER A DIVIDER. The four before it ADD ROWS; this one
   // changes what every number in the app MEANS. The rule says that without a
@@ -105,7 +105,7 @@ check('Setup resolves per role — no reader is sent to a chip they cannot open'
   // reason the resolution exists rather than a reordering of the chips
   const mine = (role: Role) =>
     chipsOf('owner', 'setup').filter((c) => canAccess(role, `/owner/setup/${c.key}`)).map((c) => c.key)
-  assert.deepEqual(mine('manager'), ['lists', 'settings'])
+  assert.deepEqual(mine('manager'), ['lists', 'letterhead', 'settings'])
   assert.deepEqual(mine('accountant'), ['accounts', 'meters'])
   assert.deepEqual(
     mine('manager').filter((k) => mine('accountant').includes(k)),

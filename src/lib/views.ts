@@ -24,6 +24,10 @@ export function readOneOf<T extends string>(
  * writes no param, so a clean URL means "unchanged".
  */
 export const VIEW_KEYS = {
+  /** Purchase orders: the queue of what is still somebody's job, against the
+   *  whole record. "Open" is the working list — a draft nobody sent and an
+   *  order nobody has delivered are both waiting on a person. */
+  orders: ['open', 'all'],
   /** On hand: grouping hides the biggest holdings, which is a real question */
   stock: ['by-category', 'by-value'],
   /** Reorder: the trip is the unit of work; urgency is the risk */

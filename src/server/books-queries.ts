@@ -125,6 +125,11 @@ export async function listVendors(restaurantId: string, q: string): Promise<Vend
   const like = `%${q}%`
   return tsql<VendorListRow[]>`
     select v.id, v.code, v.name, c.name as category_name, v.status,
+           -- CARRIED SO THE LIST CAN SAY WHO CANNOT BE SENT AN ORDER. Not one
+           -- of the five active vendors has a number, which is invisible on a
+           -- list that shows only names and balances — and is the difference
+           -- between a purchase order and a PDF.
+           nullif(btrim(coalesce(v.phone, '')), '') as phone,
            coalesce(d.balance, 0)::text as balance
     from vendors v
     join categories c on c.code = v.primary_category

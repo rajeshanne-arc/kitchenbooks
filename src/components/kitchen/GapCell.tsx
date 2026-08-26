@@ -22,6 +22,7 @@ export default function GapCell({
   gap,
   unit,
   status,
+  delivered,
 }: {
   /** given − requested, as a numeric string; null when cancelled */
   gap: string | null
@@ -34,9 +35,22 @@ export default function GapCell({
    *  fill. Both readers of this component had that bug; the fix lives here so
    *  neither can have it again. */
   status?: string
+  /** A PURCHASE ORDER's delivered quantity. The same fault as an open indent
+   *  arrives here by a second route: `po_fulfilment.gap` is
+   *  `coalesce(delivered, 0) − ordered`, so an order that has been SENT and
+   *  not yet delivered against reads as short by the whole of it — an
+   *  accusation against a vendor who has not been given the chance. Once
+   *  anything at all has arrived the gap is real and is said. */
+  delivered?: string
 }) {
   if (status === 'open') {
     return <span className="text-[13px] text-stone-400">not issued yet</span>
+  }
+  if (status === 'draft') {
+    return <span className="text-[13px] text-stone-400">not sent yet</span>
+  }
+  if (status === 'sent' && delivered !== undefined && Number(delivered) === 0) {
+    return <span className="text-[13px] text-stone-400">not delivered yet</span>
   }
   if (gap === null) {
     return <span className="text-[13px] text-stone-400">cancelled</span>

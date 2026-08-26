@@ -31,6 +31,14 @@ const nameStr = z.string().trim().min(1).max(120)
 
 const Input = z.object({
   billDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** THE ORDER THIS BILL FULFILS, if it fulfils one.
+   *
+   *  Optional, and it must stay optional: a delivery can arrive against no
+   *  order at all — that is how every bill in this app was entered before
+   *  purchase orders existed, and how a market run still arrives. What a PO
+   *  adds is a comparison, and `po_fulfilment` only counts bills that cite
+   *  one, so a bill without it is not wrong, it is merely uncompared. */
+  purchaseOrderId: z.union([z.literal(''), z.string().regex(UUID)]).optional(),
   vendor: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('existing'), id: z.string().regex(UUID) }),
     z.object({ kind: z.literal('new'), name: nameStr, category: codeStr }),
@@ -196,12 +204,42 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
       // March's financial year. Inside the tx so a failed save burns no number.
       const docNo = await nextDocNo(tx, rid, 'PUR', input.billDate)
 
+      // THE ORDER IS CHECKED, NOT TRUSTED: it must belong to this restaurant,
+      // to THIS vendor, and be one that goods could arrive against. A bill
+      // citing another vendor's order would put a delivery against a document
+      // nobody sent them, and po_fulfilment would report the gap as theirs.
+      const poId = input.purchaseOrderId === undefined || input.purchaseOrderId === ''
+        ? null
+        : input.purchaseOrderId
+      if (poId !== null) {
+        const [po] = await tx<{ id: string; status: string; vendor_id: string }[]>`
+          select id, status, vendor_id from purchase_orders
+          where id = ${poId} and restaurant_id = ${rid}
+          for update`
+        if (!po) throw new BillError('That purchase order does not exist')
+        if (po.vendor_id !== vendorId) {
+          throw new BillError('That purchase order was raised for a different vendor')
+        }
+        if (po.status === 'draft') {
+          throw new BillError('That order has not been sent yet — nothing can have arrived against it')
+        }
+        if (po.status === 'cancelled') throw new BillError('That order was cancelled')
+      }
+
       const [purchase] = await tx<{ id: string }[]>`
-        insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, gst_total, transport, entered_by, doc_no)
+        insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, gst_total, transport, entered_by, doc_no, purchase_order_id)
         values (${rid}, ${input.billDate}, ${vendorId},
                 ${goodsTotal}::numeric, ${paiseToString(gstPaise)}::numeric, ${paiseToString(transportPaise)}::numeric,
-                ${by}, ${docNo})
+                ${by}, ${docNo}, ${poId})
         returning id`
+
+      // A DELIVERY MOVES THE ORDER ON, the way an issue flips an indent. Only
+      // sent → received: a part-delivered order stays where it is, and only a
+      // person closes it, because only a person knows nothing more is coming.
+      if (poId !== null) {
+        await tx`update purchase_orders set status = 'received'
+                 where id = ${poId} and restaurant_id = ${rid} and status = 'sent'`
+      }
 
       const lineRows = input.lines.map((l, i) => ({
         restaurant_id: rid,

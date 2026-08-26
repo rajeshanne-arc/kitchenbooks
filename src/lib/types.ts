@@ -68,6 +68,10 @@ export type ItemSel =
 // Server action payload / result
 export type SaveBillInput = {
   billDate: string
+  /** The purchase order this delivery fulfils, when it fulfils one. Optional
+   *  and staying that way: a bill citing no order is not wrong, it is
+   *  uncompared — po_fulfilment counts only bills that name one. */
+  purchaseOrderId?: string
   vendor: { kind: 'existing'; id: string } | { kind: 'new'; name: string; category: string }
   lines: {
     item:
@@ -146,6 +150,9 @@ export type VendorListRow = {
   category_name: string
   status: 'active' | 'inactive'
   balance: string
+  /** NULL when nobody can be rung. A purchase order to a vendor with no
+   *  number can be written and printed and never sent. */
+  phone: string | null
 }
 
 export type VendorDetail = {
@@ -3447,3 +3454,110 @@ export type CylinderStockRow = {
   on_hand: string
   on_hand_value: string | null
 }
+
+// ---------- Purchase orders (the store's outward document) ----------
+
+/**
+ * KitchenBooks had NO store-to-vendor document. The indent is
+ * kitchen-to-store; nothing pointed outward. Stock, reorder levels and vendor
+ * history all live here, so the order belongs where the stock is.
+ */
+export type PoStatus = 'draft' | 'sent' | 'received' | 'closed' | 'cancelled'
+
+export const PO_STATUSES: PoStatus[] = ['draft', 'sent', 'received', 'closed', 'cancelled']
+
+/** How a sent order left the building. Recorded because "did we send it?" is
+ *  the first question anyone asks about a delivery that has not arrived. */
+export type SentVia = 'whatsapp' | 'print' | 'email' | 'other'
+
+export type PurchaseOrderRow = {
+  id: string
+  doc_no: string | null
+  vendor_id: string
+  vendor_code: string
+  vendor_name: string
+  /** NULL on every one of Thrayam's five vendors today. A purchase order with
+   *  nowhere to send it is a PDF, so this travels with the row and is said on
+   *  screen rather than discovered at the moment of sending. */
+  vendor_phone: string | null
+  po_date: string
+  expected_date: string | null
+  status: PoStatus
+  note: string | null
+  sent_at: string | null
+  sent_by: string | null
+  sent_via: SentVia | null
+  entered_by: string | null
+  lines: number
+  total: string
+}
+
+export type PoLineRow = {
+  id: string
+  item_id: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  qty: string
+  rate: string
+  amount: string
+  note: string | null
+}
+
+/** `po_fulfilment` — ordered vs delivered, the same shape as
+ *  `indent_fulfilment`. `gap` is delivered − ordered, so NEGATIVE IS SHORT,
+ *  which is the opposite of how a person says it out loud; it is rendered in
+ *  words, never as a signed number. */
+export type PoFulfilmentRow = {
+  po_id: string
+  doc_no: string | null
+  status: PoStatus
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  qty_ordered: string
+  rate: string
+  qty_delivered: string
+  gap: string
+}
+
+/** One line of a draft, offered from what the shelf says and what this vendor
+ *  last charged. Nothing is written until the order is saved. */
+export type PoDraftLine = {
+  item_id: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  /** par − on hand, from reorder_due */
+  suggested_qty: string
+  on_hand_qty: string
+  /** THEIR last rate, from vendor_supplied_items — never another vendor's.
+   *  Null when this vendor has never billed this item. */
+  last_rate: string | null
+  last_bought: string | null
+}
+
+/** The restaurant as it appears on a document somebody outside the building
+ *  reads. Every field is NULL on a new tenant, and a document names what it is
+ *  missing rather than quietly leaving a gap. */
+export type Letterhead = {
+  name: string
+  legal_name: string | null
+  address_line1: string | null
+  address_line2: string | null
+  city: string | null
+  state: string | null
+  pincode: string | null
+  phone: string | null
+  email: string | null
+  gstin: string | null
+  fssai_number: string | null
+  logo_url: string | null
+}
+
+/** Three layouts, per restaurant, in settings.document_style. A choice of
+ *  style is not a choice about what a number MEANS, which is why this is
+ *  allowed to be a setting at all. */
+export type DocumentStyle = 'classic' | 'compact' | 'plain'
+
+export const DOCUMENT_STYLES: DocumentStyle[] = ['classic', 'compact', 'plain']

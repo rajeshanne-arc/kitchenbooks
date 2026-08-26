@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Category, ItemSel, SaveBillInput, SavedBill, Unit, VendorSel } from '@/lib/types'
 import {
   decimalStringToPaise,
@@ -17,7 +17,7 @@ import VendorPicker from './VendorPicker'
 import ItemPicker from './ItemPicker'
 import SaveReveal from './SaveReveal'
 import { inputCls, numCls } from './ui'
-import { sectionHeadCls } from '@/components/ui'
+import { sectionHeadCls, selectCls } from '@/components/ui'
 import { useBusinessToday } from '@/components/BusinessDay'
 
 type Line = { key: number; item: ItemSel | null; qty: string; rate: string; prefillRate: string | null }
@@ -44,12 +44,79 @@ export default function BillEntry({
   const [vendor, setVendor] = useState<VendorSel | null>(null)
   const [lines, setLines] = useState<Line[]>([newLine(1)])
   const [nextKey, setNextKey] = useState(2)
+  // AGAINST A PURCHASE ORDER, when there is one. Optional and always was: a
+  // delivery can arrive against no order at all, which is how every bill in
+  // this app was entered before orders existed. What citing one adds is a
+  // COMPARISON — po_fulfilment counts only bills that name an order — so a
+  // bill without it is not wrong, merely uncompared.
+  const [orders, setOrders] = useState<{ id: string; doc_no: string | null; po_date: string; lines: number }[]>([])
+  const [poId, setPoId] = useState('')
   const [extrasOpen, setExtrasOpen] = useState(false)
   const [gst, setGst] = useState('')
   const [transport, setTransport] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<SavedBill | null>(null)
+
+  // The order list follows the vendor, and clears with it: an order belongs to
+  // one vendor, and offering another's would let a delivery be filed against a
+  // document nobody sent them. The server refuses that too.
+  const vendorKey = vendor?.kind === 'existing' ? vendor.hit.id : null
+  useEffect(() => {
+    setPoId('')
+    if (vendorKey === null) {
+      setOrders([])
+      return
+    }
+    // ABORTED ON UNMOUNT AND CAPPED IN TIME. A pending fetch is enough to keep
+    // a document from reaching idle, and a vendor picker that is changed twice
+    // quickly would otherwise race its own answers onto the screen.
+    const ctl = new AbortController()
+    const timer = setTimeout(() => ctl.abort(), 10_000)
+    void fetch(`/api/vendors/orders?vendor=${vendorKey}`, { signal: ctl.signal, cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { orders: [] }))
+      .then((d: { orders?: typeof orders }) => {
+        if (!ctl.signal.aborted) setOrders(d.orders ?? [])
+      })
+      .catch(() => {
+        if (!ctl.signal.aborted) setOrders([])
+      })
+    return () => {
+      clearTimeout(timer)
+      ctl.abort()
+    }
+  }, [vendorKey])
+
+  /** Prefill from the order — WHAT WAS ASKED FOR, which the receiver then
+   *  corrects to what arrived. The quantities are an offer, not a count; the
+   *  whole value of the comparison is that the two can differ. */
+  async function loadOrder(id: string) {
+    setPoId(id)
+    if (id === '') return
+    // Called from a change handler rather than an effect, so nothing else
+    // would ever clean it up — the timeout is the abort path.
+    const ctl = new AbortController()
+    const timer = setTimeout(() => ctl.abort(), 10_000)
+    try {
+      const r = await fetch(`/api/vendors/orders?po=${id}`, { signal: ctl.signal, cache: 'no-store' })
+      if (!r.ok) return
+      const d = (await r.json()) as { lines: { item_id: string; item_code: string; item_name: string; purchase_unit: string; qty: string; rate: string }[] }
+      if (d.lines.length === 0) return
+      setLines(
+        d.lines.map((l, i) => ({
+          ...newLine(nextKey + i),
+          item: { kind: 'existing' as const, hit: { id: l.item_id, code: l.item_code, name: l.item_name, purchase_unit: l.purchase_unit } },
+          qty: String(Number(l.qty)),
+          rate: Number(l.rate) > 0 ? String(Number(l.rate)) : '',
+        })) as Line[],
+      )
+      setNextKey((k) => k + d.lines.length + 1)
+    } catch {
+      /* the form is usable without the prefill; silence here is not a lost entry */
+    } finally {
+      clearTimeout(timer)
+    }
+  }
 
   const patchLine = (key: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
@@ -96,6 +163,7 @@ export default function BillEntry({
     setError(null)
     const payload: SaveBillInput = {
       billDate,
+      purchaseOrderId: poId,
       vendor:
         vendor.kind === 'existing'
           ? { kind: 'existing', id: vendor.hit.id }
@@ -163,6 +231,26 @@ export default function BillEntry({
           <div>
             <span className={`mb-1 block ${sectionHeadCls}`}>Vendor</span>
             <VendorPicker categories={categories} value={vendor} onChange={setVendor} />
+            {orders.length > 0 && (
+              <label className="mt-2 block">
+                <span className="mb-1 block text-xs font-medium text-stone-500">
+                  Against a purchase order? (optional)
+                </span>
+                <select value={poId} onChange={(e) => void loadOrder(e.target.value)} className={selectCls}>
+                  <option value="">No order — a delivery nobody ordered on paper</option>
+                  {orders.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.doc_no ?? 'Order'} · {o.po_date} · {o.lines} items
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1 block text-xs text-stone-500">
+                  Picking one fills in what was ordered. Change the quantities to what actually arrived — the
+                  difference is the whole point, and it is what turns “they billed 16 and delivered 14” from a
+                  note into a claim.
+                </span>
+              </label>
+            )}
           </div>
         </div>
       </section>

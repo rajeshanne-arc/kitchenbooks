@@ -23,6 +23,7 @@ import {
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
 import { countUnplacedItems } from '@/server/store-queries'
+import { countVendorsWithoutPhone } from '@/server/po-queries'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import PeriodControl from '@/components/dashboard/PeriodControl'
@@ -89,10 +90,11 @@ export default async function StoreHome({
   // checking out connections alongside this page — ten at once is already the
   // most this screen may safely ask for. These two only decide whether the
   // cards above are answerable, so they can wait a round trip.
-  const [vendors, anyIndent, placement] = await Promise.all([
+  const [vendors, anyIndent, placement, phones] = await Promise.all([
     listActiveVendors(restaurant.id),
     listIndents(restaurant.id, 1),
     countUnplacedItems(restaurant.id),
+    countVendorsWithoutPhone(restaurant.id),
   ])
 
   const purchaseTotal = purchases.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
@@ -366,7 +368,7 @@ export default async function StoreHome({
       {/* READINESS — things that are empty until somebody does them, and that
           block nothing until the day they matter. An empty list here is never
           evidence that all is well; it is evidence nobody has been asked. */}
-      {(placement.unplaced > 0 || (reorderCount === 0 && itemsWithLevel === 0)) && (
+      {(placement.unplaced > 0 || phones.without > 0 || (reorderCount === 0 && itemsWithLevel === 0)) && (
         <section className={`${cardCls} mt-3`}>
           <h2 className={sectionHeadCls}>Still to set up</h2>
           <div className="mt-2 space-y-2">
@@ -375,6 +377,27 @@ export default async function StoreHome({
                 No item carries a reorder level, so nothing can ever appear on the Reorder tab. That list is empty
                 because the question has not been asked — not because the store is full. Set levels under Masters →
                 Items.
+              </Honesty>
+            )}
+            {/* NOWHERE TO SEND AN ORDER. A purchase order can be written and
+                printed without a phone number and cannot be sent, so this
+                blocks nothing until the day somebody raises one — and then it
+                blocks the only thing that mattered. */}
+            {phones.without > 0 && (
+              <Honesty
+                verdict="vendors unreachable"
+                level={phones.without === phones.total ? 'alarm' : 'pending'}
+                meter={{
+                  filled: phones.total - phones.without,
+                  total: phones.total,
+                  unit: 'vendors reachable',
+                }}
+                action={{ href: '/store/masters/vendors', label: 'Add numbers on the vendor master' }}
+              >
+                {phones.without} of {phones.total} active{' '}
+                {phones.without === 1 ? 'vendor has' : 'vendors have'} no phone number, so a purchase order to{' '}
+                {phones.without === 1 ? 'them' : 'any of them'} can be written and printed but never sent. A
+                purchase order with nowhere to send it is a PDF.
               </Honesty>
             )}
             {/* PLACE YOUR ITEMS. Nothing is blocked by this until the first

@@ -16,12 +16,19 @@ import 'server-only'
 import type postgres from 'postgres'
 import { fyLabel, parseFyStartMonth } from '@/lib/fy'
 
-/** The eight series. PUR purchases · PAY vendor payments · EXP expenses ·
+/** The nine series. PUR purchases · PAY vendor payments · EXP expenses ·
  *  VCH cash vouchers · CON contract bills · CAS casual labour ·
- *  ADV staff advances · RUN payroll runs. */
-export type DocType = 'PUR' | 'PAY' | 'EXP' | 'VCH' | 'CON' | 'CAS' | 'ADV' | 'RUN'
+ *  ADV staff advances · RUN payroll runs · PO purchase orders.
+ *
+ *  PO IS THE FIRST SERIES THAT LEAVES THE BUILDING. Every other number is
+ *  internal — an auditor's handle on a row we wrote for ourselves. This one is
+ *  printed on a document a vendor keeps, quotes back, and matches a delivery
+ *  against, which is why it is allocated when the order is CREATED rather than
+ *  when it is sent: a cancelled order keeps its number and the series stays
+ *  gapless, exactly as a voided bill does. */
+export type DocType = 'PUR' | 'PAY' | 'EXP' | 'VCH' | 'CON' | 'CAS' | 'ADV' | 'RUN' | 'PO'
 
-export const DOC_TYPES: DocType[] = ['PUR', 'PAY', 'EXP', 'VCH', 'CON', 'CAS', 'ADV', 'RUN']
+export const DOC_TYPES: DocType[] = ['PUR', 'PAY', 'EXP', 'VCH', 'CON', 'CAS', 'ADV', 'RUN', 'PO']
 
 /** What each prefix means, for a register legend or a tooltip. */
 export const DOC_TYPE_NAMES: Record<DocType, string> = {
@@ -33,6 +40,7 @@ export const DOC_TYPE_NAMES: Record<DocType, string> = {
   CAS: 'Casual labour',
   ADV: 'Staff advance',
   RUN: 'Payroll run',
+  PO: 'Purchase order',
 }
 
 /**

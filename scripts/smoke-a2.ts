@@ -4298,6 +4298,8 @@ async function run() {
       'src/components/dashboard/PeriodControl.tsx': 'the period IS the URL',
       'src/components/books/FilterInput.tsx': 'the filter IS the URL',
       'src/components/labour/AttendanceSheet.tsx': 'the day IS the URL',
+      'src/components/store/PoDraft.tsx':
+        'a saved DRAFT is not finished — it has to be SENT, and sending lives on the order page. Only on create: editing an existing draft stays put',
     }
     const offenders: string[] = []
     let forms = 0
@@ -6741,7 +6743,7 @@ async function run() {
     // (reconciliation_matches), or CACHES someone else's fact (pos_orders,
     // pos_lines). None is an event only we hold. A sixth appearing without an
     // argument in AGENTS.md is the thing this catches.
-    const ALLOWED = ['indent_lines', 'pos_lines', 'pos_orders', 'recipe_lines', 'reconciliation_matches']
+    const ALLOWED = ['indent_lines', 'pos_lines', 'pos_orders', 'purchase_order_lines', 'recipe_lines', 'reconciliation_matches']
     const all = await tsql<{ t: string }[]>`
       select table_name as t from information_schema.table_privileges
       where grantee = 'kb_app' and privilege_type = 'DELETE' and table_schema = 'public'
@@ -7436,6 +7438,232 @@ async function run() {
       owner.includes('canAccess(role,') && owner.includes('setup:'),
       'the Setup tab no longer resolves its destination per role — a manager would be sent to Money accounts',
     )
+  })
+
+
+  /* -- purchase orders ------------------------------------------------ */
+  console.log('\npurchase orders — the first document that leaves the building')
+
+  await check('wa.me numbers and the message, by value', async () => {
+    const { waNumber, waLink, waOrderText } = await import('../src/lib/wa')
+    // A NUMBER THAT CANNOT BE DIALLED MUST RETURN NULL, not a mangled guess: a
+    // silently wrong number looks exactly like a vendor who never replies.
+    assert.equal(waNumber('98765 43210'), '919876543210', 'a plain 10-digit local number')
+    assert.equal(waNumber('+91 98765 43210'), '919876543210', 'already carries a country code')
+    assert.equal(waNumber('098765-43210'), '919876543210', 'the trunk 0 is dropped, not kept')
+    assert.equal(waNumber('+44 20 7946 0000'), '442079460000', 'not everybody is in India')
+    assert.equal(waNumber(null), null)
+    assert.equal(waNumber(''), null)
+    assert.equal(waNumber('   '), null)
+    assert.equal(waNumber('12345'), null, 'too short to be a phone number')
+    assert.equal(waLink(null, 'hello'), null, 'the link must refuse, not point at wa.me with no number')
+    assert.ok(waLink('9876543210', 'a b')?.startsWith('https://wa.me/919876543210?text='))
+    assert.ok(waLink('9876543210', 'a&b=c')?.includes('a%26b%3Dc'), 'the text must be url-encoded')
+
+    // THE RATES ARE MARKED AS OURS, not asserted as theirs — a vendor reading
+    // a total should know whether it is a quote they gave or a figure we
+    // worked out, or the first disagreement is about arithmetic.
+    const priced = waOrderText({
+      restaurantName: 'Zz Probe Restaurant', docNo: 'PO-2627-0001', poDate: '1 Apr 2026',
+      expectedDate: '3 Apr 2026',
+      lines: [{ item_name: 'Chicken Boneless', qty: '10', purchase_unit: 'kg', rate: '330.00' }],
+      total: 'Rs 3,300.00', note: null, anyRate: true,
+    })
+    assert.ok(priced.includes('PO-2627-0001') && priced.includes('Chicken Boneless — 10 kg @ 330.00'))
+    assert.ok(priced.includes('your last bill to us'), 'the rates must be attributed, not asserted')
+    const unpriced = waOrderText({
+      restaurantName: 'Zz', docNo: null, poDate: '1 Apr 2026', expectedDate: null,
+      lines: [{ item_name: 'Salt', qty: '2', purchase_unit: 'kg', rate: '0' }],
+      total: 'Rs 0.00', note: null, anyRate: false,
+    })
+    assert.ok(!unpriced.includes('Total'), 'a total was printed over rates nobody has given')
+    assert.ok(!unpriced.includes('@'), 'a rate was printed that this vendor never billed')
+  })
+
+  await check('a rate is THIS vendor’s or blank — never another vendor’s', async () => {
+    // MEASURED, and it is why vendor_supplied_items exists: RR Chicken bills
+    // boneless at Rs 330 and Sneha at Rs 300.
+    const rows = await tsql<{ vendor: string; item: string; rate: string }[]>`
+      select v.name as vendor, vsi.item_name as item, vsi.last_rate::text as rate
+      from vendor_supplied_items vsi
+      join vendors v on v.id = vsi.vendor_id
+      where vsi.restaurant_id = ${process.env.KB_LIVE_TENANT as string}
+      order by vsi.item_name, v.name`
+    const byItem = new Map<string, Set<string>>()
+    for (const r of rows) byItem.set(r.item, (byItem.get(r.item) ?? new Set()).add(r.rate))
+    const differing = [...byItem.entries()].filter(([, set]) => set.size > 1)
+    const { readFileSync } = await import('node:fs')
+    const q = readFileSync('src/server/po-queries.ts', 'utf8')
+    const draft = q.slice(q.indexOf('export async function getReorderDraft'), q.indexOf('export async function getVendorRates'))
+    assert.ok(draft.includes('vsi.vendor_id = ${vendorId}'), 'the rate is no longer scoped to the vendor')
+    assert.ok(draft.includes('left join'), 'a vendor who never billed an item must still get the line, with no rate')
+    console.log(
+      `      ${rows.length} vendor/item rates on record; ${differing.length} item(s) priced differently by different vendors` +
+        (differing.length > 0 ? ` — e.g. ${differing[0][0]}: ${[...differing[0][1]].join(' vs ')}` : ''),
+    )
+  })
+
+  await check('a sent order is frozen, and the freeze is inside the transaction', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/po-actions.ts', 'utf8')
+    const upd = src.slice(src.indexOf('export async function updatePurchaseOrder'), src.indexOf('const SendSchema'))
+    // THE ORDER OF THESE THREE IS THE WHOLE RULE: lock the row, read the
+    // status inside the transaction, refuse before touching a line.
+    const lockAt = upd.indexOf('for update')
+    const refuseAt = upd.indexOf("po.status !== 'draft'")
+    const wipeAt = upd.indexOf('purchase_order_lines\n               where')
+    assert.ok(lockAt > -1, 'the draft is no longer locked while it is checked')
+    assert.ok(refuseAt > lockAt, 'the freeze is checked before the row is locked — a concurrent send slips through')
+    assert.ok(wipeAt > refuseAt, 'lines are replaced before the freeze is checked')
+    assert.ok(upd.includes('has already been sent'), 'the refusal no longer says why')
+    const bill = readFileSync('src/server/save-bill.ts', 'utf8')
+    assert.ok(bill.includes("po.status === 'draft'"), 'a bill can now be filed against an unsent order')
+    assert.ok(bill.includes('raised for a different vendor'), "a bill can cite another vendor's order")
+  })
+
+  await check('an unsent order is not SHORT — the gap needs the status', async () => {
+    // THE OPEN-INDENT FAULT BY A SECOND ROUTE, and this time the accusation is
+    // against a vendor rather than the store.
+    const { readFileSync } = await import('node:fs')
+    const gap = readFileSync('src/components/kitchen/GapCell.tsx', 'utf8')
+    assert.ok(gap.includes("status === 'draft'") && gap.includes('not sent yet'))
+    assert.ok(gap.includes("status === 'sent'") && gap.includes('not delivered yet'))
+    assert.ok(gap.includes('Number(delivered) === 0'), 'a part-delivered order must still show its gap')
+    const page = readFileSync('src/app/store/receive/orders/[id]/page.tsx', 'utf8')
+    assert.ok(page.includes('status={f.status}') && page.includes('delivered={f.qty_delivered}'))
+  })
+
+  await check('the letterhead names what is missing rather than omitting it', async () => {
+    const { missingLetterheadFields } = await import('../src/lib/letterhead')
+    const empty = {
+      name: 'Zz', legal_name: null, address_line1: null, address_line2: null, city: null,
+      state: null, pincode: null, phone: null, email: null, gstin: null, fssai_number: null,
+      logo_url: null,
+    }
+    assert.equal(missingLetterheadFields(empty).length, 8, 'a blank letterhead must report every field')
+    assert.ok(missingLetterheadFields(empty).includes('GSTIN'))
+    const full = { ...empty, legal_name: 'A', address_line1: 'B', city: 'C', state: 'D', pincode: 'E', phone: 'F', gstin: 'G', fssai_number: 'H' }
+    assert.deepEqual(missingLetterheadFields(full), [], 'a complete letterhead must report nothing')
+    // WHITESPACE IS NOT A VALUE. A field somebody tabbed through is missing.
+    assert.ok(missingLetterheadFields({ ...full, city: '   ' }).includes('city'))
+    const { readFileSync } = await import('node:fs')
+    const doc = readFileSync('src/components/store/PoDocument.tsx', 'utf8')
+    assert.ok(doc.includes('missingLetterheadFields') && doc.includes('a name with no address'))
+
+    const { getLetterhead } = await import('../src/server/po-queries')
+    const { getRestaurant } = await import('../src/server/queries')
+    const r = await getRestaurant()
+    const live = missingLetterheadFields(await getLetterhead(r.id))
+    console.log(
+      `      ${r.name}: ${live.length === 0 ? 'letterhead complete' : `${live.length} missing — ${live.join(', ')}`}`,
+    )
+  })
+
+  await check('the phone blocker is counted and said on every screen it decides', async () => {
+    const { countVendorsWithoutPhone } = await import('../src/server/po-queries')
+    const { getRestaurant } = await import('../src/server/queries')
+    const r = await getRestaurant()
+    const phones = await countVendorsWithoutPhone(r.id)
+    assert.ok(phones.total >= 0 && phones.without <= phones.total)
+    const { readFileSync } = await import('node:fs')
+    const q = readFileSync('src/server/po-queries.ts', 'utf8')
+    assert.ok(q.includes("btrim(phone) = ''"), 'a blank-but-present phone would count as reachable')
+    for (const [f, needle] of [
+      ['src/app/store/page.tsx', 'countVendorsWithoutPhone'],
+      ['src/app/store/receive/orders/page.tsx', 'countVendorsWithoutPhone'],
+      ['src/app/store/masters/vendors/page.tsx', 'cannot be sent an order'],
+      ['src/components/store/PoActions.tsx', 'nowhere to send it'],
+    ] as const) {
+      assert.ok(readFileSync(f, 'utf8').includes(needle), `${f} no longer says who cannot be sent an order`)
+    }
+    const acts = readFileSync('src/components/store/PoActions.tsx', 'utf8')
+    assert.ok(acts.includes('waHref !== null &&'), 'a Send button is rendered when there is nowhere to send it')
+    console.log(`      ${r.name}: ${phones.without} of ${phones.total} active vendors have no phone number`)
+  })
+
+  await check('PROBE — an order is raised, frozen by sending, and delivered against', async () => {
+    // Live data has no purchase order at all, so the assertions above are over
+    // source; this one walks a real order through po_fulfilment on the probe
+    // tenant and rolls back.
+    await onProbe(async () => {
+      const { txn } = await import('../src/lib/db')
+      const { getRestaurant } = await import('../src/server/queries')
+      const r = await getRestaurant()
+      const t = r.id
+      const out: string[] = []
+      await txn(async (tx) => {
+        const [v] = await tx<{ id: string }[]>`insert into vendors (restaurant_id, code, name, primary_category, phone) values (${t},'V-ZZ-97','Zz PO Vendor','PLT','98765 43210') returning id`
+        const [i] = await tx<{ id: string }[]>`insert into items (restaurant_id, code, name, category, purchase_unit) values (${t},'ZZ-701','Zz PO Item','PLT','kg') returning id`
+        const [po] = await tx<{ id: string }[]>`insert into purchase_orders (restaurant_id, doc_no, vendor_id, po_date, status) values (${t},'PO-TEST-0001',${v.id},'2099-04-01'::date,'draft') returning id`
+        await tx`insert into purchase_order_lines (restaurant_id, purchase_order_id, item_id, qty, rate) values (${t},${po.id},${i.id},16,100)`
+
+        const gapRow = async () => {
+          const rows = await tx<{ qty_ordered: string; qty_delivered: string; gap: string; status: string }[]>`
+            select qty_ordered::text, qty_delivered::text, gap::text, status
+            from po_fulfilment where restaurant_id=${t} and po_id=${po.id}`
+          return rows[0]
+        }
+        const before = await gapRow()
+        assert.equal(Number(before?.qty_delivered), 0)
+        assert.equal(Number(before?.gap), -16, 'the view reports an undelivered order as short by all of it')
+        assert.equal(before?.status, 'draft', 'which is exactly why GapCell needs the status')
+        out.push(`draft: ordered 16, gap ${before?.gap} — rendered as "not sent yet", never "Short 16"`)
+
+        await tx`update purchase_orders set status='sent', sent_at=now(), sent_by='gate', sent_via='whatsapp' where id=${po.id}`
+
+        // A DELIVERY OF 14 AGAINST AN ORDER OF 16 — the claim this whole
+        // feature exists to make possible.
+        const [pu] = await tx<{ id: string }[]>`insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, purchase_order_id) values (${t},'2099-04-03'::date,${v.id},1400,${po.id}) returning id`
+        await tx`insert into purchase_lines (restaurant_id, purchase_id, item_id, qty, rate) values (${t},${pu.id},${i.id},14,100)`
+        const after = await gapRow()
+        assert.equal(Number(after?.qty_delivered), 14)
+        assert.equal(Number(after?.gap), -2, 'ordered 16, delivered 14 — short 2')
+        out.push(`sent + billed 14: gap ${after?.gap} — "Short 2 kg", in words`)
+
+        // A VOIDED DELIVERY STILL COUNTS — the FOURTH instance of a fault this
+        // project has recorded three times. po_fulfilment filters
+        // `pu.reverses_id is null`, which skips the REVERSAL row and not the
+        // bill it reversed; `vendor_supplied_items` and `bills.is_voided` both
+        // do both halves. So the goods come back and the order still says they
+        // arrived, which HIDES A SHORT — the direction that matters, because
+        // nobody chases a delivery the books say turned up.
+        //
+        // WRITTEN AS AN INVARIANT, NOT A PINNED BUG: it couples the view's
+        // behaviour to the words on the screen, so it passes in both worlds
+        // and fails only when they disagree. The day
+        // migrations/po_fulfilment_skips_voided_bills.sql is applied this goes
+        // red and names the caption to delete — the vendor-return refusal
+        // pattern, which worked.
+        const [rev] = await tx<{ id: string }[]>`insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, purchase_order_id, reverses_id) values (${t},'2099-04-03'::date,${v.id},-1400,${po.id},${pu.id}) returning id`
+        await tx`insert into purchase_lines (restaurant_id, purchase_id, item_id, qty, rate) values (${t},${rev.id},${i.id},14,-100)`
+        const voided = await gapRow()
+        const viewCountsVoided = Number(voided?.qty_delivered) !== 0
+        const { readFileSync: rf } = await import('node:fs')
+        const detail = rf('src/app/store/receive/orders/[id]/page.tsx', 'utf8')
+        const screenSaysSo = detail.includes('still counted here')
+        assert.equal(
+          screenSaysSo,
+          viewCountsVoided,
+          viewCountsVoided
+            ? 'po_fulfilment counts a VOIDED bill as delivered and the screen no longer warns about it'
+            : 'po_fulfilment now skips voided bills — apply is done: delete the warning caption on the order page and this branch',
+        )
+        out.push(
+          `after voiding that bill: delivered ${voided?.qty_delivered}, gap ${voided?.gap}` +
+            (viewCountsVoided ? ' — STILL COUNTED, migration written and unapplied' : ' — correctly dropped'),
+        )
+
+        await tx`update purchase_orders set status='cancelled' where id=${po.id}`
+        const rows = await tx`select 1 from po_fulfilment where restaurant_id=${t} and po_id=${po.id}`
+        assert.equal(rows.length, 0, 'a cancelled order must not appear in po_fulfilment at all')
+        out.push('cancelled: leaves po_fulfilment entirely')
+
+        throw new Error('ROLLBACK-PO-PROBE')
+      }).catch((e: unknown) => {
+        if ((e as Error).message !== 'ROLLBACK-PO-PROBE') throw e
+      })
+      for (const line of out) console.log(`      ${line}`)
+    })
   })
 
   console.log(

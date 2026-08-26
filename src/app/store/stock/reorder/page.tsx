@@ -209,13 +209,26 @@ export default async function ReorderPage({
                     {g.rows.length} {g.rows.length === 1 ? 'item' : 'items'}
                   </span>
                 </h2>
+                {/* THE GROUPING NOW LEADS SOMEWHERE. One card per vendor was
+                    built because the trip is the unit of work, and until the
+                    purchase order existed it ended at a list. Raising one
+                    carries these exact items across with par-minus-on-hand
+                    quantities and this vendor's own last rates. */}
                 {g.vendorId !== null && (
-                  <Link
-                    href={`/store/masters/vendors/${g.vendorId}`}
-                    className="shrink-0 text-xs font-medium text-emerald-700 hover:underline"
-                  >
-                    vendor page →
-                  </Link>
+                  <span className="flex shrink-0 items-center gap-3">
+                    <Link
+                      href={`/store/masters/vendors/${g.vendorId}`}
+                      className="text-xs font-medium text-stone-500 hover:text-stone-800"
+                    >
+                      vendor page →
+                    </Link>
+                    <Link
+                      href={`/store/receive/orders/new?vendor=${g.vendorId}`}
+                      className="rounded-lg bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800"
+                    >
+                      Raise PO
+                    </Link>
+                  </span>
                 )}
               </div>
 

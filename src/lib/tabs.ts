@@ -79,6 +79,13 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         { key: 'pay', label: 'Pay vendor' },
         // goods going BACK, with the credit note that follows them
         { key: 'vendor-return', label: 'Return to vendor' },
+        // ORDERS LAST, THOUGH IT COMES FIRST IN TIME. The chip row is ordered
+        // by how often a store manager reaches for it, the same argument that
+        // put Issue ahead of Receive in the tab strip: bills are entered every
+        // delivery, a purchase order is raised when the shelf runs low.
+        // Placing it first would also make it what /store/receive renders,
+        // which is not what somebody standing at the door with a bill wants.
+        { key: 'orders', label: 'Orders' },
       ],
     },
     {
@@ -212,6 +219,11 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         { key: 'meters', label: 'Meters' },
         { key: 'users', label: 'Users' },
         { key: 'lists', label: 'Lists' },
+        // WHOSE NAME IS ON THE DOCUMENT, and what it looks like. Not Settings:
+        // that screen changes what every number MEANS, and this changes
+        // nothing at all about the books — it is the restaurant's own identity
+        // as a vendor sees it on a purchase order.
+        { key: 'letterhead', label: 'Letterhead' },
         // SETTINGS LAST, AFTER A DIVIDER. The four before it ADD ROWS — an
         // account, a meter, a user, a list value. This one changes what every
         // number MEANS: which day a sale belongs to, whether input tax is a

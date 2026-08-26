@@ -4592,7 +4592,7 @@ Nobody should believe otherwise.
 
 ## THE FIVE TABLES THAT MAY BE DELETED FROM — one reason in five costumes
 
-`kb_app` holds DELETE on exactly five tables, and the count is not the point;
+`kb_app` holds DELETE on exactly six tables, and the count is not the point;
 the reason is, and it is the same reason every time:
 
 > **A row may be deleted only when it asserts an INTENTION nothing depends on
@@ -4603,6 +4603,7 @@ the reason is, and it is the same reason every time:
 |---|---|---|
 | `recipe_lines` | intention | a card is a description of a dish, always editable |
 | `indent_lines` | intention | a request nobody has acted on; frozen the instant an issue stamps it |
+| `purchase_order_lines` | intention | a DRAFT order's lines are what we mean to ask for; frozen the moment it is sent |
 | `reconciliation_matches` | judgement | a wrong match was never true, so there is nothing to reverse |
 | `pos_orders` | cache | Petpooja holds the truth; a fetch is a photocopy |
 | `pos_lines` | cache | same, and they follow their order by cascade |
@@ -6375,3 +6376,159 @@ Same family as the vacuous gates recorded above — a check whose two outcomes
 look alike has not checked anything — and the tell is the same: ask what the
 result would have been in the other world. If it is the same result, the probe
 is decoration.
+
+## PURCHASE ORDERS — the first document that leaves the building
+
+Everything before this pointed inward. An indent is kitchen-to-store; a bill
+records what a vendor already sent. **Nothing said "please send us this".**
+Petpooja can raise a purchase order and send it over WhatsApp, but only from
+Petpooja's inventory, which Rajesh does not maintain — stock, reorder levels
+and vendor history all live here, so the order belongs where the stock is.
+
+**RAISED FROM REORDER, WHERE THE GROUPING ALREADY EXISTED AND LED NOWHERE.**
+Reorder has grouped by vendor since the store phase because "the trip is the
+unit of work"; each vendor card now raises an order carrying those exact items.
+Quantities default to `reorder_due.suggested_qty` — par minus on hand, which
+the view already computes — and land in editable fields.
+
+**RATES ARE THE VENDOR'S OWN, and a blank beats a borrowed one.**
+`vendor_supplied_items.last_rate` keys on (restaurant, vendor, item), which is
+why that view exists: measured, RR Chicken bills boneless at ₹330 and Sneha at
+₹300. Where this vendor has never billed an item the rate is left EMPTY and the
+document prints "to confirm" — a blank invites a question, a wrong number
+invites agreement.
+
+### DRAFT IS EDITABLE, SENT IS FROZEN — and the grants permit what the rule forbids
+
+The clearest instance yet of **"editable, then frozen"**, and the clearest case
+for why that rule lives in code. A draft asserts an INTENTION and nothing
+depends on it. The instant it is sent, the ordered quantity becomes what a
+short is measured against — `po_fulfilment.gap` is delivered − ordered — so
+editing the ask afterwards would rewrite a claim **against somebody else's
+business**, retroactively.
+
+kb_app deliberately holds UPDATE on `qty`/`rate`/`note` and DELETE on
+`purchase_order_lines`, because a draft needs both; the database cannot know
+whether the parent has been sent. So the freeze is enforced in the action and
+**re-read inside the transaction under `for update`** — an order sent from
+another phone while the form was open must still stop the save. There is no
+UPDATE grant on `vendor_id` or `po_date` at all, which is the database agreeing:
+a different vendor is a different order.
+
+**A sent order can be CANCELLED, never edited.** Cancelling says "ignore that
+one"; editing says "you misread it", to somebody holding a copy. It keeps its
+number, and `po_fulfilment` already excludes cancelled orders so no shortfall is
+ever computed against an order nobody was going to fill.
+
+**The number is allocated at CREATE, not at send** — every other numbered row
+here carries its number from birth, a void keeps its number, and the series is
+gapless by construction. `PO` is the ninth series and the first that a person
+outside the building reads. `next_doc_no` takes free text, so no migration was
+needed.
+
+### The gap reads "not delivered yet", because a sent order is not short
+
+`po_fulfilment.gap` is `coalesce(delivered, 0) − ordered`, so an order that has
+been sent and not yet delivered against arrives as short by the whole of it —
+**the open-indent fault by a second route**, and this time the accusation is
+against a vendor rather than the store. The rule lives in `GapCell`, which
+already took the parent's status: `draft` reads "not sent yet", and `sent` with
+nothing delivered reads "not delivered yet". Once anything arrives the gap is
+real and is said, in words, never as a signed number.
+
+### wa.me, and NOT the Business API
+
+`wa.me/<number>?text=<encoded>` opens WhatsApp with the message written. No
+Business API, no Meta template approval, no BSP, no monthly fee. The store
+manager taps Send, WhatsApp opens addressed to that vendor, **he reads it and
+presses send.**
+
+**THAT REVIEW STEP IS A FEATURE, NOT A LIMITATION.** A document involving money
+should be seen by a person before it goes, and the one thing this app can never
+verify is whether a vendor understood it. So `sent_at`/`sent_by`/`sent_via`
+record that the order was handed over to be sent — an observable fact — and
+claim nothing about receipt.
+
+**DO NOT BUILD THE BUSINESS API.** When it is justified the real work is not
+sending, it is MULTI-TENANT IDENTITY: the vendor must see the RESTAURANT's name,
+not KitchenBooks, so every tenant needs its own WhatsApp Business Account and
+number. India utility rates are ₹0.115–0.145 a message while BSP platform fees
+start near ₹1,580/month — at fifty orders a month the platform fee dwarfs the
+sending. wa.me tests whether vendors respond at all before any of that is paid
+for.
+
+### THE BLOCKER IS RAJESH'S, AND IT IS ON THREE SCREENS
+
+**Not one of the five active vendors has a phone number.** No contact person and
+no GSTIN either. An order to them can be written, saved and printed, and never
+sent — *a purchase order with nowhere to send it is a PDF.* So it is said on the
+vendor list, on the order screen, on the draft form and in the store's readiness
+block, with a meter of how many are reachable. The Send button is not rendered
+at all where there is no number; the reason stands in its place.
+
+**And the letterhead is entirely empty** — `legal_name`, address, city, state,
+pincode, phone, email, GSTIN, FSSAI, logo are all NULL. The document prints
+anyway and **names every field it is missing**, on the screen rather than
+silently omitting the line: a gap that is left out looks like a design decision,
+and a purchase order with no letterhead is a list of items from nobody.
+Editable under Owner → Setup → Letterhead, which is where `document_style`
+lives too.
+
+**LOGO IS A URL, AND THE SCREEN SAYS SO.** Upload waits on attachments —
+decided (Vercel Blob with OIDC, server-side uploads, per-tenant paths, signed
+reads) and unbuilt. A file picker that silently did nothing would be worse than
+a field that admits what it is.
+
+### Three layouts, and why a style is allowed to be a setting
+
+`settings.document_style` ∈ classic | compact | plain. This passes the settings
+test cleanly where almost nothing else does: **a choice of layout cannot make
+two restaurants' food cost percentages mean different things.** It prints
+through the browser — `globals.css` already says app furniture does not print,
+the print page carries none, and "save as PDF" in the print dialog is the PDF.
+A library would add a second layout to keep in step with this one for no gain a
+vendor could see.
+
+### A VOIDED DELIVERY STILL COUNTS — the fourth instance of one fault
+
+`po_fulfilment` filters `pu.reverses_id is null`, which skips the REVERSAL row
+and **not the bill it reversed**. `vendor_supplied_items` and `bills.is_voided`
+both do both halves; this one does not.
+
+**MEASURED ON THE PROBE TENANT, not read out of the definition.** Ordered 16,
+billed 14, then that bill voided: it still reports `delivered 14, gap −2`. The
+goods went back and the order says they arrived — **so a SHORT IS HIDDEN**,
+which is the direction that matters here, because nobody chases a delivery the
+books say turned up.
+
+`migrations/po_fulfilment_skips_voided_bills.sql` is **written and NOT
+applied** — kb_app cannot replace a view, and every migration in this project
+is applied by Rajesh. It re-sets `security_invoker` in the same statement,
+because `create or replace view` silently drops it.
+
+**Until it lands the screen says what is TRUE, not what it ought to be.** The
+order page carried the caption *"voided ones excluded"*, which was false the day
+it was written; it now says a voided bill is still counted and to check the
+bill list if a figure looks too good.
+
+**The gate is an INVARIANT, not a pinned bug** — it couples the view's behaviour
+to the words on the screen and asserts they agree, so it passes in both worlds
+and fails only when they diverge. The day the migration is applied it goes red
+naming the caption to delete. Same shape as the vendor-return refusal, which is
+the one that worked.
+
+### Receiving: the shorts mechanism finally has something to compare against
+
+Bill entry gained an optional "against a purchase order". Choosing one prefills
+the items and rates; the receiver types what actually arrived, and the
+difference is the point — it turns *"they billed 16 and delivered 14"* from a
+note into a claim.
+
+**Optional, and staying that way.** A delivery can arrive against no order at
+all; that is how every bill in this app was entered before orders existed, and
+how a market run still arrives. A bill citing no order is not wrong, it is
+**uncompared**. The order is checked rather than trusted: it must belong to this
+restaurant AND this vendor AND be past draft, or a delivery would be filed
+against a document nobody sent them. A bill moves `sent → received`, the way an
+issue flips an indent — and only a person closes an order, because only a person
+knows nothing more is coming.

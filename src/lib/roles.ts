@@ -55,6 +55,11 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // against it at month end. Reached from their own group, Payments → Expense.
   ['/owner/setup/meters', ['owner', 'accountant']],
   ['/owner/setup/lists', ['manager', 'owner']],
+  // The letterhead a purchase order is printed on. Gated like Lists rather
+  // than like Users: it is the restaurant's name and address, not a
+  // permission, and the manager who deals with vendors is the one who notices
+  // a document going out with no phone number on it.
+  ['/owner/setup/letterhead', ['manager', 'owner']],
   ['/owner/setup/settings', ['manager', 'owner']],
   // The bare parent redirects the reader to the first chip THEY can open, so
   // it admits everyone admitted to any chip. It decides nothing and holds no

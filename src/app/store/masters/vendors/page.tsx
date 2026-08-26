@@ -65,6 +65,13 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
                     </span>
                     <span className="mt-0.5 block text-xs text-stone-500">
                       <span className="font-mono">{v.code}</span> · {v.category_name}
+                      {/* SAID ON THE LIST, not discovered at the send button.
+                          A vendor with no number can be billed and paid like
+                          any other — the one thing that cannot happen is an
+                          order going out to them. */}
+                      {v.phone === null && v.status === 'active' && (
+                        <span className="ml-1.5 font-medium text-red-700">no phone — cannot be sent an order</span>
+                      )}
                     </span>
                   </span>
                   {balP > 0 ? (
