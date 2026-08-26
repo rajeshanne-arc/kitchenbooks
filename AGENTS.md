@@ -6330,3 +6330,48 @@ exists precisely to disagree when the code changes, and is captured once and
 never regenerated. The difference is direction: a golden table is the past held
 still on purpose; a derived list is the present read fresh every run. What must
 not exist is the third thing — a hand-copy somebody updates when they remember.
+
+## COMMITTED IS NOT DEPLOYED, AND A REPORT THAT DOES NOT SAY WHICH WILL BE READ AS THE STRONGER ONE
+
+This has cost four rounds now, and it is two-sided. Both halves are written
+down because either one alone would have prevented it and neither did.
+
+**The writing half.** A completion report says *"committed, unpushed"* every
+single time that is true. Four reports in a row said "Committed as `5ac9a47`",
+"Committed as `7f37069`", "Committed as `d168ead`" — and one earlier report had
+said **unpushed** and then the habit lapsed. "Committed" reads as shipped,
+because the reader has no other signal and the word sounds finished. The
+stronger reading is the one that gets taken.
+
+**The reading half.** Treat committed-without-pushed as UNSHIPPED. Four reports
+went by without the question being asked, when "it is not deployed" had already
+been the answer twice before in this project. A cause that has fired twice is
+the first hypothesis, not the last.
+
+### The diagnostic order, which worked and should be reused
+
+1. **What SHA is the host serving?** From the provider's deployment metadata,
+   never from `git log` — `git log` describes a laptop. Here: production was
+   `f4a74d0`, four days old, with **five** commits local-only.
+2. **CONFIRM THE DEPLOYED TREE PRODUCES THE EXACT SYMPTOM.** The metadata alone
+   is an inference; `git show f4a74d0:src/lib/tabs.ts` emitting the exact nine
+   labels the user reported, in the exact order, makes it a fact. Also
+   `git ls-tree -r f4a74d0` finding **0 files** under the route that was
+   supposedly added. Do this step — it is what separates "the SHA looks old"
+   from "the SHA explains what you are seeing".
+3. **Only then** check the runtime: is the fallback the old list, is anything
+   cached. Both were clean here, which is what proved a push would actually
+   fix it rather than merely being owed. **A diagnosis is not finished when it
+   finds a cause; it is finished when it knows the fix will work.**
+
+### And a probe that cannot distinguish two states is not evidence
+
+Hitting production for `/owner/setup` and expecting a 404 proved NOTHING: the
+proxy is fail-closed and 307s every unauthenticated request to `/login` before
+routing, so a missing route and a live one return the identical status. That
+was reported as proving nothing rather than counted as a third confirmation.
+
+Same family as the vacuous gates recorded above — a check whose two outcomes
+look alike has not checked anything — and the tell is the same: ask what the
+result would have been in the other world. If it is the same result, the probe
+is decoration.
