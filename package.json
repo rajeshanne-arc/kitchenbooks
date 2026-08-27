@@ -26,7 +26,8 @@
     "smoke:a2": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-a2.ts",
     "audit:schema": "NODE_OPTIONS='--conditions react-server' tsx scripts/audit-schema.ts",
     "audit:tenancy": "NODE_OPTIONS='--conditions react-server' tsx scripts/audit-tenancy.ts",
-    "smoke:tenancy": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-tenancy.ts"
+    "smoke:tenancy": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-tenancy.ts",
+    "import:stock": "NODE_OPTIONS='--conditions react-server' tsx scripts/import-stock-sheet.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
