@@ -31,6 +31,7 @@ import {
 } from '@/components/ui'
 import { LockedField } from '@/components/books/Locked'
 import { toast } from '@/components/Toasts'
+import DiscardControl from '@/components/books/DiscardControl'
 import SaveAck from '@/components/SaveAck'
 
 const KIND_LABEL: Record<MoneyAccountKind, string> = {
@@ -178,6 +179,7 @@ export default function AccountsEditor({
                       draft={draft}
                       setDraft={setDraft}
                       lockedKind={a.kind}
+                      editingId={a.id}
                       busy={busy}
                       onSave={() => void save()}
                       onCancel={() => setEditing(null)}
@@ -243,6 +245,7 @@ export default function AccountsEditor({
               draft={draft}
               setDraft={setDraft}
               lockedKind={null}
+              editingId={null}
               busy={busy}
               onSave={() => void save()}
               onCancel={() => setAdding(false)}
@@ -269,6 +272,7 @@ function Fields({
   draft,
   setDraft,
   lockedKind,
+  editingId,
   busy,
   onSave,
   onCancel,
@@ -277,6 +281,8 @@ function Fields({
   setDraft: (d: SaveMoneyAccountInput) => void
   /** non-null while editing: kind is locked, and the screen says why */
   lockedKind: MoneyAccountKind | null
+  /** the row being edited, so it can be discarded from here; null while adding */
+  editingId: string | null
   busy: boolean
   onSave: () => void
   onCancel: () => void
@@ -407,13 +413,22 @@ function Fields({
         </label>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button type="button" disabled={busy || draft.name.trim() === ''} onClick={onSave} className={btnCls}>
           {busy ? 'Saving…' : 'Save'}
         </button>
         <button type="button" disabled={busy} onClick={onCancel} className={btnGhostCls}>
           Cancel
         </button>
+        {/* RETIRE AND DISCARD SAY DIFFERENT THINGS, so they sit side by side:
+            the select above stops offering the account and keeps everything
+            that moved through it; this one says it was never real. Only an
+            account nothing points at can be discarded, and the owner decides. */}
+        {editingId !== null && (
+          <span className="ml-auto">
+            <DiscardControl entity="account" id={editingId} label={draft.name} noun="account" />
+          </span>
+        )}
       </div>
     </div>
   )

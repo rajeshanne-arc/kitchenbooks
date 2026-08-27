@@ -13,7 +13,10 @@ import { formatMoneyString } from '@/lib/money'
 import RecipeEditor from '@/components/recipes/RecipeEditor'
 import DishCardPanel from '@/components/recipes/DishCardPanel'
 import SubCardPanel from '@/components/recipes/SubCardPanel'
-import { RetiredBadge } from '@/components/books/Badges'
+import { StatusBadge } from '@/components/books/Badges'
+import MasterActions, { ClosedNote } from '@/components/books/MasterActions'
+import { pendingFor, REQUESTERS } from '@/server/approvals-queries'
+import { getSessionUser } from '@/server/current-user'
 import { businessMonthStart } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
@@ -27,13 +30,15 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
   const recipe = await getRecipeDetail(restaurant.id, id)
   if (!recipe) notFound()
 
-  const [lines, { units }, sold, card, media, courses] = await Promise.all([
+  const [lines, { units }, sold, card, media, courses, open, user] = await Promise.all([
     getRecipeLines(id),
     getMasters(),
     recipe.kind === 'dish' ? getQtySold(restaurant.id, await businessMonthStart()) : Promise.resolve([]),
     recipe.kind === 'dish' ? getDishCard(restaurant.id, id) : Promise.resolve(null),
     getRecipeMedia(restaurant.id, id),
     recipe.kind === 'dish' ? listCourses(restaurant.id) : Promise.resolve([]),
+    pendingFor(restaurant.id, id),
+    getSessionUser(),
   ])
   const soldRow = sold.find((s) => s.recipe_id === id) ?? null
 
@@ -45,7 +50,7 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <code className="rounded bg-stone-900 px-2 py-0.5 font-mono text-xs font-medium text-white">{recipe.code}</code>
         <h2 className="text-lg font-bold text-stone-900">{recipe.name}</h2>
-        {recipe.status === 'inactive' && <RetiredBadge />}
+        <StatusBadge status={recipe.status} />
         <span className="text-xs text-stone-400">
           {recipe.kind === 'dish' ? (
             <>
@@ -79,6 +84,24 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
           <SubCardPanel recipe={recipe} />
         </div>
       )}
+
+      {/* A CLOSED CODE STAYS RESOLVABLE — CH-001 tells you which card absorbed
+          it. A dish code carries its department forever, so a duplicate coded
+          twice is exactly the case a merge is for. */}
+      <div className="mt-4 space-y-4">
+        <ClosedNote
+          status={recipe.status}
+          becameHref={recipe.merged_into === null ? undefined : `/kitchen/recipes/${recipe.merged_into}`}
+          becameCode={recipe.merged_into_code}
+          becameName={recipe.merged_into_name}
+        />
+        <MasterActions
+          entity="recipe"
+          row={{ id: recipe.id, code: recipe.code, name: recipe.name, status: recipe.status }}
+          open={open[0] ?? null}
+          canRequest={user !== null && REQUESTERS.includes(user.role)}
+        />
+      </div>
     </div>
   )
 }

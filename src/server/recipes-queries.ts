@@ -109,9 +109,12 @@ export async function getRecipeDetail(restaurantId: string, id: string): Promise
            rc.total_cost::text as total_cost,
            rc.cost_per_output_unit::text as cost_per_output_unit,
            rc.uncosted_lines::int as uncosted_lines,
-           dc.food_cost_pct::text as food_cost_pct
+           dc.food_cost_pct::text as food_cost_pct,
+           -- A CLOSED CARD STAYS RESOLVABLE, the same as an item's.
+           r.merged_into, mr.code as merged_into_code, mr.name as merged_into_name
     from recipes r
     join units u on u.code = r.output_unit
+    left join recipes mr on mr.restaurant_id = r.restaurant_id and mr.id = r.merged_into
     left join sections s on s.id = r.section_id
     left join recipe_costs rc on rc.recipe_id = r.id
     left join dish_costs dc on dc.recipe_id = r.id

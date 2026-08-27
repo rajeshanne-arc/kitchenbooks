@@ -9,7 +9,6 @@ import {
 import { getListSuggestions } from '@/server/settings'
 import ApprovalsClient, { type QueueItem } from '@/components/settings/ApprovalsClient'
 import SuggestionsQueue from '@/components/settings/SuggestionsQueue'
-import Honesty from '@/components/Honesty'
 import { cardCls, codeCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -153,17 +152,6 @@ export default async function ApprovalsPage() {
         </p>
       </section>
 
-      {/* THE HONEST LIMIT. Discard and merge work on items and vendors and
-          nothing else yet, and the reason is a migration rather than a
-          decision — so it is said here rather than discovered by somebody
-          hunting a button on a recipe. */}
-      <Honesty verdict="Not yet">
-        Discard and merge reach items and vendors. Recipes, money accounts, meters, storage locations and
-        list values cannot be closed this way yet: their <span className="font-mono text-[12px]">status</span>{' '}
-        column refuses the word, and none of them carries the pointer that keeps a closed code resolvable.
-        The migration is written and waiting to be applied —{' '}
-        <span className="font-mono text-[12px]">merge_recipes_and_discardable_masters</span>.
-      </Honesty>
     </div>
   )
 }

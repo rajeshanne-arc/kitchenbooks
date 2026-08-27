@@ -5561,6 +5561,12 @@ async function run() {
       'components/accountant/UnmatchButton.tsx': 'inline row control — the line moves back to the unmatched list, which IS the change',
       'components/kitchen/CancelIndent.tsx': 'inline row control — the indent flips to cancelled and its gap column stops reading as a shortage',
       'components/store/SettleShort.tsx': 'inline row control — the short leaves the open list, which is the whole finding it was on',
+      // The same category, one step further: this one sits inside a master's
+      // row and REPLACES ITSELF with "Sent to the owner — nothing has changed
+      // yet", which is the acknowledgement. A hatched band would be reporting a
+      // change that has deliberately not happened, since a request acts on
+      // nothing until the owner decides.
+      'components/books/DiscardControl.tsx': 'inline row control — it replaces itself with what was sent, and nothing has changed yet to acknowledge',
     }
 
     const server = walk('src/server')
@@ -8075,7 +8081,10 @@ async function run() {
     }
     // Everything that raises one must be the approvals path itself or a master
     // screen — never a void, a retirement or a correction.
-    const stray = raisers.filter((f) => !/approvals?-|Approvals|MasterActions/i.test(f))
+    // MasterActions is the detail-page card; DiscardControl is its inline
+    // sibling for masters that live as a ROW in a list — a money account, a
+    // meter, a storage location, a list value. Both ARE the discard path.
+    const stray = raisers.filter((f) => !/approvals?-|Approvals|MasterActions|DiscardControl/i.test(f))
     assert.deepEqual(stray, [], 'something outside the discard/merge path is raising an approval request')
     const forbidden = raisers.filter((f) => /Void|void-|retire|Reversal|correction/i.test(f))
     assert.deepEqual(forbidden, [], 'a void, retirement or correction has been put behind approval')
@@ -8260,6 +8269,81 @@ async function run() {
       await tx`rollback to savepoint d`
       assert.ok(discardErr !== null && /point at it/.test(discardErr), 'a row with history was discardable')
       out.push(`refused discard with history: ${(discardErr as string).slice(0, 72)}`)
+
+
+      // ── RECIPES: A DIFFERENT GUARD SET, NOT THE ITEM ONE RENAMED ─────────
+      //
+      // Two of the nine columns pointing at recipes must NOT be repointed —
+      // recipe_lines.recipe_id OWNS a line, and dish_cost_snapshots.recipe_id
+      // is a photograph — so merge_recipes enumerates its targets where
+      // merge_items derives them. Asserted here on the OUTPUT: whatever moved,
+      // neither of those two may be in it.
+      const recipes = await tx<{ id: string; code: string; kind: string; unit: string }[]>`
+        select id, code, kind, output_unit as unit from recipes
+        where restaurant_id = ${liveTenant} and status = 'active' order by code`
+      if (recipes.length >= 2) {
+        const dish = recipes.find((r) => r.kind === 'dish')
+        const sub = recipes.find((r) => r.kind === 'sub')
+        if (dish !== undefined && sub !== undefined) {
+          // KIND IS THIS TABLE'S UNITS RULE — a dish and a sub are costed on
+          // different scales, so merging across them reinterprets every frozen
+          // cost that moves.
+          await tx`savepoint rk`
+          let kindErr: string | null = null
+          try {
+            await applyRequest(tx, liveTenant, {
+              kind: 'merge', entity_type: 'recipe', entity_id: dish.id, target_entity_id: sub.id,
+            })
+          } catch (e) { kindErr = (e as Error).message }
+          await tx`rollback to savepoint rk`
+          assert.ok(kindErr !== null && /kind/i.test(kindErr), `a dish merged into a sub: ${kindErr}`)
+          out.push(`refused across kinds: ${(kindErr as string).slice(0, 72)}`)
+        }
+        // Self-merge, from the recipe function rather than the item one.
+        await tx`savepoint rs`
+        let selfErr: string | null = null
+        try {
+          await applyRequest(tx, liveTenant, {
+            kind: 'merge', entity_type: 'recipe', entity_id: recipes[0].id, target_entity_id: recipes[0].id,
+          })
+        } catch (e) { selfErr = (e as Error).message }
+        await tx`rollback to savepoint rs`
+        assert.ok(selfErr !== null && /itself/i.test(selfErr), 'a recipe merged into itself')
+
+        const samekind = recipes.filter((r) => r.kind === recipes[0].kind && r.unit === recipes[0].unit)
+        if (samekind.length >= 2) {
+          await tx`savepoint rm`
+          const res = await applyRequest(tx, liveTenant, {
+            kind: 'merge', entity_type: 'recipe', entity_id: samekind[0].id, target_entity_id: samekind[1].id,
+          })
+          const movedTables = Object.keys(res.moved ?? {})
+          // THE TWO THAT MUST NOT MOVE. A card's own lines stay with the card
+          // that is closing; a photograph is not rewritten.
+          assert.ok(
+            !movedTables.some((t) => t.startsWith('recipe_lines.recipe_id')),
+            'a merge dragged the closed card\'s own ingredient lines into the survivor',
+          )
+          assert.ok(
+            !movedTables.some((t) => t.startsWith('dish_cost_snapshots')),
+            'a merge repointed a dish-cost photograph',
+          )
+          const [closedR] = await tx<{ status: string; became: string | null }[]>`
+            select r.status, m.code as became from recipes r
+            left join recipes m on m.id = r.merged_into where r.id = ${samekind[0].id}`
+          assert.equal(closedR.status, 'merged')
+          assert.equal(closedR.became, samekind[1].code, 'the closed card does not point at its survivor')
+          await tx`rollback to savepoint rm`
+          out.push(`recipe merge moved ${movedTables.length ? movedTables.join(' · ') : 'nothing'} — never a card's own lines, never a photograph`)
+        } else {
+          // UNTESTED, NOT PASSED. This restaurant has one dish and one sub, so
+          // there is no legal recipe pair to merge and the selective-repoint
+          // assertion examined nothing. Saying so is the difference between a
+          // gate that is green and a gate that has looked.
+          out.push('UNTESTED — no two active recipes share a kind and a batch unit, so the repoint set was not exercised')
+        }
+      } else {
+        out.push(`UNTESTED — only ${recipes.length} active recipe(s); the recipe guards were not exercised`)
+      }
 
       throw new Error('ROLLBACK-MERGE-PROBE')
     }).catch((e: unknown) => {

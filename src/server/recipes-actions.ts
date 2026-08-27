@@ -137,9 +137,17 @@ export async function updateRecipe(id: string, raw: UpdateRecipeInput): Promise<
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const existing = await tsql<{ kind: 'dish' | 'sub' }[]>`
-      select kind from recipes where id = ${id} and restaurant_id = ${rid}`
+    const existing = await tsql<{ kind: 'dish' | 'sub'; status: string }[]>`
+      select kind, status from recipes where id = ${id} and restaurant_id = ${rid}`
     if (!existing[0]) throw new RecipeError('Recipe not found')
+    // A CLOSED CARD CANNOT BE EDITED BACK OPEN. The status select offers only
+    // Active and Retired, so a merged card would post 'active' and quietly
+    // revive itself — a form is never the check, and this is the check.
+    if (existing[0].status === 'merged' || existing[0].status === 'discarded') {
+      throw new RecipeError(
+        `This card was ${existing[0].status} and is kept so the code still resolves — it cannot be edited back open`,
+      )
+    }
     if (existing[0].kind === 'sub' && input.sellingPrice !== '') {
       throw new RecipeError('Sub-recipes have no selling price')
     }

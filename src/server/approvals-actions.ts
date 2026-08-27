@@ -43,7 +43,7 @@ function fail(e: unknown): { ok: false; error: string } {
 
 const RequestSchema = z.object({
   kind: z.enum(['discard', 'merge', 'reopen_period']),
-  entity: z.enum(['item', 'vendor', 'period']),
+  entity: z.enum(['item', 'vendor', 'recipe', 'account', 'meter', 'location', 'list_value', 'period']),
   fromId: z.string().regex(UUID),
   toId: z.union([z.literal(''), z.string().regex(UUID)]).optional(),
   reason: z.string().trim().min(1).max(300),
@@ -300,7 +300,15 @@ export async function searchMergeTargets(raw: { entity: ApprovalEntity; q: strin
     const restaurant = await getRestaurant()
     const like = `%${raw.q.slice(0, 60)}%`
     const rows =
-      raw.entity === 'item'
+      raw.entity === 'recipe'
+        ? await tsql<{ id: string; code: string; name: string; units: string }[]>`
+            select r.id, r.code, r.name, r.kind || ' · ' || r.output_unit as units
+            from recipes r
+            where r.restaurant_id = ${restaurant.id} and r.status = 'active'
+              and r.id <> ${raw.exclude}
+              and (r.name ilike ${like} or r.code ilike ${like})
+            order by r.code limit 12`
+      : raw.entity === 'item'
         ? await tsql<{ id: string; code: string; name: string; units: string }[]>`
             select i.id, i.code, i.name, i.purchase_unit || '/' || coalesce(i.stock_unit, '—') as units
             from items i

@@ -13,6 +13,7 @@ import { addListOption, moveListOption, setListOptionStatus } from '@/server/set
 import { cardCls, numCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
 import SaveAck from '@/components/SaveAck'
+import DiscardControl from '@/components/books/DiscardControl'
 
 export default function ListsEditor({ initialOptions }: { initialOptions: ListOptionRow[] }) {
   const router = useRouter()
@@ -60,7 +61,8 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
             </div>
             <ul className="mt-2 divide-y divide-rule-soft">
               {rows.map((o, i) => (
-                <li key={o.id} className="flex items-center justify-between gap-2 py-1.5">
+                <li key={o.id} className="py-1.5">
+                  <div className="flex items-center justify-between gap-2">
                   <span className={`min-w-0 truncate text-sm ${o.status === 'inactive' ? 'text-stone-400 line-through' : 'text-stone-900'}`}>
                     {o.value}
                   </span>
@@ -103,6 +105,15 @@ export default function ListsEditor({ initialOptions }: { initialOptions: ListOp
                       </button>
                     )}
                   </span>
+                  </div>
+                  {/* RETIRE AND DISCARD SAY DIFFERENT THINGS. Retiring keeps
+                      the word on every entry that already used it and stops
+                      offering it; discarding says it was never real — a
+                      mistyped value nothing ever used. Only a value nothing
+                      points at can be discarded, and the owner decides. */}
+                  {o.status === 'active' && (
+                    <DiscardControl entity="list_value" id={o.id} label={o.value} noun="list value" />
+                  )}
                 </li>
               ))}
             </ul>

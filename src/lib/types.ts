@@ -795,6 +795,9 @@ export type SubCostRow = {
 }
 
 export type RecipeDetail = {
+  merged_into: string | null
+  merged_into_code: string | null
+  merged_into_name: string | null
   id: string
   code: string
   name: string
@@ -806,7 +809,7 @@ export type RecipeDetail = {
   output_unit: string
   output_unit_name: string
   selling_price: string | null
-  status: 'active' | 'inactive'
+  status: MasterStatus
   created_at: string
   // live from recipe_costs / dish_costs
   total_cost: string

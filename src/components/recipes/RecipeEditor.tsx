@@ -38,7 +38,15 @@ export default function RecipeEditor({
   const [outputQty, setOutputQty] = useState(initialRecipe.output_qty)
   const [outputUnit, setOutputUnit] = useState(initialRecipe.output_unit)
   const [sellingPrice, setSellingPrice] = useState(initialRecipe.selling_price ?? '')
-  const [status, setStatus] = useState<'active' | 'inactive'>(initialRecipe.status)
+  // A MERGED OR DISCARDED CARD IS A SIGNPOST, NOT A RECIPE — and unlike an
+  // item or a vendor, the card itself is still worth READING, so this editor
+  // stays on the page. The refusal is where it belongs instead: updateRecipe
+  // rejects any save against a closed card, because the status select offers
+  // only Active and Retired and a merged card would otherwise post 'active'
+  // and quietly revive itself.
+  const [status, setStatus] = useState<'active' | 'inactive'>(
+    initialRecipe.status === 'inactive' ? 'inactive' : 'active',
+  )
   const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({})

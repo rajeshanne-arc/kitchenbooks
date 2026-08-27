@@ -25,6 +25,7 @@ import Honesty from '@/components/Honesty'
 import SaveAck from '@/components/SaveAck'
 import { LockedField } from '@/components/books/Locked'
 import { toast } from '@/components/Toasts'
+import DiscardControl from '@/components/books/DiscardControl'
 import {
   btnCls,
   btnGhostCls,
@@ -357,6 +358,7 @@ export default function MetersClient({
                     draft={draft}
                     setDraft={setDraft}
                     lockedKind={m.kind}
+                    editingId={m.id}
                     allowedKinds={allowedKinds}
                     busy={busy}
                     onSave={() => void saveMeter()}
@@ -422,6 +424,7 @@ export default function MetersClient({
                 draft={draft}
                 setDraft={setDraft}
                 lockedKind={null}
+                editingId={null}
                 allowedKinds={allowedKinds}
                 busy={busy}
                 onSave={() => void saveMeter()}
@@ -556,6 +559,7 @@ function Fields({
   busy,
   onSave,
   onCancel,
+  editingId,
 }: {
   draft: SaveMeterInput
   setDraft: (d: SaveMeterInput) => void
@@ -564,6 +568,8 @@ function Fields({
   allowedKinds: MeterKind[]
   busy: boolean
   onSave: () => void
+  /** the row being edited, so it can be discarded from here; null while adding */
+  editingId: string | null
   onCancel: () => void
 }) {
   return (
@@ -647,7 +653,10 @@ function Fields({
         Retired — stops being offered, and keeps every reading it ever took
       </label>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {/* RETIRE AND DISCARD SAY DIFFERENT THINGS. Retiring stops it being
+            offered and keeps everything it touched; discarding says it was
+            never real, and only a row nothing points at can be. */}
         <button type="button" onClick={onSave} disabled={busy || draft.name.trim() === ''} className={btnCls}>
           {busy ? 'Saving…' : 'Save meter'}
         </button>
@@ -659,6 +668,11 @@ function Fields({
         >
           Cancel
         </button>
+        {editingId !== null && (
+          <span className="ml-auto">
+            <DiscardControl entity="meter" id={editingId} label={draft.name} noun="meter" />
+          </span>
+        )}
       </div>
     </div>
   )

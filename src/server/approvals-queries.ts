@@ -32,7 +32,36 @@ export class ApprovalRefusal extends Error {}
  *  raised by a future phase but this app will not try to apply one. */
 export const APPLIABLE_KINDS = ['discard', 'merge', 'reopen_period'] as const
 export type ApprovalKind = (typeof APPLIABLE_KINDS)[number]
-export type ApprovalEntity = 'item' | 'vendor' | 'period'
+export type ApprovalEntity =
+  | 'item'
+  | 'vendor'
+  | 'recipe'
+  | 'account'
+  | 'meter'
+  | 'location'
+  | 'list_value'
+  | 'period'
+
+/**
+ * WHAT EACH KIND OF ROW IS CALLED, WHICH TABLE HOLDS IT, AND WHETHER IT CAN BE
+ * MERGED AT ALL.
+ *
+ * `mergeable` is not a policy — it is a fact about the schema. Only items,
+ * vendors and recipes carry `merged_into` and have a merge_* function, so only
+ * they can point somewhere after they close. The other four can be DISCARDED,
+ * which needs nothing but a status, and offering them a merge would be
+ * offering a button whose action does not exist.
+ */
+export const ENTITIES: Record<ApprovalEntity, { table: string; noun: string; mergeable: boolean }> = {
+  item: { table: 'items', noun: 'item', mergeable: true },
+  vendor: { table: 'vendors', noun: 'vendor', mergeable: true },
+  recipe: { table: 'recipes', noun: 'recipe', mergeable: true },
+  account: { table: 'money_accounts', noun: 'money account', mergeable: false },
+  meter: { table: 'meters', noun: 'meter', mergeable: false },
+  location: { table: 'storage_locations', noun: 'storage location', mergeable: false },
+  list_value: { table: 'list_options', noun: 'list value', mergeable: false },
+  period: { table: 'period_closes', noun: 'period', mergeable: false },
+}
 
 /**
  * WHO ASKS, AND WHO DECIDES — and the rule generalises past this screen:
@@ -100,7 +129,7 @@ export type RefCount = {
  * `reference_counts` is SECURITY INVOKER, so RLS applies and it must be called
  * inside a tenant-announcing transaction — which tsql is.
  */
-export async function getReferenceCounts(table: 'items' | 'vendors', id: string): Promise<RefCount[]> {
+export async function getReferenceCounts(table: string, id: string): Promise<RefCount[]> {
   const rows = await tsql<Omit<RefCount, 'pointer'>[]>`
     select referencing_table, referencing_column, n::int as n
     from reference_counts(${table}, ${id}::uuid)
@@ -140,6 +169,14 @@ export type Preview = {
   wouldApply: boolean
 }
 
+/**
+ * The row, in the two words every screen needs: a code and a name.
+ *
+ * EIGHT LITERAL QUERIES RATHER THAN ONE INTERPOLATED TABLE NAME. A dynamic
+ * identifier would be shorter and would make every statement here invisible to
+ * audit:schema and audit:tenancy, which read literal SQL. The repetition buys
+ * two gates that can see what this does.
+ */
 async function readMaster(
   restaurantId: string,
   entity: ApprovalEntity,
@@ -154,14 +191,134 @@ async function readMaster(
         ? await tsql<MasterRef[]>`
             select id, code, name, status, '—' as purchase_unit, null as stock_unit
             from vendors where restaurant_id = ${restaurantId} and id = ${id}`
-        : await tsql<MasterRef[]>`
-            select id,
-                   to_char(period_start, 'YYYY-MM') as code,
-                   to_char(period_start, 'FMMonth YYYY') || ' — closed ' || to_char(closed_at, 'DD Mon') ||
-                     coalesce(' by ' || closed_by, '') as name,
-                   case when reopened_at is null then 'closed' else 'reopened' end as status
-            from period_closes where restaurant_id = ${restaurantId} and id = ${id}`
+        : entity === 'recipe'
+          ? await tsql<MasterRef[]>`
+              select id, code, name, status,
+                     kind as purchase_unit, output_unit as stock_unit
+              from recipes where restaurant_id = ${restaurantId} and id = ${id}`
+          : entity === 'account'
+            ? await tsql<MasterRef[]>`
+                select id, kind as code, name, status from money_accounts
+                where restaurant_id = ${restaurantId} and id = ${id}`
+            : entity === 'meter'
+              ? await tsql<MasterRef[]>`
+                  select id, kind as code, name, status from meters
+                  where restaurant_id = ${restaurantId} and id = ${id}`
+              : entity === 'location'
+                ? await tsql<MasterRef[]>`
+                    select id, kind as code, name, status from storage_locations
+                    where restaurant_id = ${restaurantId} and id = ${id}`
+                : entity === 'list_value'
+                  ? await tsql<MasterRef[]>`
+                      select id, list_key as code, value as name, status from list_options
+                      where restaurant_id = ${restaurantId} and id = ${id}`
+                  : await tsql<MasterRef[]>`
+                      select id,
+                             to_char(period_start, 'YYYY-MM') as code,
+                             to_char(period_start, 'FMMonth YYYY') || ' — closed ' || to_char(closed_at, 'DD Mon') ||
+                               coalesce(' by ' || closed_by, '') as name,
+                             case when reopened_at is null then 'closed' else 'reopened' end as status
+                      from period_closes where restaurant_id = ${restaurantId} and id = ${id}`
   return rows[0] ?? null
+}
+
+/**
+ * THE RECIPE GUARDS, MIRRORED FROM merge_recipes — and they are NOT the item
+ * ones renamed.
+ *
+ * `kind` is this table's units rule: productions freezes unit_cost from
+ * dish_costs.cost_per_portion for a dish and recipe_costs.cost_per_output_unit
+ * for a sub, and a sub's output IS its batch yield where a dish's output_qty
+ * means portions made. Merging across kinds silently reinterprets every frozen
+ * cost that moves.
+ *
+ * And the CYCLE, which has no item analogue at all — see the comment on it.
+ */
+async function recipeChecks(restaurantId: string, fromId: string, toId: string): Promise<MergeCheck[]> {
+  const [row] = await tsql<{
+    kinds_differ: boolean
+    from_kind: string
+    to_kind: string
+    units_differ: boolean
+    from_unit: string
+    to_unit: string
+    card_clash: number
+    pos_clash: number
+    cycle: boolean
+    survivor_status: string
+  }[]>`
+    select f.kind <> t.kind as kinds_differ, f.kind as from_kind, t.kind as to_kind,
+           (f.kind = 'sub' and f.output_unit <> t.output_unit) as units_differ,
+           f.output_unit as from_unit, t.output_unit as to_unit,
+           (select count(*)::int from recipe_lines ca
+              join recipe_lines cb on cb.recipe_id = ca.recipe_id
+             where ca.component_recipe_id = f.id and cb.component_recipe_id = t.id) as card_clash,
+           (select count(*)::int from pos_item_map pa
+              join pos_item_map pb on pb.pos_item_id = pa.pos_item_id
+             where pa.recipe_id = f.id and pb.recipe_id = t.id) as pos_clash,
+           exists (
+             with recursive down as (
+               select component_recipe_id as rid, 1 as depth
+               from recipe_lines where recipe_id = t.id and component_recipe_id is not null
+               union all
+               select rl.component_recipe_id, d.depth + 1
+               from recipe_lines rl join down d on rl.recipe_id = d.rid
+               where rl.component_recipe_id is not null and d.depth < 12
+             )
+             select 1 from down where rid = f.id
+           ) as cycle,
+           t.status as survivor_status
+    from recipes f, recipes t
+    where f.restaurant_id = ${restaurantId} and f.id = ${fromId}
+      and t.restaurant_id = ${restaurantId} and t.id = ${toId}`
+  if (!row) return [{ ok: false, label: 'Both recipes exist', detail: 'one of them is not on this restaurant' }]
+  return [
+    {
+      ok: row.survivor_status === 'active',
+      label: 'The survivor is active',
+      detail:
+        row.survivor_status === 'active'
+          ? 'it is the card everything will point at'
+          : `it is ${row.survivor_status} — merging into a closed card would move history onto a dead end`,
+    },
+    {
+      ok: !row.kinds_differ,
+      label: 'Both are the same kind',
+      detail: row.kinds_differ
+        ? `one is a ${row.from_kind} and the other a ${row.to_kind} — they are costed on different scales, so every frozen cost that moved would quietly change meaning`
+        : `both are ${row.to_kind}s`,
+    },
+    {
+      ok: !row.units_differ,
+      label: 'The batch units match',
+      detail: row.units_differ
+        ? `${row.from_unit} against ${row.to_unit} — a quantity written against one would mean something else against the other`
+        : `both batches are measured in ${row.to_unit}`,
+    },
+    {
+      ok: row.card_clash === 0,
+      label: 'No card holds both',
+      detail:
+        row.card_clash === 0
+          ? 'no recipe would end up with the same sub twice'
+          : `${row.card_clash} card(s) list both — take one line out first`,
+    },
+    {
+      ok: row.pos_clash === 0,
+      label: 'No POS item maps to both',
+      detail: row.pos_clash === 0 ? 'nothing sold points at both' : `${row.pos_clash} POS item(s) map to both`,
+    },
+    {
+      // AN OPERATION THAT COMBINES TWO VALID STATES CAN PRODUCE AN INVALID ONE,
+      // and a per-insert guard cannot see it. Every component line here is
+      // legal on its own; merging is what closes the loop.
+      ok: !row.cycle,
+      label: 'It would not contain itself',
+      detail: row.cycle
+        ? 'the surviving recipe already uses this one — merging them would make it an ingredient of itself'
+        : 'neither is inside the other',
+    },
+  ]
 }
 
 /**
@@ -302,7 +459,7 @@ export async function getPreview(
 ): Promise<Preview> {
   const from = await readMaster(restaurantId, entity, fromId)
   if (!from) throw new ApprovalRefusal('That row is not on this restaurant')
-  const table = entity === 'item' ? 'items' : 'vendors'
+  const table = ENTITIES[entity].table
   const refs = await getReferenceCounts(table, fromId)
   const totalRefs = refs.reduce((a, r) => a + r.n, 0)
 
@@ -386,10 +543,21 @@ export async function getPreview(
   const to = await readMaster(restaurantId, entity, toId)
   if (!to) throw new ApprovalRefusal('The surviving row is not on this restaurant')
 
+  if (!ENTITIES[entity].mergeable) {
+    // NOT A POLICY, A FACT ABOUT THE SCHEMA: no merged_into column and no
+    // merge_* function, so there is nowhere for a closed row to point and
+    // nothing to move the references with.
+    throw new ApprovalRefusal(
+      `A ${ENTITIES[entity].noun} cannot be merged — it carries no pointer to a survivor. Discard it, or retire it.`,
+    )
+  }
+
   const checks =
     entity === 'item'
       ? await itemChecks(restaurantId, fromId, toId)
-      : [
+      : entity === 'recipe'
+        ? await recipeChecks(restaurantId, fromId, toId)
+        : [
           {
             ok: to.status === 'active',
             label: 'The survivor is active',
@@ -585,7 +753,9 @@ export async function applyRequest(
     const [out] =
       req.entity_type === 'item'
         ? await tx<{ r: ApplyResult }[]>`select merge_items(${req.entity_id}::uuid, ${req.target_entity_id}::uuid) as r`
-        : await tx<{ r: ApplyResult }[]>`select merge_vendors(${req.entity_id}::uuid, ${req.target_entity_id}::uuid) as r`
+        : req.entity_type === 'recipe'
+          ? await tx<{ r: ApplyResult }[]>`select merge_recipes(${req.entity_id}::uuid, ${req.target_entity_id}::uuid) as r`
+          : await tx<{ r: ApplyResult }[]>`select merge_vendors(${req.entity_id}::uuid, ${req.target_entity_id}::uuid) as r`
     return out.r
   }
 
@@ -596,7 +766,7 @@ export async function applyRequest(
   // The reference count is re-read HERE, at the moment of writing, not trusted
   // from the request: a bill landing against the row between the ask and the
   // approval turns a mistake into history, and history is not discardable.
-  const table = req.entity_type === 'item' ? 'items' : 'vendors'
+  const table = ENTITIES[req.entity_type as ApprovalEntity]?.table ?? 'items'
   const [refs] = await tx<{ n: number }[]>`
     select coalesce(sum(n), 0)::int as n from reference_counts(${table}, ${req.entity_id}::uuid)`
   if ((refs?.n ?? 0) > 0) {
@@ -604,16 +774,44 @@ export async function applyRequest(
       `${refs.n} row(s) now point at it — something was entered against it after this was asked, so it is history and cannot be discarded`,
     )
   }
+  // ONE LITERAL UPDATE PER TABLE, for the same reason readMaster has eight
+  // literal selects: audit:tenancy reads these statements, and an interpolated
+  // table name is a statement it cannot see.
   const [row] =
     req.entity_type === 'item'
       ? await tx<{ code: string }[]>`
           update items set status = 'discarded'
           where id = ${req.entity_id} and restaurant_id = ${restaurantId}
             and status in ('active', 'inactive') returning code`
-      : await tx<{ code: string }[]>`
-          update vendors set status = 'discarded'
-          where id = ${req.entity_id} and restaurant_id = ${restaurantId}
-            and status in ('active', 'inactive') returning code`
+      : req.entity_type === 'vendor'
+        ? await tx<{ code: string }[]>`
+            update vendors set status = 'discarded'
+            where id = ${req.entity_id} and restaurant_id = ${restaurantId}
+              and status in ('active', 'inactive') returning code`
+        : req.entity_type === 'recipe'
+          ? await tx<{ code: string }[]>`
+              update recipes set status = 'discarded'
+              where id = ${req.entity_id} and restaurant_id = ${restaurantId}
+                and status in ('active', 'inactive') returning code`
+          : req.entity_type === 'account'
+            ? await tx<{ code: string }[]>`
+                update money_accounts set status = 'discarded'
+                where id = ${req.entity_id} and restaurant_id = ${restaurantId}
+                  and status in ('active', 'inactive') returning name as code`
+            : req.entity_type === 'meter'
+              ? await tx<{ code: string }[]>`
+                  update meters set status = 'discarded'
+                  where id = ${req.entity_id} and restaurant_id = ${restaurantId}
+                    and status in ('active', 'inactive') returning name as code`
+              : req.entity_type === 'location'
+                ? await tx<{ code: string }[]>`
+                    update storage_locations set status = 'discarded'
+                    where id = ${req.entity_id} and restaurant_id = ${restaurantId}
+                      and status in ('active', 'inactive') returning name as code`
+                : await tx<{ code: string }[]>`
+                    update list_options set status = 'discarded'
+                    where id = ${req.entity_id} and restaurant_id = ${restaurantId}
+                      and status in ('active', 'inactive') returning value as code`
   if (!row) throw new Error('it was already closed')
   return { discarded: row.code }
 }

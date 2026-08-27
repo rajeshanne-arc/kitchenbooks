@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation'
 import type { SaveLocationInput, StorageLocation } from '@/lib/types'
 import { createLocation, moveLocation, updateLocation } from '@/server/locations-actions'
 import { toast } from '@/components/Toasts'
+import DiscardControl from '@/components/books/DiscardControl'
 import Honesty from '@/components/Honesty'
 import SaveAck from '@/components/SaveAck'
 import {
@@ -148,6 +149,7 @@ export default function LocationsEditor({
               <Fields
                 draft={draft}
                 setDraft={setDraft}
+                editingId={l.id}
                 busy={busy}
                 itemCount={l.item_count}
                 onSave={() => void run(() => updateLocation(l.id, draft), `${draft.name} saved`)}
@@ -210,6 +212,7 @@ export default function LocationsEditor({
           <Fields
             draft={draft}
             setDraft={setDraft}
+            editingId={null}
             busy={busy}
             itemCount={0}
             onSave={() => void run(() => createLocation(draft), `${draft.name} added, last in the walk`)}
@@ -240,12 +243,15 @@ function Fields({
   itemCount,
   onSave,
   onCancel,
+  editingId,
 }: {
   draft: SaveLocationInput
   setDraft: (d: SaveLocationInput) => void
   busy: boolean
   itemCount: number
   onSave: () => void
+  /** the row being edited, so it can be discarded from here; null while adding */
+  editingId: string | null
   onCancel: () => void
 }) {
   return (
@@ -305,7 +311,10 @@ function Fields({
           on the count sheet until somebody moves {itemCount === 1 ? 'it' : 'them'}.
         </p>
       )}
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {/* RETIRE AND DISCARD SAY DIFFERENT THINGS. Retiring stops it being
+            offered and keeps everything it touched; discarding says it was
+            never real, and only a row nothing points at can be. */}
         <button type="button" onClick={onSave} disabled={busy || draft.name.trim() === ''} className={btnCls}>
           {busy ? 'Saving…' : 'Save location'}
         </button>
@@ -317,6 +326,11 @@ function Fields({
         >
           Cancel
         </button>
+        {editingId !== null && (
+          <span className="ml-auto">
+            <DiscardControl entity="location" id={editingId} label={draft.name} noun="storage location" />
+          </span>
+        )}
       </div>
     </div>
   )

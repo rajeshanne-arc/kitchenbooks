@@ -7131,6 +7131,27 @@ is the hand-maintained-copy fault in the one place where it DESTROYS rather than
 merely misleads: a reference nobody counted is a row left pointing at something
 that is gone.
 
+#### AMENDED: derive when every reference means the same thing
+
+> **DERIVE WHEN EVERY REFERENCE MEANS THE SAME THING; ENUMERATE WHEN THEY DO
+> NOT. The tell is OWNERSHIP — a column that says "belongs to" must never be
+> repointed by a loop that assumes "refers to".**
+
+This is not a second rule beside "derive from pg_constraint, never a list"; it
+is that rule's precondition, and it was missing. Deriving is right for ITEMS
+because all thirteen references mean one thing: *this row is ABOUT that item*.
+It is wrong for RECIPES because two of the nine mean something else —
+`recipe_lines.recipe_id` says a line BELONGS TO that card, and
+`dish_cost_snapshots.recipe_id` is a photograph of it. A loop that repoints
+everything drags the closed card's ingredients into the survivor (which already
+has a complete one, so every ingredient appears twice) and rewrites what a
+photograph said.
+
+So `merge_items` derives its targets and `merge_recipes` enumerates them, and
+neither is the lazy choice. Before writing either, read what each referencing
+column MEANS; if they do not all mean the same thing, a loop is the wrong
+instrument no matter how tidy it looks.
+
 ### APPROVED AND APPLIED ARE SEPARATE, and `failed` is a real outcome
 
 Approval is a DECISION. Application is an ACT, and an act can fail because the
@@ -7303,15 +7324,25 @@ trace — `reopened_at`, `reopened_by`, `reopen_reason` are all recorded:
 The owner keeps the direct route because they would otherwise be raising a
 request to themselves.
 
-### WHAT COULD NOT BE BUILT, and why it is a migration rather than a decision
+### WHAT EACH KIND OF ROW CAN DO, read from the schema rather than decided
 
-Discard and merge reach items and vendors and **nothing else yet**. Checked
-before promising: `recipes`, `money_accounts`, `meters`, `storage_locations`
-and `list_options` each carry `status CHECK (active|inactive)`, so writing
-`'discarded'` violates the constraint, and not one of them has `merged_into` or
-a merge function. `migrations/merge_recipes_and_discardable_masters.sql` is
-written and **not applied** — kb_app holds no DDL. The Approvals page says so
-in an honesty strip rather than leaving somebody to hunt a button on a recipe.
+`merge_recipes_and_discardable_masters` is applied, so the honesty strip is
+down. What shipped is exactly what the schema supports, and the split is a FACT
+rather than a policy:
+
+| | discard | merge |
+|---|---|---|
+| items, vendors, **recipes** | yes | yes — they carry `merged_into` and have a `merge_*` function |
+| money accounts, meters, storage locations, list values | yes | **no** — no pointer to a survivor, so nowhere for a closed row to point |
+
+`ENTITIES.mergeable` says so in one place and the UI reads it: offering a merge
+on a meter would be offering a button whose action does not exist.
+
+**A master that lives as a ROW gets `DiscardControl`, not `MasterActions`.** The
+card belongs on a detail page; dropping one into a table row would be worse than
+useless. But the preview is not decoration that can be dropped with it, so the
+control expands INLINE into the same three things — what points at it, whether
+it can be closed, and why.
 
 ### A RECIPE MERGE IS NOT AN ITEM MERGE — the repoint set is SELECTIVE
 
@@ -7344,7 +7375,22 @@ The section is NOT a guard: merging two duplicate dishes coded under different
 departments is exactly the case you would want, so the department change is a
 line in the preview rather than a refusal.
 
-### A PROBE WHOSE FIXTURE IS LIVE DATA A USER MAY ACT ON BREAKS WHEN THE FEATURE SUCCEEDS
+**And the cycle generalises past recipes:**
+
+> **AN OPERATION THAT COMBINES TWO VALID STATES CAN PRODUCE AN INVALID ONE, AND
+> PER-INSERT GUARDS CANNOT SEE IT.**
+
+Every component line involved is legal on its own; the app checks each one as it
+is inserted. Merging is what closes the loop, and no insert-time guard was ever
+in a position to notice. Ask it of any operation that JOINS two records —
+merges, imports, bulk moves, a period being reopened into another's range:
+the invariants were checked per row, and this is not a row.
+
+## A FIXTURE CONSUMED BY THE PRODUCT WORKING
+
+A shape of its own, and **not** a member of the vacuous-gate family. Those four
+could not fail. This one failed for a reason that had nothing to do with what
+it tested.
 
 The merge probe hardcoded HKP-024 and HKP-015 — the duplicate spray bottle the
 whole feature was built for. Rajesh then USED it: raised the discard, approved
@@ -7365,11 +7411,25 @@ but not the one under test, and it masked the assertion completely. A fixture
 has to satisfy every precondition of the thing it is exercising, which is one
 query, not two.
 
-### And a stale hand-written list, found the same way
+### The corollary: a derived fixture must be derived ON THE PROPERTY UNDER TEST
+
+My own first fix got this wrong. Replacing the named codes with "the
+most-referenced item" produced a pair whose UNITS DIFFER — so the merge raised
+`units differ`, a perfectly real refusal, and the assertion about what moves
+never ran. The gate was green-adjacent and blind.
+
+A fixture has to satisfy every PRECONDITION of the thing it exercises, which
+makes it one query rather than two: "the item with the most history **and** an
+active same-units partner", found together. Deriving on the wrong property is
+how a probe ends up testing a different rule than the one it names.
+
+## DRIFT FOUND BY USE, NOT BY SWEEP
 
 `smoke:a2` asserted the document series against a literal `['PUR','PAY','EXP',
 'VCH','CON','CAS','ADV','RUN']` — eight, where `DOC_TYPES` has said nine since
-purchase orders shipped. It sat green until the first PO number was actually
+purchase orders shipped. **Third earning of the hand-maintained-copy rule, and
+the first time the drift announced itself rather than being hunted:** every
+earlier instance was found by somebody sweeping for it. It sat green until the first PO number was actually
 drawn and then failed naming a series that is entirely legitimate. Derived from
 the registry now. **A check carrying its own copy of the thing it checks is not
 checking** — third time that sentence has been earned in this file, and the

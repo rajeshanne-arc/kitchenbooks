@@ -25,7 +25,7 @@ import {
   searchMergeTargets,
   cancelApproval,
 } from '@/server/approvals-actions'
-import type { Preview } from '@/server/approvals-queries'
+import type { ApprovalEntity, Preview } from '@/server/approvals-queries'
 import {
   btnCls,
   btnGhostCls,
@@ -46,6 +46,20 @@ type Row = { id: string; code: string; name: string; status: string }
 type Target = { id: string; code: string; name: string; units: string }
 
 /** A pending or approved request already standing against this row. */
+/** The word each kind of row goes by in the sentences. Mirrors ENTITIES on the
+ *  server; kept here rather than passed as a prop so a new entity type is one
+ *  edit that a reviewer sees beside the copy it changes. */
+const ENTITY_NOUN: Record<ApprovalEntity, string> = {
+  item: 'item',
+  vendor: 'vendor',
+  recipe: 'recipe',
+  account: 'money account',
+  meter: 'meter',
+  location: 'storage location',
+  list_value: 'list value',
+  period: 'period',
+}
+
 export type OpenRequest = { id: string; kind: string; reason: string; requested_by: string | null; status: string }
 
 export default function MasterActions({
@@ -54,7 +68,7 @@ export default function MasterActions({
   open,
   canRequest,
 }: {
-  entity: 'item' | 'vendor'
+  entity: ApprovalEntity
   row: Row
   open: OpenRequest | null
   /** LAW 1 on a control rather than a link: a reader who cannot raise one is
@@ -78,7 +92,7 @@ export default function MasterActions({
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
 
-  const noun = entity === 'item' ? 'item' : 'vendor'
+  const noun = ENTITY_NOUN[entity]
 
   // ── the target typeahead ──────────────────────────────────────────────
   const searching = mode === 'merge' && q.trim().length >= 2
