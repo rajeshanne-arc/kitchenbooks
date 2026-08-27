@@ -1,16 +1,17 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant, getMasters } from '@/server/queries'
-import { getItemDetail, getItemHistory, listActiveVendors } from '@/server/books-queries'
+import { getItemDetail, getItemLedger, getItemStock, listActiveVendors } from '@/server/books-queries'
 import { listActiveLocations } from '@/server/locations-queries'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
+import ItemLedger from '@/components/books/ItemLedger'
 import { StatusBadge } from '@/components/books/Badges'
 import ItemEdit from '@/components/books/ItemEdit'
 import MasterActions, { ClosedNote } from '@/components/books/MasterActions'
 import { pendingFor, REQUESTERS } from '@/server/approvals-queries'
 import { getSessionUser } from '@/server/current-user'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,9 +24,10 @@ export default async function ItemDetailPage({ params }: { params: Promise<{ id:
   const item = await getItemDetail(restaurant.id, id)
   if (!item) notFound()
 
-  const [{ units }, history, vendors, locations, open, user] = await Promise.all([
+  const [{ units }, ledger, stock, vendors, locations, open, user] = await Promise.all([
     getMasters(),
-    getItemHistory(restaurant.id, id),
+    getItemLedger(restaurant.id, id),
+    getItemStock(restaurant.id, id),
     listActiveVendors(restaurant.id),
     listActiveLocations(restaurant.id),
     pendingFor(restaurant.id, id),
@@ -95,34 +97,18 @@ export default async function ItemDetailPage({ params }: { params: Promise<{ id:
         canRequest={user !== null && REQUESTERS.includes(user.role)}
       />
 
-      <section className={cardCls}>
-        <h3 className={sectionHeadCls}>Purchase history</h3>
-        {history.length === 0 ? (
-          <p className="mt-3 text-sm text-stone-500">No purchases yet — history starts with the first bill.</p>
-        ) : (
-          <ul className="mt-1 divide-y divide-rule-soft">
-            {history.map((h, idx) => (
-              <li key={`${h.purchase_id}-${idx}`}>
-                <Link
-                  href={`/store/books/bills/${h.purchase_id}`}
-                  className="flex items-center justify-between gap-3 rounded-lg px-1 py-2.5 hover:bg-stone-50"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-[15px] text-stone-900">{h.vendor_name}</span>
-                    <span className="mt-0.5 block text-xs text-stone-500">
-                      {fmtDate(h.bill_date)} · {h.qty} × {formatMoneyString(h.rate)}
-                      {h.landed !== h.amount && <> · landed {formatMoneyString(h.landed)}</>}
-                    </span>
-                  </span>
-                  <span className="shrink-0 font-semibold tabular-nums text-stone-900">
-                    {formatMoneyString(h.amount)}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {/* THE POSITION AND THE LEDGER. This page used to say what an item IS and
+          what it last COST, and nothing about what we HAVE or what HAPPENED —
+          so a person clicking a stock figure landed on a page that did not
+          mention stock. The Purchase history section that stood here is gone:
+          its rows are the Purchase rows of the ledger, and two lists of the
+          same bills is how they drift. */}
+      <ItemLedger
+        rows={ledger.rows}
+        total={ledger.total}
+        stock={stock}
+        unit={item.purchase_unit_name}
+      />
     </div>
   )
 }

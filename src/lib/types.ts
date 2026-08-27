@@ -308,15 +308,23 @@ export type ItemDetail = {
   storage_location_id: string | null
 }
 
-export type ItemHistoryRow = {
-  purchase_id: string
-  bill_date: string
-  bill_no: string | null
-  vendor_name: string
-  qty: string
-  rate: string
-  amount: string
-  landed: string
+/**
+ * One row of an item's movement ledger. `signed_qty` is already signed for the
+ * direction — the ledger's job is that a reader never has to remember which
+ * kinds add and which take away.
+ */
+export type ItemLedgerRow = {
+  move_date: string
+  row_id: string
+  kind: 'Purchase' | 'Issue' | 'Return' | 'Wastage' | 'Adjustment' | 'Vendor return'
+  signed_qty: string
+  ref: string
+  party: string | null
+  detail: string | null
+  /** the running balance AFTER this row, computed over every movement */
+  balance: string
+  /** how many movements exist in total, so the page can say what it is hiding */
+  total: number
 }
 
 /** Every column-granted vendor field. `code` and `primary_category` are

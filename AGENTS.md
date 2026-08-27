@@ -7538,3 +7538,81 @@ A stored `'plain'` still reads and lands on classic. `readDocumentStyle`
 narrows rather than migrating: a setting is one row per restaurant, and an
 unrecognised value must fall back rather than raise on the very screen somebody
 is visiting in order to change it.
+
+
+## THE ITEM LEDGER — six sources, two void conventions, one reconciliation
+
+The item page was the thinnest in the app: it said what an item IS and what it
+last COST, and nothing about what we HAVE or what HAPPENED. Somebody clicking a
+stock figure landed on a page that did not mention stock. It now carries the
+position — on hand, value, weighted average, all read from `stock_on_hand` and
+never recomputed — and every row that produced it.
+
+**Purchase history is gone.** Its rows are the Purchase rows of the ledger, and
+two lists of the same bills is how they drift. `getItemHistory` and
+`ItemHistoryRow` are retired; nothing else imported them.
+
+### THE VOID TRAP, which is the whole risk
+
+`stock_on_hand` sums six sources and uses **two different conventions**, read
+from the view rather than remembered:
+
+| source | sign | reversals |
+|---|---|---|
+| purchase_lines, issue_lines, wastage, stock_adjustments | + − − ± | **no filter** — the twin carries negative quantities and the pair cancels |
+| return_lines, vendor_return_lines | + − | **both halves excluded** — the parent is marked, because the line table has `CHECK (qty > 0)` |
+
+The ledger replicates each source's own convention. Pick one and apply it to all
+six and the balance stops tying — by an amount that looks like a rounding bug
+and is a missing document.
+
+**AND THE OBVIOUS PERTURBATION IS VACUOUS.** The first proof wrote a voided
+PURCHASE and compared the conventions: both answered 116. Of course they did —
++10 and −10 cancel whether you drop them or keep them. The two conventions can
+only be told apart where a reversal CANNOT be a negative twin, which is exactly
+the two tables carrying `CHECK (qty > 0)`. Redone on a vendor return and its
+void: correct **116**, wrong **96** — the return subtracted twice, off by 20.
+
+*The fixture has to be derived on the property under test*, one more time. Here
+the property is "a reversal that is not a negative twin", and only two of the
+six sources can express it.
+
+### The reconciliation is printed whether it agrees or not
+
+> **A second source of truth that agrees 99% of the time is worse than no second
+> source at all** — it teaches the reader to trust a number that is sometimes
+> wrong.
+
+So the page prints *"Balance reconciles to stock_on_hand · 116 kg ✓"* on success
+— a check that only appears when it fails is a check nobody knows is running —
+and on failure shows BOTH figures in an alarm that **names the suspect**: one of
+six sources filtered by the wrong void convention, with the two conventions
+spelled out. An alarm that names a suspicion is a diagnosis; one that says only
+"these differ" sends somebody hunting.
+
+### Details that are decisions
+
+- **Two sources that look like movements and are not**, said in the code and on
+  the page: `stock_count_lines` records what was SEEN — the adjustment written
+  when the count is ACCEPTED is what moved the book, and listing both doubles
+  every correction. `purchase_line_shorts` never moved anything, because
+  `purchase_lines.qty` already means what ARRIVED.
+- **Every source filters `restaurant_id` explicitly.** The view leans on `items`
+  being tenant-filtered while its subqueries group globally. That is not a
+  property to inherit.
+- **Ordered by (date, id), never `created_at`** — which defaults to `now()`, the
+  TRANSACTION timestamp, and the sheet import wrote all 1,101 purchase lines in
+  one transaction, so every purchase row in this tenant shares one instant.
+- **THE BALANCE IS COMPUTED OVER EVERY ROW AND THE NEWEST 200 SLICED AFTER.**
+  The obvious form — limit, then a window function — starts the running balance
+  wherever row 201 left off, and is silently wrong on exactly the items that
+  move most. The page says what it is hiding.
+
+### Verified against Thrayam, not the probe tenant
+
+    DAR-010 Paneer  116 kg · ₹44,793 · ₹386.14 · 11 opening + 13 bills  ✓
+    DAR-003 Curd    660 kg · ₹49,500 · ₹75.00  · 10 opening + 23 bills  ✓
+
+All **360 items tie**, zero disagreements: 1,101 Purchase rows and 228
+Adjustment rows, which is the import exactly. Every row is an arrival — no
+issue, return or wastage exists in this tenant yet, and that is correct.
