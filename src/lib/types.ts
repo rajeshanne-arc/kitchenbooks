@@ -3430,6 +3430,18 @@ export type UnclosedDishRow = {
 
 /** On hand answers one question two ways. See listStock for why there is no
  *  third: Count already walks by location. */
+/** One category's share of stock value. `kind` is categories.kind verbatim —
+ *  ingredient or operational — plus 'unclassified' for a code that resolves to
+ *  no category row at all. */
+export type CategoryRollupRow = {
+  category: string
+  category_name: string
+  kind: 'ingredient' | 'operational' | 'unclassified'
+  items: number
+  negatives: number
+  value: string
+}
+
 export type StockView = 'by-category' | 'by-value'
 
 /* readStockView is GONE. It was a second front door for one screen while every

@@ -7648,3 +7648,95 @@ spelled out. An alarm that names a suspicion is a diagnosis; one that says only
 All **360 items tie**, zero disagreements: 1,101 Purchase rows and 228
 Adjustment rows, which is the import exactly. Every row is an arrival — no
 issue, return or wastage exists in this tenant yet, and that is correct.
+
+
+## THE STOCK LIST BECAME A POSITION — fifteen rows, not three hundred and sixty
+
+360 rows is a query result, not a screen. The list had been carrying weight that
+belongs on the item page — which now has it — so what remains is what the screen
+actually owes: a position for an owner, and a way to find one item fast for a
+storeman. Neither is served by scrolling 37 screens.
+
+**The search moved to the top.** It was fourth, so the storeman scrolled past
+three blocks to reach the one control that would have saved him the scrolling.
+
+**Tapping a category NAVIGATES (`?cat=DRY`) rather than expanding.** A category
+filter and a search filter are the same operation, so they share one renderer
+and one code path instead of growing a second, foldable one. And when either is
+active there is no fold at all: somebody who typed "pan" wants the hits, not
+three folded cards containing them. By value stays flat always — that view
+exists to defeat grouping.
+
+**The two headings come from `categories.kind`**, which already held exactly
+this split. No mapping table, no constant: the column is the answer.
+Ingredients ₹22,70,009.73 (87.6%) becomes cost of goods sold; Operational
+₹3,22,502.14 (12.4%) becomes operating cost. **Not collapsible** — fifteen rows
+is one screen, and folding it would hide what already fits and charge a click
+for every lookup forever. One denominator throughout, so a row and a heading
+never need explaining against each other.
+
+### THE RECONCILIATION, AND WHY IT IS NOT IN PAISE
+
+The card totals `stock_on_hand` directly; the fold totals it JOINED to
+`categories`. A category code on an item and absent from that table would drop
+those items from the fold and leave the card untouched — fifteen subtotals that
+each look plausible and do not add up. **Nobody sums fifteen numbers by eye**, so
+it would fail silently and forever. Unresolved codes go under UNCLASSIFIED and
+are never dropped.
+
+**The first version of the check compared paise, and reported a one-paise
+mismatch on live data with nothing missing.** `on_hand_value` is qty × a
+weighted average carrying eighteen decimals, so fifteen roundings do not add up
+to one rounding. Rounding is not associative and never will be.
+
+> **Ask the exact question exactly.** The check is "did an item fall out of the
+> join", which has an exact answer — so it is computed in SQL at full
+> precision. A tolerance would have been the thing that let a real one-item
+> discrepancy through, and it is exactly what the false alarm would have
+> tempted somebody into adding.
+
+Measured: both sides `2592511.855893968020722304`, equal. Excluding one category
+from the join moves the rollup by **₹4,38,911.40** — the whole of Beverages —
+and the alarm fires and names it. Subtotals are still DISPLAYED rounded, so
+across fifteen of them the last paise may not visibly tally; that is arithmetic,
+not a missing item, and the comment says so where somebody would otherwise
+"fix" it.
+
+**And the same fault was already live one query earlier.** `listStock`
+INNER-joined `categories`, so an item with an unresolvable category was silently
+dropped from the list itself — with nothing summing anything to catch it. It is
+a LEFT join now.
+
+`MNT` has zero items and must not render; `OFF` has one item worth ₹0 and must.
+Grouping from the ITEM side gets both right — a row is there because an item
+points at it, not because it has value, and an `items > 0` filter would have
+conflated two different facts.
+
+### ONE FACT, FOUR TAILS
+
+Nothing has ever left this store: 330 bills in, nothing out, since 31 May 2026.
+That single fact explains four screens, so it is said once by one component with
+a per-screen tail — On hand (the 87% marked never issued is one fact about the
+register, not two hundred facts about items), Reorder (no consumption behind any
+level), Loss (wastage will be the only thing reducing the book). **Count is
+unchanged: its thin-history block already says it better, and a second sentence
+beside it would be two voices.**
+
+**AMBER, not red** — nothing is wrong; a register with one side is what a
+restaurant that has not started issuing looks like. **Above the number it
+qualifies**, because underneath it reads as a footnote to a figure the reader
+has already believed. The condition is ALL-TIME rather than period-scoped: the
+claim is about the books, not about a month, and it clears itself the day one
+issue is saved.
+
+Deleted with it: the red "bought, never issued" block and its 200 names, the
+per-row pills, and the "never issued" cover text. **At 87% they marked the
+majority as exceptional.**
+
+### The negative badge on a category row is UNEXERCISED
+
+A folded category must not hide a negative, so a category row carries
+`2 negative` beside its item count. **That path has never rendered against real
+data and cannot today**: negative stock needs issues exceeding purchases, and
+there are no issues at all. Built, commented as unexercised, and reported as
+such rather than greened with manufactured data.

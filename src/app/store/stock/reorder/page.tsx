@@ -1,7 +1,9 @@
 import Link from 'next/link'
+import NothingIssued from '@/components/stock/NothingIssued'
 import { getRestaurant } from '@/server/queries'
 import {
   countItemsWithReorderLevel,
+  issueContext,
   listReorderDue,
 } from '@/server/store-queries'
 import { formatMoneyString } from '@/lib/money'
@@ -117,9 +119,10 @@ export default async function ReorderPage({
 }) {
   const view = readView('reorder', (await searchParams).view)
   const restaurant = await getRestaurant()
-  const [rows, itemsWithLevel] = await Promise.all([
+  const [rows, itemsWithLevel, ctx] = await Promise.all([
     listReorderDue(restaurant.id),
     countItemsWithReorderLevel(restaurant.id),
+    issueContext(restaurant.id),
   ])
 
   // group by vendor, preserving the view's order within each group
@@ -153,6 +156,12 @@ export default async function ReorderPage({
           urgent supplier first
         </p>
       </header>
+
+      {/* THE SAME FACT, THE REORDER TAIL: no item has consumption behind it, so
+          a level set today would be a guess. */}
+      {!ctx.issued && ctx.since !== null && (
+        <NothingIssued tail="reorder" since={ctx.since} bills={ctx.bills} />
+      )}
 
       {rows.length === 0 ? (
         <section className={cardCls}>

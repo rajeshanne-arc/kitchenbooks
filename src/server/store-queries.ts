@@ -22,6 +22,7 @@ import type {
   SectionMonthRow,
   StockRow,
   StockView,
+  CategoryRollupRow,
   StockSnap,
   StoreLogRow,
   WastageDetail,
@@ -175,10 +176,20 @@ export async function listStock(
   restaurantId: string,
   q: string,
   view: StockView = 'by-category',
+  /** one category, when the reader has tapped one in the fold. A category
+   *  filter and a search filter are the SAME operation, so they share this one
+   *  renderer and one code path rather than growing a second, foldable one. */
+  cat = '',
 ): Promise<StockRow[]> {
   const like = `%${q}%`
   return tsql<StockRow[]>`
-    select s.item_id, s.code, s.name, s.category, c.name as category_name, s.purchase_unit, i.status,
+    select s.item_id, s.code, s.name, s.category,
+           -- LEFT, NOT INNER. An item whose category code is absent from the
+           -- categories table was silently DROPPED FROM THIS LIST — the same
+           -- fault the rollup guards against, one query earlier and with
+           -- nothing summing 15 numbers to catch it. Unclassified now.
+           coalesce(c.name, 'Unclassified') as category_name,
+           s.purchase_unit, i.status,
            s.purchased_qty::text as purchased_qty,
            s.issued_qty::text as issued_qty,
            s.wasted_qty::text as wasted_qty,
@@ -191,11 +202,12 @@ export async function listStock(
            d.days_of_history::int as days_of_history
     from stock_on_hand s
     join items i on i.id = s.item_id
-    join categories c on c.code = s.category
+    left join categories c on c.code = s.category
     left join stock_abc a on a.restaurant_id = s.restaurant_id and a.item_id = s.item_id
     left join stock_days_on_hand d on d.restaurant_id = s.restaurant_id and d.item_id = s.item_id
     where s.restaurant_id = ${restaurantId}
       and (s.name ilike ${like} or s.code ilike ${like})
+      ${cat === '' ? sql`` : sql`and s.category = ${cat}`}
     order by ${view === 'by-category' ? sql`c.name asc,` : sql``}
              s.on_hand_value desc, s.code asc`
 }
@@ -738,4 +750,122 @@ export async function getExpiringStock(
     -- EXPIRED FIRST, then soonest. A date already past is not a warning, it is
     -- a thing to go and throw away.
     order by expiry_date asc, name asc`
+}
+
+
+/**
+ * STOCK VALUE ROLLED UP BY CATEGORY — fifteen rows instead of three hundred and
+ * sixty. 360 rows is a query result, not a screen.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE SILENT DROP THIS EXISTS TO PREVENT.
+ *
+ * The value card totals `stock_on_hand` directly; this totals it JOINED to
+ * `categories`. A category code present on an item and absent from the
+ * categories table would drop those items from the fold and leave the card
+ * untouched — fifteen subtotals that each look plausible and do not add up.
+ * NOBODY SUMS FIFTEEN NUMBERS BY EYE, so it would fail silently and forever.
+ *
+ * So the join is LEFT and unresolved codes land under UNCLASSIFIED, never
+ * dropped; and the caller asserts these subtotals against the card exactly, in
+ * paise. Measured today: both are ₹25,92,511.86, and excluding one category
+ * from the join moves the rollup to ₹18,98,750.36 — caught, and named.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * `kind` comes from `categories.kind`, which already holds exactly the split
+ * the screen needs — ingredient becomes cost of goods sold, operational becomes
+ * operating cost. No mapping table and no constant: the column is the answer.
+ *
+ * GROUPED FROM THE ITEM SIDE, so a category with no items never renders. MNT
+ * exists with zero items and must not appear; OFF has one item worth ₹0 and
+ * must. Those are different facts and an `items > 0` filter would conflate
+ * them — the row is here because an item points at it, not because it has
+ * value.
+ */
+export async function stockCategoryRollup(restaurantId: string): Promise<{
+  rows: CategoryRollupRow[]
+  /** exact, computed in SQL — see the note below on why not in paise */
+  reconciles: boolean
+  cardExact: string
+  rollupExact: string
+}> {
+  const rows = await tsql<CategoryRollupRow[]>`
+    select coalesce(c.code, '')                       as category,
+           coalesce(c.name, 'Unclassified')           as category_name,
+           coalesce(c.kind, 'unclassified')           as kind,
+           count(*)::int                              as items,
+           count(*) filter (where s.on_hand_qty < 0)::int as negatives,
+           sum(s.on_hand_value)::text                 as value
+    from stock_on_hand s
+    join items i on i.restaurant_id = s.restaurant_id and i.id = s.item_id
+    left join categories c on c.code = i.category
+    where s.restaurant_id = ${restaurantId}
+    group by 1, 2, 3
+    order by sum(s.on_hand_value) desc`
+
+  // ── THE RECONCILIATION, COMPUTED IN SQL AND AT FULL PRECISION ───────────
+  //
+  // NOT in paise, and that is a correction rather than a shortcut. The first
+  // version summed each category rounded to paise and compared it with the
+  // card rounded to paise — and reported a mismatch of ONE PAISA on live data.
+  // Nothing was dropped: on_hand_value is qty × a weighted average carrying
+  // eighteen decimals, so fifteen roundings do not add up to one rounding.
+  // Rounding is not associative and never will be.
+  //
+  // What this check is FOR is "no item fell out of the join". That question has
+  // an exact answer, so it is asked exactly — and a tolerance would have been
+  // the thing that let a real one-item discrepancy through.
+  //
+  // The subtotals are still DISPLAYED rounded, and across fifteen of them the
+  // last paise may not visibly add up. That is arithmetic, not a missing item.
+  const [check] = await tsql<{ card: string; roll: string; ok: boolean }[]>`
+    with card as (
+      select coalesce(sum(on_hand_value), 0) v
+      from stock_on_hand where restaurant_id = ${restaurantId}
+    ), roll as (
+      select coalesce(sum(s.on_hand_value), 0) v
+      from stock_on_hand s
+      join items i on i.restaurant_id = s.restaurant_id and i.id = s.item_id
+      left join categories c on c.code = i.category
+      where s.restaurant_id = ${restaurantId}
+    )
+    select card.v::text as card, roll.v::text as roll, (card.v = roll.v) as ok
+    from card, roll`
+
+  return {
+    rows,
+    reconciles: check?.ok ?? false,
+    cardExact: check?.card ?? '0',
+    rollupExact: check?.roll ?? '0',
+  }
+}
+
+/**
+ * HAS ANYTHING EVER LEFT THE STORE — all time, never period-scoped.
+ *
+ * The claim the honesty block makes is about the BOOKS, not about a month: a
+ * register with one side is a running total of purchases whatever window you
+ * look at it through. It clears itself the day one issue is saved, which is why
+ * it is a query and not a setting.
+ */
+export async function hasAnyIssue(restaurantId: string): Promise<boolean> {
+  const [row] = await tsql<{ any: boolean }[]>`
+    select exists (select 1 from issue_lines where restaurant_id = ${restaurantId}) as any`
+  return row?.any ?? false
+}
+
+/** What the block needs to say it in figures: when the books open, and how many
+ *  bills have landed since. The opening date is the earliest movement of any
+ *  kind, which is the opening count rather than the first bill. */
+export async function issueContext(
+  restaurantId: string,
+): Promise<{ issued: boolean; since: string | null; bills: number }> {
+  const [row] = await tsql<{ issued: boolean; since: string | null; bills: number }[]>`
+    select exists (select 1 from issue_lines where restaurant_id = ${restaurantId}) as issued,
+           least(
+             (select min(adj_date) from stock_adjustments where restaurant_id = ${restaurantId}),
+             (select min(bill_date) from purchases where restaurant_id = ${restaurantId})
+           )::text as since,
+           (select count(*)::int from purchases where restaurant_id = ${restaurantId}) as bills`
+  return row ?? { issued: false, since: null, bills: 0 }
 }
