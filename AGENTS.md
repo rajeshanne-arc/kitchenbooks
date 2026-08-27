@@ -43,6 +43,38 @@ The corollary, paid for repeatedly and catalogued throughout this file: a gate
 that has never failed has not been tested. Perturb it, watch it name the fault,
 and only then believe it.
 
+## HOW MUCH PROOF IS WORTH THE WALL CLOCK
+
+The corollary above is not a licence to prove everything. It has a cost, and the
+cost is paid in minutes per cycle because every one of them compiles the whole
+app.
+
+**PROVE A GATE CAN FAIL when a silent pass would cost money, leak data, or
+corrupt history.** Schema. Privileges. Tenancy. Anything frozen or costed.
+And any reconciliation between two sources of truth — because a second source
+that agrees 99% of the time is worse than no second source at all.
+
+**SKIP THE PERTURBATION when the failure is visible the moment somebody opens
+the screen.** Rendering, empty states, ordering, focus, copy. Those announce
+themselves in seconds and cost minutes each to prove.
+
+The evidence, both directions:
+
+| | |
+|---|---|
+| **26 minutes** of wall clock proving a lint rule could fire | for a focus bug Rajesh found by typing one character |
+| the same discipline on the tenancy audit, the view-security sweep and the prune | found faults nothing else could have |
+
+The distinction is not how important the code is. It is **who finds the fault if
+the gate is wrong** — a person opening the page in ten seconds, or nobody, ever,
+until the books are already wrong.
+
+**Where a brief does not say which kind a task is, ASK.** Applying full ceremony
+by default is the expensive mistake, and it is the one that looks like diligence.
+
+And when a long shell command is running, **say so** — it can be backgrounded
+rather than watched.
+
 ---
 
 Purchase-bill bookkeeping for one restaurant (Thrayam). Supabase Postgres
