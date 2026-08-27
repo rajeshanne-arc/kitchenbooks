@@ -10,6 +10,41 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # KitchenBooks — rules for working in this repo
 
+## WRITTEN DOWN WAS NOT ENOUGH
+
+Read this before the rules, because it is about them.
+
+The rule was: **never put a backtick inside a SQL comment inside a template
+literal** — it is not punctuation there, it is the TERMINATOR, so the query
+ends mid-sentence and the rest parses as TypeScript. It is recorded in this
+file, at length, with the reason. I wrote it. Then I broke it — in the comment
+explaining an unrelated alias rename, in the same session, days later. Third
+instance in this project, and the first one caught by a **gate** rather than by
+a failed build.
+
+Every excuse that usually explains this is absent. The rule was correct. It was
+recorded. It was recent. It was authored by the person who broke it. The
+failure was not ignorance, not disagreement, not staleness, and not a gap in
+the documentation — and there is nothing to add to the rule that would have
+helped, because the rule already said exactly the right thing.
+
+**That is the argument for gates over rules, and it is the strongest form of
+it: a rule is a thing you have to be thinking about at the moment you break
+it, and nobody is thinking about backticks while explaining an alias rename.**
+A gate is thinking about it every run.
+
+So the standing instruction for everything below: **when a rule here matters,
+find or write the check that holds it, and prove the check can fail.** The
+prose in this file explains WHY; it is not the mechanism, and it has now been
+demonstrated not to be one. Where a rule has no gate, treat it as a rule that
+will eventually be broken by whoever most recently wrote it down.
+
+The corollary, paid for repeatedly and catalogued throughout this file: a gate
+that has never failed has not been tested. Perturb it, watch it name the fault,
+and only then believe it.
+
+---
+
 Purchase-bill bookkeeping for one restaurant (Thrayam). Supabase Postgres
 project `xvnreydzveicnzmhkire`; the schema lives in the database — read it from
 there (`supabase_migrations.schema_migrations` holds the DDL), never invent
@@ -7157,18 +7192,48 @@ survives. One exact-name duplicate in 359 items is a remarkably clean master.
 
 ### Found while building it
 
-- **The applied migration's unit message prints a stray letter.**
-  `raise exception 'units differ: % is %/%s, …'` — the `s` after the second `%`
-  is literal, so it reads *"PLT-011 is pcs/pcss, PLT-004 is kg/kgs"*. Cosmetic,
-  in the function rather than the app, and only ever seen if the world moves
-  between the preview and the apply; the app's own preview says it correctly.
-  Left for Rajesh, since the function is his.
-- **`reference_counts` includes self-references**, so a survivor gains one from
-  the closed row's `merged_into`. Correct, and worth knowing before reading the
-  number as "rows of history".
-- **The destructive half lives in `approvals-queries`, not the action file.**
-  Exported from a `'use server'` file it would be a public endpoint that applies
-  a request while taking the actor as a parameter. It also makes the gate
+- **The applied migration's unit message printed a stray letter** — the `s`
+  after the second `%` in the format string was literal, so it read *"PLT-011 is
+  pcs/pcss"*. Fixed in `merge_items_unit_message_fix`; it now reads *"units
+  differ: PLT-011 is pcs / pcs, but HKP-015 is litre / litre"*, and the gate
+  prints it on every run, so the next drift is visible rather than reported.
+- **`reference_counts` includes self-references, and the preview LABELS them.**
+  A survivor gains one from the closed row's `merged_into`, which arrives as
+  "items: 1" and reads as a bill to anyone who does not know the schema. It is
+  the opposite — it is the thing that keeps the old code resolving — so it wears
+  the words *merge pointer* rather than leaving the reader to deduce it from a
+  table name. The test is exact rather than "the table matches": `items.item_id`
+  on a self-join would be history, and a vendor is pointed at by
+  `items.default_vendor_id` from another table, which is a real reference. Only
+  same-table `merged_into` is a pointer. It still BLOCKS a discard — a row
+  something resolves to must not become a code marked never-real — but with its
+  own sentence, because "26 bills mention it" and "another code resolves here"
+  are unrelated reasons with different remedies.
+
+- **`applied_result` keeps PER-TABLE COUNTS and must never become a summary
+  string**, however much better "31 rows moved" reads in a log. Merges get
+  regretted — MarketMan built a *split* for exactly that — and this app is not
+  building unmerge, but that column is the only record of where the rows went
+  and the one shape from which an unmerge could ever be reconstructed. A summary
+  would close that door permanently with nothing on any screen looking
+  different. Guarded by a probe that MOVES rows: the HKP-024 merge returns
+  `moved:{}`, so a shape assertion over it would have passed against a summary
+  string just as happily; PLT-004 carries 26 rows across three tables, which is
+  the case that can tell them apart.
+- **AN APPROVAL GATE DEFEATED BY AN EXPORT KEYWORD.** The destructive half
+  lives in `approvals-queries`, not the action file, and the reason deserves
+  stating on its own:
+
+  > **A destructive function that takes the actor as a parameter must not be
+  > exportable as an endpoint.**
+
+  Every export from a `'use server'` file is a public HTTP endpoint. `applyRequest`
+  does the merge and takes `by` as an argument rather than reading the session —
+  so exported from there it would have been a way to apply any approval request
+  without being the owner, reachable by anyone who could post to the route. The
+  gate would have been intact, the role check would have been intact, and the
+  door beside them would have been open. Ask of any helper before it moves into
+  an action file: does it decide anything on the strength of a parameter? It also makes the gate
   possible: it runs the APP'S OWN path on a rolled-back transaction, where a
   probe writing its own SQL would have tested the function and not the app.
 - **`audit:schema` caught an alias collision in this code** — `a`/`b` reused

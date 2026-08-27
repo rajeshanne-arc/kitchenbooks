@@ -8091,9 +8091,9 @@ async function run() {
     const out: string[] = []
     await txn(async (tx) => {
       const rows = await tx<{ code: string; id: string }[]>`
-        select code, id from items where restaurant_id = ${liveTenant} and code in ('HKP-015','HKP-024','PLT-004','PLT-011')`
+        select code, id from items where restaurant_id = ${liveTenant} and code in ('HKP-015','HKP-024','PLT-004','PLT-011','PLT-008')`
       const by = new Map(rows.map((r) => [r.code, r.id]))
-      assert.equal(by.size, 4, 'the fixture codes are not all on this restaurant')
+      assert.equal(by.size, 5, 'the fixture codes are not all on this restaurant')
       const from = by.get('HKP-024') as string
       const to = by.get('HKP-015') as string
 
@@ -8147,6 +8147,37 @@ async function run() {
         assert.ok(raised !== null, `${label} was ALLOWED — the guard is not in the function`)
         out.push(`refused ${label}: ${raised.slice(0, 72)}`)
       }
+
+      // APPLIED_RESULT IS PER-TABLE COUNTS, AND THE PROBE MOVES ROWS TO PROVE
+      // IT. HKP-024 has no references, so the merge above returned moved:{} —
+      // a shape assertion over an empty object would have passed against a
+      // summary string just as happily. PLT-004 carries 26 rows across three
+      // tables, so this is the case that can tell them apart.
+      //
+      // Merges get regretted; this app is not building unmerge, but this field
+      // is the only record of where the rows went and the one shape from which
+      // one could ever be reconstructed. A summary string would close that door
+      // with nothing on screen looking different.
+      await tx`savepoint mv`
+      const big = await applyRequest(tx, liveTenant, {
+        kind: 'merge', entity_type: 'item',
+        entity_id: by.get('PLT-004') as string, target_entity_id: by.get('PLT-008') as string,
+      })
+      assert.ok(big.moved !== undefined, 'applied_result carries no moved map')
+      const entries = Object.entries(big.moved as Record<string, number>)
+      assert.ok(entries.length >= 2, `moved names only ${entries.length} table(s) — it has been summarised`)
+      for (const [t, n] of entries) {
+        assert.equal(typeof t, 'string')
+        assert.equal(typeof n, 'number', `${t} is not a count — moved has become a summary`)
+        assert.ok(n > 0, `${t} is listed with ${n} rows`)
+      }
+      // The counts must be the REAL ones, not a shape that merely typechecks.
+      const [pl] = await tx<{ n: number }[]>`
+        select count(*)::int as n from purchase_lines
+        where restaurant_id = ${liveTenant} and item_id = ${by.get('PLT-008') as string}`
+      assert.ok((big.moved as Record<string, number>).purchase_lines > 0, 'no purchase lines moved')
+      out.push(`moved per table: ${entries.map(([t, n]) => `${t} ${n}`).join(' · ')} (survivor now holds ${pl.n} lines)`)
+      await tx`rollback to savepoint mv`
 
       // A DISCARD IS REFUSED THE MOMENT ANYTHING POINTS AT IT, re-read at the
       // instant of writing rather than trusted from the request.

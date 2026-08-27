@@ -66,7 +66,25 @@ export const assertApprover = () =>
 
 // ───────────────────────────────────────────────────── what points at a row
 
-export type RefCount = { referencing_table: string; referencing_column: string; n: number }
+export type RefCount = {
+  referencing_table: string
+  referencing_column: string
+  n: number
+  /**
+   * A MERGE POINTER, NOT A ROW OF HISTORY.
+   *
+   * After a merge the survivor picks up a reference from the row that closed
+   * into it — `items.merged_into`. On the preview that arrives as "items: 1",
+   * which reads as a bill or a count unless somebody knows the schema. It is
+   * the opposite: it is the thing that keeps the old code RESOLVABLE.
+   *
+   * The test is exact rather than "the table matches": `items.item_id` on a
+   * self-join would be history, and a vendor is pointed at by
+   * `items.default_vendor_id` from another table entirely, which is a real
+   * reference. Only same-table `merged_into` is a pointer.
+   */
+  pointer: boolean
+}
 
 /**
  * Every table that points at this row, with its count — DERIVED FROM
@@ -83,11 +101,14 @@ export type RefCount = { referencing_table: string; referencing_column: string; 
  * inside a tenant-announcing transaction — which tsql is.
  */
 export async function getReferenceCounts(table: 'items' | 'vendors', id: string): Promise<RefCount[]> {
-  const rows = await tsql<RefCount[]>`
+  const rows = await tsql<Omit<RefCount, 'pointer'>[]>`
     select referencing_table, referencing_column, n::int as n
     from reference_counts(${table}, ${id}::uuid)
     order by n desc, referencing_table`
-  return rows
+  return rows.map((r) => ({
+    ...r,
+    pointer: r.referencing_table === table && r.referencing_column === 'merged_into',
+  }))
 }
 
 // ───────────────────────────────────────────────────────────── the preview
@@ -277,6 +298,13 @@ export async function getPreview(
   const totalRefs = refs.reduce((a, r) => a + r.n, 0)
 
   if (kind === 'discard') {
+    // A POINTER IS A DIFFERENT REFUSAL FROM HISTORY, and it needs its own
+    // sentence: "26 bills mention it" and "another code resolves here" are two
+    // unrelated reasons not to discard, and the remedy differs. Both still
+    // block — discarding a row something resolves to would leave that pointer
+    // aimed at a code marked never-real.
+    const pointers = refs.filter((r) => r.pointer).reduce((a, r) => a + r.n, 0)
+    const history = totalRefs - pointers
     return {
       kind,
       entity,
@@ -296,7 +324,9 @@ export async function getPreview(
           detail:
             totalRefs === 0
               ? 'no bill, count, recipe, issue or correction mentions it'
-              : `${totalRefs} row(s) in ${refs.length} table(s) point at it — that is history, not a mistake. Retire it, or merge it into the code it should have been.`,
+              : history > 0
+                ? `${history} row(s) in ${refs.filter((r) => !r.pointer).length} table(s) mention it — that is history, not a mistake. Retire it, or merge it into the code it should have been.`
+                : `${pointers} closed code(s) resolve here — discarding this would leave them pointing at a row marked never-real. Merge it instead, and they follow.`,
         },
         {
           ok: from.status === 'active' || from.status === 'inactive',
@@ -452,7 +482,20 @@ export async function getApproval(restaurantId: string, id: string): Promise<App
 
 // ───────────────────────────────────────────────────────────── the act
 
-/** Whatever merge_items / merge_vendors returned, or what a discard did. */
+/**
+ * Whatever merge_items / merge_vendors returned, or what a discard did.
+ *
+ * `moved` IS PER-TABLE COUNTS AND MUST STAY THAT WAY — never flattened into a
+ * summary string, however much nicer "31 rows moved" reads in a log.
+ *
+ * MERGES GET REGRETTED. MarketMan built a "split" for exactly that, and this
+ * app is NOT building unmerge — but `applied_result` is the only record of
+ * where the rows went, and a per-table breakdown is the one shape from which
+ * an unmerge could ever be reconstructed. A summary string would close that
+ * door permanently and nothing on any screen would look different.
+ *
+ * The screens format it for reading; the column keeps the counts.
+ */
 export type ApplyResult = {
   from?: string
   to?: string

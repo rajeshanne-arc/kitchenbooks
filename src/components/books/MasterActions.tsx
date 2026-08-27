@@ -351,7 +351,18 @@ function PreviewPanel({ p, noun }: { p: Preview; noun: string }) {
               <tbody>
                 {p.refs.map((r) => (
                   <tr key={`${r.referencing_table}.${r.referencing_column}`} className={trCls}>
-                    <td className={`${tdCls} font-mono text-[12px]`}>{r.referencing_table}</td>
+                    <td className={`${tdCls} font-mono text-[12px]`}>
+                      {r.referencing_table}
+                      {/* SAID, NOT DEDUCED. "items: 1" on an item's own preview
+                          is a merge pointer — the thing that keeps an older
+                          code resolving here — and reads as a bill to anyone
+                          who does not know the schema. */}
+                      {r.pointer && (
+                        <span className="ml-1.5 font-sans text-[11px] font-medium text-violet-700">
+                          merge pointer
+                        </span>
+                      )}
+                    </td>
                     <td className={`${tdCls} font-mono text-[12px] text-stone-500`}>{r.referencing_column}</td>
                     <td className={tdNumCls}>{r.n}</td>
                   </tr>
@@ -367,6 +378,14 @@ function PreviewPanel({ p, noun }: { p: Preview; noun: string }) {
           </div>
         )}
       </div>
+
+      {p.refs.some((r) => r.pointer) && (
+        <p className="text-[13px] text-stone-600">
+          A <span className="font-medium text-violet-700">merge pointer</span> is not history — it is an
+          older code that resolves here, so that looking it up still answers. Merging carries those
+          pointers along with everything else; they end up aimed at whichever code survives.
+        </p>
+      )}
 
       {p.cost !== null && p.to !== null && (
         <p className="text-sm text-stone-700">
