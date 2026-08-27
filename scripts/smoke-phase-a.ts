@@ -73,9 +73,15 @@ check('Setup holds the masters, Settings last and after a rule', () => {
   const chips = chipsOf('owner', 'setup')
   assert.deepEqual(
     chips.map((c) => c.label),
-    ['Money accounts', 'Meters', 'Users', 'Lists', 'Letterhead', 'Settings'],
+    ['Money accounts', 'Meters', 'Users', 'Lists', 'Letterhead', 'Approvals', 'Settings'],
   )
-  // SETTINGS LAST, AFTER A DIVIDER. The four before it ADD ROWS; this one
+  // APPROVALS IS THE SECOND THING IN HERE THAT IS NOT CONFIGURATION. Lists
+  // holds an approval queue for vocabulary; this holds one for the two acts
+  // that leave nothing behind — a discard and a merge. Both are somebody
+  // waiting on the owner rather than a setting, which is why Setup's badge
+  // counts them together.
+  //
+  // SETTINGS LAST, AFTER A DIVIDER. The five before it ADD ROWS; this one
   // changes what every number in the app MEANS. The rule says that without a
   // sentence, and it is the only one in the app — if a second appears, the
   // distinction has stopped meaning anything.

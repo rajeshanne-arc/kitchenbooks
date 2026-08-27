@@ -9,6 +9,7 @@ import { countOpenIndents, getStockBadge, stockBadgeHref } from '@/server/store-
 import { listOpenQueries } from '@/server/accountant-queries'
 import { countMissingCloses } from '@/server/cashier-queries'
 import { countPendingSuggestions } from '@/server/settings'
+import { countPendingApprovals } from '@/server/approvals-queries'
 import { canAccess, type Role } from '@/lib/roles'
 import { chipsOf, type TabBadges, type TabGroup, type TabHrefs } from '@/lib/tabs'
 import TabStrip from '@/components/TabStrip'
@@ -34,8 +35,22 @@ async function badgesFor(
     // the first chip THIS reader can open — the same override the Stock badge
     // uses, doing the same job for a different reason.
     const first = chipsOf('owner', 'setup').find((c) => canAccess(role, `/owner/setup/${c.key}`))
+    // ONE BADGE, TWO QUEUES. Setup carries a count when anything inside it is
+    // waiting on the owner — a typed list value, or a discard or merge somebody
+    // raised. Two separate numbers on one tab would be two things to decode;
+    // what the badge means is "somebody is waiting on you".
+    //
+    // AND IT COUNTS ONLY WHAT THIS READER CAN ACT ON. Approvals are owner-only;
+    // badging a MANAGER with a pending merge would send them to Lists — the
+    // first chip they can open — to find nothing there. A number you cannot
+    // act on is a number you learn to ignore, which is LAW 1 applied to a
+    // count rather than to a link.
+    const [suggestions, approvals] = await Promise.all([
+      countPendingSuggestions(restaurantId),
+      canAccess(role, '/owner/setup/approvals') ? countPendingApprovals(restaurantId) : Promise.resolve(0),
+    ])
     return {
-      badges: { setup: await countPendingSuggestions(restaurantId) },
+      badges: { setup: suggestions + approvals },
       hrefs: first === undefined ? {} : { setup: `/owner/setup/${first.key}` },
     }
   }

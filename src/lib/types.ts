@@ -176,8 +176,11 @@ export type VendorDetail = {
   gstin: string | null
   phone: string | null
   payment_terms: string | null
-  status: 'active' | 'inactive'
+  status: MasterStatus
   created_at: string
+  merged_into: string | null
+  merged_into_code: string | null
+  merged_into_name: string | null
   // contact
   contact_person: string | null
   alt_phone: string | null
@@ -260,6 +263,12 @@ export type ItemListRow = {
   prefill_rate: string | null
 }
 
+/** RETIRED, DISCARDED AND MERGED ARE THREE DIFFERENT SENTENCES, and the
+ *  schema keeps them apart on purpose: retired means we stopped buying it,
+ *  discarded means it was never real, merged means look over there. Collapsing
+ *  any two of them would lose the only account of why a code went quiet. */
+export type MasterStatus = 'active' | 'inactive' | 'merged' | 'discarded'
+
 export type ItemDetail = {
   /** PER ITEM, because onions carry no printed date — asking for one on
    *  every line trains people to type anything. */
@@ -278,13 +287,19 @@ export type ItemDetail = {
   gst_rate: string | null
   par_level: string | null
   brand: string | null
-  status: 'active' | 'inactive'
+  status: MasterStatus
   created_at: string
   reorder_level: string | null
   default_vendor_id: string | null
   default_vendor_name: string | null
   item_type: string | null
   notes: string | null
+  /** WHERE A CLOSED CODE POINTS. A merged or discarded row stays on the list
+   *  forever so the old code still RESOLVES — looking up HKP-024 must tell you
+   *  it became HKP-015. That is what makes closing one safe to do at all. */
+  merged_into: string | null
+  merged_into_code: string | null
+  merged_into_name: string | null
   /** from item_rates */
   prefill_rate: string | null
   last_rate: string | null

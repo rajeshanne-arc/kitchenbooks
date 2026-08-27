@@ -7,11 +7,14 @@ import { getList } from '@/server/settings'
 import { getVendorReturnReasons } from '@/server/vendor-return-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
-import { RetiredBadge } from '@/components/books/Badges'
+import { StatusBadge } from '@/components/books/Badges'
 import BillList from '@/components/books/BillList'
 import CopyField from '@/components/books/CopyField'
 import PaymentForm from '@/components/books/PaymentForm'
 import VendorEdit from '@/components/books/VendorEdit'
+import MasterActions, { ClosedNote } from '@/components/books/MasterActions'
+import { pendingFor, REQUESTERS } from '@/server/approvals-queries'
+import { getSessionUser } from '@/server/current-user'
 import {
   cardCls,
   dataTableCls,
@@ -40,12 +43,14 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
   const vendor = await getVendorDetail(restaurant.id, id)
   if (!vendor) notFound()
 
-  const [bills, payments, modes, accounts, returnReasons] = await Promise.all([
+  const [bills, payments, modes, accounts, returnReasons, open, user] = await Promise.all([
     getVendorBills(restaurant.id, id),
     getVendorPayments(id),
     getList(restaurant.id, 'payment_mode'),
     listMoneyAccounts(restaurant.id),
     getVendorReturnReasons(restaurant.id, id),
+    pendingFor(restaurant.id, id),
+    getSessionUser(),
   ])
   const balP = decimalStringToPaise(vendor.balance)
   const hasBank =
@@ -72,7 +77,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-bold text-stone-900">{vendor.name}</h2>
-              {vendor.status === 'inactive' && <RetiredBadge />}
+              <StatusBadge status={vendor.status} />
             </div>
             <p className="mt-0.5 text-sm text-stone-500">
               <span className="font-mono">{vendor.code}</span> · {vendor.category_name}
@@ -289,7 +294,23 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
         </section>
       )}
 
+      {/* A CLOSED CODE STAYS RESOLVABLE FOREVER — looking up the old vendor
+          tells you which one absorbed it. */}
+      <ClosedNote
+        status={vendor.status}
+        becameHref={vendor.merged_into === null ? undefined : `/store/masters/vendors/${vendor.merged_into}`}
+        becameCode={vendor.merged_into_code}
+        becameName={vendor.merged_into_name}
+      />
+
       <VendorEdit vendor={vendor} />
+
+      <MasterActions
+        entity="vendor"
+        row={{ id: vendor.id, code: vendor.code, name: vendor.name, status: vendor.status }}
+        open={open[0] ?? null}
+        canRequest={user !== null && REQUESTERS.includes(user.role)}
+      />
     </div>
   )
 }

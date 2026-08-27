@@ -224,6 +224,13 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         // nothing at all about the books — it is the restaurant's own identity
         // as a vendor sees it on a purchase order.
         { key: 'letterhead', label: 'Letterhead' },
+        // THE SECOND THING IN HERE THAT IS NOT CONFIGURATION. Lists holds an
+        // approval queue for vocabulary; this one holds it for the two acts
+        // that leave nothing behind — a discard and a merge. Both are work
+        // waiting on the owner rather than a setting, which is why Setup's
+        // badge counts them together: what the badge means is "somebody is
+        // waiting on you", not "a table has rows in it".
+        { key: 'approvals', label: 'Approvals' },
         // SETTINGS LAST, AFTER A DIVIDER. The four before it ADD ROWS — an
         // account, a meter, a user, a list value. This one changes what every
         // number MEANS: which day a sale belongs to, whether input tax is a
