@@ -146,11 +146,14 @@ export async function getVendorDetail(restaurantId: string, id: string): Promise
            v.contact_person, v.alt_phone, v.email, v.address,
            v.bank_name, v.account_no, v.ifsc, v.upi_id,
            v.nature_of_supply, coalesce(v.opening_balance, 0)::text as opening_balance, v.notes,
+           -- A CLOSED CODE STAYS RESOLVABLE, the same as an item's.
+           v.merged_into, mv.code as merged_into_code, mv.name as merged_into_name,
            coalesce(d.balance, 0)::text as balance,
            coalesce(d.purchased, 0)::text as purchased,
            coalesce(d.paid, 0)::text as paid
     from vendors v
     join categories c on c.code = v.primary_category
+    left join vendors mv on mv.restaurant_id = v.restaurant_id and mv.id = v.merged_into
     left join vendor_dues d on d.vendor_id = v.id
     where v.restaurant_id = ${restaurantId} and v.id = ${id}`
   return rows[0] ?? null
@@ -204,6 +207,9 @@ export async function getItemDetail(restaurantId: string, id: string): Promise<I
            i.reorder_level::text as reorder_level,
            i.default_vendor_id, dv.name as default_vendor_name,
            i.item_type, i.notes, i.storage_location_id,
+           -- A CLOSED CODE STAYS RESOLVABLE. The survivor is joined here so the
+           -- page can say what this became rather than showing a dead row.
+           i.merged_into, mi.code as merged_into_code, mi.name as merged_into_name,
            r.prefill_rate::text as prefill_rate,
            r.last_rate::text as last_rate,
            r.last_rate_date::text as last_rate_date
@@ -212,6 +218,7 @@ export async function getItemDetail(restaurantId: string, id: string): Promise<I
     join units pu on pu.code = i.purchase_unit
     left join units su on su.code = i.stock_unit
     left join vendors dv on dv.id = i.default_vendor_id
+    left join items mi on mi.restaurant_id = i.restaurant_id and mi.id = i.merged_into
     left join item_rates r on r.item_id = i.id
     where i.restaurant_id = ${restaurantId} and i.id = ${id}`
   return rows[0] ?? null

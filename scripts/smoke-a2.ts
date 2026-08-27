@@ -113,10 +113,13 @@ async function main() {
     process.exit(1)
   }
   liveBefore = await census(tenant)
+  liveTenant = tenant
   return withTenant(tenant, run)
 }
 
 let liveBefore: Record<string, number> = {}
+/** the live restaurant id, for probes that must run against real references */
+let liveTenant = ''
 
 /** Run `fn` against the probe tenant. Anything that COMMITS uses this. */
 export async function onProbe<T>(fn: () => Promise<T>): Promise<T> {
@@ -8022,6 +8025,149 @@ async function run() {
     const n = new Set(warned).size
     assert.ok(n >= 9, `only ${n} costed forms carry the warning — the sweep is not reaching them`)
     console.log(`      ${costed.length} costed tables · ${new Set(actions).size} costing actions · ${n} dated forms, all warning`)
+  })
+
+  /* ── discard, merge, and the approval gate ─────────────────────────── */
+  console.log('\nan action that leaves no trace needs approval')
+
+  await check('only the two traceless acts are behind approval', async () => {
+    // THE LINE THE WHOLE FEATURE RESTS ON:
+    //
+    //   AN ACTION THAT LEAVES A TRACE NEEDS NO PERMISSION;
+    //   AN ACTION THAT LEAVES NONE NEEDS APPROVAL.
+    //
+    // A void writes a negative twin, a retirement leaves the row, a corrected
+    // mark keeps both — all traceable by construction. Only a discard and a
+    // merge leave nothing unless something is written on purpose.
+    //
+    // ASSERTED AS AN EXCLUSION, because the danger is drift in ONE direction:
+    // somebody putting a void or a retirement behind approval later, at which
+    // point a correction that is inconvenient becomes a correction that does
+    // not happen. The gate fails if any void/retire/reverse path starts
+    // raising a request.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const raisers: string[] = []
+    for (const f of [...walk('src/server'), ...walk('src/components'), ...walk('src/app')]) {
+      const src = readFileSync(f, 'utf8')
+      if (/\brequestApproval\s*\(/.test(src) || /insert into approval_requests\b/.test(src)) {
+        raisers.push(f.replace('src/', ''))
+      }
+    }
+    // Everything that raises one must be the approvals path itself or a master
+    // screen — never a void, a retirement or a correction.
+    const stray = raisers.filter((f) => !/approvals?-|Approvals|MasterActions/i.test(f))
+    assert.deepEqual(stray, [], 'something outside the discard/merge path is raising an approval request')
+    const forbidden = raisers.filter((f) => /Void|void-|retire|Reversal|correction/i.test(f))
+    assert.deepEqual(forbidden, [], 'a void, retirement or correction has been put behind approval')
+    assert.ok(raisers.length >= 2, `only ${raisers.length} file(s) raise a request — the sweep is not reaching them`)
+
+    // AND THE APPROVER IS THE OWNER ALONE. Read from roles.ts rather than
+    // restated: the route and the action must not disagree about who decides.
+    const { canAccess, ALL_ROLES } = await import('../src/lib/roles')
+    const admitted = ALL_ROLES.filter((r) => canAccess(r, '/owner/setup/approvals'))
+    assert.deepEqual(admitted, ['owner'], 'the approvals queue is not owner-only')
+    const { DECIDERS, REQUESTERS } = await import('../src/server/approvals-queries')
+    assert.deepEqual([...DECIDERS], ['owner'])
+    assert.ok(REQUESTERS.includes('store') && !REQUESTERS.includes('cashier'))
+    console.log(`      ${raisers.length} file(s) raise · deciders ${DECIDERS.join(',')} · requesters ${REQUESTERS.join(',')}`)
+  })
+
+  await check('PROBE — a merge moves history, refuses by name, and rolls back', async () => {
+    // Runs against the LIVE tenant deliberately and discards: the merge
+    // functions read pg_constraint, so a synthetic tenant with no bills would
+    // exercise none of the thirteen referencing tables. Everything is inside a
+    // transaction that throws, and the live-table census at the head of this
+    // suite proves nothing was left behind.
+    const { txn } = await import('../src/lib/db')
+    const { applyRequest, getPreview } = await import('../src/server/approvals-queries')
+    const out: string[] = []
+    await txn(async (tx) => {
+      const rows = await tx<{ code: string; id: string }[]>`
+        select code, id from items where restaurant_id = ${liveTenant} and code in ('HKP-015','HKP-024','PLT-004','PLT-011')`
+      const by = new Map(rows.map((r) => [r.code, r.id]))
+      assert.equal(by.size, 4, 'the fixture codes are not all on this restaurant')
+      const from = by.get('HKP-024') as string
+      const to = by.get('HKP-015') as string
+
+      // THE PREVIEW AND THE FUNCTION MUST AGREE AT THE MOMENT BOTH ARE RUN.
+      // They are two implementations of one rule and will be run days apart in
+      // life; if they disagree the SAME second, the mirror has drifted.
+      const legal = await getPreview(liveTenant, 'merge', 'item', from, to)
+      assert.equal(legal.wouldApply, true, 'the preview refuses a merge the function allows')
+
+      const bad = await getPreview(liveTenant, 'merge', 'item', by.get('PLT-011') as string, by.get('PLT-004') as string)
+      assert.equal(bad.wouldApply, false, 'the preview allows a unit mismatch the function refuses')
+      assert.ok(
+        bad.checks.some((c) => !c.ok && /unit/i.test(c.label)),
+        'the preview does not name units as the blocker',
+      )
+
+      // THROUGH THE APP'S OWN applyRequest, not a hand-written select: a probe
+      // that writes its own SQL cannot test the path the app takes.
+      const before = await tx<{ n: number }[]>`
+        select coalesce(sum(n), 0)::int as n from reference_counts('items', ${to}::uuid)`
+      const result = await applyRequest(tx, liveTenant, {
+        kind: 'merge', entity_type: 'item', entity_id: from, target_entity_id: to,
+      })
+      assert.equal(result.from, 'HKP-024')
+      assert.equal(result.to, 'HKP-015')
+      const [closed] = await tx<{ status: string; became: string | null }[]>`
+        select i.status, mi.code as became from items i
+        left join items mi on mi.id = i.merged_into where i.id = ${from}`
+      assert.equal(closed.status, 'merged', 'the closed row is not marked merged')
+      // THE CODE STAYS RESOLVABLE. This is what makes closing one safe at all.
+      assert.equal(closed.became, 'HKP-015', 'the closed code does not point at its survivor')
+      const [after] = await tx<{ n: number }[]>`
+        select coalesce(sum(n), 0)::int as n from reference_counts('items', ${to}::uuid)`
+      assert.ok(after.n > before[0].n, 'the survivor gained no references')
+      out.push(`HKP-024 -> HKP-015: status ${closed.status}, resolves to ${closed.became}, survivor refs ${before[0].n} -> ${after.n}`)
+
+      // Each refusal, by name, from the FUNCTION rather than the preview.
+      for (const [label, a, b] of [
+        ['units differ', by.get('PLT-011') as string, by.get('PLT-004') as string],
+        ['merged into itself', to, to],
+        ['survivor not active', by.get('PLT-004') as string, from],
+      ] as [string, string, string][]) {
+        await tx`savepoint probe`
+        let raised: string | null = null
+        try {
+          await applyRequest(tx, liveTenant, { kind: 'merge', entity_type: 'item', entity_id: a, target_entity_id: b })
+        } catch (e) {
+          raised = (e as Error).message
+        }
+        await tx`rollback to savepoint probe`
+        assert.ok(raised !== null, `${label} was ALLOWED — the guard is not in the function`)
+        out.push(`refused ${label}: ${raised.slice(0, 72)}`)
+      }
+
+      // A DISCARD IS REFUSED THE MOMENT ANYTHING POINTS AT IT, re-read at the
+      // instant of writing rather than trusted from the request.
+      await tx`savepoint d`
+      let discardErr: string | null = null
+      try {
+        await applyRequest(tx, liveTenant, {
+          kind: 'discard', entity_type: 'item', entity_id: by.get('PLT-004') as string, target_entity_id: null,
+        })
+      } catch (e) {
+        discardErr = (e as Error).message
+      }
+      await tx`rollback to savepoint d`
+      assert.ok(discardErr !== null && /point at it/.test(discardErr), 'a row with history was discardable')
+      out.push(`refused discard with history: ${(discardErr as string).slice(0, 72)}`)
+
+      throw new Error('ROLLBACK-MERGE-PROBE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-MERGE-PROBE') throw e
+    })
+    for (const l of out) console.log(`      ${l}`)
   })
 
   console.log(

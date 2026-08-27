@@ -7052,3 +7052,131 @@ until somebody says which account they left.
 Document numbers were allocated in date order: **PUR-2627-0004 … 0333** (three
 PUR numbers had been drawn before this import and are gone, which is what
 gapless-by-construction means) and **PAY-2627-0001 … 0017**.
+
+## DELETE, DISCARD AND MERGE — and the line that decides what needs permission
+
+> **AN ACTION THAT LEAVES A TRACE NEEDS NO PERMISSION; AN ACTION THAT LEAVES
+> NONE NEEDS APPROVAL.**
+
+A void writes a negative twin. A retirement leaves the row and its whole
+history. A corrected attendance mark keeps both and lets the view pick the
+winner. Every one of those is traceable by construction, so **none of them goes
+through approvals and none ever should** — a correction that is inconvenient is
+a correction that does not happen, and the moment somebody has to ask
+permission to fix a number they will leave it wrong instead.
+
+Discarding and merging leave nothing behind unless something is written on
+purpose. That is the whole of why they are here and nothing else is.
+`smoke:a2` asserts it as an EXCLUSION rather than an inclusion, because the
+danger is drift in one direction: it fails if any void, retirement or
+correction path starts raising a request.
+
+**Three words, three different sentences, and collapsing any two loses the only
+account of why a code went quiet:** retired means we stopped buying it,
+discarded means it was never real, merged means look over there.
+
+### THE PREVIEW IS THE FEATURE
+
+The owner is being asked to approve something INVISIBLE. Afterwards there is no
+negative twin to read and no reversal to find, only a status and a pointer — so
+without a list of exactly what moves and exactly what changes, their yes is a
+signature on a blank page.
+
+So the request carries, before it is raised: every referencing table with its
+count, and the figure that shifts — *"HKP-015's weighted average stays at
+₹88.00"*, or on a bad merge *"PLT-004's falls from ₹314.73 to ₹39.58"*, which is
+the corruption the unit refusal exists to prevent, made visible. Then the three
+checks, each passing or refusing by name. **The reason is required**, and the
+form says why: that sentence is the only account anyone will ever have.
+
+**The reference counts come from `reference_counts`, which discovers them from
+pg_constraint.** Items are pointed at by thirteen tables through four
+differently-named columns. A hand-written guard would have missed one, and this
+is the hand-maintained-copy fault in the one place where it DESTROYS rather than
+merely misleads: a reference nobody counted is a row left pointing at something
+that is gone.
+
+### APPROVED AND APPLIED ARE SEPARATE, and `failed` is a real outcome
+
+Approval is a DECISION. Application is an ACT, and an act can fail because the
+world moved: a bill can land against the closing item while the request sits in
+the queue. Collapsing them would make a failure look like a refusal and the
+owner would never learn their yes did nothing. So a raise from the function
+writes `failed` with the database's own message on it, in its own transaction —
+never `applied` — and the screen says *"Approved, but it could not be applied."*
+
+**THE GUARDS RUN INSIDE THE FUNCTION AND AT APPROVAL, NOT AT REQUEST.** A check
+that passed on Tuesday has not passed on Thursday. `merge_items` takes both rows
+`FOR UPDATE` and re-runs every one of them itself — the same lesson as the
+purchase-order freeze re-reading its status under a lock, and as `closePeriod`
+re-counting its blockers inside the advisory lock. The app's preview is a
+courtesy so a hopeless request is never raised; the function is the authority.
+
+**The queue shows both and says when they disagree.** Each request carries the
+snapshot from when it was asked AND a fresh check run now, side by side: *"0
+rows pointed at it when asked, 1 now — read the reason again."* Hiding the
+difference would be hiding the only thing that changed.
+
+### A CLOSED CODE STAYS RESOLVABLE FOREVER
+
+Looking up HKP-024 tells you it became HKP-015. **That is what makes closing one
+safe to do at all** — nothing that was ever written down becomes unreadable. The
+row stays on the list, wears its own badge, and the detail page names its
+survivor with a link. `merged_into` is a composite FK like every other, so the
+pointer cannot cross tenants.
+
+The editor is not rendered for a closed row, and the guard is in the component
+as well as the page: the status select offers only Active and Retired, so a
+closed row would post `merged` back and be refused with an enum message nobody
+could act on. It returns null before any hook runs — the only way to say "not
+editable" without a coercion that would quietly relabel it as retired.
+
+### Roles, and the rule that generalises
+
+**Store, chef and manager REQUEST. The owner DECIDES.**
+
+> An action that changes what the FUTURE offers belongs to whoever runs the
+> future; an action that changes what the PAST says belongs to the owner.
+
+Closing a duplicate code does both — the picker stops offering it, and thirteen
+tables of history start pointing somewhere else — so it is split. The chef is on
+the requester list and cannot reach the item master today, so that grant is
+inert; it is stated anyway because the rule is about ROLES, not routes, and
+adding a role to a permission list later is a change nobody reviews.
+
+**The Setup badge counts approvals with list suggestions, and only for a reader
+who can act on them.** Badging a manager with a pending merge would send them to
+Lists — the first chip they can open — to find nothing. A number you cannot act
+on is a number you learn to ignore: LAW 1 applied to a count rather than a link.
+
+### Rajesh's own case, checked rather than assumed
+
+`HKP-024` has **zero** references — no bills, no counts, no recipes, no
+adjustments. It is a DISCARD, not a merge. `HKP-015` carries the one bill and
+survives. One exact-name duplicate in 359 items is a remarkably clean master.
+
+### Found while building it
+
+- **The applied migration's unit message prints a stray letter.**
+  `raise exception 'units differ: % is %/%s, …'` — the `s` after the second `%`
+  is literal, so it reads *"PLT-011 is pcs/pcss, PLT-004 is kg/kgs"*. Cosmetic,
+  in the function rather than the app, and only ever seen if the world moves
+  between the preview and the apply; the app's own preview says it correctly.
+  Left for Rajesh, since the function is his.
+- **`reference_counts` includes self-references**, so a survivor gains one from
+  the closed row's `merged_into`. Correct, and worth knowing before reading the
+  number as "rows of history".
+- **The destructive half lives in `approvals-queries`, not the action file.**
+  Exported from a `'use server'` file it would be a public endpoint that applies
+  a request while taking the actor as a parameter. It also makes the gate
+  possible: it runs the APP'S OWN path on a rolled-back transaction, where a
+  probe writing its own SQL would have tested the function and not the app.
+- **`audit:schema` caught an alias collision in this code** — `a`/`b` reused
+  across two subqueries, valid SQL, and the scanner resolved the second binding
+  and reported `pos_item_map.component_item_id` as missing. Renamed rather than
+  the gate blunted, the same ruling as `a.total` on `attendance_current`.
+- **And the backtick-in-a-SQL-comment gate caught its own author, again** — in a
+  comment explaining the alias fix above. Third instance recorded in this file,
+  first one caught by the gate rather than by a failed build. That is the gate
+  earning its place: the rule was already written down, by me, and written down
+  was not enough.

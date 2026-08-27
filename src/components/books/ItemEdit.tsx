@@ -37,11 +37,37 @@ const Field = ({
   </label>
 )
 
-export default function ItemEdit({
+/**
+ * A MERGED OR DISCARDED ROW IS A SIGNPOST, NOT A MASTER.
+ *
+ * The detail page does not mount the editor for one — but a hidden form is not
+ * a check, and this is the second guarantee: the status select below offers
+ * only Active and Retired, so a closed row would post 'merged' back and be
+ * refused by the action with an enum message nobody could act on. Returning
+ * null before any hook runs is the only way to say "this row is not editable"
+ * without a coercion that would quietly relabel it as retired.
+ */
+export default function ItemEdit(props: {
+  item: ItemDetail
+  units: Unit[]
+  /** active vendors, for the usual-supplier picker */
+  vendors: VendorHit[]
+  /** active storage locations, in walking order */
+  locations: StorageLocation[]
+}) {
+  const status = props.item.status
+  // Compared directly rather than through a boolean: TypeScript narrows a
+  // property access on a comparison, not on an intermediate flag.
+  if (status !== 'active' && status !== 'inactive') return null
+  return <ItemEditForm {...props} status={status} />
+}
+
+function ItemEditForm({
   item,
   units,
   vendors,
   locations,
+  status,
 }: {
   item: ItemDetail
   units: Unit[]
@@ -49,6 +75,8 @@ export default function ItemEdit({
   vendors: VendorHit[]
   /** active storage locations, in walking order */
   locations: StorageLocation[]
+  /** narrowed by the wrapper above — a closed row never reaches here */
+  status: 'active' | 'inactive'
 }) {
   const [f, setF] = useState({
     name: item.name,
@@ -59,7 +87,7 @@ export default function ItemEdit({
     conversionFactor: item.conversion_factor,
     stockUnit: item.stock_unit ?? '',
     openingRate: item.opening_rate ?? '',
-    status: item.status,
+    status,
     reorderLevel: item.reorder_level ?? '',
     storageLocationId: item.storage_location_id ?? '',
     defaultVendorId: item.default_vendor_id ?? '',
@@ -112,7 +140,10 @@ export default function ItemEdit({
           conversionFactor: i.conversion_factor,
           stockUnit: i.stock_unit ?? '',
           openingRate: i.opening_rate ?? '',
-          status: i.status,
+          // The form posts only 'active' or 'inactive', so that is all the
+          // action can hand back. Narrowed rather than cast, so a widened
+          // return type fails here instead of flowing into the select.
+          status: i.status === 'active' ? 'active' : 'inactive',
           reorderLevel: i.reorder_level ?? '',
           storageLocationId: i.storage_location_id ?? '',
           defaultVendorId: i.default_vendor_id ?? '',
