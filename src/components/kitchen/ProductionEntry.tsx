@@ -45,6 +45,7 @@ import {
 } from '@/components/ui'
 import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
+import BackdatedCost from '@/components/BackdatedCost'
 
 type Line = { key: number; recipeId: string; qty: string }
 const newLine = (key: number): Line => ({ key, recipeId: '', qty: '' })
@@ -217,6 +218,7 @@ export default function ProductionEntry({
             </div>
           </div>
         </div>
+        <BackdatedCost date={date} what="today's recipe cost" />
       </section>
 
       {last !== null && last.lines.length > 0 && (

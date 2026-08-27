@@ -28,6 +28,7 @@ import {
 import { useLang } from '@/components/useLang'
 import Honesty from '@/components/Honesty'
 import { useBusinessToday } from '@/components/BusinessDay'
+import BackdatedCost from '@/components/BackdatedCost'
 
 export function FirstCountWarning({ days }: { days: number }) {
   if (days >= 14) return null
@@ -322,6 +323,7 @@ export default function CountEntry({
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
           </label>
         </div>
+        <BackdatedCost date={countDate} what="today's weighted average cost for each item" />
         <label className="block">
             {/* YOUR ROOM — a filter, not a new screen. The sheet already walks
                 in location order, so counting one room is choosing which part

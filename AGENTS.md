@@ -6797,6 +6797,71 @@ support, and nothing on any screen would say so.
 is: the sum of every `book_qty` came back ZERO. A date cannot be checked
 against anything; an empty book can.
 
+### THE WARNING, and the product it deliberately is not
+
+The consequence is live the day the store starts issuing: a backdated issue,
+return, loss, closing, production, count, correction, giveaway or off-book line
+freezes **today's** cost onto a row that claims to be about a day with a
+different one, and the row looks entirely correct afterwards.
+
+**Forward entry is not the risk.** Every date field defaults to the business
+day and `<BusinessDayNote>` tells the cashier past midnight that the date is
+already right. The risk is DELIBERATE backdating, which happens the first week
+somebody catches up on a missed day.
+
+`<BackdatedCost>` says so, in words, on any costed form dated more than three
+days back: *"This is dated 12 days ago. The cost frozen will be today's
+weighted average — not the one that applied then."*
+
+**It is a warning and never a refusal, and that is the whole design.** Catching
+up on a missed day is legitimate work — the reason somebody backdates is that
+the books are behind — and refusing the save pushes that day off the books
+entirely rather than onto them slightly mis-costed. **A wrong cost on a real
+entry beats a right cost on an entry nobody made.**
+
+**Three days, and the threshold never appears in the sentence.** Yesterday's
+issues written up this morning are the ordinary rhythm of a store, and a
+warning that fires on the ordinary case is one people learn to dismiss — the
+same argument, and the same cost, as the cross-vendor price chip that fired on
+every correct Sneha bill. The sentence names how late THIS entry is, which is
+the only number the reader can act on.
+
+**`what` is a prop because the forms do not freeze the same thing** — an issue
+takes the item's weighted average, a production takes the recipe's cost, a
+giveaway takes the dish's. One shared sentence naming the wrong one would be a
+small lie in the one place the screen is being careful.
+
+**DO NOT BUILD AS-OF-DATE COSTING.** It is a different product, not a bigger
+version of this one: every cost view would need a date parameter and every
+caller would need to pass one, and a weighted average *as of a date* is a
+materially harder calculation than it looks. The sentence is the honest version
+of it. If this is ever revisited, it is a phase with its own migration, not a
+patch.
+
+**The costed set is READ FROM THE SCHEMA, never listed.** A costed table is one
+carrying a STORED, non-generated, NUMERIC column called `unit_cost`,
+`cost_value` or `value` — ten of them. Each half of that does work: *generated*
+excludes `issue_lines.value` and its six siblings, which are `qty × unit_cost`
+and cannot appear in an insert at all; *numeric* excludes `settings.value`,
+`list_options.value` and `list_suggestions.value`, which are vocabulary rather
+than money. It catches `kitchen_wastage`, whose frozen figure is a stored
+`value` and which a `unit_cost`-only rule would have missed — which is the
+argument for deriving rather than listing, made concrete.
+
+**A call site needs the warning only if it lets somebody PICK the date**, and
+that exemption is structural rather than a list, so it stays true by itself: a
+void copies its original's cost and takes no date, an inline row button has no
+date field, so neither can be backdated and neither is asked to carry the
+sentence. Nine forms qualify today; the gate counts them and requires at least
+nine, because a sweep whose denominator falls to zero when the code is correct
+cannot tell "clean" from "not looking".
+
+Proved capable of failing twice: dropping the mount from one form names it, and
+**renaming the component to `<BackdatedCostX` also fails it** — the matcher is a
+real JSX boundary, `/<BackdatedCost[\s/>]/`, because the prefix flaw has now
+been recorded for `<DateLink` and `<SaveAck` and was not going to be made a
+third time.
+
 ### THE VIEWS ARE NOT DATE-AWARE, so the count must precede the bills
 
 The brief said items → purchases → payments → opening stock. **It cannot run

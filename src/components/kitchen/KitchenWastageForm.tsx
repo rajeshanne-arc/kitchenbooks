@@ -40,6 +40,7 @@ import {
 import KitchenComponentPicker from './KitchenComponentPicker'
 import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
+import BackdatedCost from '@/components/BackdatedCost'
 
 type Line = {
   key: number
@@ -198,6 +199,7 @@ export default function KitchenWastageForm({
             </div>
           </div>
         </div>
+        <BackdatedCost date={date} what="today's cost for that item or dish" />
       </section>
 
       <section className={cardCls}>

@@ -16,6 +16,7 @@ import { rankDishes } from '@/components/DishSuggest'
 import { toast } from '@/components/Toasts'
 import SaveAck from '@/components/SaveAck'
 import { useBusinessToday } from '@/components/BusinessDay'
+import BackdatedCost from '@/components/BackdatedCost'
 
 export default function OffBookClient({
   dishes,
@@ -188,6 +189,7 @@ export default function OffBookClient({
               </select>
             </label>
           </div>
+          <BackdatedCost date={date} what="today's dish cost" />
           {/* beside the mode: "Cash" says how it was paid, this says where it landed */}
           <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} label="Received into" required />
           <label className="block">

@@ -17,6 +17,7 @@ import { rankDishes } from '@/components/DishSuggest'
 import { toast } from '@/components/Toasts'
 import SaveAck from '@/components/SaveAck'
 import { useBusinessToday } from '@/components/BusinessDay'
+import BackdatedCost from '@/components/BackdatedCost'
 
 export type GiveawayDish = { id: string; code: string; name: string; selling_price: string | null; has_cost: boolean }
 
@@ -211,6 +212,7 @@ export default function NonRevenueClient({
           <span className={fieldLabelCls}>Date</span>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${numCls} w-full`} />
         </label>
+        <BackdatedCost date={date} what="today's dish cost" />
 
         {/* A CARD PER GIVEAWAY. REASON IS PER LINE — argued against the
             adjustments ruling and landing the other way: a batch of stock
