@@ -6680,3 +6680,77 @@ The rewrite parses no structure at all. `--` is SQL (TypeScript comments are
 `//`), so any line where a backtick follows one is the fault, wherever it sits.
 139 SQL comment lines scanned; proved by injecting one and watching it name the
 file and the line.
+
+## THE CROSS-VENDOR COMPARISON WAS LIVE
+
+Not a hypothetical avoided during design — a warning that had been shipped and
+was firing wrongly. `BillEntry` compared the typed rate against
+`line.prefillRate` at a hardcoded 15%, and `prefill_rate` **falls back to
+`item_rates`**, which is the last rate from ANY vendor. So on an item this
+vendor had never billed, the chip measured against somebody else's price:
+**every Sneha bill for Chicken Boneless would have read as a 10% fall against
+RR Chicken's ₹330.**
+
+> **A warning that fires on a normal price teaches the reader to dismiss the
+> one that matters.**
+
+That is the whole cost, and it is not paid on the false alarm — it is paid
+later, on the true one that gets waved past by somebody who has learned the
+chip is noise. An alert with a false-positive rate is worse than no alert,
+because it also consumes the attention that would have caught the real thing.
+
+**Guarding on `rate_source === 'vendor'` is right precisely because it cannot
+be reintroduced by forgetting.** The check lives inside `priceMove`, not at the
+call site: a caller who forgets gets `null`, not a cross-vendor comparison. The
+same shape as `assertAccount` refusing a blank and `waNumber` returning null
+rather than a mangled guess — **put the refusal where the answer is computed,
+not where it is requested.**
+
+## AN INSTRUMENT THAT LOCATES ITS SUBJECT BY THE DELIMITER IT IS HUNTING WILL BE DEFEATED BY IT
+
+**This is a NEW shape, not another vacuous gate, and the difference is worth
+holding onto.** The vacuous family — the converging attendance probe, the
+extra-hours gate writing its own insert, the prune's identical generations, the
+walking-order gate with zero placed items — all failed by examining NOTHING, or
+by examining data that could not have differed. **This gate ran, examined
+something real, and examined the wrong region.**
+
+It hunted backticks in SQL comments. It found each template by its opening tag
+and then its closing backtick with `indexOf` — and the injected backtick **was**
+that closing one, so the template it sliced ended just before the offending
+line, and it truthfully reported a clean template. Every step worked. The
+subject was simply not inside the boundary the instrument drew, *because the
+thing being hunted is what draws the boundary.*
+
+**Parsing no structure is the fix.** `--` is SQL where `//` is TypeScript, so a
+backtick after one is the fault wherever it sits — no templates, no boundaries,
+nothing for the subject to corrupt. Generalised: **when the fault is a
+delimiter, do not use delimiters to find it.** Ask the same of any checker that
+locates a region before searching it — quotes, braces, fences, tags. If the bug
+class can move the boundary, the boundary is not a safe place to stand.
+
+## A COLUMN/VALUE MISMATCH IS FOUND BY COUNTING, NOT READING
+
+Adding `tracks_expiry` to the items INSERT put it after `reorder_level` in the
+column list and before it in the values. `reorder_level` would have been set to
+a boolean and `tracks_expiry` to a number — **silent, correct-looking, and
+type-checked clean**, because both lists are just SQL text to TypeScript and
+Postgres will happily cast either way.
+
+Reading the statement does not find this. The two lists are twenty lines apart,
+each individually plausible, and the eye pairs them by position without ever
+holding both orders at once. What finds it is **counting**: parse the column
+list, parse the value list, assert the lengths match and the intended name sits
+at the intended index.
+
+**This is a different verification act from every other one in this file** —
+those are about whether a thing is TRUE (does the column exist, does the tenant
+match, does the void net out). This one is about whether two sequences are in
+the same ORDER, which no amount of reading either sequence can answer. It
+belongs beside them because it is exactly as cheap and exactly as easy to skip:
+
+    17 columns, 17 values -> ALIGNED
+    tracks_expiry at column 12
+
+Do it on every multi-column INSERT that gains a column, not only when something
+looks wrong — by construction, nothing will.
