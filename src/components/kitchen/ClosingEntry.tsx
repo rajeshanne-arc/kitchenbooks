@@ -27,6 +27,7 @@ import { cardCls, fieldLabelCls, inputCls, numCls, sectionHeadCls } from '@/comp
 import KitchenComponentPicker from './KitchenComponentPicker'
 import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
+import BackdatedCost from '@/components/BackdatedCost'
 
 type Line = {
   key: number
@@ -240,6 +241,7 @@ export default function ClosingEntry({
             </div>
           </div>
         </div>
+        <BackdatedCost date={date} what="today's cost for each item or batch" />
       </section>
 
       {last !== null && last.lines.length > 0 && (

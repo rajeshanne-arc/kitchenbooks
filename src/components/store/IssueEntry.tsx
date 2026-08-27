@@ -44,6 +44,7 @@ import SaveAck from '@/components/SaveAck'
 import IssueItemPicker from './IssueItemPicker'
 import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
+import BackdatedCost from '@/components/BackdatedCost'
 
 type Line = {
   key: number
@@ -412,6 +413,7 @@ export default function IssueEntry({
             </div>
           </div>
         </div>
+        <BackdatedCost date={issueDate} what="today's weighted average cost for each item" />
         {/* Beside the department, because together they name the one ask
             being answered. Nothing is preselected on purpose. */}
         <div className="mt-4">

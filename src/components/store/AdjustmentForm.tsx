@@ -34,6 +34,7 @@ import {
   trCls,
 } from '@/components/ui'
 import { useBusinessToday } from '@/components/BusinessDay'
+import BackdatedCost from '@/components/BackdatedCost'
 
 const OTHER = '__other__'
 
@@ -160,6 +161,7 @@ export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
           <span className={fieldLabelCls}>Date</span>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${numCls} w-full`} />
         </label>
+        <BackdatedCost date={date} what="today's weighted average cost for that item" />
 
         {/* THE REASON IS A HEADER FIELD, unlike the loss forms where it is per
             line. A batch of corrections is one EVENT — a stocktake, an opening

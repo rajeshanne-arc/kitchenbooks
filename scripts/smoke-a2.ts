@@ -7916,6 +7916,114 @@ async function run() {
     })
   })
 
+  /* ── backdating a costed entry ─────────────────────────────────────── */
+  console.log('\na date on a document does not date the state it was computed from')
+
+  await check('the days-back arithmetic, by value', async () => {
+    const { daysBackdated, BACKDATE_DAYS } = await import('../src/lib/backdate')
+    // Plain cases, then the three that break naive date maths.
+    assert.equal(daysBackdated('2026-08-27', '2026-08-27'), 0, 'same day')
+    assert.equal(daysBackdated('2026-08-24', '2026-08-27'), 3, 'exactly at the edge')
+    assert.equal(daysBackdated('2026-08-15', '2026-08-27'), 12, "the brief's own example")
+    assert.equal(daysBackdated('2026-07-31', '2026-08-01'), 1, 'across a month end')
+    assert.equal(daysBackdated('2025-12-31', '2026-01-01'), 1, 'across a year end')
+    assert.equal(daysBackdated('2024-02-28', '2024-03-01'), 2, 'across a leap day')
+    assert.equal(daysBackdated('2026-03-01', '2026-02-28'), -1, 'a future date is negative, and warns about nothing')
+    assert.equal(daysBackdated('not-a-date', '2026-08-27'), 0, 'a half-typed date must not warn')
+    // THE THRESHOLD IS AN EDGE, and both sides of it are asserted: a gate that
+    // only checks the warning fires cannot see one that fires on every entry,
+    // which is the failure mode that makes people dismiss it.
+    assert.equal(BACKDATE_DAYS, 3)
+    assert.ok(daysBackdated('2026-08-24', '2026-08-27') <= BACKDATE_DAYS, 'three days back must stay silent')
+    assert.ok(daysBackdated('2026-08-23', '2026-08-27') > BACKDATE_DAYS, 'four days back must speak')
+    console.log('      0 · 3 silent · 4 speaks · month end · year end · leap day · future negative')
+  })
+
+  await check('every costed form warns about backdating, and only costed ones', async () => {
+    // WHICH FORMS ARE COSTED IS READ FROM THE SCHEMA, NOT LISTED HERE.
+    //
+    // A check carrying a hand-maintained copy of the thing it checks is not
+    // checking — the retired-URL list drifted 51 against 57 and agreed with
+    // itself the whole time. So: a COSTED table is one carrying a STORED
+    // (non-generated) NUMERIC column called unit_cost, cost_value or value.
+    //
+    // Each half of that does work. `generated` excludes issue_lines.value and
+    // its six siblings, which are qty × unit_cost and cannot appear in an
+    // insert at all. `numeric` excludes settings.value, list_options.value and
+    // list_suggestions.value, which are vocabulary rather than money. What is
+    // left is exactly the set the app freezes from a dateless cost view — and
+    // it catches kitchen_wastage, whose frozen figure is a stored `value` and
+    // which a unit_cost-only rule would have missed.
+    const { tsql } = await import('../src/lib/db')
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const costed = (
+      await tsql<{ table_name: string }[]>`
+        select c.relname as table_name
+        from pg_attribute a
+        join pg_class c on c.oid = a.attrelid
+        join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
+          and a.attname in ('unit_cost', 'cost_value', 'value')
+          and a.attgenerated = '' and format_type(a.atttypid, null) = 'numeric'
+        group by c.relname order by c.relname`
+    ).map((r) => r.table_name)
+    assert.ok(costed.length >= 9, `only ${costed.length} costed tables found — the derivation is not reaching them`)
+
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const ui = [...walk('src/components'), ...walk('src/app')]
+    const srcOf = new Map(ui.map((f) => [f, readFileSync(f, 'utf8')]))
+
+    // Every 'use server' action that INSERTS into a costed table.
+    const actions: string[] = []
+    for (const f of walk('src/server')) {
+      const src = readFileSync(f, 'utf8')
+      if (!/^['"]use server['"]/m.test(src)) continue
+      const starts = [...src.matchAll(/export async function (\w+)/g)]
+      for (const [i, m] of starts.entries()) {
+        const body = src.slice(m.index as number, (starts[i + 1]?.index as number) ?? src.length)
+        if (costed.some((t) => new RegExp(`insert into ${t}\\b`).test(body))) actions.push(m[1])
+      }
+    }
+    assert.ok(actions.length >= 9, `only ${actions.length} costing actions found`)
+
+    // A CALL SITE NEEDS THE WARNING ONLY IF IT LETS SOMEBODY PICK THE DATE.
+    // That exemption is structural rather than a list, so it stays true by
+    // itself: a void copies its original's cost and takes no date, and an
+    // inline row button has no date field, so neither can be backdated and
+    // neither is asked to carry the sentence.
+    const warned: string[] = []
+    const missing: string[] = []
+    for (const name of new Set(actions)) {
+      for (const site of ui.filter((f) => new RegExp(`\\b${name}\\s*\\(`).test(srcOf.get(f) as string))) {
+        const src = srcOf.get(site) as string
+        if (!/type="date"/.test(src)) continue
+        // A REAL JSX BOUNDARY. `/<BackdatedCost/` also matches
+        // `<BackdatedCostX`, so a rename would have left this green — the
+        // substring flaw already recorded for <DateLink and <SaveAck, and not
+        // made a third time.
+        if (/<BackdatedCost[\s/>]/.test(src)) warned.push(site.replace('src/', ''))
+        else missing.push(`${name} -> ${site.replace('src/', '')}`)
+      }
+    }
+    assert.deepEqual(
+      [...new Set(missing)].sort(),
+      [],
+      'these forms freeze a cost from a dateless view and let somebody pick the date, and say nothing about it',
+    )
+    // COUNTS SOMETHING THAT SURVIVES THE FIX. A sweep whose denominator falls
+    // to zero when the code is correct cannot tell "clean" from "not looking".
+    const n = new Set(warned).size
+    assert.ok(n >= 9, `only ${n} costed forms carry the warning — the sweep is not reaching them`)
+    console.log(`      ${costed.length} costed tables · ${new Set(actions).size} costing actions · ${n} dated forms, all warning`)
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

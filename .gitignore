@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# stock-sheet import source (Rajesh's data, exported from the Google Sheet)
+/import-data

@@ -3027,6 +3027,10 @@ Each one argued rather than inherited, and every one came out differently:
 and on a bill that is wrong: measured live, Chicken Boneless reads ₹330 because
 RR Chicken sold it last, while Sneha Chicken charges ₹300. A Sneha bill
 prefilled ₹330 — ten per cent out, on a field somebody tabs straight past.
+*(Those two rates were TEST PURCHASES, since deleted — see "A SPOT-CHECK DRAWN
+FROM MEMORY IS NOT A SPOT-CHECK" at the end of this file. The argument is
+unaffected and the live equivalent is sharper: PLT-004 is ₹305 from RR Chicken
+and ₹315 from Sneha, on real bills.)*
 `searchItems` now takes the vendor and reads `vendor_supplied_items.last_rate`
 (still a named view, never recomputed), falling back to `item_rates` only when
 that vendor has never sent the item — and the dropdown says which it is,
@@ -6585,10 +6589,14 @@ line.
 exists so a form does not cry wolf at somebody mid-entry; `/store/books/prices`
 shows EVERY movement, because it is read deliberately by somebody asking what
 changed, and a filtered report would hide the slow drift that never trips
-anything. Live proof: RR Chicken went ₹310 → ₹330 on Chicken Boneless — **6.5%,
-under the threshold, invisible until the report existed, and it cost ₹200 on
-one delivery.** Ordered by `cost_of_change`, not percentage: a 40% rise on a
-₹20 item matters less than 6% on the chicken.
+anything. *(The ₹310 → ₹330 "live proof" that stood here was measured on the
+app's own TEST purchases, which were later deleted — see "A SPOT-CHECK DRAWN
+FROM MEMORY IS NOT A SPOT-CHECK" at the end of this file. The point it made is
+right and the real ledger makes it better: RR Chicken's Chicken Whole Birds ran
+211 → 231 → 221 → 205 → 195 → 179 → 185 across eleven bills, and every one of
+those moves is under the 10% threshold — the slow drift a filtered report would
+hide, exactly as argued.)* Ordered by `cost_of_change`, not percentage: a 40%
+rise on a ₹20 item matters less than 6% on the chicken.
 
 ### SHARED COUNTING IS A FILTER AND AN ATTRIBUTION, NOT A SCREEN
 
@@ -6754,3 +6762,293 @@ belongs beside them because it is exactly as cheap and exactly as easy to skip:
 
 Do it on every multi-column INSERT that gains a column, not only when something
 looks wrong — by construction, nothing will.
+
+## THE STOCK SHEET IMPORT — and the order the brief could not have
+
+Rajesh's "Stock Management" sheet is now in the ledger: 359 active items, one
+opening stock count, **330 bills · 1,101 lines · ₹18,11,348.35 landed** from
+5 Jun to 26 Aug 2026, and 17 vendor payments of ₹5,10,307. The importer is
+`scripts/import-stock-sheet.ts`; its source CSVs live in the gitignored
+`import-data/`.
+
+### A DATE ON A DOCUMENT DOES NOT DATE THE STATE IT WAS COMPUTED FROM
+
+> **Dating a record says when it happened. It says nothing about which state
+> the figures frozen onto it were read from — that is decided by WHEN it is
+> written, and the two are independent.**
+
+The brief specified the count's date and treated that as sufficient. It is not:
+the date is a column, and the SEQUENCE is what decides every frozen number on
+the row. A count dated 31 May but saved after the August bills would carry a
+31 May date and August's book — a document that looks entirely correct and is
+wrong in the only way that matters.
+
+This generalises well past counts. `stock_count_lines.book_qty`,
+`issue_lines.unit_cost`, `kitchen_closing_lines.unit_cost`,
+`non_revenue.cost_value`, `off_book_lines.cost_value` — every frozen value in
+this schema is read from a view at write time, and those views are
+`item_costs`, `recipe_costs`, `dish_costs` and `stock_on_hand`. **Checked
+rather than reasoned: not one of the four contains a single date reference** —
+no `bill_date`, no `created_at`, no `current_date`, nothing. They answer only
+about now. Backdating any such row is therefore a claim the data cannot
+support, and nothing on any screen would say so.
+
+**The defence is an assertion about the state, not about the date.** Here that
+is: the sum of every `book_qty` came back ZERO. A date cannot be checked
+against anything; an empty book can.
+
+### THE WARNING, and the product it deliberately is not
+
+The consequence is live the day the store starts issuing: a backdated issue,
+return, loss, closing, production, count, correction, giveaway or off-book line
+freezes **today's** cost onto a row that claims to be about a day with a
+different one, and the row looks entirely correct afterwards.
+
+**Forward entry is not the risk.** Every date field defaults to the business
+day and `<BusinessDayNote>` tells the cashier past midnight that the date is
+already right. The risk is DELIBERATE backdating, which happens the first week
+somebody catches up on a missed day.
+
+`<BackdatedCost>` says so, in words, on any costed form dated more than three
+days back: *"This is dated 12 days ago. The cost frozen will be today's
+weighted average — not the one that applied then."*
+
+**It is a warning and never a refusal, and that is the whole design.** Catching
+up on a missed day is legitimate work — the reason somebody backdates is that
+the books are behind — and refusing the save pushes that day off the books
+entirely rather than onto them slightly mis-costed. **A wrong cost on a real
+entry beats a right cost on an entry nobody made.**
+
+**Three days, and the threshold never appears in the sentence.** Yesterday's
+issues written up this morning are the ordinary rhythm of a store, and a
+warning that fires on the ordinary case is one people learn to dismiss — the
+same argument, and the same cost, as the cross-vendor price chip that fired on
+every correct Sneha bill. The sentence names how late THIS entry is, which is
+the only number the reader can act on.
+
+**`what` is a prop because the forms do not freeze the same thing** — an issue
+takes the item's weighted average, a production takes the recipe's cost, a
+giveaway takes the dish's. One shared sentence naming the wrong one would be a
+small lie in the one place the screen is being careful.
+
+**DO NOT BUILD AS-OF-DATE COSTING.** It is a different product, not a bigger
+version of this one: every cost view would need a date parameter and every
+caller would need to pass one, and a weighted average *as of a date* is a
+materially harder calculation than it looks. The sentence is the honest version
+of it. If this is ever revisited, it is a phase with its own migration, not a
+patch.
+
+**The costed set is READ FROM THE SCHEMA, never listed.** A costed table is one
+carrying a STORED, non-generated, NUMERIC column called `unit_cost`,
+`cost_value` or `value` — ten of them. Each half of that does work: *generated*
+excludes `issue_lines.value` and its six siblings, which are `qty × unit_cost`
+and cannot appear in an insert at all; *numeric* excludes `settings.value`,
+`list_options.value` and `list_suggestions.value`, which are vocabulary rather
+than money. It catches `kitchen_wastage`, whose frozen figure is a stored
+`value` and which a `unit_cost`-only rule would have missed — which is the
+argument for deriving rather than listing, made concrete.
+
+**A call site needs the warning only if it lets somebody PICK the date**, and
+that exemption is structural rather than a list, so it stays true by itself: a
+void copies its original's cost and takes no date, an inline row button has no
+date field, so neither can be backdated and neither is asked to carry the
+sentence. Nine forms qualify today; the gate counts them and requires at least
+nine, because a sweep whose denominator falls to zero when the code is correct
+cannot tell "clean" from "not looking".
+
+Proved capable of failing twice: dropping the mount from one form names it, and
+**renaming the component to `<BackdatedCostX` also fails it** — the matcher is a
+real JSX boundary, `/<BackdatedCost[\s/>]/`, because the prefix flaw has now
+been recorded for `<DateLink` and `<SaveAck` and was not going to be made a
+third time.
+
+### THE VIEWS ARE NOT DATE-AWARE, so the count must precede the bills
+
+The brief said items → purchases → payments → opening stock. **It cannot run
+that way, and the reason is worth keeping because it is not obvious from any
+screen:** `stock_on_hand` and `item_costs` carry no date filter at all — they
+are all-time running totals. A count saved after the purchases would freeze
+`book_qty` at everything ever bought and `unit_cost` at the weighted average
+of those purchases, and accepting it would write `counted − book`: one large
+negative adjustment per item, erasing the purchases from the shelf.
+
+So the order is **items → count → accept → purchases → payments**, which is
+what AGENTS.md already said in other words: "set items.opening_rate → count
+against the empty book → accept."
+
+**The tempting shortcut is the thing to refuse.** An importer writing its own
+SQL controls the frozen values, so it could write `book_qty = 0` after the
+bills and land on the same number. That fakes a freeze — it asserts a value
+the views never returned. The script reads the same two views `saveCount`
+reads, at the moment it reads them, and **asserts the sum of every book_qty is
+zero**; if a purchase ever moves above that line the import refuses by name
+rather than quietly mis-stating the shelf.
+
+### THE COUNT DATE IS 31 MAY, and what it does NOT do
+
+`store_stock_by_month` takes the LAST count of a month as that month's
+closing. Dated 4 June — literally the day before the first bill — ₹8.12 lakh
+would have become JUNE's closing and June COGS would have printed as **minus
+eight lakh**. Dated 31 May it is May's closing, which is where an opening
+balance belongs.
+
+**But it does not reach the P&L either way, and that was predicted wrongly
+once already.** `pnl_monthly`'s month spine is the UNION of months holding
+sales, purchases, expenses or labour — a month with only a stock count is not
+in it. May is therefore absent, June's `lag(closing)` finds nothing, and
+June's opening reads NULL. **Monthly COGS is simply not computable until there
+are month-end counts**, and the date choice only decides which flavour of
+wrong you get. `pnl_diagnostics` says so unprompted — "STOPS THE SUM — No
+closing stock counted" on all three months — which is the honesty machinery
+working exactly as designed and the reason neither choice puts a confident
+wrong number on screen.
+
+### KHP- IS HKP-, established on five instances rather than assumed from one
+
+The master carries `KHP-015` and no `HKP-015`; the ledger buys `HKP-015` and
+also `KHP-014/017/018/019`. Every one of those four matches an HKP master row
+by name, unit AND rate — FRESH LAVENDER 184, TOILET ROLLS 16, M-FOLD NAPKIN
+55, SPONGE WIPE 30. One transposed row is a typo; five is a rule, and only the
+rule resolves all of them. Zero-padding is the same correction Rajesh made by
+hand on PKG-0013 — the sheet also holds PLT-0012, VEG-0051 and VEG-39..42, and
+codes are compared as TEXT everywhere, so VEG-39 sorts after VEG-052.
+
+### GST GOES ON THE BILL HEADER, NOT THE LINE — even though the sheet has both
+
+The sheet carries per-line GST on 90 lines. `purchase_lines.landed` is
+GENERATED as `qty*rate + gst_amount + transport_alloc` and
+`item_costs.issue_cost` is `landed/qty` — so **GST on a line changes what every
+recipe and every issue costs**. The app's own bill flow writes `gst_amount = 0`
+and carries GST on `purchases.gst_total`; per-line GST entry is a deliberately
+deferred phase. Imported per line, those 90 rows would have been the only ones
+in the ledger costed on a different basis from every bill entered afterwards,
+and no screen would have said so. `bill_total`, `vendor_dues` and the P&L all
+read the header, so the money is identical either way — only the cost basis
+would have diverged. The verification asserts `sum(lines.landed)` equals goods
++ transport, which is the check that catches a leak.
+
+Transport is the sheet's **own** per-line figure, not `allocateTransport`:
+re-deriving a split the source already states would be this app disagreeing
+with its source.
+
+### A DRY RUN PROVES THE PARSER; ONLY A REHEARSAL PROVES THE INSERTS
+
+`--rehearse` runs the whole import for real against live data and then throws,
+rolling back. It earned itself immediately: the first green-looking run had a
+**JOIN fan-out in its own verification** — header sums taken over
+`purchases JOIN purchase_lines`, so a five-line bill contributed its
+`goods_total` five times and the total read ₹74 lakh against the sheet's
+₹17.9 lakh.
+
+**A verification that inflates by four times is exactly the kind that survives
+review.** It is six lines of obvious SQL; every column name is right, the
+relations are the right ones, and the join is the one anybody would write. What
+is wrong is not visible in the statement at all — it is visible only in the
+number, and only when a real number is put beside it. Reading the query had not
+found it, twice. That is the argument for rehearsing over reviewing whenever a
+check can be run against real data instead of read.
+
+The whole import is **ONE transaction**, not one per stage. Four would have
+been the app's shape, but a failure at stage 3 would leave an ACCEPTED count
+committed — and `stock_counts`/`stock_adjustments` are append-only with no
+DELETE grant, so the retry would then be refused by the importer's own guard.
+
+Proved capable of failing, four ways, each firing by name: GST moved onto the
+line (`sum(lines.landed)` diverges), a bill written before the count (the
+empty-book assertion names the non-zero sum), a unit removed from the mapper
+(refuses at the sheet row), and a ledger code the master lacks.
+
+**Verification compares against the SHEET, never against another number the
+script wrote** — including two independent witnesses the sheet computed
+itself: its `_owner` tab's monthly figures (June ₹8,594/1 bill, July
+₹25,146.85/6 bills) and its Stock Count baseline total of 5,367.52 units.
+
+### Numeric scale is not a difference in value
+
+Postgres preserves scale: `sum(purchase_lines.amount)` reads `1796960.250`
+where the sheet says `1796960.25`. Both sides are trimmed of trailing zeros
+before comparison — value-preserving, so it cannot make two different numbers
+agree, only two spellings of one number. **Do not "fix" this by rounding**;
+rounding to make a check pass is how a check stops checking.
+
+### A SPOT-CHECK DRAWN FROM MEMORY IS NOT A SPOT-CHECK
+
+> **A figure quoted from memory as a fact about the source is not a check on
+> the import — it is a second thing to verify, and the one nobody thinks to.**
+
+The import brief named a spot-check: RR Chicken's Chicken Boneless should
+"still show ₹310 then ₹330" in `price_movements`. Searched across all 1,101
+ledger lines: **no poultry line carries either rate.** RR Chicken bought a
+boneless item exactly once — PLT-004, 8 Aug, 9.98 kg at ₹305.
+
+**Those figures were never in the sheet. They came from the app's own TEST
+purchases during the Phase B price-variance work, and those rows were later
+deleted** — so the number was real when it was measured and described nothing
+by the time it was quoted. It had also propagated: ₹330 / ₹300 / ₹310 appear at
+six places in this file, in four different arguments, every one of them written
+as "measured live". The reasoning at all six is CORRECT and none of it changes;
+only the evidence had expired. The two that state the figures as EVIDENCE
+rather than illustration now carry a correction inline. The live equivalents,
+from real bills:
+
+| the claim | what the ledger actually shows |
+|---|---|
+| a rate differs by vendor | PLT-004 is **₹305 from RR Chicken** and **₹315 from Sneha** |
+| slow drift under the threshold | RR's Chicken Whole Birds: 211 → 231 → 221 → 205 → 195 → 179 → 185 over eleven bills, every move under 10% |
+
+**The general form, and it is the same family as a benchmark run in the wrong
+environment:** a measurement is only evidence about the state it was taken
+from. Test data, a probe tenant and a rolled-back transaction all produce
+perfectly real numbers about a world that then stops existing. So a figure
+carried into a later document has to say WHICH database it came from, or be
+re-measured before it is quoted — and a check built on one is not a check, it
+is an assumption wearing a number.
+
+Replaced with two assertions this source can satisfy, and the first is
+stronger than the one it replaces because **it asserts a bug is ABSENT rather
+than re-reading a figure**: PLT-004 is bought from **two vendors at two
+prices** — RR at ₹305 once, Sneha at ₹315 twenty-three times — so RR's single
+line must read "first bill from this vendor" and must NOT report −₹10 against
+Sneha's rate. That is exactly the cross-vendor comparison this file records as
+a live bug, and asserting it does not happen tests the view harder than
+re-reading a movement does. The second walks RR Chicken · Chicken Whole Birds,
+a real eleven-bill chain: 211 → 231 → 221 → 205 → 195 → 179 → 185.
+
+### What the sheet holds that did NOT load, and why
+
+- **CORINDER POWDER** shares code `DRY-115` with CHICKEN MASALA, which owns it
+  everywhere else — both ledger lines and the Stock Count's own lookup say
+  CHICKEN MASALA. The code IS the identity, so the second row has none, and
+  inventing `DRY-116` would put a number in the permanent series Rajesh never
+  chose. Add it through the app, where the code is assigned in-transaction.
+- **The sheet's ISSUES cannot become issue events.** `_issued` carries a code
+  and a running total — 4,660.02 units across 41 items — with no date, no
+  department and no session. Every one of those is required and none can be
+  derived, so `stock_on_hand` reads opening + purchases with no consumption
+  until issues are entered properly. The sheet's own STOCK tab is stale
+  besides: its PURCHASED column is **0 on all 361 rows**, which is why it
+  reports 23 negatives and ₹4.84 lakh against the app's ₹25.9 lakh.
+- **`HKP-015` and `HKP-024` are the same product** — TRIGGER SPRAY BOTTLE,
+  ₹88/Litr — and both had to load: the ledger buys 015, the count counts 024.
+  Retiring one is Rajesh's call, not an importer's.
+- **DRY-096 Soya Chunks and PKG-007 50 ML Bowls carry no opening rate** (0 and
+  blank). A rate of zero is not a rate: it would make `issue_cost` 0 and the
+  item silently issuable at no cost, where NULL makes it refuse by name. Both
+  were counted zero, so nothing is mis-valued.
+
+### `entered_by` is a person, `account_id` is not a guess
+
+Every row is stamped `rajeshanne`. `entered_by` answers "who recorded this",
+not "which process inserted it", and the activity log's person filter reads
+real usernames.
+
+Payments carry `account_id = NULL` — the documented case rather than a
+shortcut. The column is nullable precisely because history predates money
+accounts; the sheet records a MODE and never an account, and this restaurant
+has no cash account at all. `vendor_dues` reads `payments` directly so every
+balance is right; these seventeen rows simply reach no cash or bank register
+until somebody says which account they left.
+
+Document numbers were allocated in date order: **PUR-2627-0004 … 0333** (three
+PUR numbers had been drawn before this import and are gone, which is what
+gapless-by-construction means) and **PAY-2627-0001 … 0017**.

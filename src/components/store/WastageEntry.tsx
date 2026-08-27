@@ -38,6 +38,7 @@ import {
 import IssueItemPicker from './IssueItemPicker'
 import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
+import BackdatedCost from '@/components/BackdatedCost'
 
 type Line = { key: number; item: IssuableItemHit | null; qty: string; reason: string; note: string }
 const newLine = (key: number): Line => ({ key, item: null, qty: '', reason: '', note: '' })
@@ -129,6 +130,7 @@ export default function WastageEntry({ reasons }: { reasons: string[] }) {
             className={`${numCls} w-full`}
           />
         </label>
+        <BackdatedCost date={date} what="today's weighted average cost for that item" />
       </section>
 
       <section className={cardCls}>
