@@ -43,6 +43,13 @@ function assertRealDate(s: string, label: string) {
 // --------------------------------------------------------------- save count
 
 const CountSchema = z.object({
+  /** JOIN AN EXISTING COUNT instead of starting one. Two people counting two
+   *  rooms are doing ONE count, not two — a second count row would give the
+   *  same night two books and two variance sets. Absent means start one. */
+  countId: z.union([z.literal(''), z.string().regex(UUID)]).optional(),
+  /** which room this person walked, so the sheet can say what is still to do
+   *  and the lines can say who counted them */
+  locationId: z.union([z.literal(''), z.string().regex(UUID)]).optional(),
   countDate: z.string().regex(DATE_RE),
   note: z.string().trim().max(300),
   lines: z.array(z.object({ itemId: z.string().regex(UUID), countedQty: qtyStr })).min(1).max(300),
@@ -69,10 +76,53 @@ export async function saveCount(raw: SaveCountInput): Promise<SaveCountResult> {
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
-      const [count] = await tx<{ id: string }[]>`
-        insert into stock_counts (restaurant_id, count_date, note, entered_by)
-        values (${rid}, ${input.countDate}, ${input.note === '' ? null : input.note}, ${by})
-        returning id`
+      // TWO PEOPLE COUNTING TWO ROOMS ARE DOING ONE COUNT. Joining an existing
+      // one rather than starting a second is the whole of shared counting: two
+      // rows for one night would freeze the same book twice and produce two
+      // variance sets nobody could reconcile.
+      let countId: string
+      if (input.countId !== undefined && input.countId !== '') {
+        const [open] = await tx<{ id: string; accepted_at: string | null; count_date: string }[]>`
+          select id, accepted_at::text as accepted_at, count_date::text as count_date
+          from stock_counts
+          where id = ${input.countId} and restaurant_id = ${rid}
+          for update`
+        if (!open) throw new CountsError('That count no longer exists — start a new one')
+        // AN ACCEPTED COUNT IS HISTORY. Accepting writes stock_adjustments
+        // against the frozen book; adding a line afterwards would put a
+        // counted quantity behind a correction already made from it.
+        if (open.accepted_at !== null) {
+          throw new CountsError('That count has already been accepted into the book — start a new one')
+        }
+        countId = open.id
+      } else {
+        const [count] = await tx<{ id: string }[]>`
+          insert into stock_counts (restaurant_id, count_date, note, entered_by)
+          values (${rid}, ${input.countDate}, ${input.note === '' ? null : input.note}, ${by})
+          returning id`
+        countId = count.id
+      }
+      const count = { id: countId }
+
+      // ALREADY COUNTED IS REFUSED BY NAME, and the name is the point: if two
+      // people counted the same item, one of them is in the wrong room, and
+      // "line 4 is a duplicate" does not tell either of them which. Read
+      // INSIDE the transaction under the same lock, so two phones saving at
+      // once cannot both pass the check.
+      const already = await tx<{ item_id: string; name: string; counted_by: string | null }[]>`
+        select l.item_id, i.name, l.counted_by
+        from stock_count_lines l
+        join items i on i.restaurant_id = l.restaurant_id and i.id = l.item_id
+        where l.restaurant_id = ${rid} and l.count_id = ${countId}
+          and l.item_id = any(${input.lines.map((l) => l.itemId)}::uuid[])`
+      if (already.length > 0) {
+        const first = already[0]
+        throw new CountsError(
+          `${first.name} has already been counted in this count${
+            first.counted_by === null ? '' : ` by ${first.counted_by}`
+          }${already.length > 1 ? `, and so have ${already.length - 1} more` : ''} — if you are both counting it, one of you is in the wrong room`,
+        )
+      }
 
       for (const [i, l] of input.lines.entries()) {
         // Freeze book_qty and unit_cost NOW, inside the transaction.
@@ -84,8 +134,8 @@ export async function saveCount(raw: SaveCountInput): Promise<SaveCountResult> {
           where i.id = ${l.itemId} and i.restaurant_id = ${rid} and i.status = 'active'`
         if (!item) throw new CountsError(`Line ${i + 1}: item not found`)
         await tx`
-          insert into stock_count_lines (restaurant_id, count_id, item_id, counted_qty, book_qty, unit_cost)
-          values (${rid}, ${count.id}, ${l.itemId}, ${l.countedQty.trim()}, ${item.book_qty}, ${item.unit_cost ?? '0'})`
+          insert into stock_count_lines (restaurant_id, count_id, item_id, counted_qty, book_qty, unit_cost, counted_by)
+          values (${rid}, ${count.id}, ${l.itemId}, ${l.countedQty.trim()}, ${item.book_qty}, ${item.unit_cost ?? '0'}, ${by})`
       }
       return { countId: count.id }
     })

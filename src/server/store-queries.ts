@@ -3,8 +3,10 @@
 // section_consumption (monthly section totals). Event aggregates (an issue's
 // own total) sum the stored generated `value` column — never recomputed.
 import 'server-only'
-import { sql, tsql } from '@/lib/db'
+import { txn, sql, tsql } from '@/lib/db'
 import type {
+  ExpiringStockRow,
+  PriceMovementRow,
   ChecklistRow,
   IndentPrefill,
   IndentRow,
@@ -522,6 +524,16 @@ export async function getStockBadge(restaurantId: string): Promise<StockBadge> {
  *
  * Null when nothing is firing — and then the tab wears no badge at all.
  */
+/**
+ * WHERE A BADGED TAB LANDS — the one that is firing, worst first.
+ *
+ * AN ALERT CARRYING AN ACTION BEATS ONE CARRYING INFORMATION, and each of
+ * these is already a place where something can be DONE rather than merely
+ * read: negative stock opens the shelf that cannot be true, an unaccepted
+ * count opens the decision nobody took, and reorder opens the list whose
+ * vendor cards raise a purchase order. That last one only became an action
+ * when Raise PO existed; before it, the badge led to a fact.
+ */
 export function stockBadgeHref(b: StockBadge): string | null {
   if (b.negative > 0) return '/store/stock/on-hand'
   if (b.unaccepted > 0) return '/store/stock/count'
@@ -641,4 +653,89 @@ export async function getSectionConsumptionDaily(
       and move_date between ${from}::date and ${to}::date
       and (${sectionCodes ?? null}::text[] is null or section_code = any(${sectionCodes ?? null}::text[]))
     order by move_date asc, section_code asc, session asc`
+}
+
+/**
+ * What every vendor's price did, bill over bill, in a period.
+ *
+ * PARTITIONED BY (VENDOR, ITEM) IN THE VIEW, which is the whole point: an
+ * item-wide average would call Sneha's ₹300 a fall and RR's ₹330 a rise on the
+ * same Chicken Boneless, and both would be wrong.
+ *
+ * FIRST PURCHASES ARE EXCLUDED, not shown as a change from nothing. A row with
+ * no previous rate is a vendor's first bill for that item — real, and not a
+ * movement — so it is left out of a report whose entire subject is movement.
+ * The count of them is returned so the screen can say how much it is not
+ * showing rather than implying the list is everything.
+ */
+export async function getPriceMovements(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<{ rows: PriceMovementRow[]; firstPurchases: number }> {
+  return txn(async (tx) => {
+    const rows = await tx<PriceMovementRow[]>`
+      select vendor_name, item_code, item_name, purchase_unit,
+             bill_date::text as bill_date, bill_no,
+             qty::text as qty, rate::text as rate,
+             previous_rate::text as previous_rate,
+             previous_date::text as previous_date,
+             change_value::text as change_value,
+             change_pct::text as change_pct,
+             cost_of_change::text as cost_of_change
+      from price_movements
+      where restaurant_id = ${restaurantId}
+        and bill_date >= ${from}::date and bill_date <= ${to}::date
+        and previous_rate is not null
+        and change_value <> 0
+      -- WORST FIRST BY WHAT IT COST, not by percentage: a 40% rise on a
+      -- ₹20 item matters less than a 6% rise on the chicken, and the
+      -- ordering is the report's argument.
+      order by cost_of_change desc nulls last, bill_date desc`
+    const [firsts] = await tx<{ n: number }[]>`
+      select count(*)::int as n from price_movements
+      where restaurant_id = ${restaurantId}
+        and bill_date >= ${from}::date and bill_date <= ${to}::date
+        and previous_rate is null`
+    return { rows, firstPurchases: firsts?.n ?? 0 }
+  })
+}
+
+/**
+ * Dated deliveries of things still on the book, soonest first.
+ *
+ * THE VIEW PUBLISHES NO "TODAY" ON PURPOSE — `business_date()` reads settings
+ * and so answers only inside a tenant-announcing transaction, which would make
+ * a view that called it correct only while RLS happened to be filtering it.
+ * That is a rule holding by accident. The comparison is made here, against the
+ * app's own business day, and the caller passes it in.
+ *
+ * `on_hand_qty` IS THE ITEM'S TOTAL, not the batch's, because stock is a
+ * running quantity and there is no lot tracking. Callers must render this as a
+ * prompt to go and look, never as a claim about which goods are on the shelf.
+ */
+export async function getExpiringStock(
+  restaurantId: string,
+  today: string,
+  withinDays: number,
+): Promise<ExpiringStockRow[]> {
+  return tsql<ExpiringStockRow[]>`
+    select item_id, code, name, category, purchase_unit,
+           on_hand_qty::text as on_hand_qty,
+           issue_cost::text as issue_cost,
+           bill_date::text as bill_date,
+           expiry_date::text as expiry_date,
+           qty_received::text as qty_received,
+           vendor_name, bill_no
+    from expiring_stock
+    where restaurant_id = ${restaurantId}
+      -- make_interval(days => n) reads as a bare column called "days" to the
+      -- schema gate's scanner, and blinding it to that word would be wrong —
+      -- a table may legitimately have a column called days. Multiplying an
+      -- interval says the same thing with no named argument, so the SQL is
+      -- fixed rather than the gate taught to look away.
+      and expiry_date <= (${today}::date + (${withinDays} * interval '1 day'))
+    -- EXPIRED FIRST, then soonest. A date already past is not a warning, it is
+    -- a thing to go and throw away.
+    order by expiry_date asc, name asc`
 }

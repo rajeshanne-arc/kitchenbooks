@@ -55,6 +55,7 @@ export default function ItemEdit({
     brand: item.brand ?? '',
     gstRate: item.gst_rate ?? '',
     parLevel: item.par_level ?? '',
+    tracksExpiry: item.tracks_expiry === true,
     conversionFactor: item.conversion_factor,
     stockUnit: item.stock_unit ?? '',
     openingRate: item.opening_rate ?? '',
@@ -89,6 +90,7 @@ export default function ItemEdit({
         brand: f.brand.trim(),
         gstRate: f.gstRate.trim(),
         parLevel: f.parLevel.trim(),
+        tracksExpiry: f.tracksExpiry,
         conversionFactor: f.conversionFactor.trim(),
         stockUnit: f.stockUnit.trim(),
         openingRate: f.openingRate.trim(),
@@ -106,6 +108,7 @@ export default function ItemEdit({
           brand: i.brand ?? '',
           gstRate: i.gst_rate ?? '',
           parLevel: i.par_level ?? '',
+          tracksExpiry: i.tracks_expiry === true,
           conversionFactor: i.conversion_factor,
           stockUnit: i.stock_unit ?? '',
           openingRate: i.opening_rate ?? '',
@@ -276,6 +279,23 @@ export default function ItemEdit({
               className={`${inputCls} text-right font-mono tabular-nums`}
             />
           </Field>
+          <Wide>
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={f.tracksExpiry}
+                onChange={(e) => set('tracksExpiry', e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-rule text-emerald-700"
+              />
+              <span className="text-sm text-stone-700">
+                This item carries a printed expiry date
+                <span className="mt-0.5 block text-xs text-stone-500">
+                  Asked for on every bill line for this item, and on no others. Onions carry no printed date,
+                  and asking for one everywhere trains people to type anything.
+                </span>
+              </span>
+            </label>
+          </Wide>
           <Wide>
             <p className="rounded-lg border border-rule bg-stone-50 px-3 py-2 text-xs text-stone-600">
               {item.last_rate === null ? (

@@ -18,11 +18,13 @@ import ItemPicker from './ItemPicker'
 import SaveReveal from './SaveReveal'
 import { inputCls, numCls } from './ui'
 import { sectionHeadCls, selectCls } from '@/components/ui'
+import { priceMove } from '@/lib/price'
+import { fmtDate } from '@/lib/format'
 import { useBusinessToday } from '@/components/BusinessDay'
 
-type Line = { key: number; item: ItemSel | null; qty: string; rate: string; prefillRate: string | null }
+type Line = { key: number; item: ItemSel | null; qty: string; rate: string; prefillRate: string | null; expiryDate: string }
 
-const newLine = (key: number): Line => ({ key, item: null, qty: '', rate: '', prefillRate: null })
+const newLine = (key: number): Line => ({ key, item: null, qty: '', rate: '', prefillRate: null, expiryDate: '' })
 
 /** keep free typing but drop anything that can never be part of an amount */
 const sanitizeAmount = (raw: string) => {
@@ -35,9 +37,12 @@ const sanitizeAmount = (raw: string) => {
 export default function BillEntry({
   categories,
   units,
+  thresholdPct,
 }: {
   categories: Category[]
   units: Unit[]
+  /** settings.price_variance_threshold_pct, resolved on the server. */
+  thresholdPct: number
 }) {
   const businessToday = useBusinessToday()
   const [billDate, setBillDate] = useState(businessToday)
@@ -179,6 +184,7 @@ export default function BillEntry({
                 : { kind: 'new' as const, name: it.name.trim(), category: it.category, unit: it.unit },
           qty: l.qty.trim(),
           rate: l.rate.trim(),
+          expiryDate: l.expiryDate.trim(),
         }
       }),
       gstTotal: gst.trim() === '' ? '0' : gst.trim(),
@@ -260,6 +266,7 @@ export default function BillEntry({
         <div className="mt-1 divide-y divide-rule-soft">
           {lines.map((line, i) => (
             <LineRow
+              thresholdPct={thresholdPct}
               key={line.key}
               line={line}
               index={i}
@@ -385,6 +392,7 @@ function LineRow({
   units,
   vendorId,
   vendorName,
+  thresholdPct,
   patch,
   remove,
 }: {
@@ -394,16 +402,36 @@ function LineRow({
   units: Unit[]
   vendorId: string | null
   vendorName: string | null
+  /** settings.price_variance_threshold_pct — a restaurant's own idea of how
+   *  big a move is worth a word, not a rule about what a number means. */
+  thresholdPct: number
   patch: (p: Partial<Line>) => void
   remove: () => void
 }) {
   const q = parseQty(line.qty)
   const r = parseMoney(line.rate)
   const micro = q !== null && q > 0 && r !== null ? lineValueMicro(q, r) : null
-  const prefillP = line.prefillRate !== null ? decimalStringToPaise(line.prefillRate) : NaN
-  const deviates =
-    Number.isFinite(prefillP) && prefillP > 0 && r !== null && Math.abs(r - prefillP) / prefillP > 0.15
-  const deltaPct = deviates && r !== null ? Math.round(((r - prefillP) / prefillP) * 100) : 0
+  // THE OLD CHIP COMPARED ACROSS VENDORS, which is the one comparison that
+  // must never be made. It read `line.prefillRate` whatever its source, at a
+  // hardcoded 15% — so on an item this vendor had never billed it measured the
+  // typed rate against ANOTHER vendor's price and called a correct entry a
+  // rise. Measured: Chicken Boneless is ₹330 from RR and ₹300 from Sneha, so
+  // every Sneha bill for it would have been flagged. A warning that fires on
+  // correct entries is a warning people learn to dismiss, which costs more
+  // than never having built it.
+  //
+  // The rule is in lib/price.ts and refuses unless rate_source is 'vendor', so
+  // the cross-vendor comparison cannot be reintroduced by forgetting.
+  const hit = line.item?.kind === 'existing' ? line.item.hit : null
+  const move = priceMove({
+    typed: line.rate,
+    previous: hit?.rate_source === 'vendor' ? hit.prefill_rate : null,
+    previousDate: hit?.last_bought ?? null,
+    rateSource: hit?.rate_source ?? null,
+    qty: line.qty,
+    thresholdPct,
+    fmtDate,
+  })
 
   const unitName = line.item?.kind === 'existing' ? line.item.hit.unit_name : null
 
@@ -453,10 +481,34 @@ function LineRow({
             className={`${numCls} w-32 pl-7`}
           />
         </div>
-        {deviates && (
-          <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
-            usually {formatPaise(prefillP)} · {deltaPct > 0 ? '+' : ''}
-            {deltaPct}%
+        {/* ASKED ONLY WHERE THE ITEM CARRIES ONE. Onions have no printed
+            date, and a required field on every line trains people to type
+            anything — an invented date is worse than none, because the card
+            that reads it would then be confidently wrong. */}
+        {hit?.tracks_expiry === true && (
+          <label className="flex items-center gap-1.5">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Expires</span>
+            <input
+              type="date"
+              value={line.expiryDate}
+              onChange={(e) => patch({ expiryDate: e.target.value })}
+              className={`${numCls} w-36`}
+            />
+          </label>
+        )}
+        {/* INLINE, AND IT DOES NOT BLOCK. The price may genuinely have gone
+            up — the receiver is holding the bill and we are not. The job is
+            to stop somebody typing a number they would have questioned had
+            they noticed it. */}
+        {move !== null && (
+          <span
+            className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
+              move.direction === 'up'
+                ? 'border-amber-300 bg-amber-50 text-amber-800'
+                : 'border-emerald-300 bg-emerald-50 text-emerald-800'
+            }`}
+          >
+            {move.sentence}
           </span>
         )}
         <span className="ml-auto text-[15px] font-semibold tabular-nums text-stone-900">

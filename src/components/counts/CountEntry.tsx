@@ -19,6 +19,7 @@ import {
   inputCls,
   numCls,
   sectionHeadCls,
+  selectCls,
   tdCls,
   tdCodeCls,
   thCls,
@@ -38,12 +39,31 @@ export function FirstCountWarning({ days }: { days: number }) {
   )
 }
 
-export default function CountEntry({ items, historyDays }: { items: CountableItem[]; historyDays: number }) {
+export default function CountEntry({
+  items,
+  historyDays,
+  openCount = null,
+  progress = [],
+}: {
+  items: CountableItem[]
+  historyDays: number
+  /** A count somebody else started today and nobody has accepted. Joining it
+   *  rather than starting a second is the whole of shared counting: two rows
+   *  for one night would freeze the same book twice. */
+  openCount?: { id: string; entered_by: string | null; lines: number } | null
+  /** what each room still owes, so "done" is a fact rather than a feeling */
+  progress?: { location_id: string | null; location_name: string; items: number; counted: number; counters: string | null }[]
+}) {
   const businessToday = useBusinessToday()
   const { label } = useLang()
   const [countDate, setCountDate] = useState(businessToday)
   const [note, setNote] = useState('')
   const [filter, setFilter] = useState('')
+  // YOUR ROOM. The sheet already walks by storage location, so counting one
+  // room is a filter — not a new screen and not a new habit. Empty means the
+  // whole store, which is what one person counting alone wants.
+  const [locationId, setLocationId] = useState('')
+  const [joinOpen, setJoinOpen] = useState(openCount !== null)
   const [qtys, setQtys] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -51,9 +71,27 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
 
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase()
-    if (q === '') return items
-    return items.filter((i) => i.name.toLowerCase().includes(q) || i.code.toLowerCase().includes(q))
-  }, [items, filter])
+    const inRoom =
+      locationId === ''
+        ? items
+        : items.filter((i) => (locationId === 'none' ? i.location_id === null : i.location_id === locationId))
+    if (q === '') return inRoom
+    return inRoom.filter((i) => i.name.toLowerCase().includes(q) || i.code.toLowerCase().includes(q))
+  }, [items, filter, locationId])
+
+  /** The rooms, in walking order, taken from the items themselves — the sheet
+   *  is already sorted that way, so this needs no second source. */
+  const rooms = useMemo(() => {
+    const out: { id: string; name: string }[] = []
+    const seen = new Set<string>()
+    for (const i of items) {
+      const key = i.location_id ?? 'none'
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ id: key, name: i.location_name ?? 'Not placed yet' })
+    }
+    return out
+  }, [items])
 
   /**
    * THE SHEET WALKS THE STORE. `listCountableItems` orders by the location's
@@ -94,6 +132,8 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
     setError(null)
     try {
       const res = await saveCount({
+        countId: joinOpen && openCount !== null ? openCount.id : '',
+        locationId: locationId === '' || locationId === 'none' ? '' : locationId,
         countDate,
         note: note.trim(),
         lines: filled.map(([itemId, countedQty]) => ({ itemId, countedQty: countedQty.trim() })),
@@ -191,9 +231,86 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
     )
   }
 
+  const done = progress.filter((r) => r.items > 0 && r.counted === r.items)
+  const started = progress.filter((r) => r.counted > 0 && r.counted < r.items)
+  const untouched = progress.filter((r) => r.counted === 0 && r.items > 0)
+
   return (
     <div className="space-y-4">
       <FirstCountWarning days={historyDays} />
+
+      {/* SOMEBODY IS ALREADY COUNTING. Starting a second count for the same
+          night would freeze the same book twice and produce two variance sets
+          nobody could reconcile, so the choice is offered once, plainly, and
+          joining is the default. */}
+      {openCount !== null && (
+        <section className={cardCls}>
+          <Honesty verdict="a count is already open" compact>
+            {openCount.entered_by ?? 'Somebody'} started a count today and has entered {openCount.lines}{' '}
+            {openCount.lines === 1 ? 'line' : 'lines'}. Two people counting two rooms are doing ONE count —
+            joining theirs keeps one book and one set of variances.
+          </Honesty>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setJoinOpen(true)}
+              className={`min-h-[40px] rounded-xl px-3.5 text-sm font-semibold ${joinOpen ? 'bg-emerald-700 text-white' : 'border border-rule bg-cell text-stone-700'}`}
+            >
+              Join their count
+            </button>
+            <button
+              type="button"
+              onClick={() => setJoinOpen(false)}
+              className={`min-h-[40px] rounded-xl px-3.5 text-sm font-semibold ${!joinOpen ? 'bg-emerald-700 text-white' : 'border border-rule bg-cell text-stone-700'}`}
+            >
+              Start a separate one
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* WHAT EACH ROOM STILL OWES. "Not started" and "nothing to count" are
+          different facts, so a room with no stock is not listed as owed — and
+          the count is only finished when every room that HOLDS something is
+          covered. */}
+      {progress.length > 0 && joinOpen && openCount !== null && (
+        <section className={cardCls}>
+          <h2 className={sectionHeadCls}>Where the count has got to</h2>
+          <ul className="mt-2 space-y-1.5 text-[13px]">
+            {progress
+              .filter((r) => r.items > 0)
+              .map((r) => (
+                <li key={r.location_id ?? 'none'} className="flex flex-wrap items-baseline gap-x-2">
+                  <span
+                    aria-hidden
+                    className={`h-[11px] w-[11px] shrink-0 translate-y-[1px] rounded-[2px] border ${
+                      r.counted === r.items
+                        ? 'border-emerald-700 bg-emerald-700'
+                        : r.counted > 0
+                          ? 'border-amber-500 bg-amber-200'
+                          : 'border-dashed border-stone-400 bg-cell'
+                    }`}
+                  />
+                  <span className="font-medium text-stone-800">{r.location_name}</span>
+                  <span className="font-mono tabular-nums text-stone-600">
+                    {r.counted === r.items
+                      ? 'done'
+                      : r.counted === 0
+                        ? 'not started'
+                        : `${r.counted} of ${r.items}`}
+                  </span>
+                  {r.counters !== null && <span className="text-stone-400">{r.counters}</span>}
+                </li>
+              ))}
+          </ul>
+          <p className="mt-2 text-xs text-stone-500">
+            {untouched.length === 0 && started.length === 0
+              ? 'Every room holding stock has been covered.'
+              : `${done.length} done · ${started.length} part done · ${untouched.length} not started. The count is not complete until every room holding stock is covered.`}
+          </p>
+        </section>
+      )}
+
       <section className={cardCls}>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
@@ -205,7 +322,21 @@ export default function CountEntry({ items, historyDays }: { items: CountableIte
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" className={inputCls} maxLength={300} />
           </label>
         </div>
-        <label className="mt-3 block">
+        <label className="block">
+            {/* YOUR ROOM — a filter, not a new screen. The sheet already walks
+                in location order, so counting one room is choosing which part
+                of the walk is yours. */}
+            <span className={fieldLabelCls}>Which room are you counting?</span>
+            <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={selectCls}>
+              <option value="">The whole store</option>
+              {rooms.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="mt-3 block">
           <span className={fieldLabelCls}>{label('filter_items')}</span>
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="type to narrow the list" className={inputCls} />
         </label>

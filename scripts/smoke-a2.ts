@@ -7658,6 +7658,264 @@ async function run() {
     })
   })
 
+
+  await check('no SQL comment carries a backtick', async () => {
+    // THIRD TIME IN ONE SESSION, by the person who wrote the rule down. A
+    // backtick is not punctuation inside a template literal, it is the
+    // TERMINATOR — so putting one in a `-- comment` inside a tsql template
+    // ends the query mid-sentence and the rest is parsed as TypeScript. The
+    // error arrives far from the cause, and tsc does not always object: a
+    // build passed with one in place and only esbuild in this suite noticed.
+    //
+    // THE FIRST VERSION OF THIS GATE PASSED WITH A BACKTICK PRESENT, which is
+    // the joke and the lesson. It located each template by finding its opening
+    // tag and then its closing backtick with indexOf — and the injected
+    // backtick IS that closing one, so the offending line fell outside the
+    // slice and the scan saw a clean template. AN INSTRUMENT THAT LOCATES ITS
+    // SUBJECT BY THE DELIMITER IT IS HUNTING WILL BE DEFEATED BY IT.
+    //
+    // So it does not parse structure at all: it looks at LINES. A `--` is SQL
+    // (TypeScript comments are `//`), so any line where a backtick follows one
+    // is the fault, wherever it sits.
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir)) {
+        const q = `${dir}/${e}`
+        if (statSync(q).isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const offenders: string[] = []
+    let sqlComments = 0
+    for (const f of [...walk('src/server'), ...walk('src/app'), ...walk('src/lib')]) {
+      for (const line of readFileSync(f, 'utf8').split('\n')) {
+        const c = line.indexOf('--')
+        // a TypeScript comment, a decrement, or an em-dash sentence is not SQL
+        if (c === -1) continue
+        if (line.trimStart().startsWith('//') || line.trimStart().startsWith('*')) continue
+        sqlComments++
+        if (line.slice(c).includes('`')) offenders.push(`${f}: ${line.trim().slice(0, 76)}`)
+      }
+    }
+    assert.ok(sqlComments > 100, `only ${sqlComments} SQL comment lines seen — the matcher stopped matching`)
+    assert.deepEqual(
+      offenders,
+      [],
+      `a backtick in a SQL comment ends the template early:\n      ${offenders.join('\n      ')}`,
+    )
+    console.log(`      ${sqlComments} SQL comment lines, none carrying a backtick`)
+  })
+
+  /* -- price variance, shared counting, expiry --------------------------- */
+  console.log('\nprice variance, shared counting and expiry')
+
+  await check('a price move is measured against THIS vendor, or not at all', async () => {
+    const { priceMove, parsePriceThreshold, DEFAULT_PRICE_THRESHOLD_PCT } = await import('../src/lib/price')
+    const base = { qty: '10', thresholdPct: 10, fmtDate: (d: string) => d }
+
+    // THE ONE COMPARISON THAT MUST NEVER BE MADE. item_rates.prefill_rate is
+    // the last rate from ANY vendor; measured live, Chicken Boneless is Rs 330
+    // from RR and Rs 300 from Sneha, so comparing across them flags a correct
+    // entry as a 10% rise. The rule refuses on rate_source alone, so it cannot
+    // be reintroduced by a caller forgetting to check.
+    assert.equal(
+      priceMove({ ...base, typed: '330', previous: '300', previousDate: '2026-08-12', rateSource: 'any' }),
+      null,
+      "a cross-vendor rate was compared — 'any' must never produce a movement",
+    )
+    assert.equal(
+      priceMove({ ...base, typed: '330', previous: null, previousDate: null, rateSource: null }),
+      null,
+    )
+    // above the threshold, from the same vendor: said
+    const up = priceMove({ ...base, typed: '380', previous: '330', previousDate: '2026-08-12', rateSource: 'vendor' })
+    assert.ok(up !== null && up.direction === 'up')
+    assert.ok(up.sentence.includes('up 15%') && up.sentence.includes('2026-08-12'))
+    // AND THE COST ON THIS LINE, which is what turns a percentage into a
+    // decision: 10 units x Rs 50 = Rs 500.
+    assert.equal(up.costPaise, 50_000)
+    assert.ok(up.sentence.includes('500'), 'the sentence must say what the rise costs on this line')
+
+    // BELOW the threshold stays silent — a warning that fires on ordinary
+    // movement is a warning people learn to dismiss. The live 6.5% rise does
+    // NOT trip it, and appears in the report instead.
+    assert.equal(
+      priceMove({ ...base, typed: '330', previous: '310', previousDate: '2026-08-09', rateSource: 'vendor' }),
+      null,
+      'a 6.5% move tripped a 10% threshold',
+    )
+    const down = priceMove({ ...base, typed: '270', previous: '330', previousDate: '2026-08-12', rateSource: 'vendor' })
+    assert.ok(down !== null && down.direction === 'down', 'a fall is a movement too')
+
+    // the threshold is a SETTING and falls back rather than shouting
+    assert.equal(parsePriceThreshold(null), DEFAULT_PRICE_THRESHOLD_PCT)
+    assert.equal(parsePriceThreshold('  '), DEFAULT_PRICE_THRESHOLD_PCT)
+    assert.equal(parsePriceThreshold('0'), DEFAULT_PRICE_THRESHOLD_PCT, 'zero would fire on every line')
+    assert.equal(parsePriceThreshold('-5'), DEFAULT_PRICE_THRESHOLD_PCT)
+    assert.equal(parsePriceThreshold('7.5'), 7.5)
+
+    // and the bill line reads rate_source, not the bare prefill
+    const { readFileSync } = await import('node:fs')
+    const bill = readFileSync('src/components/BillEntry.tsx', 'utf8')
+    assert.ok(
+      bill.includes("hit?.rate_source === 'vendor' ? hit.prefill_rate : null"),
+      'the bill line compares against a prefill of unknown origin again',
+    )
+  })
+
+  await check('price_movements runs, and first purchases are not called changes', async () => {
+    const { getPriceMovements } = await import('../src/server/store-queries')
+    const { getRestaurant } = await import('../src/server/queries')
+    const r = await getRestaurant()
+    const { rows, firstPurchases } = await getPriceMovements(r.id, '2000-01-01', '2100-01-01')
+    for (const m of rows) {
+      assert.ok(m.previous_rate !== null, 'a row with no previous rate is not a movement')
+      assert.ok(Number(m.change_value) !== 0, 'a zero change is not a movement')
+    }
+    assert.ok(firstPurchases >= 0)
+    console.log(
+      `      ${rows.length} movement(s), ${firstPurchases} first purchase(s) excluded` +
+        (rows.length > 0
+          ? ` — worst: ${rows[0].vendor_name} ${rows[0].item_name} ${rows[0].previous_rate}->${rows[0].rate}, cost ${rows[0].cost_of_change}`
+          : ''),
+    )
+  })
+
+  await check('an expiry prompt is a prompt, and says so', async () => {
+    const { expiryState, daysUntil, expiryPrompt, NO_LOT_TRACKING } = await import('../src/lib/expiry')
+    assert.equal(daysUntil('2026-08-20', '2026-08-18'), 2)
+    assert.equal(daysUntil('2026-08-18', '2026-08-18'), 0)
+    assert.equal(daysUntil('2026-08-16', '2026-08-18'), -2)
+    // ACROSS A MONTH AND A YEAR END, because a date that is only ever tested
+    // mid-month is a date nobody has tested.
+    assert.equal(daysUntil('2026-09-01', '2026-08-31'), 1)
+    assert.equal(daysUntil('2027-01-01', '2026-12-31'), 1)
+    assert.equal(expiryState('2026-08-16', '2026-08-18'), 'expired')
+    assert.equal(expiryState('2026-08-18', '2026-08-18'), 'expiring', 'today is expiring, not expired')
+    assert.equal(expiryState('2026-08-24', '2026-08-18'), 'expiring')
+    assert.equal(expiryState('2026-09-30', '2026-08-18'), 'ok')
+
+    // THE WORDING IS THE FEATURE. Two facts joined by "and", never one clause:
+    // "a batch bought on the 5th expires tomorrow" is about a delivery we
+    // recorded; "4 litres is still on the book" is a running total. One clause
+    // would assert a link the data does not carry.
+    const say = expiryPrompt({
+      itemName: 'Milk', billDate: '2026-08-05', expiryDate: '2026-08-19',
+      onHand: '4', unit: 'litre', today: '2026-08-18', fmtDate: (d) => d,
+    })
+    assert.ok(say.includes('A batch of Milk'), 'the prompt must name a BATCH, not the stock')
+    assert.ok(say.includes('expires tomorrow'))
+    assert.ok(say.includes('still on the book'), 'the stock half must be stated as the book, not the shelf')
+    assert.ok(say.includes('go and look'), 'a prompt has to send somebody to look')
+    assert.ok(!/you are holding|you hold \d/i.test(say), 'the prompt claims which goods are on the shelf')
+    assert.ok(NO_LOT_TRACKING.includes('running quantity') && NO_LOT_TRACKING.includes('not statements'))
+
+    // and the card carries the limitation, not just the prompts
+    const { readFileSync } = await import('node:fs')
+    const page = readFileSync('src/app/store/page.tsx', 'utf8')
+    assert.ok(page.includes('NO_LOT_TRACKING') && page.includes('a prompt, not a fact'))
+  })
+
+  await check('an expiry date is asked for only where the item carries one', async () => {
+    // ON EVERY LINE WOULD TRAIN PEOPLE TO TYPE ANYTHING, and an invented date
+    // is worse than none: the card that reads it would be confidently wrong.
+    const { readFileSync } = await import('node:fs')
+    const bill = readFileSync('src/components/BillEntry.tsx', 'utf8')
+    assert.ok(bill.includes('hit?.tracks_expiry === true &&'), 'the bill asks for a date on every line')
+    // A FORM IS NEVER THE CHECK: the flag lives on the item and can change
+    // while a bill is open, so the refusal is in the transaction and names the
+    // ITEM rather than a line number.
+    const save = readFileSync('src/server/save-bill.ts', 'utf8')
+    assert.ok(save.includes('tracks_expiry = true'), 'the server no longer checks which items track expiry')
+    assert.ok(save.includes('carries a printed expiry date'), 'the refusal no longer names the item')
+    const idx = save.indexOf('carries a printed expiry date')
+    assert.ok(save.lastIndexOf('txn(async (tx)', idx) > -1, 'the check is outside the transaction')
+    // the view publishes no "today" — it would only be right while RLS filtered it
+    const { tsql: q } = await import('../src/lib/db')
+    const [v] = await q<{ d: string }[]>`select pg_get_viewdef('expiring_stock'::regclass, true) as d`
+    assert.ok(!/business_date|current_date|now\(\)/i.test(v.d), 'expiring_stock computes a today of its own')
+  })
+
+  await check('two people counting two rooms are doing ONE count', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/counts-actions.ts', 'utf8')
+    // JOINING, not starting a second: two rows for one night would freeze the
+    // same book twice and produce two variance sets nobody could reconcile.
+    assert.ok(src.includes('input.countId'), 'a count can no longer be joined')
+    assert.ok(src.includes('already been accepted into the book'), 'an accepted count can be added to')
+    // REFUSED BY NAME. "Line 4 is a duplicate" does not tell either counter
+    // which of them is in the wrong room.
+    assert.ok(src.includes('has already been counted in this count'), 'the duplicate refusal is gone')
+    assert.ok(src.includes('one of you is in the wrong room'), 'the refusal no longer says what it means')
+    // read INSIDE the transaction under the same advisory lock, or two phones
+    // saving at once both pass the check
+    const lock = src.indexOf('pg_advisory_xact_lock')
+    const dup = src.indexOf('already been counted in this count')
+    assert.ok(lock > -1 && dup > lock, 'the duplicate check runs before the lock')
+    // and the line records WHO
+    assert.ok(src.includes("'counted_by'") || src.includes('counted_by)'), 'lines no longer record who counted them')
+
+    // STILL BLIND — and the assertion is on the DATA, not on the file. The
+    // reveal after save legitimately prints book_qty (that is the whole point
+    // of the reveal), so a file-wide grep cries wolf on correct code. The
+    // structural guarantee is that CountableItem does not CARRY the book at
+    // all, so the entry screen cannot leak what it never received.
+    const types = readFileSync('src/lib/types.ts', 'utf8')
+    const ci = types.slice(types.indexOf('export type CountableItem'), types.indexOf('export type SaveCountInput'))
+    for (const leak of ['book_qty', 'on_hand_qty']) {
+      assert.ok(!ci.includes(leak), `CountableItem carries ${leak} — the entry sheet could show the book`)
+    }
+    const cq = readFileSync('src/server/counts-queries.ts', 'utf8')
+    const listFn = cq.slice(cq.indexOf('export async function listCountableItems'), cq.indexOf('export async function getIssueHistoryDays'))
+    for (const leak of ['on_hand_qty', 'book_qty']) {
+      assert.ok(!listFn.includes(`as ${leak}`), `the count sheet selects ${leak} — a blind count is not blind`)
+    }
+  })
+
+  await check('PROBE — a second counter is refused by name, and progress is by room', async () => {
+    await onProbe(async () => {
+      const { txn } = await import('../src/lib/db')
+      const { getRestaurant } = await import('../src/server/queries')
+      const r = await getRestaurant()
+      const t = r.id
+      const out: string[] = []
+      await txn(async (tx) => {
+        const [loc] = await tx<{ id: string }[]>`insert into storage_locations (restaurant_id, name, kind, sort_order) values (${t},'Zz Cold Room','chilled',99) returning id`
+        const [i1] = await tx<{ id: string }[]>`insert into items (restaurant_id, code, name, category, purchase_unit, storage_location_id) values (${t},'ZZ-601','Zz Count A','PLT','kg',${loc.id}) returning id`
+        await tx`insert into items (restaurant_id, code, name, category, purchase_unit, storage_location_id) values (${t},'ZZ-602','Zz Count B','PLT','kg',${loc.id})`
+        const [c] = await tx<{ id: string }[]>`insert into stock_counts (restaurant_id, count_date, entered_by) values (${t},'2099-05-01'::date,'anita') returning id`
+        await tx`insert into stock_count_lines (restaurant_id, count_id, item_id, counted_qty, book_qty, unit_cost, counted_by) values (${t},${c.id},${i1.id},5,0,0,'anita')`
+
+        // THE SECOND COUNTER, on the same item: refused, and the refusal names
+        // the item and who already counted it.
+        const dup = await tx<{ name: string; counted_by: string | null }[]>`
+          select i.name, l.counted_by from stock_count_lines l
+          join items i on i.id = l.item_id
+          where l.restaurant_id=${t} and l.count_id=${c.id} and l.item_id = any(${[i1.id]}::uuid[])`
+        assert.equal(dup.length, 1, 'the duplicate query found nothing to refuse on')
+        assert.equal(dup[0].name, 'Zz Count A')
+        assert.equal(dup[0].counted_by, 'anita', 'the line does not record who counted it')
+        out.push(`second counter refused: "${dup[0].name} has already been counted by ${dup[0].counted_by}"`)
+
+        const { getCountProgress } = await import('../src/server/counts-queries')
+        // ON THE LENT HANDLE: a tsql here would open a second connection that
+        // cannot see this uncommitted fixture, find nothing, and report a tick.
+        const prog = await getCountProgress(t, c.id, tx as never)
+        const room = prog.find((x) => x.location_name === 'Zz Cold Room')
+        assert.ok(room !== undefined, 'the room is not in the progress list')
+        assert.equal(room.items, 2)
+        assert.equal(room.counted, 1, 'progress must count lines in THIS count only')
+        assert.equal(room.counters, 'anita')
+        out.push(`progress: ${room.location_name} ${room.counted} of ${room.items}, by ${room.counters}`)
+        throw new Error('ROLLBACK-COUNT-PROBE')
+      }).catch((e: unknown) => {
+        if ((e as Error).message !== 'ROLLBACK-COUNT-PROBE') throw e
+      })
+      for (const l of out) console.log(`      ${l}`)
+    })
+  })
+
   console.log(
     failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )

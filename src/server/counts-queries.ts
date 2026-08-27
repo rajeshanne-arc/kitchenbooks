@@ -127,3 +127,73 @@ export async function getSnapshot(restaurantId: string, snapDate: string): Promi
     where restaurant_id = ${restaurantId} and snap_date = ${snapDate}
     order by section_code asc, code asc`
 }
+
+/**
+ * A COUNT IN PROGRESS, and what each room still owes.
+ *
+ * The sheet already walks by storage location, so two people counting two
+ * rooms is a FILTER and an ATTRIBUTION rather than a new screen. This is the
+ * other half: what has been covered, by whom, and what has not been started.
+ *
+ * "NOT STARTED" AND "NOTHING TO COUNT" ARE DIFFERENT FACTS, and the count is
+ * only complete when every location that HOLDS SOMETHING is covered. A room
+ * with no stock in it needs nobody to walk it; a room with stock and no lines
+ * is the reason a count is not finished. Items nobody has placed are their own
+ * row, because on a physical walk they are exactly what gets missed.
+ */
+export async function getCountProgress(
+  restaurantId: string,
+  countId: string,
+  // OPTIONAL HANDLE, the getClosePrefill shape — so a gate can build a
+  // fixture, run THIS query against it and roll back, rather than asserting
+  // against a hand-written copy that cannot test the real one.
+  db: typeof tsql = tsql,
+): Promise<{
+  location_id: string | null
+  location_name: string
+  items: number
+  counted: number
+  counters: string | null
+}[]> {
+  return db<{
+    location_id: string | null
+    location_name: string
+    items: number
+    counted: number
+    counters: string | null
+  }[]>`
+    select i.storage_location_id as location_id,
+           coalesce(l.name, 'Not placed yet') as location_name,
+           count(*)::int as items,
+           count(scl.id)::int as counted,
+           nullif(string_agg(distinct scl.counted_by, ', '), '') as counters
+    from items i
+    left join storage_locations l
+      on l.restaurant_id = i.restaurant_id and l.id = i.storage_location_id
+    left join stock_count_lines scl
+      on scl.restaurant_id = i.restaurant_id and scl.item_id = i.id and scl.count_id = ${countId}
+    where i.restaurant_id = ${restaurantId} and i.status = 'active'
+    group by i.storage_location_id, l.name, l.sort_order
+    -- WALKING ORDER, the same as the sheet. Unplaced items sink to the bottom
+    -- and are named there rather than hidden.
+    order by (i.storage_location_id is null) asc, l.sort_order asc nulls last, l.name asc`
+}
+
+/** The count somebody else may still be adding to: the most recent one for
+ *  today that nobody has accepted. Null when there is none, which is the
+ *  ordinary state and means the next save starts one. */
+export async function getOpenCount(
+  restaurantId: string,
+  countDate: string,
+): Promise<{ id: string; count_date: string; entered_by: string | null; lines: number } | null> {
+  const rows = await tsql<{ id: string; count_date: string; entered_by: string | null; lines: number }[]>`
+    select c.id, c.count_date::text as count_date, c.entered_by,
+           (select count(*)::int from stock_count_lines l where l.count_id = c.id) as lines
+    from stock_counts c
+    where c.restaurant_id = ${restaurantId}
+      and c.count_date = ${countDate}::date
+      and c.accepted_at is null
+    order by c.created_at desc
+    limit 1`
+  return rows[0] ?? null
+}

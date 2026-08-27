@@ -42,8 +42,18 @@ export type ItemHitExisting = {
    *  vendor's own last bill; 'any' = the last bill from anybody, which is a
    *  weaker claim and is labelled as one; null = no rate history at all. */
   rate_source: 'vendor' | 'any' | null
+  /** WHEN this vendor last billed it, so a price warning can name the day it
+   *  is comparing against. Only ever set alongside rate_source 'vendor':
+   *  a movement is only a movement against the SAME vendor's own last price,
+   *  and a date beside a cross-vendor rate would dress up a comparison that
+   *  must not be made at all. */
+  last_bought: string | null
   /** this vendor has supplied it before — what puts it in the scoped group */
   from_vendor: boolean
+  /** whether this item carries a printed expiry date. The bill line asks for
+   *  one only when it does — asking on every line trains people to type
+   *  anything, and an invented date is worse than none. */
+  tracks_expiry: boolean
 }
 
 export type ItemHitStarter = {
@@ -74,6 +84,7 @@ export type SaveBillInput = {
   purchaseOrderId?: string
   vendor: { kind: 'existing'; id: string } | { kind: 'new'; name: string; category: string }
   lines: {
+    expiryDate?: string
     item:
       | { kind: 'existing'; id: string }
       | { kind: 'starter'; starterId: number; unit: string }
@@ -250,6 +261,9 @@ export type ItemListRow = {
 }
 
 export type ItemDetail = {
+  /** PER ITEM, because onions carry no printed date — asking for one on
+   *  every line trains people to type anything. */
+  tracks_expiry?: boolean
   id: string
   code: string
   name: string
@@ -316,6 +330,7 @@ export type UpdateVendorInput = {
 /** Every column-granted item field. yield_pct is absent because its UPDATE
  *  grant was revoked — yield lives on the recipe LINE now. */
 export type UpdateItemInput = {
+  tracksExpiry?: boolean
   name: string
   brand: string
   gstRate: string
@@ -1649,6 +1664,13 @@ export type SaveLocationInput = {
 }
 
 export type SaveCountInput = {
+  /** Join a count already in progress rather than starting a second one. Two
+   *  people counting two rooms are doing ONE count; two rows for one night
+   *  would freeze the same book twice and produce two variance sets. */
+  countId?: string
+  /** the room this person walked — recorded so the sheet can say what is
+   *  still to do, and so a line can say who counted it */
+  locationId?: string
   countDate: string
   note: string
   lines: { itemId: string; countedQty: string }[]
@@ -2595,6 +2617,7 @@ export type CreateVendorResult = { ok: true; vendor: VendorDetail } | { ok: fals
  *  INSERT — a second trip to the edit page to set a reorder level was a
  *  trip nobody made. yield_pct is absent: yield lives on the recipe line. */
 export type CreateItemInput = {
+  tracksExpiry?: boolean
   name: string
   category: string
   purchaseUnit: string
@@ -3561,3 +3584,47 @@ export type Letterhead = {
 export type DocumentStyle = 'classic' | 'compact' | 'plain'
 
 export const DOCUMENT_STYLES: DocumentStyle[] = ['classic', 'compact', 'plain']
+
+/** `price_movements` — what a vendor's price did, bill over bill.
+ *
+ *  `previous_rate` is NULL on a first-ever purchase from that vendor: there is
+ *  nothing to compare and the row says so rather than reading as a change from
+ *  zero. `cost_of_change` is qty × the difference — what the move actually
+ *  cost on THAT delivery, which is the figure that turns a percentage into a
+ *  decision. */
+export type PriceMovementRow = {
+  vendor_name: string
+  item_code: string
+  item_name: string
+  purchase_unit: string
+  bill_date: string
+  bill_no: string | null
+  qty: string
+  rate: string
+  previous_rate: string | null
+  previous_date: string | null
+  change_value: string | null
+  change_pct: string | null
+  cost_of_change: string | null
+}
+
+/** `expiring_stock` — a dated delivery of an item the restaurant still holds.
+ *
+ *  `on_hand_qty` is the ITEM's running total, NOT this batch's: there is no
+ *  lot tracking, and the view is honest about that by construction rather than
+ *  pretending to a per-batch figure it cannot compute. Every surface reading
+ *  this must phrase it as a prompt to go and look. */
+export type ExpiringStockRow = {
+  item_id: string
+  code: string
+  name: string
+  category: string
+  purchase_unit: string
+  on_hand_qty: string
+  issue_cost: string | null
+  bill_date: string
+  expiry_date: string
+  qty_received: string
+  vendor_name: string
+  bill_no: string | null
+}

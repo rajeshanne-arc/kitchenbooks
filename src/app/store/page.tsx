@@ -24,6 +24,8 @@ import {
 import Honesty from '@/components/Honesty'
 import { countUnplacedItems } from '@/server/store-queries'
 import { countVendorsWithoutPhone } from '@/server/po-queries'
+import { getExpiringStock } from '@/server/store-queries'
+import { EXPIRING_WITHIN_DAYS, expiryPrompt, expiryState, NO_LOT_TRACKING } from '@/lib/expiry'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import PeriodControl from '@/components/dashboard/PeriodControl'
@@ -90,11 +92,12 @@ export default async function StoreHome({
   // checking out connections alongside this page — ten at once is already the
   // most this screen may safely ask for. These two only decide whether the
   // cards above are answerable, so they can wait a round trip.
-  const [vendors, anyIndent, placement, phones] = await Promise.all([
+  const [vendors, anyIndent, placement, phones, expiring] = await Promise.all([
     listActiveVendors(restaurant.id),
     listIndents(restaurant.id, 1),
     countUnplacedItems(restaurant.id),
     countVendorsWithoutPhone(restaurant.id),
+    getExpiringStock(restaurant.id, today, EXPIRING_WITHIN_DAYS),
   ])
 
   const purchaseTotal = purchases.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
@@ -181,11 +184,19 @@ export default async function StoreHome({
               </p>
             </Link>
           )}
+          {/* AN ALERT CARRYING AN ACTION BEATS ONE CARRYING INFORMATION.
+              "Chicken is below par" is a fact; "Chicken is below par — raise
+              an order" is a decision. The tile said the fact and led to a
+              list; Raise PO now exists, so the action half is real and the
+              tile names it. The destination is unchanged — the list is where
+              the per-vendor Raise PO buttons live, and picking WHICH vendor is
+              a decision the tile cannot make. */}
           {reorderCount > 0 && (
             <Link href="/store/stock/reorder" className={`${cardCls} block border-amber-300 bg-amber-50/40`}>
               <h2 className={sectionHeadCls}>To reorder</h2>
               <p className={`mt-1 text-[26px] ${heroNumCls} text-amber-900`}>{reorderCount}</p>
               <p className="text-xs text-amber-900">at or below their reorder level</p>
+              <p className="mt-1.5 text-xs font-semibold text-emerald-700">Raise a purchase order →</p>
             </Link>
           )}
           {openIndents.length > 0 && (
@@ -364,6 +375,58 @@ export default async function StoreHome({
           )}
         </section>
       </div>
+
+      {/* DATED DELIVERIES OF THINGS STILL ON THE BOOK.
+          THE LIMITATION IS THE FEATURE, and it is on the screen in these
+          terms: there is no LOT tracking. Stock is a running quantity, so the
+          app knows the restaurant holds 4 litres and cannot know whether they
+          are the ones bought on the 5th. Every line here is therefore a PROMPT
+          to go and look at a date, never a claim about what is on the shelf.
+          Say it the other way round and the card is wrong twice and then
+          ignored forever. */}
+      {expiring.length > 0 && (
+        <section className={`${cardCls} mt-3`}>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>Dates worth checking</h2>
+            <span className="font-mono text-[11px] text-stone-400">expiring_stock</span>
+          </div>
+          <ul className="mt-2 space-y-2">
+            {expiring.slice(0, 8).map((e, i) => {
+              const state = expiryState(e.expiry_date, today)
+              return (
+                <li key={`${e.item_id}-${e.bill_date}-${i}`} className="flex items-start gap-2 text-[13px]">
+                  <span
+                    aria-hidden
+                    className={`mt-[3px] h-[11px] w-[11px] shrink-0 rounded-[2px] border ${
+                      state === 'expired' ? 'border-red-700 bg-red-600' : 'border-amber-500 bg-amber-300'
+                    }`}
+                  />
+                  <span className={state === 'expired' ? 'text-red-800' : 'text-stone-700'}>
+                    {expiryPrompt({
+                      itemName: e.name,
+                      billDate: e.bill_date,
+                      expiryDate: e.expiry_date,
+                      onHand: e.on_hand_qty,
+                      unit: e.purchase_unit,
+                      today,
+                      fmtDate,
+                    })}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+          {expiring.length > 8 && (
+            <p className="mt-2 text-xs text-stone-500">and {expiring.length - 8} more.</p>
+          )}
+          <div className="mt-3">
+            <Honesty verdict="a prompt, not a fact">
+              {NO_LOT_TRACKING} Full batch tracking is what a pharmacy needs; a kitchen turning fresh produce
+              in days does not, and building it would put a date on every issue line for the rest of time.
+            </Honesty>
+          </div>
+        </section>
+      )}
 
       {/* READINESS — things that are empty until somebody does them, and that
           block nothing until the day they matter. An empty list here is never

@@ -1,5 +1,7 @@
 import BillEntry from '@/components/BillEntry'
 import { getMasters, getRestaurant } from '@/server/queries'
+import { getSettingValue } from '@/server/settings'
+import { parsePriceThreshold } from '@/lib/price'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
@@ -7,11 +9,13 @@ export const dynamic = 'force-dynamic'
 export default async function BillPage() {
   let restaurantName: string
   let categories, units
+  let thresholdPct = 10
   try {
     const [restaurant, masters] = await Promise.all([getRestaurant(), getMasters()])
     restaurantName = restaurant.name
     categories = masters.categories
     units = masters.units
+    thresholdPct = parsePriceThreshold(await getSettingValue(restaurant.id, 'price_variance_threshold_pct'))
   } catch (e) {
     console.error('bootstrap failed', e)
     return (
@@ -33,7 +37,7 @@ export default async function BillPage() {
       </header>
       <div className="mx-auto max-w-2xl px-4 sm:px-6">
       </div>
-      <BillEntry categories={categories} units={units} />
+      <BillEntry categories={categories} units={units} thresholdPct={thresholdPct} />
     </>
   )
 }

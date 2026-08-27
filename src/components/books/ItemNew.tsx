@@ -41,6 +41,7 @@ export default function ItemNew({
     conversionFactor: '',
     gstRate: '',
     parLevel: '',
+    tracksExpiry: false,
     reorderLevel: '',
     storageLocationId: '',
     defaultVendorId: '',
@@ -81,6 +82,7 @@ export default function ItemNew({
           conversionFactor: '',
           gstRate: '',
           parLevel: '',
+          tracksExpiry: false,
           reorderLevel: '',
           storageLocationId: '',
           defaultVendorId: '',
@@ -286,6 +288,21 @@ export default function ItemNew({
                   inputMode="decimal"
                   className={`${numCls} w-full text-right font-mono tabular-nums`}
                 />
+              </label>
+              <label className="mt-3 flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={x.tracksExpiry}
+                  onChange={(e) => setX((v) => ({ ...v, tracksExpiry: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 rounded border-rule text-emerald-700"
+                />
+                <span className="text-sm text-stone-700">
+                  This item carries a printed expiry date
+                  <span className="mt-0.5 block text-xs text-stone-500">
+                    Asked for on every bill line for this item, and on no others. Onions carry no printed
+                    date, and asking for one everywhere trains people to type anything.
+                  </span>
+                </span>
               </label>
               <Wide>
                 <label className="block">

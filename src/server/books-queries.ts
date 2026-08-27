@@ -199,6 +199,7 @@ export async function getItemDetail(restaurantId: string, id: string): Promise<I
            i.opening_rate::text as opening_rate,
            i.gst_rate::text as gst_rate,
            i.par_level::text as par_level,
+           i.tracks_expiry,
            i.brand, i.status, i.created_at::text as created_at,
            i.reorder_level::text as reorder_level,
            i.default_vendor_id, dv.name as default_vendor_name,

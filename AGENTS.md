@@ -6553,3 +6553,130 @@ restaurant AND this vendor AND be past draft, or a delivery would be filed
 against a document nobody sent them. A bill moves `sent → received`, the way an
 issue flips an indent — and only a person closes an order, because only a person
 knows nothing more is coming.
+
+## PRICE VARIANCE, SHARED COUNTING, EXPIRY — and the order they were built in
+
+**The order was by how little new habit each demands**, which is the right
+axis when 32 activity rows in 13 days is the usage. Price variance appears
+while somebody is ALREADY entering a bill — nothing to remember, nothing to
+open — so it went first. Shared counting is small only because storage
+locations already exist. Expiry needs a new field on the item master and a new
+one at receipt, so it went last.
+
+### THE INLINE PRICE WARNING ALREADY EXISTED, AND COMPARED ACROSS VENDORS
+
+Found while building, not reported: `BillEntry` carried a chip firing at a
+hardcoded 15% against `line.prefillRate` **whatever its source** — and
+`prefill_rate` falls back to `item_rates`, the last rate from ANY vendor. So on
+an item this vendor had never billed, it measured the typed rate against
+somebody else's price. Measured: Chicken Boneless is ₹330 from RR and ₹300 from
+Sneha, so **every Sneha bill for it would have been flagged as a 10% fall.**
+
+> A warning that fires on correct entries is a warning people learn to dismiss,
+> which costs more than never having built it.
+
+The rule is in `src/lib/price.ts` and **refuses unless `rate_source` is
+'vendor'**, so the cross-vendor comparison cannot be reintroduced by a caller
+forgetting to check. The threshold is `settings.price_variance_threshold_pct`
+(10), and a zero or malformed value falls back rather than firing on every
+line.
+
+**The inline nudge and the report are deliberately different.** The threshold
+exists so a form does not cry wolf at somebody mid-entry; `/store/books/prices`
+shows EVERY movement, because it is read deliberately by somebody asking what
+changed, and a filtered report would hide the slow drift that never trips
+anything. Live proof: RR Chicken went ₹310 → ₹330 on Chicken Boneless — **6.5%,
+under the threshold, invisible until the report existed, and it cost ₹200 on
+one delivery.** Ordered by `cost_of_change`, not percentage: a 40% rise on a
+₹20 item matters less than 6% on the chicken.
+
+### SHARED COUNTING IS A FILTER AND AN ATTRIBUTION, NOT A SCREEN
+
+The sheet already walks in storage-location order, so two people counting two
+rooms is choosing which part of the walk is yours. What that needed:
+
+- **Joining a count, not starting a second.** Two rows for one night would
+  freeze the same book twice and produce two variance sets nobody could
+  reconcile. An ACCEPTED count refuses new lines — accepting has already
+  written `stock_adjustments` from the frozen book.
+- **`counted_by` from the session**, and the duplicate refusal **names the item
+  and who counted it**: *"Zz Count A has already been counted by anita — if you
+  are both counting it, one of you is in the wrong room."* "Line 4 is a
+  duplicate" tells neither of them which. Read INSIDE the transaction under the
+  same advisory lock, or two phones saving at once both pass.
+- **Progress by room**, where "not started" and "nothing to count" are
+  different facts: the count is finished when every room HOLDING stock is
+  covered, and a room with nothing in it needs nobody to walk it.
+
+**Still blind, and asserted on the DATA rather than the file.** The first
+version of that assertion grepped `CountEntry.tsx` for `book_qty` and failed on
+correct code — the REVEAL after save legitimately prints it. The structural
+guarantee is that `CountableItem` does not CARRY the book, so the entry screen
+cannot leak what it never received.
+
+### EXPIRY: THE LIMITATION IS THE FEATURE
+
+**KitchenBooks has no LOT tracking and the card says so in those terms.** Stock
+is a running quantity: the app knows the restaurant holds 4 litres and cannot
+know whether they are the ones bought on the 5th. So the sentence is
+
+> *"A batch of Milk bought on 5 Aug expires tomorrow, and 4 litre of it is
+> still on the book — go and look."*
+
+and never *"you are holding 4 litres that expire tomorrow."* The first is a
+PROMPT; the second is a claim about which physical goods are on the shelf, and
+this app has no basis for it. **Two facts joined by "and", never one clause** —
+one clause would assert a link the data does not carry. A prompt that sends
+somebody to look is useful and true; a claim that is wrong twice teaches people
+the card is noise.
+
+Full lot tracking is what a pharmacy needs. A kitchen turning fresh produce in
+days does not, and building it would put a date on **every issue line** for the
+rest of time — a cost the store manager pays forever for precision nobody is
+asking for.
+
+**`tracks_expiry` is PER ITEM** because onions carry no printed date, and
+asking on every line trains people to type anything — an invented date is worse
+than none, because the card reading it would then be confidently wrong. The
+requirement is checked in the transaction against the item's own flag (a form
+is never the check) and the refusal **names the item**, not a line number: the
+receiver is holding a bill with names on it.
+
+**`expiring_stock` deliberately publishes no "today".** `business_date()` reads
+settings and answers only inside a tenant-announcing transaction, so a view
+calling it would be correct *only while RLS happened to be filtering it* — a
+rule holding by accident. The app compares against its own business day.
+
+### PROACTIVE PUSH: NOT BUILT, and the cheaper step taken instead
+
+An alert carrying an ACTION beats one carrying information — "Chicken is below
+par" is a fact, "Chicken is below par — raise an order" is a decision — and
+Raise PO now exists, so the action half is real. But **delivery is blocked on
+the same thing it has always been blocked on**: nobody opens the app. A
+notification into an app nobody has installed goes nowhere.
+
+So the badges were made action-shaped first, which is in-app and free.
+`stockBadgeHref` **already landed on the condition that was firing** — verified
+rather than assumed — and the reorder tile now names the action rather than
+only the count. wa.me already tests whether vendors respond; the same evidence
+should decide whether push is worth paying for.
+
+## AN INSTRUMENT THAT LOCATES ITS SUBJECT BY THE DELIMITER IT IS HUNTING WILL BE DEFEATED BY IT
+
+**A backtick inside a SQL comment inside a template literal, three times in one
+session, by the person who wrote that rule down.** It is not punctuation there,
+it is the TERMINATOR: the query ends mid-sentence and the rest parses as
+TypeScript, so the error lands far from the cause — and `tsc` does not reliably
+object, a build passed with one in place and only esbuild noticed.
+
+A rule its author breaks twice in a day is a wish, so it is a gate now. **And
+the first version of that gate passed with a backtick present**, which is the
+lesson worth more than the rule: it located each template by finding the
+opening tag and then its closing backtick with `indexOf` — and the injected
+backtick *is* that closing one, so the offending line fell outside the slice
+and the scan reported a clean template.
+
+The rewrite parses no structure at all. `--` is SQL (TypeScript comments are
+`//`), so any line where a backtick follows one is the fault, wherever it sits.
+139 SQL comment lines scanned; proved by injecting one and watching it name the
+file and the line.

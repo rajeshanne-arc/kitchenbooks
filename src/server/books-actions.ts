@@ -297,6 +297,10 @@ const ItemSchema = z.object({
   brand: z.string().trim().max(80),
   gstRate: z.union([z.literal(''), numStr(2)]),
   parLevel: z.union([z.literal(''), numStr(3)]),
+  /** PER ITEM, because onions carry no printed date. Asking for one on every
+   *  line trains people to type anything, and a date somebody invented to get
+   *  past a required field is worse than no date at all. */
+  tracksExpiry: z.boolean().optional(),
   conversionFactor: numStr(4),
   stockUnit: z.string().trim().max(16),
   openingRate: z.union([z.literal(''), numStr(2)]),
@@ -338,6 +342,7 @@ export async function updateItem(id: string, raw: UpdateItemInput): Promise<Upda
         brand = ${trimmedOrNull(input.brand)},
         gst_rate = ${input.gstRate === '' ? null : input.gstRate}::numeric,
         par_level = ${input.parLevel === '' ? null : input.parLevel}::numeric,
+        tracks_expiry = ${input.tracksExpiry === true},
         conversion_factor = ${input.conversionFactor}::numeric,
         stock_unit = ${input.stockUnit === '' ? null : input.stockUnit},
         opening_rate = ${input.openingRate === '' ? null : input.openingRate}::numeric,
@@ -442,6 +447,10 @@ const CreateItemSchema = z.object({
   conversionFactor: z.union([z.literal(''), numStr(4)]),
   gstRate: z.union([z.literal(''), numStr(2)]),
   parLevel: z.union([z.literal(''), numStr(3)]),
+  /** PER ITEM, because onions carry no printed date. Asking for one on every
+   *  line trains people to type anything, and a date somebody invented to get
+   *  past a required field is worse than no date at all. */
+  tracksExpiry: z.boolean().optional(),
   reorderLevel: z.union([z.literal(''), numStr(3)]),
   defaultVendorId: z.union([z.literal(''), z.string().regex(UUID)]),
   itemType: z.string().trim().max(40),
@@ -474,7 +483,7 @@ export async function createItem(raw: CreateItemInput): Promise<CreateItemResult
       const icode = `${input.category}-${String(n + 1).padStart(3, '0')}`
       const [row] = await tx<{ id: string }[]>`
         insert into items (restaurant_id, code, name, category, purchase_unit, opening_rate, brand,
-                           stock_unit, conversion_factor, gst_rate, par_level, reorder_level,
+                           stock_unit, conversion_factor, gst_rate, par_level, reorder_level, tracks_expiry,
                            default_vendor_id, item_type, notes, storage_location_id)
         values (${rid}, ${icode}, ${input.name}, ${input.category}, ${input.purchaseUnit},
                 ${input.openingRate === '' ? null : input.openingRate}::numeric, ${trimmedOrNull(input.brand)},
@@ -483,6 +492,7 @@ export async function createItem(raw: CreateItemInput): Promise<CreateItemResult
                 ${input.gstRate === '' ? null : input.gstRate}::numeric,
                 ${input.parLevel === '' ? null : input.parLevel}::numeric,
                 ${input.reorderLevel === '' ? null : input.reorderLevel}::numeric,
+                ${input.tracksExpiry === true},
                 ${input.defaultVendorId === '' ? null : input.defaultVendorId},
                 ${trimmedOrNull(input.itemType)}, ${trimmedOrNull(input.notes)},
                 ${await assertLocation(rid, input.storageLocationId, tx as unknown as typeof tsql)})

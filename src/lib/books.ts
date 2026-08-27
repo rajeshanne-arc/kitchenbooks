@@ -21,6 +21,10 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
     // the same group — the duplication test says one mount per group, and the
     // top-level tab is the one that wins. /store/books/stock now redirects.
     { href: '/store/books/purchases', label: 'Daily purchases' },
+    // WHAT A VENDOR'S PRICE DID, bill over bill. Beside Daily purchases
+    // because they answer the same question from two sides — what we spent,
+    // and what changed underneath it.
+    { href: '/store/books/prices', label: 'Price moves' },
     // what the vendor billed and did not deliver, and how each vendor does
     // on that over time — the same question from the line and from the year
     { href: '/store/books/shorts', label: 'Shorts' },

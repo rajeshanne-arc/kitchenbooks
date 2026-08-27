@@ -122,7 +122,8 @@ export async function searchItems(
           select i.id, i.code, i.name, i.category, c.name as category_name,
                  i.purchase_unit, u.name as unit_name,
                  v.last_rate::text as prefill_rate,
-                 'vendor' as rate_source, true as from_vendor
+                 v.last_bought::text as last_bought,
+                 'vendor' as rate_source, true as from_vendor, i.tracks_expiry
           from vendor_supplied_items v
           join items i on i.id = v.item_id
           join categories c on c.code = i.category
@@ -141,7 +142,13 @@ export async function searchItems(
     select i.id, i.code, i.name, i.category, c.name as category_name,
            i.purchase_unit, u.name as unit_name, r.prefill_rate::text as prefill_rate,
            case when r.prefill_rate is null then null else 'any' end as rate_source,
-           false as from_vendor
+           -- NULL BY CONSTRUCTION on this branch: item_rates.prefill_rate is
+           -- the last rate from ANY vendor, and a price movement is only a
+           -- movement against the same vendor's own last price. There is no
+           -- date to offer here, and that absence is what stops the bill form
+           -- comparing across vendors at all.
+           null::text as last_bought,
+           false as from_vendor, i.tracks_expiry
     from items i
     join categories c on c.code = i.category
     join units u on u.code = i.purchase_unit

@@ -46,6 +46,11 @@ const Input = z.object({
   lines: z
     .array(
       z.object({
+        /** Required ONLY where the item carries a printed date — checked
+         *  against items.tracks_expiry inside the transaction, because a form
+         *  is never the check and an item's flag can change between the
+         *  screen loading and the save. */
+        expiryDate: z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)]).optional(),
         item: z.discriminatedUnion('kind', [
           z.object({ kind: z.literal('existing'), id: z.string().regex(UUID) }),
           z.object({ kind: z.literal('starter'), starterId: z.number().int().positive(), unit: codeStr }),
@@ -241,6 +246,23 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
                  where id = ${poId} and restaurant_id = ${rid} and status = 'sent'`
       }
 
+      // REQUIRED ONLY WHERE THE ITEM TRACKS IT, and checked here rather than
+      // on the form: the flag is on the item and can change while a bill is
+      // open, and a form is never the check. The refusal names the ITEM,
+      // because the receiver is holding a bill with names on it and has no
+      // idea which row is "line 3".
+      const tracked = await tx<{ id: string; name: string }[]>`
+        select id, name from items
+        where restaurant_id = ${rid} and tracks_expiry = true
+          and id = any(${itemIds}::uuid[])`
+      const tracks = new Map(tracked.map((t) => [t.id, t.name]))
+      for (const [i, l] of input.lines.entries()) {
+        const name = tracks.get(itemIds[i])
+        if (name !== undefined && (l.expiryDate === undefined || l.expiryDate === '')) {
+          throw new BillError(`${name} carries a printed expiry date — enter it from the pack`)
+        }
+      }
+
       const lineRows = input.lines.map((l, i) => ({
         restaurant_id: rid,
         purchase_id: purchase.id,
@@ -249,8 +271,9 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
         rate: l.rate.trim(),
         gst_amount: '0',
         transport_alloc: paiseToString(transportAlloc[i]),
+        expiry_date: l.expiryDate === undefined || l.expiryDate === '' ? null : l.expiryDate,
       }))
-      await tx`insert into purchase_lines ${tx(lineRows, 'restaurant_id', 'purchase_id', 'item_id', 'qty', 'rate', 'gst_amount', 'transport_alloc')}`
+      await tx`insert into purchase_lines ${tx(lineRows, 'restaurant_id', 'purchase_id', 'item_id', 'qty', 'rate', 'gst_amount', 'transport_alloc', 'expiry_date')}`
 
       return { purchaseId: purchase.id, vendorId, vendorCreated, createdItems }
     })
