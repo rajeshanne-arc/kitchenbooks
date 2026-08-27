@@ -11,6 +11,7 @@ import { listMoneyAccounts } from '@/server/accounts-queries'
 import CloseClient from '@/components/accountant/CloseClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
 import { businessToday } from '@/server/business-day'
+import { getSessionUser } from '@/server/current-user'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,11 +31,12 @@ export default async function ClosePeriodPage() {
   const restaurant = await getRestaurant()
   const today = await businessToday()
   // one fan-out, not four awaits — the pool is shared with the group layout
-  const [blocking, closed, fund, accounts] = await Promise.all([
+  const [blocking, closed, fund, accounts, user] = await Promise.all([
     listOpenQueries(restaurant.id),
     listClosedPeriods(restaurant.id),
     getStaffFundBalance(restaurant.id),
     listMoneyAccounts(restaurant.id),
+    getSessionUser(),
   ])
   const offered = lastMonth(today)
 
@@ -47,6 +49,7 @@ export default async function ClosePeriodPage() {
         </p>
       </header>
       <CloseClient
+        canReopenDirectly={user?.role === 'owner'}
         blocking={blocking}
         closed={closed}
         defaultStart={offered.from}

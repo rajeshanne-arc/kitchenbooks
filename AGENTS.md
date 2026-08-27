@@ -7245,3 +7245,132 @@ survives. One exact-name duplicate in 359 items is a remarkably clean master.
   first one caught by the gate rather than by a failed build. That is the gate
   earning its place: the rule was already written down, by me, and written down
   was not enough.
+
+
+## APPROVALS IS A TAB — one page for everything waiting
+
+    Owner: Dashboard · P&L · Approvals ● · Activity · Setup
+
+**Positioned by READING ORDER, not urgency.** Dashboard is NOW, P&L is the
+PERIOD, Approvals is WHAT NEEDS ME, Activity is WHAT HAPPENED. The badge does
+the summoning, so it need not sit second — a strip ordered by how alarming a
+tab might be is a strip that means something different on a bad day.
+
+Four things waited on Rajesh in four places he had to remember to visit. This
+is the one page that says what is waiting, **including for what it does not
+itself execute**: pending discard/merge/reopen requests, words somebody typed
+that are not yet vocabulary, and payroll runs prepared and unapproved. One
+badge, three queues, because what it means is "somebody is waiting on you" —
+two numbers on one strip would be two things to decode.
+
+**A PAYROLL RUN IS A POINTER, NEVER A COPY.** Approving payroll means seeing
+the whole run — the people, the days, the withholdings, the account each line
+is paid from. A row rendered inline would invite a decision made on a total,
+which is the one way to approve a payroll badly. The card says enough to
+recognise it and links; it carries nothing you could approve from.
+
+**EMPTY IS THE NORMAL STATE AND MUST READ LIKE ONE.** Everything is zero today.
+An empty queue is one sentence — "Nothing is waiting on you" — and not four
+empty sections with four zeroes, which would turn a page somebody is pleased to
+find empty into four things to check and dismiss. The badge law applied to a
+whole screen.
+
+**WHAT NEVER COMES HERE IS SAID ON THE PAGE**, not only in this file: voids
+write a negative twin, retirements keep the row, attendance corrections keep
+both marks, a price warning must never stand between somebody and goods at the
+door, and settings are already the owner's alone so there is nobody to approve
+for. The absence of voids from an approvals screen is exactly the sort of thing
+somebody "fixes" later.
+
+**The suggestion queue MOVED rather than being copied.** It was never
+configuration — somebody typed a word and is waiting — and it sat in Setup ›
+Lists where nobody looks. `SuggestionsQueue` is asserted to be mounted exactly
+once, and on Approvals: two mounts is duplication by definition, and the Lists
+chip lost its badge with it, because a count summoning somebody to a screen
+that no longer holds the queue is worse than no count.
+
+### Reopening a month: the owner reopens, everybody else asks
+
+`reopenPeriod` was accountant-and-owner and is now the OWNER'S alone;
+`requestReopen` is the accountant's route. The argument for putting it behind
+approval at all is narrow and worth keeping, because a reopen *does* leave a
+trace — `reopened_at`, `reopened_by`, `reopen_reason` are all recorded:
+
+> **What a reopen destroys is not in this database.** The month may already
+> have been handed to a CA, and nothing here knows that. What leaves no trace
+> is the fact that somebody downstream treated it as final.
+
+The owner keeps the direct route because they would otherwise be raising a
+request to themselves.
+
+### WHAT COULD NOT BE BUILT, and why it is a migration rather than a decision
+
+Discard and merge reach items and vendors and **nothing else yet**. Checked
+before promising: `recipes`, `money_accounts`, `meters`, `storage_locations`
+and `list_options` each carry `status CHECK (active|inactive)`, so writing
+`'discarded'` violates the constraint, and not one of them has `merged_into` or
+a merge function. `migrations/merge_recipes_and_discardable_masters.sql` is
+written and **not applied** — kb_app holds no DDL. The Approvals page says so
+in an honesty strip rather than leaving somebody to hunt a button on a recipe.
+
+### A RECIPE MERGE IS NOT AN ITEM MERGE — the repoint set is SELECTIVE
+
+This is the part worth reading before applying that migration. `merge_items`
+repoints EVERY foreign key that points at items, because an item is only ever
+referenced as a subject. Nine columns point at recipes and **two of them must
+not move**:
+
+- **`recipe_lines.recipe_id`** is the OWNER of a line. Repointing it drags the
+  closed recipe's ingredients into the survivor's card — which already has a
+  complete one — producing a card holding every ingredient twice. The
+  survivor's card is the surviving definition; the closed recipe keeps its own
+  lines, which nothing reads once it is merged.
+- **`dish_cost_snapshots.recipe_id`** is a PHOTOGRAPH. Live costs rewrite
+  history, photographs don't. The snapshot recorded what that recipe cost on
+  that day, and that recipe existed on that day.
+
+**That selectivity is why a generic pg_constraint loop would be wrong here, and
+wrong quietly.** The guard set differs too:
+
+| guard | why |
+|---|---|
+| `kind` must match | the UNITS rule of this table: `productions` freezes from `cost_per_portion` for a dish and `cost_per_output_unit` for a sub, and a sub's output is its batch yield where a dish's is portions made. Merging across kinds silently reinterprets every frozen cost that moves. |
+| `output_unit` must match, for subs | `recipe_lines.qty` on a sub component is in that sub's output unit — litres into kilos is the item units rule one level up |
+| no card holds both | two lines of one ingredient, the item rule unchanged |
+| no POS item maps to both | the same failure one layer up |
+| **NO CYCLE** | **no item analogue at all.** The app refuses to INSERT a component that closes a loop; a merge can create one no single insert could. If the survivor contains the closing recipe at any depth, merging makes it contain itself, and `recipe_costs` recurses to its depth cap and reports a number nobody can explain. |
+
+The section is NOT a guard: merging two duplicate dishes coded under different
+departments is exactly the case you would want, so the department change is a
+line in the preview rather than a refusal.
+
+### A PROBE WHOSE FIXTURE IS LIVE DATA A USER MAY ACT ON BREAKS WHEN THE FEATURE SUCCEEDS
+
+The merge probe hardcoded HKP-024 and HKP-015 — the duplicate spray bottle the
+whole feature was built for. Rajesh then USED it: raised the discard, approved
+it, reason "duplicate". `HKP-024.status` is `discarded`, and **the gate went red
+because the product worked.**
+
+It is a new member of the vacuous-gate family rather than another instance of
+one: the earlier four could not fail, and this one failed for a reason that had
+nothing to do with what it tests. The fix is the same shape as always — the
+fixture is now DERIVED from the properties the rules are about (two active items
+sharing units, two whose units differ, the most-referenced item *and* a
+same-units partner) and names no code at all.
+
+**Both halves of that last pair matter, and the first attempt got it wrong.**
+Picking the most-referenced item on its own produced a pair whose units differ,
+so the merge raised "units differ" instead of moving anything — a real refusal,
+but not the one under test, and it masked the assertion completely. A fixture
+has to satisfy every precondition of the thing it is exercising, which is one
+query, not two.
+
+### And a stale hand-written list, found the same way
+
+`smoke:a2` asserted the document series against a literal `['PUR','PAY','EXP',
+'VCH','CON','CAS','ADV','RUN']` — eight, where `DOC_TYPES` has said nine since
+purchase orders shipped. It sat green until the first PO number was actually
+drawn and then failed naming a series that is entirely legitimate. Derived from
+the registry now. **A check carrying its own copy of the thing it checks is not
+checking** — third time that sentence has been earned in this file, and the
+first time the drift was found by real use rather than by a sweep.

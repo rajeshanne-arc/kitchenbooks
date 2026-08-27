@@ -22,6 +22,7 @@ import type {
   StaffFundInput,
 } from '@/lib/types'
 import { closePeriod, reopenPeriod, saveStaffFundMovement } from '@/server/accountant-actions'
+import { requestReopen } from '@/server/approvals-actions'
 import { entityLabel } from '@/lib/query-entities'
 import { fmtDate } from '@/lib/format'
 import { decimalStringToPaise, formatMoneyString, parseMoney } from '@/lib/money'
@@ -51,6 +52,7 @@ export default function CloseClient({
   fund,
   accounts,
   today,
+  canReopenDirectly,
 }: {
   blocking: QueryRow[]
   closed: ClosedPeriodRow[]
@@ -59,6 +61,8 @@ export default function CloseClient({
   fund: StaffFundBalance
   accounts: MoneyAccount[]
   today: string
+  /** the owner reopens; everybody else raises a request the owner decides */
+  canReopenDirectly: boolean
 }) {
   const router = useRouter()
   const [periodStart, setPeriodStart] = useState(defaultStart)
@@ -120,11 +124,35 @@ setAck({ headline: `${fmtDate(periodStart)} – ${fmtDate(periodEnd)} closed`, s
     }
   }
 
-  async function reopen(start: string) {
+  /**
+   * THE OWNER REOPENS; EVERYONE ELSE ASKS.
+   *
+   * What a reopen destroys is not in this database. The month may already have
+   * gone to a CA, and nothing here knows that — so for anybody but the owner
+   * this raises a request carrying the reason, and the owner decides. The
+   * owner's own route stays direct: they would otherwise be asking themselves.
+   */
+  async function reopen(start: string, id: string) {
     if (busy || reason.trim() === '') return
     setBusy(true)
     try {
-      const res = await reopenPeriod(start, reason)
+      const res = canReopenDirectly
+        ? await reopenPeriod(start, reason)
+        : await requestReopen({ periodCloseId: id, reason })
+      if (!canReopenDirectly) {
+        if (!res.ok) {
+          toast(res.error, 'error')
+          return
+        }
+        setAck({
+          headline: 'Sent to the owner — nothing has reopened yet',
+          sub: 'A closed month coming back is theirs to allow: it may already have been handed on, and this app cannot know that. Your reason goes with it.',
+        })
+        setReopening(null)
+        setReason('')
+        router.refresh()
+        return
+      }
       if (!res.ok) {
         toast(res.error, 'error')
         return
@@ -452,7 +480,7 @@ setAck({ headline: direction === 'collected' ? 'Collection recorded' : 'Payout r
                     <button
                       type="button"
                       disabled={busy || reason.trim() === ''}
-                      onClick={() => void reopen(c.period_start)}
+                      onClick={() => void reopen(c.period_start, c.id)}
                       className={`${btnCls} shrink-0 px-3 py-2 text-sm`}
                     >
                       Reopen

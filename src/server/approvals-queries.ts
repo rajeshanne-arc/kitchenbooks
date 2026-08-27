@@ -30,9 +30,9 @@ export class ApprovalRefusal extends Error {}
 /** kinds the app can actually apply today. `reopen_period` and `other` are in
  *  the CHECK constraint and have no mechanic yet; a request of that kind can be
  *  raised by a future phase but this app will not try to apply one. */
-export const APPLIABLE_KINDS = ['discard', 'merge'] as const
+export const APPLIABLE_KINDS = ['discard', 'merge', 'reopen_period'] as const
 export type ApprovalKind = (typeof APPLIABLE_KINDS)[number]
-export type ApprovalEntity = 'item' | 'vendor'
+export type ApprovalEntity = 'item' | 'vendor' | 'period'
 
 /**
  * WHO ASKS, AND WHO DECIDES — and the rule generalises past this screen:
@@ -120,8 +120,9 @@ export type MasterRef = {
   code: string
   name: string
   status: string
-  purchase_unit: string
-  stock_unit: string | null
+  /** Absent on a period, which has no units and no unit rule. */
+  purchase_unit?: string
+  stock_unit?: string | null
 }
 
 export type Preview = {
@@ -149,9 +150,17 @@ async function readMaster(
       ? await tsql<MasterRef[]>`
           select id, code, name, status, purchase_unit, stock_unit
           from items where restaurant_id = ${restaurantId} and id = ${id}`
-      : await tsql<MasterRef[]>`
-          select id, code, name, status, '—' as purchase_unit, null as stock_unit
-          from vendors where restaurant_id = ${restaurantId} and id = ${id}`
+      : entity === 'vendor'
+        ? await tsql<MasterRef[]>`
+            select id, code, name, status, '—' as purchase_unit, null as stock_unit
+            from vendors where restaurant_id = ${restaurantId} and id = ${id}`
+        : await tsql<MasterRef[]>`
+            select id,
+                   to_char(period_start, 'YYYY-MM') as code,
+                   to_char(period_start, 'FMMonth YYYY') || ' — closed ' || to_char(closed_at, 'DD Mon') ||
+                     coalesce(' by ' || closed_by, '') as name,
+                   case when reopened_at is null then 'closed' else 'reopened' end as status
+            from period_closes where restaurant_id = ${restaurantId} and id = ${id}`
   return rows[0] ?? null
 }
 
@@ -296,6 +305,37 @@ export async function getPreview(
   const table = entity === 'item' ? 'items' : 'vendors'
   const refs = await getReferenceCounts(table, fromId)
   const totalRefs = refs.reduce((a, r) => a + r.n, 0)
+
+  // ── reopening a closed month ─────────────────────────────────────────
+  //
+  // NO REFERENCE COUNTS HERE, because nothing points at a close — the close
+  // is a STATEMENT that a period is finished, and reopening retracts the
+  // statement. It leaves a trace of a sort (reopened_at / reopened_by /
+  // reopen_reason are all recorded), which is why it took an argument to put
+  // it behind approval at all: what it does NOT leave is any record that the
+  // month was ever treated as final by whoever received it. The accountant
+  // may already have handed it to a CA, and nothing in this database knows
+  // that. That is the leaves-no-trace half.
+  if (kind === 'reopen_period') {
+    const alreadyOpen = from.status === 'reopened'
+    return {
+      kind,
+      entity,
+      from,
+      to: null,
+      refs: [],
+      totalRefs: 0,
+      cost: null,
+      checks: [
+        {
+          ok: !alreadyOpen,
+          label: 'It is closed',
+          detail: alreadyOpen ? 'this period has already been reopened' : 'reopening retracts that',
+        },
+      ],
+      wouldApply: !alreadyOpen,
+    }
+  }
 
   if (kind === 'discard') {
     // A POINTER IS A DIFFERENT REFUSAL FROM HISTORY, and it needs its own
@@ -501,6 +541,7 @@ export type ApplyResult = {
   to?: string
   moved?: Record<string, number>
   discarded?: string
+  reopened?: string
 }
 
 /**
@@ -523,7 +564,22 @@ export async function applyRequest(
   tx: postgres.TransactionSql,
   restaurantId: string,
   req: { kind: string; entity_type: string; entity_id: string; target_entity_id: string | null },
+  /** who is applying, and why — both land on the period row for a reopen,
+   *  which is the only kind that records them outside approval_requests. */
+  by = 'owner',
+  reason = '',
 ): Promise<ApplyResult> {
+  if (req.kind === 'reopen_period') {
+    // The ONLY update period_closes takes, granted on exactly three columns.
+    const [row] = await tx<{ code: string }[]>`
+      update period_closes
+      set reopened_at = now(), reopened_by = ${by}, reopen_reason = ${reason.slice(0, 500)}
+      where id = ${req.entity_id} and restaurant_id = ${restaurantId} and reopened_at is null
+      returning to_char(period_start, 'FMMonth YYYY') as code`
+    if (!row) throw new Error('that period is no longer closed')
+    return { reopened: row.code }
+  }
+
   if (req.kind === 'merge') {
     if (req.target_entity_id === null) throw new Error('a merge with no survivor cannot be applied')
     const [out] =
@@ -560,4 +616,79 @@ export async function applyRequest(
             and status in ('active', 'inactive') returning code`
   if (!row) throw new Error('it was already closed')
   return { discarded: row.code }
+}
+
+
+// ══════════════════════════════════════════════ what is waiting on the owner
+
+export type WaitingPayrollRun = {
+  id: string
+  doc_no: string | null
+  period_start: string
+  period_end: string
+  prepared_by: string | null
+  lines: number
+  total: string
+}
+
+export type Waiting = {
+  approvals: ApprovalRow[]
+  suggestions: { id: string; list_key: string; value: string; suggested_by: string | null; seen_count: number }[]
+  payrollRuns: WaitingPayrollRun[]
+  total: number
+}
+
+/**
+ * FOUR THINGS WAIT ON RAJESH IN FOUR PLACES HE WOULD HAVE TO REMEMBER TO
+ * VISIT. This is the one page that says what is waiting — including for the
+ * things it does not itself execute.
+ *
+ * A payroll run is a POINTER and never a copy. Approving payroll means seeing
+ * the whole run — the people, the days, the withholdings — and a row rendered
+ * inline here would invite a decision made on a total. So this carries enough
+ * to recognise it and a link, and nothing you could approve from.
+ */
+export async function getWaiting(restaurantId: string): Promise<Waiting> {
+  const [approvals, suggestions, payrollRuns] = await Promise.all([
+    listApprovals(restaurantId, true),
+    tsql<{ id: string; list_key: string; value: string; suggested_by: string | null; seen_count: number }[]>`
+      select id, list_key, value, suggested_by, seen_count
+      from list_suggestions
+      where restaurant_id = ${restaurantId} and status = 'pending'
+      -- SEEN_COUNT IS THE SIGNAL: a word typed nine times is real, once is a
+      -- typo. Most-seen first so the owner meets the vocabulary before the
+      -- slips.
+      order by seen_count desc, created_at asc`,
+    tsql<WaitingPayrollRun[]>`
+      select r.id, r.doc_no, r.period_start::text as period_start, r.period_end::text as period_end,
+             r.prepared_by,
+             (select count(*)::int from payroll_lines l where l.run_id = r.id) as lines,
+             (select coalesce(sum(l.net_payable), 0)::text from payroll_lines l where l.run_id = r.id) as total
+      from payroll_runs r
+      where r.restaurant_id = ${restaurantId} and r.status = 'draft'
+      order by r.period_start`,
+  ])
+  return {
+    approvals,
+    suggestions,
+    payrollRuns,
+    total: approvals.length + suggestions.length + payrollRuns.length,
+  }
+}
+
+/**
+ * The badge. Silent at zero, like every other one in the app.
+ *
+ * Takes an optional handle so a gate can count inside its own rolled-back
+ * transaction — a tsql there would open a second connection that cannot see
+ * the uncommitted fixture, find nothing, and report a tick.
+ */
+export async function countWaiting(restaurantId: string, tx?: postgres.TransactionSql): Promise<number> {
+  const q = (tx ?? tsql) as typeof tsql
+  const [row] = await q<{ n: number }[]>`
+    select (select count(*) from approval_requests where restaurant_id = ${restaurantId} and status = 'pending')::int
+         + (select count(*) from list_suggestions where restaurant_id = ${restaurantId} and status = 'pending')::int
+         + (select count(*) from payroll_runs where restaurant_id = ${restaurantId} and status = 'draft')::int
+      as n`
+  return row?.n ?? 0
 }

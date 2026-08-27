@@ -249,7 +249,11 @@ export async function reopenPeriod(periodStart: string, reason: string): Promise
     if (!DATE_RE.test(periodStart)) throw new QueryError('Malformed period')
     const clean = reason.trim()
     if (clean === '') throw new QueryError('Say why it is being reopened — a closed month reopening needs a reason')
-    const who = await actor(['accountant', 'owner'], 'Reopening a period')
+    // THE OWNER'S OWN ROUTE, and theirs alone. An accountant asks — see
+    // requestReopen — because what a reopen destroys is not in this database:
+    // the month may already have been handed to a CA, and nothing here knows
+    // that. The owner would otherwise be raising a request to themselves.
+    const who = await actor(['owner'], 'Reopening a period')
     const restaurant = await getRestaurant()
 
     const [row] = await tsql<{ id: string }[]>`

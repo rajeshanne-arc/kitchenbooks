@@ -81,11 +81,20 @@ export async function getBooksCompleteness(restaurantId: string): Promise<BooksC
  *  shut right now. */
 export async function listClosedPeriods(restaurantId: string): Promise<ClosedPeriodRow[]> {
   return tsql<ClosedPeriodRow[]>`
-    select period_start::text as period_start, period_end::text as period_end,
-           closed_at::text as closed_at, closed_by
-    from closed_periods
-    where restaurant_id = ${restaurantId}
-    order by period_start desc`
+    -- THE ID COMES FROM THE BASE TABLE, because closed_periods does not
+    -- publish one and a reopen REQUEST has to name a row: approval_requests
+    -- .entity_id is a NOT NULL uuid. The view stays the authority on WHICH
+    -- periods are shut right now; this only fetches the handle for them.
+    select pc.id,
+           cp.period_start::text as period_start, cp.period_end::text as period_end,
+           cp.closed_at::text as closed_at, cp.closed_by
+    from closed_periods cp
+    join period_closes pc
+      on pc.restaurant_id = cp.restaurant_id
+     and pc.period_start = cp.period_start
+     and pc.reopened_at is null
+    where cp.restaurant_id = ${restaurantId}
+    order by cp.period_start desc`
 }
 
 /** Whether a date falls inside a period that is currently closed. */

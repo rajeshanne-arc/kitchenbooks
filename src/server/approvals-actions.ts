@@ -42,8 +42,8 @@ function fail(e: unknown): { ok: false; error: string } {
 }
 
 const RequestSchema = z.object({
-  kind: z.enum(['discard', 'merge']),
-  entity: z.enum(['item', 'vendor']),
+  kind: z.enum(['discard', 'merge', 'reopen_period']),
+  entity: z.enum(['item', 'vendor', 'period']),
   fromId: z.string().regex(UUID),
   toId: z.union([z.literal(''), z.string().regex(UUID)]).optional(),
   reason: z.string().trim().min(1).max(300),
@@ -195,7 +195,7 @@ export async function decideApproval(raw: {
         // it on a rolled-back transaction. Not exported from here: a function
         // that applies a request while taking the actor as a parameter must
         // not be a public endpoint.
-        const result = await applyRequest(tx, rid, req)
+        const result = await applyRequest(tx, rid, req, by, req.reason)
 
         await tx`
           update approval_requests
@@ -318,5 +318,32 @@ export async function searchMergeTargets(raw: { entity: ApprovalEntity; q: strin
     return { ok: true as const, rows }
   } catch (e) {
     return { ok: false as const, error: fail(e).error, rows: [] }
+  }
+}
+
+
+/**
+ * An accountant asking for a closed month back.
+ *
+ * reopenPeriod() still exists and is the owner's own direct route — they would
+ * otherwise be raising a request to themselves. This is the accountant's, and
+ * it is a REQUEST rather than the act, because the thing a reopen destroys is
+ * not in this database: the month may already have been handed to a CA, and
+ * nothing here knows that. The reason is the record of why it came back.
+ */
+export async function requestReopen(raw: { periodCloseId: string; reason: string }): Promise<ApprovalResult> {
+  try {
+    if (!UUID.test(raw.periodCloseId)) throw new ApprovalRefusal('Malformed period')
+    const reason = raw.reason.trim()
+    if (reason === '') throw new ApprovalRefusal('Say why it needs reopening — that sentence is the record')
+    return await requestApproval({
+      kind: 'reopen_period',
+      entity: 'period',
+      fromId: raw.periodCloseId,
+      toId: '',
+      reason,
+    })
+  } catch (e) {
+    return fail(e)
   }
 }

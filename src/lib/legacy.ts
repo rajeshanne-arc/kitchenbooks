@@ -7,6 +7,9 @@ import { canAccess, type Role } from '@/lib/roles'
 const FIXED: [from: string, to: string][] = [
   ['/books/sales/mapping', '/sales/books/sales/mapping'],
   ['/books/food-cost', '/kitchen/books/food-cost'],
+  // Approvals was a Setup chip for one commit before it earned a tab of its
+  // own. Short-lived, but a bookmark does not care how long a URL existed.
+  ['/owner/setup/approvals', '/owner/approvals'],
   ['/books/snapshots', '/owner/snapshots'],
   ['/books/recipes', '/kitchen/recipes'],
   ['/books/vendors', '/store/masters/vendors'],

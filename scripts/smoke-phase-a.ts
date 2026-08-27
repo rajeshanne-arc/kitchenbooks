@@ -61,27 +61,30 @@ console.log('\nowner: four tabs, five chips, one divider')
 check('the owner strip is exactly Dashboard · P&L · Activity · Setup', () => {
   assert.deepEqual(
     TAB_DEFAULTS.owner.map((t) => t.label),
-    ['Dashboard', 'P&L', 'Activity', 'Setup'],
+    ['Dashboard', 'P&L', 'Approvals', 'Activity', 'Setup'],
   )
   // THE THREE THAT ARE READ COME FIRST. The point of the collapse was that
   // five rarely-visited masters made the three that matter one third of the
   // strip; if a master is ever promoted back, this says so.
-  assert.equal(TAB_DEFAULTS.owner.filter((t) => t.chips === undefined).length, 3)
+  // FOUR READ TABS NOW, and the order is READING ORDER rather than urgency:
+  // Dashboard is now, P&L is the period, Approvals is what needs me, Activity
+  // is what happened. The badge does the summoning, so Approvals need not sit
+  // second — a strip ordered by how alarming a tab might be is a strip that
+  // means something different on a bad day.
+  assert.equal(TAB_DEFAULTS.owner.filter((t) => t.chips === undefined).length, 4)
+  assert.equal(TAB_DEFAULTS.owner[2].key, 'approvals', 'Approvals is not third')
 })
 
 check('Setup holds the masters, Settings last and after a rule', () => {
   const chips = chipsOf('owner', 'setup')
   assert.deepEqual(
     chips.map((c) => c.label),
-    ['Money accounts', 'Meters', 'Users', 'Lists', 'Letterhead', 'Approvals', 'Settings'],
+    ['Money accounts', 'Meters', 'Users', 'Lists', 'Letterhead', 'Settings'],
   )
-  // APPROVALS IS THE SECOND THING IN HERE THAT IS NOT CONFIGURATION. Lists
-  // holds an approval queue for vocabulary; this holds one for the two acts
-  // that leave nothing behind — a discard and a merge. Both are somebody
-  // waiting on the owner rather than a setting, which is why Setup's badge
-  // counts them together.
+  // APPROVALS LEFT THIS ROW for a tab of its own — everything in Setup is
+  // configuration again, which is what the chip row is for.
   //
-  // SETTINGS LAST, AFTER A DIVIDER. The five before it ADD ROWS; this one
+  // SETTINGS LAST, AFTER A DIVIDER. The four before it ADD ROWS; this one
   // changes what every number in the app MEANS. The rule says that without a
   // sentence, and it is the only one in the app — if a second appears, the
   // distinction has stopped meaning anything.

@@ -2703,6 +2703,8 @@ export type ClosePeriodResult = { ok: true } | { ok: false; error: string }
 export type BooksCompletenessRow = { severity: string; what: string; n: number }
 
 export type ClosedPeriodRow = {
+  /** the period_closes row, so a reopen REQUEST can name it */
+  id: string
   period_start: string
   period_end: string
   closed_at: string

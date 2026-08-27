@@ -203,6 +203,12 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
   owner: [
     { key: 'dashboard', href: '/owner', label: 'Dashboard' },
     { key: 'pnl', href: '/owner/pnl', label: 'P&L' },
+    // POSITIONED BY READING ORDER, NOT URGENCY — the badge does the summoning,
+    // so this need not sit second to be found. Dashboard is NOW, P&L is the
+    // PERIOD, Approvals is WHAT NEEDS ME, Activity is WHAT HAPPENED. A tab
+    // ordered by how alarming it might be is a strip that means something
+    // different on a bad day.
+    { key: 'approvals', href: '/owner/approvals', label: 'Approvals' },
     { key: 'activity', href: '/owner/activity', label: 'Activity' },
     {
       // THE BADGE IS WHAT STOPS THIS BEING A PLACE NOBODY OPENS. One thing
@@ -224,13 +230,6 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         // nothing at all about the books — it is the restaurant's own identity
         // as a vendor sees it on a purchase order.
         { key: 'letterhead', label: 'Letterhead' },
-        // THE SECOND THING IN HERE THAT IS NOT CONFIGURATION. Lists holds an
-        // approval queue for vocabulary; this one holds it for the two acts
-        // that leave nothing behind — a discard and a merge. Both are work
-        // waiting on the owner rather than a setting, which is why Setup's
-        // badge counts them together: what the badge means is "somebody is
-        // waiting on you", not "a table has rows in it".
-        { key: 'approvals', label: 'Approvals' },
         // SETTINGS LAST, AFTER A DIVIDER. The four before it ADD ROWS — an
         // account, a meter, a user, a list value. This one changes what every
         // number MEANS: which day a sale belongs to, whether input tax is a

@@ -8,8 +8,7 @@ import { tabsFor } from '@/server/settings'
 import { countOpenIndents, getStockBadge, stockBadgeHref } from '@/server/store-queries'
 import { listOpenQueries } from '@/server/accountant-queries'
 import { countMissingCloses } from '@/server/cashier-queries'
-import { countPendingSuggestions } from '@/server/settings'
-import { countPendingApprovals } from '@/server/approvals-queries'
+import { countWaiting } from '@/server/approvals-queries'
 import { canAccess, type Role } from '@/lib/roles'
 import { chipsOf, type TabBadges, type TabGroup, type TabHrefs } from '@/lib/tabs'
 import TabStrip from '@/components/TabStrip'
@@ -24,36 +23,25 @@ async function badgesFor(
   role: Role,
 ): Promise<{ badges: TabBadges; hrefs: TabHrefs }> {
   if (group === 'owner') {
-    // THE BADGE THAT KEEPS SETUP FROM BEING A PLACE NOBODY OPENS. Four of its
-    // five chips are configuration — set once, forgotten — and Lists is not:
-    // it holds an approval queue, and a category somebody typed is a decision
-    // waiting on the owner.
+    // THE BADGE MOVED WITH THE PAGE. Approvals is its own tab now, and it
+    // counts everything waiting on the owner — requests to decide, words
+    // somebody typed, payroll prepared and unapproved. What the badge means is
+    // "somebody is waiting on you", which is why three queues make one number:
+    // two numbers on one strip would be two things to decode.
     //
-    // AND THE HREF, because this is the one chip row that spans a role
-    // boundary. Setup's first chip is Money accounts, which a MANAGER cannot
-    // open; sending them there would be a link to a wall. The tab points at
-    // the first chip THIS reader can open — the same override the Stock badge
-    // uses, doing the same job for a different reason.
+    // Setup keeps its own resolution: it is the only chip row in the app that
+    // spans a role boundary, so its tab points at the first chip THIS reader
+    // can open rather than at a fixed first child that would send a manager to
+    // a wall.
     const first = chipsOf('owner', 'setup').find((c) => canAccess(role, `/owner/setup/${c.key}`))
-    // ONE BADGE, TWO QUEUES. Setup carries a count when anything inside it is
-    // waiting on the owner — a typed list value, or a discard or merge somebody
-    // raised. Two separate numbers on one tab would be two things to decode;
-    // what the badge means is "somebody is waiting on you".
-    //
-    // AND IT COUNTS ONLY WHAT THIS READER CAN ACT ON. Approvals are owner-only;
-    // badging a MANAGER with a pending merge would send them to Lists — the
-    // first chip they can open — to find nothing there. A number you cannot
-    // act on is a number you learn to ignore, which is LAW 1 applied to a
-    // count rather than to a link.
-    const [suggestions, approvals] = await Promise.all([
-      countPendingSuggestions(restaurantId),
-      canAccess(role, '/owner/setup/approvals') ? countPendingApprovals(restaurantId) : Promise.resolve(0),
-    ])
     return {
-      badges: { setup: suggestions + approvals },
+      badges: canAccess(role, '/owner/approvals')
+        ? { approvals: await countWaiting(restaurantId) }
+        : {},
       hrefs: first === undefined ? {} : { setup: `/owner/setup/${first.key}` },
     }
   }
+
   if (group === 'accounts') {
     // Everything unresolved, not just unanswered: an answer the accountant
     // has not read yet is still a question standing between them and a

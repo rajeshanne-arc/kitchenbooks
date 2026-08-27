@@ -60,7 +60,7 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // PAST says belongs to the owner. Closing a duplicate code does both, so the
   // store raises it and only the owner decides it. A manager is admitted to
   // Lists — vocabulary — and not to this.
-  ['/owner/setup/approvals', ['owner']],
+  ['/owner/approvals', ['owner']],
   ['/owner/setup/lists', ['manager', 'owner']],
   // The letterhead a purchase order is printed on. Gated like Lists rather
   // than like Users: it is the restaurant's name and address, not a

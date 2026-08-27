@@ -2711,9 +2711,15 @@ async function run() {
     // future change does not quietly add one.
     const numbered = await tsql<{ doc_type: string }[]>`
       select distinct doc_type from doc_sequences where restaurant_id = ${rid}`
+    // DERIVED FROM DOC_TYPES, NOT LISTED HERE. The hand-written copy said eight
+    // and the registry has said nine since purchase orders shipped — so this
+    // sat green until the first PO number was actually drawn, then failed
+    // naming a series that is entirely legitimate. A check carrying its own
+    // copy of the thing it checks is not checking.
+    const { DOC_TYPES } = await import('../src/server/doc-numbers')
     for (const t of numbered) {
       assert.ok(
-        ['PUR', 'PAY', 'EXP', 'VCH', 'CON', 'CAS', 'ADV', 'RUN'].includes(t.doc_type),
+        (DOC_TYPES as readonly string[]).includes(t.doc_type),
         `unexpected document series ${t.doc_type}`,
       )
     }
@@ -7391,30 +7397,31 @@ async function run() {
   })
 
 
-  await check('the Setup badge fires on a pending suggestion, and only a pending one', async () => {
+  await check('the Approvals badge counts everything waiting, and only what is waiting', async () => {
     // SILENT AT ZERO IS NOT PROOF. The live tenant has no pending suggestion,
     // so the badge is correctly invisible and correspondingly untested — the
     // family this file records five times. So one is written on the probe
     // tenant, inside a transaction that rolls back, and the count is read
     // through the app's own query on the lent handle.
     //
-    // THE BADGE IS THE WHOLE REASON SETUP GETS OPENED. Four of its five chips
-    // are configuration set once and forgotten; Lists holds an approval queue,
-    // and a category somebody typed is a decision waiting on the owner.
+    // THE BADGE IS THE WHOLE REASON THE PAGE GETS OPENED, and it counts THREE
+    // queues as one number: requests to decide, words somebody typed, payroll
+    // prepared and unapproved. What it means is "somebody is waiting on you" —
+    // two numbers on one strip would be two things to decode.
     await onProbe(async () => {
       const { txn } = await import('../src/lib/db')
       const { getRestaurant } = await import('../src/server/queries')
-      const { countPendingSuggestions } = await import('../src/server/settings')
+      const { countWaiting } = await import('../src/server/approvals-queries')
       const r = await getRestaurant()
       let seen = { before: -1, pending: -1, accepted: -1 }
       await txn(async (tx) => {
-        seen.before = await countPendingSuggestions(r.id, tx as never)
+        seen.before = await countWaiting(r.id, tx as never)
         await tx`insert into list_suggestions (restaurant_id, list_key, value, suggested_by, seen_count, status)
                  values (${r.id}, 'waste_reason', 'Zz Probe Reason', 'gate', 1, 'pending')`
-        seen.pending = await countPendingSuggestions(r.id, tx as never)
+        seen.pending = await countWaiting(r.id, tx as never)
         await tx`update list_suggestions set status = 'accepted'
                  where restaurant_id = ${r.id} and value = 'Zz Probe Reason'`
-        seen.accepted = await countPendingSuggestions(r.id, tx as never)
+        seen.accepted = await countWaiting(r.id, tx as never)
         throw new Error('ROLLBACK-SUGGESTION-PROBE')
       }).catch((e: unknown) => {
         if ((e as Error).message !== 'ROLLBACK-SUGGESTION-PROBE') throw e
@@ -7429,14 +7436,19 @@ async function run() {
     // and the wiring: the layout must actually hand the count to the row, and
     // the tab must actually carry it. Either half missing is a silent badge.
     const { readFileSync } = await import('node:fs')
+    // THE COUNT MOVED WITH THE QUEUE. Setup must NOT still badge Lists — that
+    // would summon somebody to a screen that no longer holds the queue — and
+    // the owner strip must carry it on Approvals instead. Both halves asserted,
+    // because either one alone leaves a badge pointing at the wrong page.
     const layout = readFileSync('src/app/owner/setup/layout.tsx', 'utf8')
-    assert.ok(
-      layout.includes('countPendingSuggestions') && layout.includes('badges={{ lists:'),
-      'the Setup chip row is no longer given the pending count',
-    )
+    assert.ok(!/badges=/.test(layout), 'Setup still badges a chip — the queue is not there any more')
     const tabs = readFileSync('src/components/GroupTabs.tsx', 'utf8')
     const owner = tabs.slice(tabs.indexOf("if (group === 'owner')"), tabs.indexOf("if (group === 'accounts')"))
-    assert.ok(owner.includes('countPendingSuggestions'), 'the Setup TAB no longer carries the badge')
+    assert.ok(owner.includes('approvals: await countWaiting'), 'the Approvals TAB does not carry the count')
+    assert.ok(!/badges:[^}]*setup:/.test(owner), 'Setup still carries a badge — the queue moved')
+    // Setup keeps its own resolution: the only chip row in the app that spans
+    // a role boundary, so its tab points at the first chip THIS reader can
+    // open rather than at a fixed first child that would be a wall.
     assert.ok(
       owner.includes('canAccess(role,') && owner.includes('setup:'),
       'the Setup tab no longer resolves its destination per role — a manager would be sent to Money accounts',
@@ -8072,8 +8084,16 @@ async function run() {
     // AND THE APPROVER IS THE OWNER ALONE. Read from roles.ts rather than
     // restated: the route and the action must not disagree about who decides.
     const { canAccess, ALL_ROLES } = await import('../src/lib/roles')
-    const admitted = ALL_ROLES.filter((r) => canAccess(r, '/owner/setup/approvals'))
+    const admitted = ALL_ROLES.filter((r) => canAccess(r, '/owner/approvals'))
     assert.deepEqual(admitted, ['owner'], 'the approvals queue is not owner-only')
+    // ONE DOOR. The pending-suggestion queue moved here from Setup › Lists; a
+    // second mount would be two doors to one screen, which this repo treats as
+    // duplication by definition rather than as a judgement call.
+    const mounts = [...walk('src/app'), ...walk('src/components')].filter((f) =>
+      /<SuggestionsQueue[\s/>]/.test(readFileSync(f, 'utf8')),
+    )
+    assert.equal(mounts.length, 1, `SuggestionsQueue is mounted ${mounts.length} times: ${mounts.join(', ')}`)
+    assert.ok(mounts[0].includes('owner/approvals'), `it is mounted at ${mounts[0]}, not on Approvals`)
     const { DECIDERS, REQUESTERS } = await import('../src/server/approvals-queries')
     assert.deepEqual([...DECIDERS], ['owner'])
     assert.ok(REQUESTERS.includes('store') && !REQUESTERS.includes('cashier'))
@@ -8090,12 +8110,55 @@ async function run() {
     const { applyRequest, getPreview } = await import('../src/server/approvals-queries')
     const out: string[] = []
     await txn(async (tx) => {
-      const rows = await tx<{ code: string; id: string }[]>`
-        select code, id from items where restaurant_id = ${liveTenant} and code in ('HKP-015','HKP-024','PLT-004','PLT-011','PLT-008')`
-      const by = new Map(rows.map((r) => [r.code, r.id]))
-      assert.equal(by.size, 5, 'the fixture codes are not all on this restaurant')
-      const from = by.get('HKP-024') as string
-      const to = by.get('HKP-015') as string
+      // THE FIXTURE IS DERIVED, NOT NAMED.
+      //
+      // The first version of this probe hardcoded HKP-024 and HKP-015 — the
+      // duplicate spray bottle the feature was built for. Rajesh then USED the
+      // feature: he raised the discard, approved it, and HKP-024 is now
+      // 'discarded'. The gate went red because the product worked.
+      //
+      // A PROBE WHOSE FIXTURE IS LIVE DATA A USER MAY ACT ON IS A PROBE THAT
+      // BREAKS WHEN THE FEATURE SUCCEEDS. So the pairs are found by their
+      // PROPERTIES — two active items sharing units, two active items whose
+      // units differ, one active item with history — which is what the rules
+      // under test are actually about. Nothing here names a code.
+      const [pair] = await tx<{ a: string; b: string; ca: string; cb: string }[]>`
+        select f.id as a, t.id as b, f.code as ca, t.code as cb
+        from items f join items t
+          on t.restaurant_id = f.restaurant_id and t.id <> f.id
+         and t.purchase_unit = f.purchase_unit and t.stock_unit is not distinct from f.stock_unit
+        where f.restaurant_id = ${liveTenant} and f.status = 'active' and t.status = 'active'
+        order by f.code limit 1`
+      assert.ok(pair !== undefined, 'no two active items share units — nothing legal to merge')
+      const [mismatch] = await tx<{ a: string; b: string; ca: string; cb: string }[]>`
+        select f.id as a, t.id as b, f.code as ca, t.code as cb
+        from items f join items t
+          on t.restaurant_id = f.restaurant_id and t.purchase_unit <> f.purchase_unit
+        where f.restaurant_id = ${liveTenant} and f.status = 'active' and t.status = 'active'
+        order by f.code limit 1`
+      assert.ok(mismatch !== undefined, 'no two active items differ in units — the refusal is untestable')
+      // THE ITEM WITH THE MOST HISTORY *AND* A SAME-UNITS PARTNER — both in one
+      // query, because they are one requirement. Picking the most-referenced
+      // item on its own gave a pair whose units differ, so the merge raised
+      // "units differ" instead of moving anything: a real refusal, but not the
+      // one under test, and it masked the assertion completely.
+      const [withHistory] = await tx<{ id: string; code: string; n: number; partner: string; pcode: string }[]>`
+        select i.id, i.code,
+               (select coalesce(sum(n), 0)::int from reference_counts('items', i.id)) as n,
+               p.id as partner, p.code as pcode
+        from items i
+        join lateral (
+          select p.id, p.code from items p
+          where p.restaurant_id = i.restaurant_id and p.id <> i.id and p.status = 'active'
+            and p.purchase_unit = i.purchase_unit and p.stock_unit is not distinct from i.stock_unit
+          order by p.code limit 1
+        ) p on true
+        where i.restaurant_id = ${liveTenant} and i.status = 'active'
+          and (select coalesce(sum(n), 0) from reference_counts('items', i.id)) > 0
+        order by 3 desc limit 1`
+      assert.ok(withHistory !== undefined, 'no active item has history and a same-units partner')
+      const from = pair.a
+      const to = pair.b
 
       // THE PREVIEW AND THE FUNCTION MUST AGREE AT THE MOMENT BOTH ARE RUN.
       // They are two implementations of one rule and will be run days apart in
@@ -8103,7 +8166,7 @@ async function run() {
       const legal = await getPreview(liveTenant, 'merge', 'item', from, to)
       assert.equal(legal.wouldApply, true, 'the preview refuses a merge the function allows')
 
-      const bad = await getPreview(liveTenant, 'merge', 'item', by.get('PLT-011') as string, by.get('PLT-004') as string)
+      const bad = await getPreview(liveTenant, 'merge', 'item', mismatch.a, mismatch.b)
       assert.equal(bad.wouldApply, false, 'the preview allows a unit mismatch the function refuses')
       assert.ok(
         bad.checks.some((c) => !c.ok && /unit/i.test(c.label)),
@@ -8117,24 +8180,28 @@ async function run() {
       const result = await applyRequest(tx, liveTenant, {
         kind: 'merge', entity_type: 'item', entity_id: from, target_entity_id: to,
       })
-      assert.equal(result.from, 'HKP-024')
-      assert.equal(result.to, 'HKP-015')
+      assert.equal(result.from, pair.ca)
+      assert.equal(result.to, pair.cb)
       const [closed] = await tx<{ status: string; became: string | null }[]>`
         select i.status, mi.code as became from items i
         left join items mi on mi.id = i.merged_into where i.id = ${from}`
       assert.equal(closed.status, 'merged', 'the closed row is not marked merged')
       // THE CODE STAYS RESOLVABLE. This is what makes closing one safe at all.
-      assert.equal(closed.became, 'HKP-015', 'the closed code does not point at its survivor')
+      assert.equal(closed.became, pair.cb, 'the closed code does not point at its survivor')
       const [after] = await tx<{ n: number }[]>`
         select coalesce(sum(n), 0)::int as n from reference_counts('items', ${to}::uuid)`
       assert.ok(after.n > before[0].n, 'the survivor gained no references')
-      out.push(`HKP-024 -> HKP-015: status ${closed.status}, resolves to ${closed.became}, survivor refs ${before[0].n} -> ${after.n}`)
+      out.push(`${pair.ca} -> ${pair.cb}: status ${closed.status}, resolves to ${closed.became}, survivor refs ${before[0].n} -> ${after.n}`)
 
       // Each refusal, by name, from the FUNCTION rather than the preview.
       for (const [label, a, b] of [
-        ['units differ', by.get('PLT-011') as string, by.get('PLT-004') as string],
+        ['units differ', mismatch.a, mismatch.b],
         ['merged into itself', to, to],
-        ['survivor not active', by.get('PLT-004') as string, from],
+        // INTO the row just merged, not some third item: it shares units with
+        // `to` by construction, so the units guard cannot fire first and mask
+        // the one being tested. The first version used the most-referenced
+        // item and got "units differ" — a refusal, but not this refusal.
+        ['survivor not active', to, from],
       ] as [string, string, string][]) {
         await tx`savepoint probe`
         let raised: string | null = null
@@ -8150,9 +8217,9 @@ async function run() {
 
       // APPLIED_RESULT IS PER-TABLE COUNTS, AND THE PROBE MOVES ROWS TO PROVE
       // IT. HKP-024 has no references, so the merge above returned moved:{} —
-      // a shape assertion over an empty object would have passed against a
-      // summary string just as happily. PLT-004 carries 26 rows across three
-      // tables, so this is the case that can tell them apart.
+      // return moved:{} — and a shape assertion over an empty object would
+      // pass against a summary string just as happily. The item with the most
+      // history is chosen precisely so this case can tell them apart.
       //
       // Merges get regretted; this app is not building unmerge, but this field
       // is the only record of where the rows went and the one shape from which
@@ -8161,7 +8228,7 @@ async function run() {
       await tx`savepoint mv`
       const big = await applyRequest(tx, liveTenant, {
         kind: 'merge', entity_type: 'item',
-        entity_id: by.get('PLT-004') as string, target_entity_id: by.get('PLT-008') as string,
+        entity_id: withHistory.id, target_entity_id: withHistory.partner,
       })
       assert.ok(big.moved !== undefined, 'applied_result carries no moved map')
       const entries = Object.entries(big.moved as Record<string, number>)
@@ -8174,7 +8241,7 @@ async function run() {
       // The counts must be the REAL ones, not a shape that merely typechecks.
       const [pl] = await tx<{ n: number }[]>`
         select count(*)::int as n from purchase_lines
-        where restaurant_id = ${liveTenant} and item_id = ${by.get('PLT-008') as string}`
+        where restaurant_id = ${liveTenant} and item_id = ${withHistory.partner}`
       assert.ok((big.moved as Record<string, number>).purchase_lines > 0, 'no purchase lines moved')
       out.push(`moved per table: ${entries.map(([t, n]) => `${t} ${n}`).join(' · ')} (survivor now holds ${pl.n} lines)`)
       await tx`rollback to savepoint mv`
@@ -8185,7 +8252,7 @@ async function run() {
       let discardErr: string | null = null
       try {
         await applyRequest(tx, liveTenant, {
-          kind: 'discard', entity_type: 'item', entity_id: by.get('PLT-004') as string, target_entity_id: null,
+          kind: 'discard', entity_type: 'item', entity_id: withHistory.id, target_entity_id: null,
         })
       } catch (e) {
         discardErr = (e as Error).message
