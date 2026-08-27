@@ -10,8 +10,9 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { saveLetterhead } from '@/server/letterhead-actions'
-import { DOCUMENT_STYLE_NAMES, missingLetterheadFields } from '@/lib/letterhead'
-import { DOCUMENT_STYLES, type DocumentStyle, type Letterhead } from '@/lib/types'
+import { missingLetterheadFields } from '@/lib/letterhead'
+import StylePicker from '@/components/settings/StylePicker'
+import { type DocumentStyle, type Letterhead } from '@/lib/types'
 import SaveAck from '@/components/SaveAck'
 import Honesty from '@/components/Honesty'
 import {
@@ -20,8 +21,40 @@ import {
   fieldLabelCls,
   inputCls,
   sectionHeadCls,
-  selectCls,
 } from '@/components/ui'
+
+/**
+ * AT MODULE SCOPE, AND THAT IS THE WHOLE BUG FIX.
+ *
+ * This was declared inside LetterheadEditor's body. Every render produced a new
+ * function identity, so React saw a different component TYPE in the same
+ * position, unmounted the <input> and mounted a fresh one — which is why typing
+ * a character moved focus out of the field. The character was never lost; it
+ * was in state the whole time. The INPUT was lost.
+ *
+ * `react-hooks/static-components` names this exactly — "The component is
+ * created during render here" — and had been naming it all along. See the note
+ * on `npm run lint` in AGENTS.md: the rule was never the problem.
+ */
+function Field({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string
+  value: string
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  hint?: string
+}) {
+  return (
+    <label className="block">
+      <span className={fieldLabelCls}>{label}</span>
+      <input value={value} onChange={onChange} className={inputCls} />
+      {hint !== undefined && <span className="mt-1 block text-xs text-stone-500">{hint}</span>}
+    </label>
+  )
+}
 
 export default function LetterheadEditor({
   initial,
@@ -80,14 +113,6 @@ export default function LetterheadEditor({
     }
   }
 
-  const Field = ({ k, label, hint }: { k: keyof typeof f; label: string; hint?: string }) => (
-    <label className="block">
-      <span className={fieldLabelCls}>{label}</span>
-      <input value={f[k]} onChange={set(k)} className={inputCls} />
-      {hint !== undefined && <span className="mt-1 block text-xs text-stone-500">{hint}</span>}
-    </label>
-  )
-
   return (
     <div className="space-y-4">
       {ack !== null && <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />}
@@ -103,16 +128,16 @@ export default function LetterheadEditor({
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>Who this restaurant is, on paper</h2>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <Field k="legalName" label="Legal name" hint="The name on the GST registration, if it differs from the one above the door." />
-          <Field k="phone" label="Phone" />
-          <Field k="addressLine1" label="Address" />
-          <Field k="addressLine2" label="Address, second line" />
-          <Field k="city" label="City" />
-          <Field k="state" label="State" />
-          <Field k="pincode" label="Pincode" />
-          <Field k="email" label="Email" />
-          <Field k="gstin" label="GSTIN" />
-          <Field k="fssaiNumber" label="FSSAI number" />
+          <Field value={f.legalName} onChange={set('legalName')} label="Legal name" hint="The name on the GST registration, if it differs from the one above the door." />
+          <Field value={f.phone} onChange={set('phone')} label="Phone" />
+          <Field value={f.addressLine1} onChange={set('addressLine1')} label="Address" />
+          <Field value={f.addressLine2} onChange={set('addressLine2')} label="Address, second line" />
+          <Field value={f.city} onChange={set('city')} label="City" />
+          <Field value={f.state} onChange={set('state')} label="State" />
+          <Field value={f.pincode} onChange={set('pincode')} label="Pincode" />
+          <Field value={f.email} onChange={set('email')} label="Email" />
+          <Field value={f.gstin} onChange={set('gstin')} label="GSTIN" />
+          <Field value={f.fssaiNumber} onChange={set('fssaiNumber')} label="FSSAI number" />
         </div>
       </section>
 
@@ -128,26 +153,43 @@ export default function LetterheadEditor({
           offering a file picker that would not work.
         </p>
         <div className="mt-2">
-          <Field k="logoUrl" label="Logo address" hint="Must start with https://" />
+          <Field value={f.logoUrl} onChange={set('logoUrl')} label="Logo address" hint="Must start with https://" />
         </div>
       </section>
 
       <section className={cardCls}>
         <h2 className={sectionHeadCls}>How documents look</h2>
         <p className="mt-1 text-sm text-stone-600">
-          A choice of layout, per restaurant. It changes nothing about any figure — which is the only reason
-          it is allowed to be a setting at all.
+          Three layouts that differ by USE, not by taste — and the third is the one nothing else in this
+          market has: our purchase orders go out over WhatsApp, and an A4 table read on a phone is a grey
+          smear somebody has to pinch and drag. Choosing one changes nothing about any figure, which is the
+          only reason it is allowed to be a setting at all.
         </p>
-        <label className="mt-2 block">
-          <span className={fieldLabelCls}>Document style</span>
-          <select value={style} onChange={(e) => setStyle(e.target.value as DocumentStyle)} className={selectCls}>
-            {DOCUMENT_STYLES.map((s) => (
-              <option key={s} value={s}>
-                {DOCUMENT_STYLE_NAMES[s]}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/* THUMBNAILS, NOT A DROPDOWN — and each one renders the real template
+            rather than a picture of it, so it cannot drift. The values it shows
+            are Rajesh's where he has given them and marked stand-ins where he
+            has not, because a picker showing a complete document he does not
+            have is the same lie as a dashboard showing zero for missing data. */}
+        <div className="mt-3">
+          <StylePicker
+            value={style}
+            onChange={setStyle}
+            letterhead={{
+              ...current,
+              legal_name: f.legalName || null,
+              address_line1: f.addressLine1 || null,
+              address_line2: f.addressLine2 || null,
+              city: f.city || null,
+              state: f.state || null,
+              pincode: f.pincode || null,
+              phone: f.phone || null,
+              email: f.email || null,
+              gstin: f.gstin || null,
+              fssai_number: f.fssaiNumber || null,
+              logo_url: f.logoUrl || null,
+            }}
+          />
+        </div>
       </section>
 
       {error !== null && (

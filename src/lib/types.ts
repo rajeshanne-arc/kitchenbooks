@@ -3601,9 +3601,22 @@ export type Letterhead = {
 /** Three layouts, per restaurant, in settings.document_style. A choice of
  *  style is not a choice about what a number MEANS, which is why this is
  *  allowed to be a setting at all. */
-export type DocumentStyle = 'classic' | 'compact' | 'plain'
+/**
+ * THREE LAYOUTS THAT DIFFER BY USE, NOT BY TASTE.
+ *
+ * `plain` — "no rules, cheapest to print" — is gone, because it differed from
+ * classic by decoration and nothing else. `message` replaces it and is the one
+ * that earns its place: PHONE-SHAPED, because this app's delivery channel is
+ * WhatsApp. Zoho ships sixteen templates that vary by font and colour and every
+ * one of them assumes A4, because nobody in that market sends a purchase order
+ * over a chat app.
+ *
+ * A stored 'plain' still reads — see readDocumentStyle — and lands on classic,
+ * which is what it was: the same document with the rules turned off.
+ */
+export type DocumentStyle = 'classic' | 'compact' | 'message'
 
-export const DOCUMENT_STYLES: DocumentStyle[] = ['classic', 'compact', 'plain']
+export const DOCUMENT_STYLES: DocumentStyle[] = ['classic', 'compact', 'message']
 
 /** `price_movements` — what a vendor's price did, bill over bill.
  *

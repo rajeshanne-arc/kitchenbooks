@@ -7434,3 +7434,107 @@ drawn and then failed naming a series that is entirely legitimate. Derived from
 the registry now. **A check carrying its own copy of the thing it checks is not
 checking** — third time that sentence has been earned in this file, and the
 first time the drift was found by real use rather than by a sweep.
+
+
+## THE RULE FIRED EVERY TIME AND NOTHING RAN IT
+
+Rajesh typed one character into the letterhead and lost focus. **A remount, not
+a state bug** — and the three causes look identical from outside, so they are
+told apart before anything is touched:
+
+| cause | tell |
+|---|---|
+| a component DEFINED INSIDE the parent's render | the character appears, focus jumps |
+| `key={value}` | same |
+| a `useEffect` writing state each render | the character never appears |
+
+It was the first. `Field` was declared inside `LetterheadEditor`'s body, so
+every render produced a new function identity, React saw a different component
+TYPE in the same position, and it **unmounted the `<input>` and mounted a fresh
+one**. The character was never lost — it was in state the whole time. The INPUT
+was lost, and the focus with it.
+
+**AND THE LINT HAD BEEN CATCHING IT ALL ALONG.**
+`react-hooks/static-components` fired ELEVEN times on that one file and said
+*"The component is created during render here"*, naming the line.
+`npm run lint` was simply not in the gate set, and `next build` does not run it.
+
+So the finding is not the bug and not a missing rule:
+
+> **A CHECK NOBODY RUNS IS NOT A CHECK. The preamble of this file says a rule
+> its author has to remember is not a rule; this is the same sentence one layer
+> out — a GATE nobody invokes is exactly as useful as a rule nobody recalls.**
+
+`npm run gates` now runs lint FIRST, then the three audits and `smoke:phase-a`.
+Getting there cost three fixes and they were the whole backlog: this bug, one
+`set-state-in-effect` in `BillEntry` (the effect blanked two pieces of state on
+every vendor change — keyed and derived now, the same fix as `MasterActions`),
+and three trivialities in `scripts/`. **`src` and `scripts` are at zero eslint
+errors**, so the chain exits 0 rather than starting as one permanent red line
+people learn to scroll past.
+
+**`smoke:a2` is deliberately NOT in that chain**, and the reason is the same
+rule read the other way. It currently carries two assertions that are WRITTEN TO
+FAIL — "no department has ever been issued to, so this assertion cannot fail and
+is not a test" — which is the honest state and clears the day the store starts
+issuing. Chaining it would make `gates` permanently non-zero, and an exit code
+that is always 1 carries no information at all. Run it beside the chain, read
+its two reds as the standing signal they are, and put it into `gates` the day
+they go green.
+
+### The sweep found one instance, and the first sweep was wrong
+
+Worth keeping because the correction is the method. An INDENTATION-based scan
+for "a component declared inside another" reported **43 candidates**; 42 were
+module-scope declarations it had mis-flagged. A BRACE-DEPTH scan found **one** —
+the bug. Vendor create has 22 fields, item create 19, staff 27, and every one of
+them is clean: **the fault was an instance, not a shape**, which is only worth
+knowing because it was checked rather than assumed.
+
+The gate keeps the depth scan and adds the thing that actually matters: the rule
+may not be switched off. Its first version tested for `static-components` and
+`eslint-disable` appearing anywhere in the same file and **flagged itself**,
+because it names the rule in a comment — *a checker that reads source is part of
+the source it reads*, for the second time in this file. It matches the directive
+now.
+
+## THE STYLE PICKER RENDERS THE TEMPLATE, NEVER A PICTURE OF IT
+
+Zoho, QuickBooks, Xero and Wave all show thumbnails, and a list of style names
+is worse than any of them. But a thumbnail IMAGE is a hand-maintained copy of a
+template: it lies the day the layout changes, silently, in a place nobody would
+think to look. So each tile renders `<PoDocument>` itself at a third scale,
+through the same component the printed page uses. No assets, nothing to
+regenerate, and it cannot drift — change the document and the picker changes
+with it. Gated both ways: the picker must render the real component, and must
+contain no `<img>` or image path.
+
+**GAPS ARE FILLED WITH SAMPLES AND THE SAMPLES ARE NAMED.** All eight letterhead
+fields are empty on this restaurant, and three empty frames would show nothing
+about a layout — while a complete document Rajesh does not have is the same lie
+as a dashboard printing zero for data that never arrived. So plausible values go
+in, and a line underneath says which of them are stand-ins. The preview becomes
+the real document as he fills the fields.
+
+### The three differ by USE, and the third is the one nothing else has
+
+    CLASSIC   A4, formal. Address block and a ruled table — what a vendor files.
+    COMPACT   A4, dense. A thirty-line order still fits on one page.
+    MESSAGE   PHONE-SHAPED. Large type, one line per item, no wide table.
+
+**`plain` is gone and `message` replaces it.** Plain differed from classic by
+decoration alone — "no rules, cheapest to print" — which is a preference, not a
+use. Message exists because **this app's delivery channel is WhatsApp**: an A4
+six-column table read on a phone is a grey smear somebody has to pinch and drag.
+Zoho ships sixteen templates that vary by font and colour and every one of them
+assumes A4, because nobody in that market sends a purchase order over a chat
+app.
+
+It is a genuinely different layout rather than the A4 document with a narrower
+margin, and the gate asserts that structurally: the message branch RETURNS
+BEFORE the `<table>` exists, so there is no six-column grid in it to reflow.
+
+A stored `'plain'` still reads and lands on classic. `readDocumentStyle`
+narrows rather than migrating: a setting is one row per restaurant, and an
+unrecognised value must fall back rather than raise on the very screen somebody
+is visiting in order to change it.

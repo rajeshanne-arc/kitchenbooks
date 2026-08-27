@@ -139,7 +139,6 @@ check('locations is a store master, and the store may edit it', () => {
   // nothing, and the target it lands on is matrix-checked like any other page.
   assert.equal(legacyTarget('/owner/locations', 'owner'), '/store/masters/locations')
   assert.equal(legacyTarget('/owner/locations', 'store'), '/store/masters/locations')
-  const { readFileSync } = require('node:fs') as typeof import('node:fs')
   const actions = readFileSync('src/server/locations-actions.ts', 'utf8')
   assert.ok(
     actions.includes("user.role !== 'store'"),

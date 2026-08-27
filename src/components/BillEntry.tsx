@@ -34,6 +34,11 @@ const sanitizeAmount = (raw: string) => {
   return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '')
 }
 
+type OrderAnswer = {
+  key: string
+  rows: { id: string; doc_no: string | null; po_date: string; lines: number }[]
+}
+
 export default function BillEntry({
   categories,
   units,
@@ -54,8 +59,10 @@ export default function BillEntry({
   // this app was entered before orders existed. What citing one adds is a
   // COMPARISON — po_fulfilment counts only bills that name an order — so a
   // bill without it is not wrong, merely uncompared.
-  const [orders, setOrders] = useState<{ id: string; doc_no: string | null; po_date: string; lines: number }[]>([])
-  const [poId, setPoId] = useState('')
+  // The answer is stored WITH the vendor it answers for, so a list fetched for
+  // one vendor can never render under another — no clearing, no flash.
+  const [orderAnswer, setOrders] = useState<OrderAnswer | null>(null)
+  const [poIdRaw, setPoId] = useState('')
   const [extrasOpen, setExtrasOpen] = useState(false)
   const [gst, setGst] = useState('')
   const [transport, setTransport] = useState('')
@@ -66,13 +73,19 @@ export default function BillEntry({
   // The order list follows the vendor, and clears with it: an order belongs to
   // one vendor, and offering another's would let a delivery be filed against a
   // document nobody sent them. The server refuses that too.
+  //
+  // KEYED, NOT CLEARED. The two setState calls that used to open this effect —
+  // blanking the order id and emptying the list — ran synchronously on every
+  // vendor change, which is a cascading render and is what
+  // react-hooks/set-state-in-effect names. Both are DERIVED below instead: the
+  // answer is stored against the vendor it answers for, so a stale list is
+  // never shown under a new vendor and nothing has to be cleared to prevent it.
   const vendorKey = vendor?.kind === 'existing' ? vendor.hit.id : null
+  const orders = orderAnswer !== null && orderAnswer.key === vendorKey ? orderAnswer.rows : []
+  // The chosen order is only a choice while it belongs to the vendor on screen.
+  const poId = orders.some((o) => o.id === poIdRaw) ? poIdRaw : ''
   useEffect(() => {
-    setPoId('')
-    if (vendorKey === null) {
-      setOrders([])
-      return
-    }
+    if (vendorKey === null) return
     // ABORTED ON UNMOUNT AND CAPPED IN TIME. A pending fetch is enough to keep
     // a document from reaching idle, and a vendor picker that is changed twice
     // quickly would otherwise race its own answers onto the screen.
@@ -80,11 +93,11 @@ export default function BillEntry({
     const timer = setTimeout(() => ctl.abort(), 10_000)
     void fetch(`/api/vendors/orders?vendor=${vendorKey}`, { signal: ctl.signal, cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { orders: [] }))
-      .then((d: { orders?: typeof orders }) => {
-        if (!ctl.signal.aborted) setOrders(d.orders ?? [])
+      .then((d: { orders?: OrderAnswer['rows'] }) => {
+        if (!ctl.signal.aborted) setOrders({ key: vendorKey, rows: d.orders ?? [] })
       })
       .catch(() => {
-        if (!ctl.signal.aborted) setOrders([])
+        if (!ctl.signal.aborted) setOrders({ key: vendorKey, rows: [] })
       })
     return () => {
       clearTimeout(timer)

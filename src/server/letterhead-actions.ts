@@ -58,7 +58,7 @@ const Schema = z.object({
   // picker that silently did nothing would be worse than a field that admits
   // what it is.
   logoUrl: txt(500),
-  documentStyle: z.enum(['classic', 'compact', 'plain']),
+  documentStyle: z.enum(['classic', 'compact', 'message']),
 })
 
 export type SaveLetterheadInput = z.infer<typeof Schema>

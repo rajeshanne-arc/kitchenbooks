@@ -27,7 +27,8 @@
     "audit:schema": "NODE_OPTIONS='--conditions react-server' tsx scripts/audit-schema.ts",
     "audit:tenancy": "NODE_OPTIONS='--conditions react-server' tsx scripts/audit-tenancy.ts",
     "smoke:tenancy": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-tenancy.ts",
-    "import:stock": "NODE_OPTIONS='--conditions react-server' tsx scripts/import-stock-sheet.ts"
+    "import:stock": "NODE_OPTIONS='--conditions react-server' tsx scripts/import-stock-sheet.ts",
+    "gates": "npm run lint && npm run audit:schema && npm run audit:tenancy && npm run audit:matrix && npm run smoke:phase-a"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

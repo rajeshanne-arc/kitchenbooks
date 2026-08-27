@@ -28,7 +28,7 @@ function Head({ l, style }: { l: Letterhead; style: DocumentStyle }) {
     .join(' · ')
   const reach = [l.phone, l.email].filter((x) => x !== null && String(x).trim() !== '').join(' · ')
 
-  if (style === 'plain') {
+  if (style === 'message') {
     return (
       <div className="mb-4">
         <div className="text-[15px] font-semibold">{l.legal_name ?? l.name}</div>
@@ -72,32 +72,112 @@ function Head({ l, style }: { l: Letterhead; style: DocumentStyle }) {
   )
 }
 
+/** The missing-field note. Not part of the document a vendor reads — it is a
+ *  message to US about our own record, so it never prints and never appears in
+ *  a thumbnail. */
+function MissingNote({ missing }: { missing: string[] }) {
+  return (
+    <div className="mb-4 rounded-xl border border-dashed border-amber-400 bg-amber-50/60 p-3 text-[13px] text-amber-900 print:hidden">
+      <b>This document is missing {missing.length} of the things a purchase order normally carries:</b>{' '}
+      {missing.join(', ')}. It will print without {missing.length === 1 ? 'it' : 'them'} — a vendor reading it
+      sees a list of items from a name with no address. Fill them in under Owner → Setup → Letterhead.
+    </div>
+  )
+}
+
 export default function PoDocument({
   po,
   lines,
   letterhead,
   style,
+  preview = false,
 }: {
   po: PurchaseOrderRow
   lines: PoLineRow[]
   letterhead: Letterhead
   style: DocumentStyle
+  /** Rendered small, inside the style picker. Suppresses the note about our own
+   *  missing fields — a thumbnail is showing the LAYOUT, and a banner about our
+   *  record would be the loudest thing in it. */
+  preview?: boolean
 }) {
   const missing = missingLetterheadFields(letterhead)
   const priced = lines.filter((l) => Number(l.rate) > 0)
-  const ruled = style !== 'plain'
+  const ruled = style !== 'message'
+
+  // ── MESSAGE: PHONE-SHAPED, and it is not the A4 document with a narrower
+  // margin. It exists because this app's delivery channel is WhatsApp, where
+  // a six-column table becomes a grey smear a vendor has to pinch and drag.
+  // Large type, ONE LINE PER ITEM, no table at all — the shape of a message
+  // somebody reads on a phone with one thumb, standing up.
+  if (style === 'message') {
+    return (
+      <div className="mx-auto max-w-[380px] bg-white px-5 py-6 text-stone-900 print:px-0">
+        {!preview && missing.length > 0 && <MissingNote missing={missing} />}
+        <div className="text-[17px] font-bold leading-tight">{letterhead.legal_name ?? letterhead.name}</div>
+        {letterhead.phone !== null && <div className="text-[14px] text-stone-600">{letterhead.phone}</div>}
+
+        <div className="mt-4 text-[15px]">
+          <div className="font-semibold uppercase tracking-wide">Purchase order</div>
+          <div className="font-mono text-[13px] text-stone-600">{po.doc_no ?? '—'}</div>
+          <div className="text-[14px]">{fmtDate(po.po_date)}</div>
+          {po.expected_date !== null && (
+            <div className="text-[14px]">Needed by {fmtDate(po.expected_date)}</div>
+          )}
+        </div>
+
+        <div className="mt-4 text-[15px]">
+          <span className="text-stone-500">To </span>
+          <span className="font-semibold">{po.vendor_name}</span>
+        </div>
+
+        {/* ONE LINE PER ITEM. Quantity first, because that is what the reader
+            is being asked for; the rate follows in smaller type where it is
+            known, and is simply absent where it is not. */}
+        <ul className="mt-4 space-y-2.5">
+          {lines.map((l, i) => (
+            <li key={l.id} className="text-[16px] leading-snug">
+              <span className="text-stone-400">{i + 1}. </span>
+              <span className="font-semibold">
+                {Number(l.qty)} {l.purchase_unit}
+              </span>{' '}
+              {l.item_name}
+              {Number(l.rate) > 0 ? (
+                <span className="block pl-5 text-[13px] text-stone-500">
+                  at {formatMoneyString(l.rate)} — {formatMoneyString(l.amount)}
+                </span>
+              ) : (
+                <span className="block pl-5 text-[13px] text-stone-400">rate to confirm</span>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-4 border-t border-stone-300 pt-2 text-[16px]">
+          <span className="text-stone-500">Total at our last rates </span>
+          <span className="font-mono font-bold">{formatMoneyString(po.total)}</span>
+        </div>
+
+        {priced.length < lines.length && (
+          <p className="mt-2 text-[13px] text-stone-600">
+            {lines.length - priced.length} of {lines.length} have no rate yet — we have no bill from you for{' '}
+            {lines.length - priced.length === 1 ? 'it' : 'them'}. Every rate above is what you last billed
+            us, not a price we are setting.
+          </p>
+        )}
+        {po.note !== null && po.note !== '' && <p className="mt-3 text-[14px]">{po.note}</p>}
+        {po.status === 'cancelled' && (
+          <p className="mt-3 font-semibold uppercase tracking-wide text-red-700">Cancelled</p>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-[210mm] bg-white p-6 text-stone-900 print:p-0">
       {/* NAMED, NOT OMITTED — and it does not print, because it is a message
           to us about our own record, not part of the document a vendor reads. */}
-      {missing.length > 0 && (
-        <div className="mb-4 rounded-xl border border-dashed border-amber-400 bg-amber-50/60 p-3 text-[13px] text-amber-900 print:hidden">
-          <b>This document is missing {missing.length} of the things a purchase order normally carries:</b>{' '}
-          {missing.join(', ')}. It will print without {missing.length === 1 ? 'it' : 'them'} — a vendor reading
-          it sees a list of items from a name with no address. Fill them in under Owner → Setup → Letterhead.
-        </div>
-      )}
+      {!preview && missing.length > 0 && <MissingNote missing={missing} />}
 
       <Head l={letterhead} style={style} />
 

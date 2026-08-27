@@ -30,7 +30,28 @@ export function missingLetterheadFields(l: Letterhead): string[] {
 /** Three layouts, and what each is for. The choice is per restaurant because
  *  taste in documents differs and nothing about a number changes with it. */
 export const DOCUMENT_STYLE_NAMES: Record<DocumentStyle, string> = {
-  classic: 'Classic — letterhead block, ruled table, signature line',
-  compact: 'Compact — one dense block, fits a half page',
-  plain: 'Plain — no rules or shading, cheapest to print',
+  classic: 'Classic',
+  compact: 'Compact',
+  message: 'Message',
+}
+
+/** WHAT EACH ONE IS FOR. The difference is the situation the document is read
+ *  in, not the font — which is why there are three and not sixteen. */
+export const DOCUMENT_STYLE_USES: Record<DocumentStyle, string> = {
+  classic: 'A4, formal. Address block and a ruled table — what a vendor files.',
+  compact: 'A4, dense. A thirty-line order still fits on one page.',
+  message: 'Phone-shaped. Large type, one line per item, no wide table — reads on WhatsApp without zooming.',
+}
+
+/**
+ * The stored value, narrowed — and a legacy 'plain' lands on classic.
+ *
+ * 'plain' was classic with the rules turned off, so that is where it belongs.
+ * Reading it rather than migrating it: a setting is one row per restaurant and
+ * an unrecognised value should fall back, not raise, on a screen somebody is
+ * only visiting to change it.
+ */
+export function readDocumentStyle(v: string | null | undefined): DocumentStyle {
+  if (v === 'compact' || v === 'message') return v
+  return 'classic'
 }

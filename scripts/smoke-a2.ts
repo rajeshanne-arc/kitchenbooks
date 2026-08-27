@@ -7182,7 +7182,7 @@ async function run() {
       const { getRestaurant } = await import('../src/server/queries')
       const r = await getRestaurant()
       const t = r.id
-      let out = { a: '', b: '', c: '' }
+      const out = { a: '', b: '', c: '' }
       await txn(async (tx) => {
         const [ch] = await tx<{ id: string }[]>`select id from sections where code='CH' and restaurant_id=${t}`
         const [v] = await tx<{ id: string }[]>`insert into vendors (restaurant_id, code, name, primary_category) values (${t},'V-ZZ-98','Zz Variance Probe','PLT') returning id`
@@ -7419,7 +7419,7 @@ async function run() {
       const { getRestaurant } = await import('../src/server/queries')
       const { countWaiting } = await import('../src/server/approvals-queries')
       const r = await getRestaurant()
-      let seen = { before: -1, pending: -1, accepted: -1 }
+      const seen = { before: -1, pending: -1, accepted: -1 }
       await txn(async (tx) => {
         seen.before = await countWaiting(r.id, tx as never)
         await tx`insert into list_suggestions (restaurant_id, list_key, value, suggested_by, seen_count, status)
@@ -8350,6 +8350,100 @@ async function run() {
       if ((e as Error).message !== 'ROLLBACK-MERGE-PROBE') throw e
     })
     for (const l of out) console.log(`      ${l}`)
+  })
+
+  /* ── the letterhead: a remount, and a picker that cannot drift ─────── */
+  console.log('\nthe letterhead')
+
+  await check('no component is defined inside another component', async () => {
+    // THE BUG WAS A REMOUNT, NOT A STATE BUG. `Field` was declared inside
+    // LetterheadEditor's body, so every render produced a new function identity
+    // and React saw a different component TYPE in the same position: it
+    // unmounted the <input> and mounted a fresh one. The character was never
+    // lost — it was in state the whole time. The INPUT was lost, and with it
+    // the focus, after every keystroke.
+    //
+    // THE LINT ALREADY CAUGHT IT. `react-hooks/static-components` fired eleven
+    // times on that file and said "The component is created during render
+    // here", naming the line. Nothing ran it — `npm run lint` was not in the
+    // gate set. So the fix is not this sweep, it is that lint now runs; this
+    // asserts the rule cannot be quietly switched off.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const files = [...walk('src'), ...walk('scripts')]
+    // MATCHED AS A DIRECTIVE, not as two strings in one file. The first
+    // version tested for "static-components" and "eslint-disable" appearing
+    // anywhere in the same file and flagged THIS ONE, which names the rule in a
+    // comment — a checker that reads source is part of the source it reads.
+    const suppressed = files.filter((f) =>
+      /eslint-disable[a-z-]*[^\n]*react-hooks\/static-components/.test(readFileSync(f, 'utf8')),
+    )
+    assert.deepEqual(suppressed, [], 'react-hooks/static-components is disabled somewhere')
+
+    // And the independent sweep, by BRACE DEPTH rather than indentation: an
+    // indentation-based scan reported 43 candidates and 42 were module-scope
+    // declarations. Depth found exactly one, which was the bug.
+    const nested: string[] = []
+    for (const f of walk('src')) {
+      if (!f.endsWith('.tsx')) continue
+      let depth = 0
+      readFileSync(f, 'utf8')
+        .split('\n')
+        .forEach((ln, i) => {
+          const code = ln.replace(/\/\/.*$/, '')
+          if (depth > 0 && /^[ \t]*(?:const [A-Z]\w*\s*=\s*[(<]|function [A-Z]\w*\s*[(<])/.test(ln)) {
+            nested.push(`${f.replace('src/', '')}:${i + 1}`)
+          }
+          depth = Math.max(0, depth + (code.split('{').length - 1) - (code.split('}').length - 1))
+        })
+    }
+    assert.deepEqual(nested, [], 'a component is defined inside another component — every render remounts it')
+    console.log(`      ${files.length} files swept by brace depth · the rule is not disabled anywhere`)
+  })
+
+  await check('the style picker renders the template, never a picture of it', async () => {
+    // A THUMBNAIL IMAGE IS A HAND-MAINTAINED COPY OF A TEMPLATE and it lies the
+    // day the layout changes — the same fault as a gate carrying its own copy
+    // of the thing it checks, somewhere nobody would look for it. So the picker
+    // renders <PoDocument> at small scale, through the same component the
+    // printed page uses.
+    const { readFileSync } = await import('node:fs')
+    const picker = readFileSync('src/components/settings/StylePicker.tsx', 'utf8')
+    assert.ok(/<PoDocument\b/.test(picker), 'the picker does not render the real document')
+    assert.ok(!/<img\b|\.png|\.jpg|\.svg/.test(picker), 'the picker ships an image of a template')
+    assert.ok(/preview\b/.test(picker), 'the thumbnail does not suppress the missing-fields note')
+
+    // THREE STYLES THAT DIFFER BY USE, and each says what it is for. Asserted
+    // by value: 'plain' differed from classic by decoration alone and is gone.
+    const { DOCUMENT_STYLES } = await import('../src/lib/types')
+    const { DOCUMENT_STYLE_USES, DOCUMENT_STYLE_NAMES, readDocumentStyle } = await import('../src/lib/letterhead')
+    assert.deepEqual([...DOCUMENT_STYLES], ['classic', 'compact', 'message'])
+    for (const s of DOCUMENT_STYLES) {
+      assert.ok((DOCUMENT_STYLE_USES[s] ?? '').length > 20, `${s} does not say what it is for`)
+      assert.ok((DOCUMENT_STYLE_NAMES[s] ?? '') !== '', `${s} has no name`)
+    }
+    // A stored 'plain' still reads. A setting is one row per restaurant and an
+    // unrecognised value must fall back, not raise, on the screen somebody is
+    // visiting in order to change it.
+    assert.equal(readDocumentStyle('plain'), 'classic')
+    assert.equal(readDocumentStyle(null), 'classic')
+    assert.equal(readDocumentStyle('message'), 'message')
+
+    // MESSAGE IS PHONE-SHAPED, not the A4 document with a narrower margin: it
+    // returns before the table exists, so there is no six-column grid in it.
+    const doc = readFileSync('src/components/store/PoDocument.tsx', 'utf8')
+    const msgAt = doc.indexOf("if (style === 'message')")
+    const tableAt = doc.indexOf('<table')
+    assert.ok(msgAt !== -1, 'there is no message layout')
+    assert.ok(msgAt < tableAt, 'the message layout does not return before the table')
+    console.log('      classic · compact · message — the picker renders each one, legacy "plain" reads as classic')
   })
 
   console.log(
