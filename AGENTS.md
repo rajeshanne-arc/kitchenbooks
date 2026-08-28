@@ -8116,3 +8116,66 @@ fault inherits that fault's credibility.* Ask of the corrected version the same
 question you would ask of a fresh one — what would this look like if it failed?
 If both sides of a comparison were written in the same keystroke, they are
 probably the same side twice.
+
+## A PARTIAL OBJECT BEHIND A CAST — three faults reported as one
+
+A bill line prefilled from a purchase order was missing its expiry field. It
+was missing two other things in the same screenshot, and all three were one
+fault:
+
+    PO line      "BAK-002 ·"          orphan separator, no unit, no EXPIRES
+    picker line  "BAK-002 · Bakery"   category, "Pieces", EXPIRES present
+
+The PO path hand-built the item's `hit` from the columns the order query
+happened to join — `id`, `code`, `name`, `purchase_unit` — **four of
+`ItemHitExisting`'s thirteen**. So `category` was `undefined` (the orphan dot),
+`unit_name` was `undefined` (no label), and `tracks_expiry` was `undefined`,
+**which is falsy, which hid the expiry field on exactly the items that require
+one.** A fourth was silently gone too: `rate_source` and `last_bought` were
+absent, so the price-variance warning could never fire on a prefilled line.
+
+**`as Line[]` is what made it possible.** TypeScript had every fact it needed —
+a four-key object literal is not an `ItemHitExisting` — and the cast told it not
+to look. The fields did not go missing at runtime; they went missing at the
+keystroke that silenced the checker.
+
+**THE FIX IS ONE CONSTRUCTOR, NOT ONE FIELD.** Adding `tracks_expiry` to the PO
+path repairs the reported symptom, leaves two live, and leaves the shape
+divergent so the next field added to the picker goes missing here again.
+`getBillItemHits(restaurant, vendor, ids)` returns the same hit the picker
+returns, fetched by id; `lineFrom(key, item, prefillRate, arriving)` is the only
+place an item becomes a line. **A prefill differs from a fresh line only in the
+qty and rate it arrives with.**
+
+Two consequences that fall out rather than being added: the prefilled line now
+carries the vendor-scoped rate history, so the price warning works on it; and
+`expiryDate` resets when the picked item changes, because an expiry belongs to
+the item it was read off.
+
+**THE GATE ASSERTS THE SHAPE, NEVER THE FIELD.** `Object.keys` of an
+order-prefilled hit against a picked one, plus `deepEqual` on the values — key
+names alone pass against a branch that fills every field wrongly. Pinning
+`tracks_expiry` would have caught this bug and none of its siblings. Live: 13
+fields, identical both ways. The expiry item is still checked, but as a
+consequence of the shape rather than instead of it.
+
+**Not perturbed, deliberately.** This announced itself the moment somebody
+opened the screen — the wall-clock rule's second column exactly.
+
+### The two things checked while there, both already correct
+
+- **The same item on two lines of one bill is summed.** `po_fulfilment`'s
+  delivered leg is `sum(pl.qty) GROUP BY (purchase_order_id, item_id)`, so two
+  bill lines for one item at two rates both count against the ordered quantity.
+  It also filters BOTH halves of a reversed pair, as that rule requires.
+- **The save refuses a blank expiry on both paths.** `save-bill.ts` reads
+  `items.tracks_expiry` from the DATABASE inside the transaction and loops every
+  line, so the PO path is not exempt and could not be — the check never consults
+  the client's hit. It names the ITEM, not a line number.
+
+**A LATENT MIRROR, reported not fixed:** `purchase_order_lines` has NO
+uniqueness on `(purchase_order_id, item_id)`. Zero orders have a repeated item
+today, but if one ever did, `po_fulfilment` would join the same summed delivery
+to each of the two order rows and report the full delivery twice — an
+over-delivery on both. The bill side is right because it aggregates; the order
+side would double-count because it does not. Fixing it is a migration.

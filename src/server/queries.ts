@@ -92,6 +92,56 @@ export async function searchVendors(restaurantId: string, q: string): Promise<Ve
  * Starter rows whose name is already materialized as an item are excluded,
  * so a suggestion never duplicates something that exists.
  */
+/**
+ * THE SAME HIT THE PICKER RETURNS, FETCHED BY ID.
+ *
+ * `searchItems` is how an item normally becomes a bill line, and every field on
+ * the line — the category shown beside the name, the unit label, whether an
+ * expiry is asked for, and the vendor-scoped rate the price warning compares
+ * against — comes off that hit. Any other path that builds a bill line must
+ * produce the SAME OBJECT, or the line quietly differs from its neighbours in
+ * ways nothing type-checks: the purchase-order prefill hand-built four of these
+ * thirteen fields and cast the result, so `tracks_expiry` arrived `undefined`,
+ * which is falsy, which hid the expiry field on the items that require one.
+ *
+ * The vendor branch is the same rule as the picker's, collapsed into one query
+ * because the ids are known: this vendor's own last rate when they have sent it
+ * before, item_rates only when they have not — and `last_bought` ONLY beside a
+ * vendor rate, because a date next to a cross-vendor price would dress up the
+ * comparison lib/price.ts exists to refuse.
+ *
+ * NOT FILTERED TO ACTIVE, deliberately, unlike the picker. The picker is
+ * choosing what to buy next and a retired item must not be offered; this is
+ * reconstructing lines that were ALREADY ordered, and dropping one because the
+ * item was retired since would silently shorten somebody's delivery.
+ */
+export async function getBillItemHits(
+  restaurantId: string,
+  /** the vendor the bill is for, when known — what makes the rate theirs */
+  vendorId: string | null,
+  itemIds: string[],
+): Promise<ItemHitExisting[]> {
+  if (itemIds.length === 0) return []
+  const rows = await tsql<Omit<ItemHitExisting, 'kind'>[]>`
+    select i.id, i.code, i.name, i.category, c.name as category_name,
+           i.purchase_unit, u.name as unit_name,
+           coalesce(v.last_rate::text, r.prefill_rate::text) as prefill_rate,
+           case when v.last_rate is not null then 'vendor'
+                when r.prefill_rate is not null then 'any'
+                else null end as rate_source,
+           case when v.last_rate is not null then v.last_bought::text else null end as last_bought,
+           (v.item_id is not null) as from_vendor,
+           i.tracks_expiry
+    from items i
+    join categories c on c.code = i.category
+    join units u on u.code = i.purchase_unit
+    left join item_rates r on r.item_id = i.id
+    left join vendor_supplied_items v
+      on v.restaurant_id = i.restaurant_id and v.item_id = i.id and v.vendor_id = ${vendorId}::uuid
+    where i.restaurant_id = ${restaurantId} and i.id = any(${itemIds}::uuid[])`
+  return rows.map((r) => ({ ...r, kind: 'item' as const }))
+}
+
 export async function searchItems(
   restaurantId: string,
   q: string,

@@ -8458,6 +8458,77 @@ async function run() {
     console.log('      classic · compact · message — the picker renders each one, legacy "plain" reads as classic')
   })
 
+  /* ── one constructor for a bill line ───────────────────────────────── */
+  console.log('\na bill line has one shape, whichever door it came in by')
+
+  await check('a line prefilled from an order is the same shape as a picked one', async () => {
+    // ASSERT THE SHAPE, NOT THE FIELD. The reported symptom was a missing
+    // expiry box; the fault was that the PO path hand-built FOUR of thirteen
+    // hit fields and cast the result, so category, unit_name and tracks_expiry
+    // were all undefined on a prefilled line. Pinning `tracks_expiry` here
+    // would catch this bug and none of its siblings — the next field added to
+    // the picker and not to the order path is the same bug wearing a new name.
+    const { searchItems, getBillItemHits } = await import('../src/server/queries')
+    const { getPoLinesForBill } = await import('../src/server/po-queries')
+
+    // DERIVED, never hardcoded: a real order with lines, and an item some
+    // vendor has actually supplied so the vendor-scoped branch is the one
+    // exercised rather than the fallback.
+    const [po] = await tsql<{ id: string }[]>`
+      select p.id::text as id from purchase_orders p
+      join purchase_order_lines l on l.purchase_order_id = p.id
+      where p.restaurant_id = ${liveTenant}
+      group by p.id limit 1`
+    assert.ok(po !== undefined, 'no purchase order with lines exists — this check examined nothing')
+
+    const prefilled = await getPoLinesForBill(liveTenant, po.id)
+    assert.ok(prefilled.length > 0, 'the order returned no lines — this check examined nothing')
+
+    for (const line of prefilled) {
+      const picked = (await searchItems(liveTenant, line.hit.code, null)).find(
+        (h) => h.kind === 'item' && h.id === line.hit.id,
+      )
+      assert.ok(picked !== undefined, `${line.hit.code} is not findable through the picker`)
+      assert.deepEqual(
+        Object.keys(line.hit).sort(),
+        Object.keys(picked).sort(),
+        `${line.hit.code}: an order-prefilled line and a picked one have different fields`,
+      )
+    }
+
+    // AND THE TWO BRANCHES AGREE ON VALUES, not merely on key names. A shape
+    // check passes happily against a branch that returns every field and fills
+    // them wrongly, which is the other half of one constructor.
+    const [supplied] = await tsql<{ vendor_id: string; item_id: string; code: string }[]>`
+      select v.vendor_id::text as vendor_id, v.item_id::text as item_id, i.code
+      from vendor_supplied_items v
+      join items i on i.restaurant_id = v.restaurant_id and i.id = v.item_id
+      where v.restaurant_id = ${liveTenant} and i.status = 'active'
+      order by v.times_bought desc limit 1`
+    assert.ok(supplied !== undefined, 'no vendor has supplied anything — the vendor branch is untested')
+    const [built] = await getBillItemHits(liveTenant, supplied.vendor_id, [supplied.item_id])
+    const viaPicker = (await searchItems(liveTenant, supplied.code, supplied.vendor_id)).find(
+      (h) => h.kind === 'item' && h.id === supplied.item_id,
+    )
+    assert.deepEqual(built, viaPicker, `${supplied.code}: the two hit builders disagree`)
+    assert.equal(built.rate_source, 'vendor', 'the vendor branch was not the one exercised')
+
+    // THE FIELD THAT BROKE, still checked — but as a consequence of the shape
+    // rather than instead of it. An item that tracks expiry must say so
+    // through the order path, or the form has no reason to render the box.
+    const tracked = await tsql<{ id: string; code: string }[]>`
+      select id::text as id, code from items
+      where restaurant_id = ${liveTenant} and tracks_expiry = true and status = 'active'`
+    assert.ok(tracked.length > 0, 'no item tracks expiry — the field that broke is untested')
+    const hits = await getBillItemHits(liveTenant, supplied.vendor_id, tracked.map((t) => t.id))
+    for (const h of hits) assert.equal(h.tracks_expiry, true, `${h.code} lost tracks_expiry`)
+
+    console.log(
+      `      ${prefilled.length} order line(s) · ${tracked.length} item(s) tracking expiry · ` +
+        `${Object.keys(prefilled[0].hit).length} fields, identical both ways`,
+    )
+  })
+
   /* ── comparison baselines ──────────────────────────────────────────── */
   console.log('\nthe baseline window, by value')
 

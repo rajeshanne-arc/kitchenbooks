@@ -22,7 +22,9 @@
 
 import 'server-only'
 import { txn, tsql } from '@/lib/db'
+import { getBillItemHits } from '@/server/queries'
 import type {
+  BillPrefillLine,
   Letterhead,
   PoDraftLine,
   PoFulfilmentRow,
@@ -169,14 +171,35 @@ export async function listReceivablePos(
 export async function getPoLinesForBill(
   restaurantId: string,
   poId: string,
-): Promise<PoLineRow[]> {
-  return tsql<PoLineRow[]>`
-    select l.id, l.item_id, i.code as item_code, i.name as item_name, i.purchase_unit,
-           l.qty::text as qty, l.rate::text as rate, l.amount::text as amount, l.note
+): Promise<BillPrefillLine[]> {
+  // THE VENDOR COMES OFF THE ORDER, not off the caller. It is what makes the
+  // rate theirs, and an order belongs to exactly one vendor by construction.
+  const rows = await tsql<{ item_id: string; qty: string; rate: string; vendor_id: string }[]>`
+    select l.item_id::text as item_id, l.qty::text as qty, l.rate::text as rate,
+           p.vendor_id::text as vendor_id
     from purchase_order_lines l
+    join purchase_orders p on p.restaurant_id = l.restaurant_id and p.id = l.purchase_order_id
     join items i on i.restaurant_id = l.restaurant_id and i.id = l.item_id
     where l.restaurant_id = ${restaurantId} and l.purchase_order_id = ${poId}
     order by i.name asc`
+  if (rows.length === 0) return []
+
+  // ONE HIT BUILDER, shared with the picker — see getBillItemHits. Building the
+  // hit here from the columns already joined above is exactly the shortcut that
+  // produced a four-field line and hid the expiry field.
+  const hits = await getBillItemHits(
+    restaurantId,
+    rows[0].vendor_id,
+    rows.map((r) => r.item_id),
+  )
+  const byId = new Map(hits.map((h) => [h.id, h]))
+  return rows.flatMap((r) => {
+    const hit = byId.get(r.item_id)
+    // Unreachable while the composite FK holds — an order line cannot name an
+    // item this restaurant does not have — and a dropped line would be worse
+    // than a loud one, so it is a flatMap rather than a non-null assertion.
+    return hit === undefined ? [] : [{ hit, qty: r.qty, rate: r.rate }]
+  })
 }
 
 /** The restaurant as a vendor sees it. Every field is NULL on a new tenant and

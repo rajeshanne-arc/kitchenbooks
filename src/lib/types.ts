@@ -3575,6 +3575,28 @@ export type PoLineRow = {
   note: string | null
 }
 
+/**
+ * ONE LINE OF A BILL PREFILLED FROM AN ORDER — and it carries the item's FULL
+ * hit, not a hand-built subset.
+ *
+ * This type exists because the PO path used to build a partial `hit` from the
+ * order line alone — id, code, name, purchase_unit — and cast it. Three fields
+ * were therefore `undefined` on a prefilled line and on no other: `category`
+ * (an orphan separator on screen), `unit_name` (no unit label) and
+ * `tracks_expiry`, which is falsy, which silently HID the expiry field on
+ * exactly the items that require one.
+ *
+ * A prefill differs from a fresh line only in the qty and rate it arrives
+ * with. Everything else about the item is the item's.
+ */
+export type BillPrefillLine = {
+  hit: ItemHitExisting
+  /** what was ORDERED — an offer the receiver corrects to what arrived */
+  qty: string
+  /** the rate the order was placed at; blank when the order carried none */
+  rate: string
+}
+
 /** `po_fulfilment` — ordered vs delivered, the same shape as
  *  `indent_fulfilment`. `gap` is delivered − ordered, so NEGATIVE IS SHORT,
  *  which is the opposite of how a person says it out loud; it is rendered in

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import type { Category, ItemSel, SaveBillInput, SavedBill, Unit, VendorSel } from '@/lib/types'
+import type { BillPrefillLine, Category, ItemSel, SaveBillInput, SavedBill, Unit, VendorSel } from '@/lib/types'
 import {
   decimalStringToPaise,
   formatMicro,
@@ -25,6 +25,36 @@ import { useBusinessToday } from '@/components/BusinessDay'
 type Line = { key: number; item: ItemSel | null; qty: string; rate: string; prefillRate: string | null; expiryDate: string }
 
 const newLine = (key: number): Line => ({ key, item: null, qty: '', rate: '', prefillRate: null, expiryDate: '' })
+
+/**
+ * THE ONE PLACE AN ITEM BECOMES A BILL LINE. Both paths go through it — the
+ * picker and a purchase-order prefill — because the bug it replaces was a
+ * PARTIAL line: the PO path hand-built a four-field `hit` and cast it, so
+ * `category`, `unit_name` and `tracks_expiry` were all `undefined` on a
+ * prefilled line and nowhere else. The first showed as an orphan separator, the
+ * second as a missing unit, and the third is FALSY — so the expiry field simply
+ * did not render, on exactly the items that require one.
+ *
+ * Adding tracks_expiry to the PO path would have fixed one of three and left
+ * the shape divergent. A line is built here or it is not built.
+ *
+ * A prefill differs from a fresh line ONLY in the qty and rate it arrives with;
+ * `expiryDate` always starts blank, because an expiry belongs to the item that
+ * was picked and must not survive picking a different one.
+ */
+const lineFrom = (
+  key: number,
+  item: ItemSel,
+  prefillRate: string | null,
+  arriving: { qty?: string; rate?: string } = {},
+): Line => ({
+  key,
+  item,
+  prefillRate,
+  qty: arriving.qty ?? '',
+  rate: arriving.rate ?? prefillRate ?? '',
+  expiryDate: '',
+})
 
 /** keep free typing but drop anything that can never be part of an amount */
 const sanitizeAmount = (raw: string) => {
@@ -118,15 +148,21 @@ export default function BillEntry({
     try {
       const r = await fetch(`/api/vendors/orders?po=${id}`, { signal: ctl.signal, cache: 'no-store' })
       if (!r.ok) return
-      const d = (await r.json()) as { lines: { item_id: string; item_code: string; item_name: string; purchase_unit: string; qty: string; rate: string }[] }
+      const d = (await r.json()) as { lines: BillPrefillLine[] }
       if (d.lines.length === 0) return
       setLines(
-        d.lines.map((l, i) => ({
-          ...newLine(nextKey + i),
-          item: { kind: 'existing' as const, hit: { id: l.item_id, code: l.item_code, name: l.item_name, purchase_unit: l.purchase_unit } },
-          qty: String(Number(l.qty)),
-          rate: Number(l.rate) > 0 ? String(Number(l.rate)) : '',
-        })) as Line[],
+        // NO CAST. The `as Line[]` that used to sit here is what let a
+        // four-field object pass as a thirteen-field ItemHitExisting; the hit
+        // now arrives whole from the server and the constructor does the rest.
+        d.lines.map((l, i) =>
+          lineFrom(nextKey + i, { kind: 'existing', hit: l.hit }, l.hit.prefill_rate, {
+            qty: String(Number(l.qty)),
+            // WHAT WAS ORDERED wins over what the vendor last charged: this is
+            // the price the order was placed at, and the gap between it and
+            // what is billed is the whole point of receiving against an order.
+            rate: Number(l.rate) > 0 ? String(Number(l.rate)) : '',
+          }),
+        ),
       )
       setNextKey((k) => k + d.lines.length + 1)
     } catch {
@@ -458,7 +494,12 @@ function LineRow({
             vendorId={vendorId}
             vendorName={vendorName}
             value={line.item}
-            onPick={(sel, prefill) => patch({ item: sel, prefillRate: prefill, rate: prefill ?? line.rate })}
+            onPick={(sel, prefill) =>
+              // THE SAME CONSTRUCTOR. The typed quantity survives — it comes off
+              // the delivery note, not off the item — and the rate falls back to
+              // whatever was already typed when the new item has no history.
+              patch(lineFrom(line.key, sel, prefill, { qty: line.qty, rate: prefill ?? line.rate }))
+            }
             onChange={(sel) => patch({ item: sel })}
             onClear={() => patch({ item: null, prefillRate: null })}
           />
