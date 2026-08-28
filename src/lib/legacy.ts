@@ -127,6 +127,15 @@ export function legacyTarget(pathname: string, role: Role): string | null {
     // "the store's day, in one log" — issues and wastage, newest first
     '/books/wastage': '/store/books/log',
     '/books/issues': '/store/books/log',
+    // BILLS MERGED INTO PURCHASES, and the LIST is the only half that moved.
+    // /store/books/bills/<id> — the document — did not, and seven references
+    // across five files depend on it. So these are BARE entries, exact-match:
+    // the FIXED loop below prefix-matches, so an entry there would rewrite
+    // /books/bills/<id> to /store/books/purchases/<id>, which does not exist.
+    // The FIXED ['/books/bills', '/store/books/bills'] pair stays for exactly
+    // that reason and still carries a bookmarked document through.
+    '/books/bills': '/store/books/purchases',
+    '/store/books/bills': '/store/books/purchases',
   }
   if (BARE[clean] !== undefined) return BARE[clean]
 

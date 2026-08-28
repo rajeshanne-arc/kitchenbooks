@@ -36,6 +36,12 @@ export const VIEW_KEYS = {
   recipeKind: ['all', 'dishes', 'subs'],
   /** Recipes: "what is in Chinese" vs "what is expensive" */
   recipeOrder: ['by-section', 'by-food-cost'],
+  /** Purchases: ONE ledger at three grains, not two reports. Bills and Daily
+   *  purchases were the same rows — a vendor delivers once a day, so 323
+   *  August bills grouped to 301 day-vendor rows: 7% fewer rows in exchange
+   *  for the document number, the vendor's bill number, the line count and
+   *  the link. That is the register with information taken out. */
+  purchases: ['by-bill', 'by-day', 'by-vendor'],
   /** Sales books: one dataset, three questions */
   sales: ['by-day', 'by-hour', 'by-item'],
   /** Mapping: reviewing what was already mapped is a real task */

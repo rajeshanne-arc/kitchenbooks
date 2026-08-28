@@ -6,7 +6,6 @@ import { tsql } from '@/lib/db'
 import type {
   ActivityRow,
   CashHandoverRow,
-  DailyPurchaseRow,
   GstServiceRow,
   SlowMovingRow,
 } from '@/lib/types'
@@ -60,20 +59,14 @@ export async function getSlowMovingStock(restaurantId: string): Promise<SlowMovi
     order by on_hand_value desc nulls last`
 }
 
-/** Spend by day, grouped by vendor. */
-export async function getDailyPurchases(
-  restaurantId: string,
-  from: string,
-  to: string,
-): Promise<DailyPurchaseRow[]> {
-  return tsql<DailyPurchaseRow[]>`
-    select bill_date::text as bill_date, vendor_name, vendor_code,
-           bills::int as bills, spend::text as spend
-    from daily_purchases
-    where restaurant_id = ${restaurantId}
-      and bill_date between ${from}::date and ${to}::date
-    order by bill_date desc, spend desc`
-}
+// DELETED: getDailyPurchases — the "by day and vendor" cross product.
+//
+// It grouped the purchase register by (day, vendor), which is neither
+// question: a vendor delivers once a day, so 323 August bills became 301
+// rows. 7% fewer rows, and no document number, no vendor bill number, no line
+// count and no link. The `daily_purchases` VIEW still exists — the schema is
+// Rajesh's — but nothing reads it; /store/books/purchases now groups by day
+// OR by vendor, from the register itself, so both grains keep the bills.
 
 /** The owner's activity log. Nothing new is recorded — entered_by and
  *  created_at already sat on every event table; this only reads them. */

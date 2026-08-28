@@ -8627,6 +8627,129 @@ async function run() {
     console.log(`      refused by name: ${msg}`)
   })
 
+  /* ── the purchase register, merged ─────────────────────────────────── */
+  console.log('\nbills and daily purchases are one ledger')
+
+  await check('every bill is reachable — no cap inside the query', async () => {
+    // SIXTH IN THE CAP FAMILY. listBills carried `limit = 300` against 330
+    // purchases, so thirty were missing from the register with no line saying
+    // so: the list simply stopped and the last row read as the last bill.
+    // A cap inside a query is invisible at the call site, which is exactly how
+    // getPurchasesByVendor's `limit 8` survived until a total had to add up.
+    const { listBills } = await import('../src/server/books-queries')
+    const [t] = await tsql<{ n: number }[]>`
+      select count(*)::int as n from purchases where restaurant_id = ${liveTenant}`
+    const all = await listBills(liveTenant)
+    assert.ok(t.n > 300, `the fixture cannot see a 300-cap: only ${t.n} purchases exist`)
+    assert.equal(all.length, t.n, `listBills returned ${all.length} of ${t.n} purchases`)
+    // And the source carries no limit at all, so it cannot come back as a
+    // "tidy-up" that the count above would still pass on a smaller ledger.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/books-queries.ts', 'utf8')
+    const i = src.indexOf('export async function listBills')
+    assert.ok(!src.slice(i, src.indexOf('export async function', i + 10)).includes('limit '),
+      'listBills has a limit in its query again')
+    console.log(`      ${all.length} bills, uncapped`)
+  })
+
+  await check('the register header reconciles to the dashboard, exact and in paise', async () => {
+    // THE RECONCILIATION THIS PAGE HAS NEVER HAD. Bills was all-time and Daily
+    // purchases period-scoped, so neither could be held against the Goods in
+    // card. Both sides are now the same window and must agree to the paise.
+    //
+    // TWO GENUINELY DIFFERENT COMPUTATIONS: the page sums the REGISTER's own
+    // rows in integer paise, the card sums getPurchaseSeries. A check whose
+    // two sides were written in one keystroke is the same side twice.
+    const { listBills } = await import('../src/server/books-queries')
+    const { getPurchaseSeries } = await import('../src/server/store-queries')
+    const { decimalStringToPaise, formatPaise } = await import('../src/lib/money')
+    const from = '2026-08-01'
+    const to = '2026-08-28'
+    const bills = await listBills(liveTenant, { from, to })
+    assert.ok(bills.length > 0, 'no bills in the window — this check examined nothing')
+    const header = bills.reduce((n, b) => n + decimalStringToPaise(b.bill_total), 0)
+    const series = await getPurchaseSeries(liveTenant, from, to)
+    const card = series.current.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
+    assert.equal(
+      header,
+      card,
+      `the register header shows ${formatPaise(header)}; the dashboard's Goods in card ${formatPaise(card)}`,
+    )
+    // COUNT BESIDE SUM — a sum alone cannot see a truncated set.
+    const [sql_] = await tsql<{ n: number; days: number; vendors: number }[]>`
+      select count(*)::int as n, count(distinct bill_date)::int as days,
+             count(distinct vendor_id)::int as vendors
+      from purchases
+      where restaurant_id = ${liveTenant} and bill_date between ${from}::date and ${to}::date`
+    assert.equal(bills.length, sql_.n, 'the register lost bills against the table')
+    assert.equal(new Set(bills.map((b) => b.bill_date)).size, sql_.days)
+    assert.equal(new Set(bills.map((b) => b.vendor_code)).size, sql_.vendors)
+    console.log(
+      `      ${bills.length} bills · ${sql_.days} days · ${sql_.vendors} vendors · ${formatPaise(header)} both ways`,
+    )
+  })
+
+  await check('the vendor that CROSSES 80% is inside the 80%', async () => {
+    // A RUNNING TOTAL OVER ORDERED SPEND, and the boundary is the whole of it.
+    // The test is on the running total BEFORE each vendor: while less than 80%
+    // has been accounted for, this vendor is still part of accounting for it.
+    // Excluding it reports a set that does not actually reach 80% — a smaller,
+    // tidier, wrong number that nothing on screen would contradict.
+    const { listBills } = await import('../src/server/books-queries')
+    const { decimalStringToPaise } = await import('../src/lib/money')
+    const from = '2026-08-01'
+    const to = '2026-08-28'
+    const [sqlSide] = await tsql<{ included: number; excluded: number; n: number }[]>`
+      with v as (
+        select vendor_id, sum(bill_total) as s from purchases
+        where restaurant_id = ${liveTenant} and bill_date between ${from}::date and ${to}::date
+        group by vendor_id
+      ), r as (
+        select s,
+               sum(s) over (order by s desc, vendor_id) as through_me,
+               sum(s) over (order by s desc, vendor_id) - s as before_me,
+               sum(s) over () as tot
+        from v
+      )
+      select count(*) filter (where before_me < tot * 0.8)::int as included,
+             count(*) filter (where through_me <= tot * 0.8)::int as excluded,
+             count(*)::int as n
+      from r`
+    // THE FIXTURE MUST BE ABLE TO TELL THE TWO RULES APART. If the boundary
+    // vendor happened to land exactly on 80% both rules would agree, and this
+    // assertion would pass under either implementation.
+    assert.notEqual(
+      sqlSide.included,
+      sqlSide.excluded,
+      'this period cannot distinguish the two boundary rules — the assertion would be vacuous',
+    )
+
+    // And the PAGE's own computation, in integer paise over the register.
+    const bills = await listBills(liveTenant, { from, to })
+    const total = bills.reduce((n, b) => n + decimalStringToPaise(b.bill_total), 0)
+    const byVendor = new Map<string, number>()
+    for (const b of bills) {
+      byVendor.set(b.vendor_code, (byVendor.get(b.vendor_code) ?? 0) + decimalStringToPaise(b.bill_total))
+    }
+    const ordered = [...byVendor.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    let running = 0
+    let topN = 0
+    for (const [, paise] of ordered) {
+      if (running < total * 0.8) topN += 1
+      running += paise
+    }
+    assert.equal(topN, sqlSide.included, 'the page and SQL disagree about the 80% set')
+    assert.equal(ordered.length, sqlSide.n, 'the page and SQL disagree about the vendor count')
+    // The set it names must actually reach 80%, which is the property the
+    // boundary rule exists to guarantee.
+    const reached = ordered.slice(0, topN).reduce((n, [, p]) => n + p, 0)
+    assert.ok(reached >= total * 0.8, `the top ${topN} carry only ${((reached / total) * 100).toFixed(1)}%`)
+    console.log(
+      `      ${topN} of ${ordered.length} vendors carry 80% (they reach ` +
+        `${((reached / total) * 100).toFixed(1)}%); excluding the crosser would say ${sqlSide.excluded}`,
+    )
+  })
+
   /* ── comparison baselines ──────────────────────────────────────────── */
   console.log('\nthe baseline window, by value')
 

@@ -30,12 +30,41 @@ const BILL_SELECT = `
   from bills b
   join purchases p on p.id = b.id`
 
-export async function listBills(restaurantId: string, limit = 300): Promise<BillRow[]> {
+/**
+ * EVERY BILL, UNCAPPED. This carried `limit = 300` against 330 purchases, so
+ * thirty bills were missing from the register with no line saying so — the
+ * list simply stopped, and a reader takes the last row as the last bill.
+ *
+ * Sixth in the cap family, and the same fix as the by-vendor table: a cap
+ * inside a query is invisible at the call site, so truncation belongs on the
+ * SCREEN where it can be named and carry the value it is hiding.
+ */
+export async function listBills(
+  restaurantId: string,
+  /** optional window — the register is period-scoped so it reconciles to the
+   *  dashboard's Goods in card, which reads the same rows */
+  range: { from: string; to: string } | null = null,
+  /** vendor name, either bill number, or an ITEM on the bill. The item leg is
+   *  why this is in SQL rather than a filter over the returned rows: a bill
+   *  carries no item names, they are on its lines. */
+  q = '',
+): Promise<BillRow[]> {
+  const like = `%${q.trim()}%`
   return tsql<BillRow[]>`
     ${sql.unsafe(BILL_SELECT)}
     where b.restaurant_id = ${restaurantId}
-    order by b.bill_date desc, b.created_at desc
-    limit ${limit}`
+      and (${range === null} or b.bill_date between ${range?.from ?? '1900-01-01'}::date
+                                                and ${range?.to ?? '9999-12-31'}::date)
+      and (${q.trim() === ''}
+           or b.vendor_name ilike ${like}
+           or b.vendor_code ilike ${like}
+           or b.bill_no ilike ${like}
+           or p.doc_no ilike ${like}
+           or exists (
+             select 1 from purchase_lines pl
+             join items i on i.id = pl.item_id
+             where pl.purchase_id = b.id and (i.name ilike ${like} or i.code ilike ${like})))
+    order by b.bill_date desc, b.created_at desc`
 }
 
 export async function getBill(restaurantId: string, id: string): Promise<BillRow | null> {

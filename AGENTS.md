@@ -8258,3 +8258,97 @@ the asymmetry is exercised rather than asserted. It also checks the guard does
 **not** refuse two different items — a guard that refuses everything is not a
 guard — and sweeps both write paths for the call, since create and update each
 build their own rows and either could be written without it.
+
+## BILLS AND DAILY PURCHASES WERE ONE LEDGER — merged, at three grains
+
+The duplication test this repo already uses — *if the same component is mounted
+twice, one mount is duplication by definition* — retired `/store/books/stock`
+and was never applied here. It should have been, and the arithmetic is what
+settles it rather than a judgement:
+
+> **A vendor delivers once a day, so 323 August bills group to 301 day-vendor
+> rows. Daily purchases removed 7% of the rows and in exchange dropped the
+> document number, the vendor's own bill number, the line count and the link
+> to the document. It was the register with information taken out, at 93% of
+> the length.**
+
+That is not two grains. `/store/books/purchases` survives — the dashboard's
+Goods in card already linked there with `?period` — and `/store/books/bills`
+redirects. **The old "by day and vendor" cross product is DELETED**; it
+answered neither question. By day is 26 rows for August, not 301.
+
+`?view=` through the existing `readView` contract, never a fourth toggle
+idiom: `purchases: ['by-bill', 'by-day', 'by-vendor']`, default first so a
+clean URL means the register.
+
+### THE CAP: 300 AGAINST 330, sixth in the family
+
+`listBills(restaurantId, limit = 300)` with 330 purchases on the books.
+**Thirty bills were missing from the register with no line saying so** — the
+list simply stopped, and a reader takes the last row as the last bill. Same
+shape as `getPurchasesByVendor`'s `limit 8` against 31 vendors: a cap inside a
+query is invisible at the call site. No cap in the query now; truncation
+belongs on the SCREEN where it can be named and carry the value it hides.
+
+### THE HEADER LINE IS THE RECONCILIATION THE PAGE NEVER HAD
+
+Daily purchases had no total row at all; Bills had no total anywhere. **Bills
+was all-time and Daily purchases period-scoped, which is why neither could be
+held up against the dashboard.** Both are one period-scoped window now, and
+the header — `323 bills · 26 days · 31 vendors · ₹17,77,607.50` — is asserted
+equal to the Goods in card to the paise, with the COUNT beside the sum,
+because a sum alone cannot see a truncated set.
+
+The two sides are genuinely different computations: the page sums the
+register's own rows in integer paise, the card sums `getPurchaseSeries`.
+Perturbed by shifting one window a single day: `₹15,77,910.99` against
+`₹17,77,607.50`.
+
+### EXPAND INLINE OR NAVIGATE — the rule is QUANTITATIVE
+
+By day and By vendor expand IN PLACE; a bill navigates to its document.
+Measured on live data: **busiest day 25 bills, average 12; busiest vendor 25,
+average 10** — about a screen. An item's stock ledger expands to 115 rows and
+therefore gets a page instead. **Do not harmonise the two; the numbers
+differ.**
+
+**THE OPEN GROUP LIVES IN THE URL** — `?day=2026-08-04`, `?vendor=V-DRY-01`,
+one at a time — so an opened day is shareable and behaves like every other
+filter here. Component state would be neither.
+
+### NO TAIL ON BY VENDOR, and that was the choice
+
+The `<Rest>` row that names its value is right for a top-8 preview beside a
+chart. Here it would have read *"26 other vendors · ₹7,34,635.79 · 41.3%"* —
+**the largest single line on the screen, and the one thing a reader most needs
+opened.** 31 rows fit, so all 31 render and there is no tail at all.
+
+### THE 80% BOUNDARY: the vendor that CROSSES it is INSIDE it
+
+**11 of 31 vendors carry 80% of August's spend**, and they reach 82.1%. The
+test is on the running total BEFORE each vendor: while less than 80% has been
+accounted for, this vendor is still part of accounting for it.
+
+Excluding the crosser gives a smaller, tidier, **wrong** number — the set it
+names reaches only **78.4%**, which is the property the rule exists to
+guarantee and the perturbation that proves it. The gate also asserts the two
+rules DISAGREE on this period, because a boundary vendor landing exactly on
+80% would make both agree and the assertion vacuous.
+
+Beside it, informational and amber rather than an alarm: **65 bills under
+₹1,000, ₹30,746.80 combined** — the drops worth consolidating into one trip.
+
+### A REDIRECT THAT MUST NOT SWALLOW ITS OWN CHILDREN
+
+`/store/books/stock` uses a `[[...rest]]` catch-all, because the whole subtree
+moved. **Bills is the opposite case: the LIST moved and the DOCUMENT did
+not**, and seven references across five files point at
+`/store/books/bills/[id]`. So the shim is a BARE page beside the `[id]`
+segment, and the legacy entries are `BARE` (exact-match) rather than `FIXED` —
+because the `FIXED` loop prefix-matches, and an entry there would have
+rewritten `/books/bills/<id>` to `/store/books/purchases/<id>`, which does not
+exist. The `FIXED` `['/books/bills', '/store/books/bills']` pair STAYS for
+exactly that reason and still carries a bookmarked document through.
+
+**Ask of any retired URL whether its children moved with it.** The two shapes
+look identical and one of them silently 404s every deep link.

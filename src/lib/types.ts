@@ -2560,13 +2560,6 @@ export type SlowMovingRow = {
   days_since_bought: number | null
 }
 
-export type DailyPurchaseRow = {
-  bill_date: string
-  vendor_name: string
-  vendor_code: string
-  bills: number
-  spend: string
-}
 
 export type ActivityRow = {
   what: string

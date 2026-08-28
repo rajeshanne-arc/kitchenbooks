@@ -6,9 +6,11 @@
 // marks the first chip active at the parent URL, so the screen looks
 // identical — it just arrives once.
 //
-// Rendering Bills — the same component the chip's own URL renders, so
-// there is one implementation and it cannot drift. `dynamic` is declared
-// here rather than re-exported: Next parses that field statically and
-// refuses to follow it through a re-export.
+// Rendering Purchases — the same component the chip's own URL renders, so
+// there is one implementation and it cannot drift. It used to render Bills,
+// which is now a redirect: re-exporting THAT would have made the Books tab
+// bounce through a shim on every open. `dynamic` is declared here rather than
+// re-exported, because Next parses that field statically and refuses to
+// follow it through a re-export.
 export const dynamic = 'force-dynamic'
-export { default } from './bills/page'
+export { default } from './purchases/page'

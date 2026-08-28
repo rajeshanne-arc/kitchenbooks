@@ -14,16 +14,23 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
     { href: '/kitchen/books/suppliers', label: 'Supplier exposure' },
   ],
   store: [
-    { href: '/store/books/bills', label: 'Bills' },
+    // BILLS AND DAILY PURCHASES WERE ONE LEDGER, and the duplication rule that
+    // retired /store/books/stock — one mount per group — was never applied
+    // here. A vendor delivers once a day, so 323 August bills grouped to 301
+    // day-vendor rows: 7% fewer rows in exchange for the document number, the
+    // vendor's own bill number, the line count and the link to the document.
+    // That is the register with information taken out, at 93% of the length.
+    // One tab now, three grains behind ?view=; /store/books/bills redirects.
+    { href: '/store/books/purchases', label: 'Purchases' },
     { href: '/store/books/log', label: 'Store log' },
     // STOCK MOVED OUT of Books and became a top-level tab with four views.
     // Keeping an entry here would be a second door to the same component in
     // the same group — the duplication test says one mount per group, and the
     // top-level tab is the one that wins. /store/books/stock now redirects.
-    { href: '/store/books/purchases', label: 'Daily purchases' },
-    // WHAT A VENDOR'S PRICE DID, bill over bill. Beside Daily purchases
-    // because they answer the same question from two sides — what we spent,
-    // and what changed underneath it.
+    //
+    // WHAT A VENDOR'S PRICE DID, bill over bill. Beside Purchases because they
+    // answer the same question from two sides — what we spent, and what
+    // changed underneath it.
     { href: '/store/books/prices', label: 'Price moves' },
     // what the vendor billed and did not deliver, and how each vendor does
     // on that over time — the same question from the line and from the year
