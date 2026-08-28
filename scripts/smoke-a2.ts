@@ -8529,6 +8529,104 @@ async function run() {
     )
   })
 
+  await check('an order refuses the same item twice, by name; a bill does not', async () => {
+    // THE ASYMMETRY IS THE ASSERTION. Both halves are checked here because
+    // either one alone reads as an arbitrary rule: a BILL must keep carrying
+    // one item twice (two rates on one delivery, and po_fulfilment aggregates
+    // the delivered side), and an ORDER must refuse it (a request for the same
+    // thing twice is always a mistake, and the ordered side does NOT
+    // aggregate, so two rows would each claim the whole delivery).
+    const [uq] = await tsql<{ d: string }[]>`
+      select pg_get_constraintdef(i.indexrelid) as d
+      from pg_index i
+      where i.indrelid = 'purchase_order_lines'::regclass and i.indisunique
+        and i.indexrelid::regclass::text like '%item_uq%'`
+    assert.ok(uq !== undefined, 'purchase_order_lines has no uniqueness on (order, item)')
+
+    // AND THE BILL SIDE HAS NONE, checked rather than assumed — adding one
+    // there "for symmetry" would refuse a delivery that really did arrive at
+    // two rates.
+    const billUq = await tsql<{ d: string }[]>`
+      select pg_get_constraintdef(i.indexrelid) as d
+      from pg_index i
+      where i.indrelid = 'purchase_lines'::regclass and i.indisunique
+        and pg_get_constraintdef(i.indexrelid) like '%item_id%'`
+    assert.equal(billUq.length, 0, 'purchase_lines gained a uniqueness it must not have')
+
+    // A bill that genuinely carries one item twice, on live data — the case
+    // the order rule must NOT be generalised to.
+    const [twice] = await tsql<{ n: number }[]>`
+      select count(*)::int as n from (
+        select purchase_id from purchase_lines
+        where restaurant_id = ${liveTenant} group by purchase_id, item_id having count(*) > 1
+      ) t`
+    assert.ok(twice.n > 0, 'no bill carries one item twice — the asymmetry is untested')
+
+    // THE APP'S OWN GUARD, not a hand-written insert — which would test the
+    // constraint and not the app. `createPurchaseOrder` cannot be called here:
+    // it needs a session, and outside a request getSessionUser returns null, so
+    // the front door would refuse for the WRONG reason and this would pass
+    // while proving nothing. The guard writes nothing, so nothing to roll back.
+    //
+    // ON THE LIVE TENANT, and deliberately: the guard SELECTS and nothing more,
+    // so there is nothing to write anywhere, and the probe tenant has no items
+    // at all — running it there reported UNTESTED, which is a tick over an
+    // empty set. Real item names are also what make the refusal readable.
+    const { assertOneRowPerItem, PoLineRefusal } = await import('../src/server/po-queries')
+    const { withTenant } = await import('../src/lib/tenant')
+    const probe = await withTenant(liveTenant, () =>
+      txn(async (tx) => {
+        const rid = liveTenant
+        const items = await tx<{ id: string; name: string }[]>`
+          select id::text as id, name from items where status = 'active' order by code limit 2`
+        if (items.length < 2) return null
+        const catch_ = async (lines: { itemId: string }[]) => {
+          try {
+            await assertOneRowPerItem(tx, rid, lines)
+            return null
+          } catch (e) {
+            return e
+          }
+        }
+        return {
+          name: items[0].name,
+          // the same item twice is what an order must refuse...
+          refusal: await catch_([{ itemId: items[0].id }, { itemId: items[0].id }]),
+          // ...and two DIFFERENT items is what it must not.
+          falseAlarm: await catch_([{ itemId: items[0].id }, { itemId: items[1].id }]),
+        }
+      }),
+    )
+    if (probe === null) {
+      console.log('      UNTESTED: the probe tenant holds fewer than two active items')
+      return
+    }
+    assert.ok(probe.refusal instanceof PoLineRefusal, 'the same item twice was not refused')
+    const msg = (probe.refusal as Error).message
+    assert.ok(msg.includes(probe.name), `the refusal must name the item; it said: ${msg}`)
+    assert.ok(
+      msg.toLowerCase().includes('quantity'),
+      `the refusal must say what to do instead; it said: ${msg}`,
+    )
+    // A GUARD THAT REFUSES EVERYTHING IS NOT A GUARD.
+    assert.equal(probe.falseAlarm, null, 'two different items were refused as duplicates')
+
+    // AND BOTH WRITE PATHS CALL IT. Create and update each build their own
+    // line rows, so either could be written without it — the same static sweep
+    // that holds assertAccount across nine forms.
+    const { readFileSync } = await import('node:fs')
+    const actionsSrc = readFileSync('src/server/po-actions.ts', 'utf8')
+    for (const fn of ['createPurchaseOrder', 'updatePurchaseOrder']) {
+      const i = actionsSrc.indexOf(`export async function ${fn}`)
+      assert.ok(i > 0, `${fn} is gone`)
+      assert.ok(
+        actionsSrc.slice(i, i + 3000).includes('assertOneRowPerItem'),
+        `${fn} does not refuse a repeated item`,
+      )
+    }
+    console.log(`      refused by name: ${msg}`)
+  })
+
   /* ── comparison baselines ──────────────────────────────────────────── */
   console.log('\nthe baseline window, by value')
 

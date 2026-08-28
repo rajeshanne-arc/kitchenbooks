@@ -27,6 +27,7 @@ import { txn, tsql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
+import { PoLineRefusal, assertOneRowPerItem } from '@/server/po-queries'
 import { parseMoney, parseQty } from '@/lib/money'
 import type { PurchaseOrderRow, SentVia } from '@/lib/types'
 
@@ -40,6 +41,8 @@ export type PoSendResult = { ok: true; po: PurchaseOrderRow } | { ok: false; err
 
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof PoError) return { ok: false, error: e.message }
+  // Its own words, not the generic apology — the same handling AccountRefusal gets.
+  if (e instanceof PoLineRefusal) return { ok: false, error: e.message }
   if (e instanceof z.ZodError) return { ok: false, error: 'Invalid input — nothing was saved' }
   console.error('purchase order action failed', e)
   const detail = e instanceof Error ? e.message.slice(0, 200) : 'unknown error'
@@ -121,6 +124,10 @@ export async function createPurchaseOrder(raw: SavePoInput): Promise<PoResult> {
         select id from vendors
         where id = ${input.vendorId} and restaurant_id = ${rid} and status = 'active'`
       if (!vendor) throw new PoError('That vendor is not on the active list — pick another')
+      // BEFORE THE NUMBER IS DRAWN. The transaction rolls back either way, so
+      // the series stays gapless — but refusing first keeps the failure about
+      // the order rather than about numbering.
+      await assertOneRowPerItem(tx, rid, lines)
 
       const docNo = await nextDocNo(tx, rid, 'PO', input.poDate)
       const [po] = await tx<{ id: string }[]>`
@@ -190,6 +197,10 @@ export async function updatePurchaseOrder(id: string, raw: SavePoInput): Promise
       if (input.vendorId !== po.vendor_id) {
         throw new PoError('An order cannot change vendor — raise a new one')
       }
+      // BEFORE THE DELETE, not after the insert. Refusing later would still be
+      // safe — the transaction rolls back — but it would have thrown away the
+      // draft's lines to discover something knowable from the payload alone.
+      await assertOneRowPerItem(tx, rid, lines)
 
       // The lines are REPLACED, which is what the DELETE grant is for: a draft
       // line asserts an intention and nothing reads it yet.

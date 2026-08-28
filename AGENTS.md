@@ -8179,3 +8179,82 @@ today, but if one ever did, `po_fulfilment` would join the same summed delivery
 to each of the two order rows and report the full delivery twice — an
 over-delivery on both. The bill side is right because it aggregates; the order
 side would double-count because it does not. Fixing it is a migration.
+
+## A CAST IS AN INSTRUCTION TO STOP CHECKING
+
+`as Line[]` on the purchase-order prefill is the cleanest instance this project
+has produced, and it belongs beside the gate rules because it is the same shape
+as the two already there:
+
+| | What was capable of answering | What told it not to |
+|---|---|---|
+| the retired-URL list at 51 against 57 | `RETIRED_URLS`, derivable every run | a hand-maintained copy |
+| the focus-loss remount | `react-hooks/static-components`, firing 11 times | a gate nobody invoked |
+| the PO prefill | TypeScript, which knew a four-key literal is not an `ItemHitExisting` | `as Line[]` |
+
+**Each one is a place where a tool was capable of answering and was told not
+to.** None of them is a missing check. The checker existed, was correct, and
+was silenced — by a copy, by an uninvoked command, by a keyword.
+
+**The cast is the worst of the three, because it is the only one that hides
+something with no symptom.** Four fields were missing. Three were visible the
+moment somebody opened the screen — an orphan separator, no unit, no expiry
+box. The fourth was **SILENT**: without `rate_source` and `last_bought` the
+price-variance warning could never fire on a prefilled line, and nothing on any
+screen would ever have said so. Rajesh reported the expiry field. Nobody would
+ever have reported the warning that did not appear.
+
+So the rule is not "avoid casts", which is unusable. It is: **a cast on an
+object literal is a claim that you have written every field, and the compiler
+will not check the claim.** Where the object is a domain type with more than a
+handful of fields, do not write it — CALL THE THING THAT BUILDS IT. If no such
+thing exists, that is the finding.
+
+## AN ORDER REFUSES WHAT A BILL REQUIRES — the asymmetry, and why only one side needed a constraint
+
+Migration `purchase_order_lines_one_row_per_item`, applied with zero rows
+violating it, closed before a purchase order was raised in anger.
+
+The two documents look alike and the rule is opposite, which is exactly why it
+is worth writing down rather than reasoning out again:
+
+- **A BILL legitimately carries one item twice.** Goods arrive at two rates on
+  one delivery. Five bills in the live ledger already do it. `po_fulfilment`
+  **aggregates** the delivered side — `sum(pl.qty) GROUP BY (order, item)` — so
+  both lines count against the ordered quantity and nothing is lost.
+  **Aggregating is what makes the bill side safe, and a uniqueness there would
+  refuse a delivery that really happened.**
+- **An ORDER is a REQUEST**, so asking for the same thing twice on one document
+  is always a mistake. And the ordered side does **not** aggregate: two order
+  rows for one item would each join the whole summed delivery and report it
+  twice — an over-delivery on both. **Only uniqueness fixes that side.**
+
+**THE CONSTRAINT STOPS CORRUPTION; IT DOES NOT ANSWER ANYBODY.** A raw 23505
+names an index. So `assertOneRowPerItem` refuses by ITEM NAME on both write
+paths — "Baking Powder & Soda is already on this order — change the quantity on
+the existing line rather than adding a second one" — never by line number,
+because somebody reading an order sees names and "line 4 is a duplicate" tells
+neither of the two which to remove. Same reasoning as the shorts refusal.
+
+It lives in `po-queries.ts` with its own `PoLineRefusal`, **deliberately not in
+the `'use server'` file**, the same reasoning as `assertAccount`: every export
+from one of those is a public endpoint, and a guard is not something to publish.
+Living there is also what makes it testable through the app's own code path.
+
+**THERE IS NO CLIENT HALF, AND THAT IS A FINDING RATHER THAN AN OMISSION.**
+`PoDraft` is the only line editor and it has no item picker at all — lines come
+from the reorder suggestions (one row per item by construction) or from the
+order being edited. **A duplicate is not reachable through the UI today**, so a
+client-side refusal would be a guard against a state the screen cannot produce,
+which is untestable by definition. The server is where it is reachable, because
+a server action is a public endpoint; and it is where the refusal will already
+be waiting on the day somebody adds an item picker, which is a plausible next
+feature.
+
+**The gate asserts BOTH halves**, because either alone reads as an arbitrary
+rule: the order table HAS the unique index, `purchase_lines` has NONE and must
+not gain one, and a live bill genuinely carrying one item twice is counted so
+the asymmetry is exercised rather than asserted. It also checks the guard does
+**not** refuse two different items — a guard that refuses everything is not a
+guard — and sweeps both write paths for the call, since create and update each
+build their own rows and either could be written without it.

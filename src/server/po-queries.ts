@@ -21,6 +21,7 @@
 //   know that an order nobody has delivered against yet is not short.
 
 import 'server-only'
+import type postgres from 'postgres'
 import { txn, tsql } from '@/lib/db'
 import { getBillItemHits } from '@/server/queries'
 import type {
@@ -31,6 +32,56 @@ import type {
   PoLineRow,
   PurchaseOrderRow,
 } from '@/lib/types'
+
+/**
+ * Refusing a second line for an item already on the order.
+ *
+ * DELIBERATELY NOT IN THE `'use server'` FILE, the same reasoning as
+ * `assertAccount`: every export from one of those is a public HTTP endpoint,
+ * and a guard is not something to publish. Living here also makes it testable
+ * through the app's own code path rather than through a hand-written insert.
+ */
+export class PoLineRefusal extends Error {}
+
+/**
+ * ONE ROW PER ITEM ON AN ORDER — refused by NAME, inside the transaction.
+ *
+ * THE ASYMMETRY WITH A BILL IS THE WHOLE REASON THIS EXISTS. A bill genuinely
+ * carries one item twice — goods arrive at two rates on one delivery — and
+ * `po_fulfilment` aggregates the delivered side, so the bill needs no
+ * uniqueness and must not have one. An ORDER is a REQUEST: asking the same
+ * vendor for onions twice on one document is always a mistake, and the view
+ * does NOT aggregate the ordered side, so each of the two rows would join the
+ * whole delivery and report it twice.
+ *
+ * `purchase_order_lines_item_uq` is what makes it impossible. This is what
+ * makes it ANSWERABLE — a raw 23505 names an index, and the person holding the
+ * order needs to be told which item and what to do instead.
+ */
+export async function assertOneRowPerItem(
+  tx: postgres.TransactionSql,
+  rid: string,
+  lines: { itemId: string }[],
+): Promise<void> {
+  const seen = new Set<string>()
+  const repeated = new Set<string>()
+  for (const l of lines) {
+    if (seen.has(l.itemId)) repeated.add(l.itemId)
+    seen.add(l.itemId)
+  }
+  if (repeated.size === 0) return
+  // NAMED, never numbered: somebody reading an order sees item names, and
+  // "line 4 is a duplicate" tells neither of the two which one to remove.
+  const names = await tx<{ name: string }[]>`
+    select name from items
+    where restaurant_id = ${rid} and id = any(${[...repeated]}::uuid[])
+    order by name`
+  const list = names.map((n) => n.name).join(', ')
+  throw new PoLineRefusal(
+    `${list} ${names.length === 1 ? 'is' : 'are'} already on this order — ` +
+      `change the quantity on the existing line rather than adding a second one.`,
+  )
+}
 
 /** Every order, newest first. `open` narrows to the two states that are still
  *  somebody's job — a draft nobody sent and an order nobody has delivered. */
