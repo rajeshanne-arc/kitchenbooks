@@ -3689,3 +3689,18 @@ export type ExpiringStockRow = {
   vendor_name: string
   bill_no: string | null
 }
+
+/** One row of the vendor-payments log — the destination of the store
+ *  dashboard's "Paid out" card. */
+export type PaymentLogRow = {
+  id: string
+  doc_no: string | null
+  paid_date: string
+  amount: string
+  mode: string | null
+  note: string | null
+  entered_by: string | null
+  vendor_code: string
+  vendor_name: string
+  account_name: string | null
+}

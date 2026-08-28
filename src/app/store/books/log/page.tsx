@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
+import { businessToday } from '@/server/business-day'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import { listStoreLog } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -7,9 +9,21 @@ import { ReversalBadge, VoidedBadge } from '@/components/books/Badges'
 
 export const dynamic = 'force-dynamic'
 
-export default async function StoreLogPage() {
+export default async function StoreLogPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>
+}) {
   const restaurant = await getRestaurant()
-  const rows = await listStoreLog(restaurant.id)
+  // PERIOD-SCOPED, because this is where "Stock out" lands. A drill-down that
+  // answers over a different window than the number it was clicked from is a
+  // lie that renders perfectly. No ?period means all time, which is what the
+  // Books tab shows when nobody has picked one.
+  const { period: periodParam } = await searchParams
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = periodParam === undefined ? null : resolvePeriod(periodReq.param, periodToday)
+  const rows = await listStoreLog(restaurant.id, 150, period?.from, period?.to)
 
   if (rows.length === 0) {
     return (
@@ -38,6 +52,11 @@ export default async function StoreLogPage() {
 
   return (
     <section className="mt-2">
+      {period !== null && (
+        <p className="pb-2 text-sm text-stone-500">
+          {period.label} · {fmtDate(period.from)} — {fmtDate(period.to)}
+        </p>
+      )}
       <ul className="divide-y divide-rule-soft">
         {rows.map((r) => {
           const neg = decimalStringToPaise(r.value) < 0

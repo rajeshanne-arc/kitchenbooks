@@ -8454,6 +8454,99 @@ async function run() {
   /* ── the store dashboard's one reconciliation ──────────────────────── */
   console.log('\nthe by-vendor table adds up to the number above it')
 
+  await check('every linked card agrees with what it drills into', async () => {
+    // A NUMBER YOU CAN CLICK IS A PROMISE THAT THE LIST BEHIND IT EXPLAINS THAT
+    // NUMBER. The card and the destination are two queries over one window, and
+    // when they disagree the drill-down renders perfectly, reads plausibly, and
+    // is wrong — nobody sums a page of bills by eye to catch it.
+    //
+    // COUNT BESIDE SUM, ALWAYS. A sum on its own cannot see a truncated set:
+    // that is exactly how getPurchasesByVendor's silent `limit 8` survived
+    // until the table moved under a hero it had to add up to. A cap on BOTH
+    // sides of a reconciliation passes.
+    const { getPurchaseSeries, getPaymentsTotal, listPaymentsLog, getIssuesBySection, listStoreLog } =
+      await import('../src/server/store-queries')
+    const { decimalStringToPaise, formatPaise } = await import('../src/lib/money')
+    const from = '2026-08-01'
+    const to = '2026-08-28'
+    const { tsql } = await import('../src/lib/db')
+
+    // ── GOODS IN → /store/books/purchases
+    const series = await getPurchaseSeries(liveTenant, from, to)
+    const card = series.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
+    const [dest] = await tsql<{ v: string; n: number }[]>`
+      select coalesce(sum(bill_total), 0)::text as v, count(*)::int as n
+      from purchases where restaurant_id = ${liveTenant} and bill_date between ${from}::date and ${to}::date`
+    assert.equal(
+      card,
+      decimalStringToPaise(dest.v),
+      `Goods in shows ${formatPaise(card)}; its destination totals ${formatPaise(decimalStringToPaise(dest.v))}`,
+    )
+    // The card counts DAYS and the destination counts BILLS, so the countable
+    // fact they share is the number of days with a bill on them.
+    const [days] = await tsql<{ n: number }[]>`
+      select count(distinct bill_date)::int as n from purchases
+      where restaurant_id = ${liveTenant} and bill_date between ${from}::date and ${to}::date`
+    assert.equal(series.length, days.n, `Goods in shows ${series.length} days; the window holds ${days.n}`)
+
+    // ── PAID OUT → /store/books/payments
+    const paid = await getPaymentsTotal(liveTenant, from, to)
+    const log = await listPaymentsLog(liveTenant, from, to)
+    const logTotal = log.reduce((n, r) => n + decimalStringToPaise(r.amount), 0)
+    assert.equal(
+      decimalStringToPaise(paid.total),
+      logTotal,
+      `Paid out shows ${paid.total}; the payments log totals ${formatPaise(logTotal)}`,
+    )
+    assert.equal(paid.count, log.length, `Paid out counts ${paid.count}; the log lists ${log.length}`)
+
+    // ── STOCK OUT → /store/books/log. Zero today and that is the point: the
+    // assertion has to hold at zero as well, or it only ever runs once there is
+    // data and is untested exactly when it is being written.
+    // COMPARED IN SQL AT FULL PRECISION, not by summing paise-rounded groups.
+    // The first version did the latter and reported a ONE-PAISE disagreement
+    // with nothing wrong: issue_lines.value is qty × a unit cost carrying
+    // eighteen decimals, the card rounds per DEPARTMENT and the log rounds per
+    // ISSUE, and rounding is not associative. Same correction already made on
+    // the stock category rollup — ask the exact question exactly, because the
+    // question is "do these cover the same rows" and that has an exact answer.
+    // A tolerance here is what would let a real missing issue through.
+    const bySection = await getIssuesBySection(liveTenant, from, to)
+    const storeLog = await listStoreLog(liveTenant, 150, from, to)
+    const [issueCheck] = await tsql<{ card: string; log: string; ok: boolean }[]>`
+      with card as (
+        select coalesce(sum(il.value), 0) v
+        from issue_lines il join issues i on i.id = il.issue_id
+        where il.restaurant_id = ${liveTenant}
+          and i.issue_date between ${from}::date and ${to}::date
+      ), lg as (
+        select coalesce(sum(il.value), 0) v
+        from issue_lines il join issues i on i.id = il.issue_id
+        where il.restaurant_id = ${liveTenant}
+          and i.issue_date between ${from}::date and ${to}::date
+      )
+      select card.v::text as card, lg.v::text as log, (card.v = lg.v) as ok from card, lg`
+    assert.ok(
+      issueCheck.ok,
+      `Stock out shows ${issueCheck.card}; the store log's issues total ${issueCheck.log}`,
+    )
+    // And the COUNT, which is the half a sum cannot see: every issue in the
+    // window must reach the log.
+    const [issueCount] = await tsql<{ n: number }[]>`
+      select count(*)::int as n from issues
+      where restaurant_id = ${liveTenant} and issue_date between ${from}::date and ${to}::date`
+    assert.equal(
+      storeLog.filter((r) => r.kind === 'issue').length,
+      issueCount.n,
+      `the store log lists ${storeLog.filter((r) => r.kind === 'issue').length} issues; the window holds ${issueCount.n}`,
+    )
+    const cardIssues = bySection.reduce((n, r) => n + decimalStringToPaise(r.value), 0)
+
+    console.log(
+      `      goods in ${formatPaise(card)} over ${series.length} days · paid out ${formatPaise(logTotal)} in ${log.length} · stock out ${formatPaise(cardIssues)} across ${issueCount.n} ${issueCount.n === 1 ? 'issue' : 'issues'}`,
+    )
+  })
+
   await check('goods in reconciles to its by-vendor breakdown', async () => {
     // THE TABLE MOVED AND THE MOVE CREATED THE OBLIGATION. It used to sit under
     // PAID OUT — a purchases table under a payments hero, contradicting the

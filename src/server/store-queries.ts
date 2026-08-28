@@ -21,6 +21,7 @@ import type {
   SectionConsumptionDay,
   SectionMonthRow,
   StockRow,
+  PaymentLogRow,
   StockView,
   CategoryRollupRow,
   StockSnap,
@@ -336,7 +337,20 @@ export async function getWastageVoidedBy(wastageId: string): Promise<{ id: strin
   return rows[0] ?? null
 }
 
-export async function listStoreLog(restaurantId: string, limit = 150): Promise<StoreLogRow[]> {
+/**
+ * The store's day — issues and wastage in one log.
+ *
+ * PERIOD-SCOPED, because it is the destination of the "Stock out" card and a
+ * drill-down that answers over a different window than the number it was
+ * clicked from is a lie that looks perfectly healthy. `from`/`to` omitted means
+ * all time, which is what the Books tab shows when nobody has picked a period.
+ */
+export async function listStoreLog(
+  restaurantId: string,
+  limit = 150,
+  from?: string,
+  to?: string,
+): Promise<StoreLogRow[]> {
   const issues = await tsql<
     {
       id: string
@@ -358,6 +372,7 @@ export async function listStoreLog(restaurantId: string, limit = 150): Promise<S
            (select count(*)::int from issue_lines il where il.issue_id = i.id) as line_count
     from issues i join sections s on s.id = i.section_id
     where i.restaurant_id = ${restaurantId}
+      ${from === undefined || to === undefined ? sql`` : sql`and i.issue_date between ${from}::date and ${to}::date`}
     order by i.issue_date desc, i.created_at desc
     limit ${limit}`
   const waste = await tsql<
@@ -380,6 +395,7 @@ export async function listStoreLog(restaurantId: string, limit = 150): Promise<S
            w.value::text as value, it.name as item_name, w.qty::text as qty, it.purchase_unit, w.reason
     from wastage w join items it on it.id = w.item_id
     where w.restaurant_id = ${restaurantId}
+      ${from === undefined || to === undefined ? sql`` : sql`and w.waste_date between ${from}::date and ${to}::date`}
     order by w.waste_date desc, w.created_at desc
     limit ${limit}`
   const merged: StoreLogRow[] = [
@@ -881,4 +897,37 @@ export async function issueContext(
            )::text as since,
            (select count(*)::int from purchases where restaurant_id = ${restaurantId}) as bills`
   return row ?? { issued: false, since: null, bills: 0 }
+}
+
+
+/**
+ * EVERY VENDOR PAYMENT IN A WINDOW — the destination of the "Paid out" card.
+ *
+ * THERE WAS NO PAYMENTS LOG. Payments live at /store/receive/pay, which is a
+ * FORM, and a number must never link to a form: a reader clicking a figure is
+ * asking "what is this made of", and being handed a blank entry screen answers
+ * a different question and loses their place. So the log exists now rather than
+ * the card being left dead — three clickable figures and one that is not
+ * teaches that some numbers are clickable, which is worse than none being.
+ *
+ * NO CAP. Seventeen payments today and a few hundred a year; a limit here would
+ * be the silent truncation this page has already been caught by once, on a list
+ * whose whole job is to add up to the number above it.
+ */
+export async function listPaymentsLog(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<PaymentLogRow[]> {
+  return tsql<PaymentLogRow[]>`
+    select p.id, p.doc_no, p.paid_date::text as paid_date, p.amount::text as amount,
+           p.mode, p.note, p.entered_by,
+           v.code as vendor_code, v.name as vendor_name,
+           a.name as account_name
+    from payments p
+    join vendors v on v.restaurant_id = p.restaurant_id and v.id = p.vendor_id
+    left join money_accounts a on a.restaurant_id = p.restaurant_id and a.id = p.account_id
+    where p.restaurant_id = ${restaurantId}
+      and p.paid_date between ${from}::date and ${to}::date
+    order by p.paid_date desc, p.created_at desc`
 }

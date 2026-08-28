@@ -7881,3 +7881,87 @@ back as a tidy-up. Restoring the `limit 8` fails it by name:
 duplicate card, a sort order — and was fixed and opened rather than proved, per
 the wall-clock rule. The reconciliation was the one piece that could have failed
 in silence.
+
+
+## A NUMBER YOU CAN CLICK IS A PROMISE ABOUT THE LIST BEHIND IT
+
+Four cards on the store dashboard drill down, and the promise is kept two ways:
+the destination reads the SAME `?period=` the card was showing, and a gate
+asserts both TOTALS and both COUNTS agree. Break the promise once and nobody
+clicks again.
+
+**ASSERT THE COUNT BESIDE THE SUM.** A sum on its own cannot see a truncated
+set — which is exactly how `getPurchasesByVendor`'s silent `limit 8` survived
+until the table moved under a hero it had to add up to. **A cap on BOTH sides of
+a reconciliation passes**, so the count is not a nicety; it is the half that
+catches truncation.
+
+Proved by shifting the destination window one day: *"Goods in shows
+₹17,77,607.50; its destination totals ₹15,58,368.99"*.
+
+### The URL contract is not forked
+
+`periodParamValue` is the inverse of `readPeriodParam`, and **a preset stays a
+preset in the link.** Resolving `this-month` to a range on the way out would
+make a link shared on Monday show Monday's dates when it is opened on Friday.
+One parameter, `?period=`, exactly as `src/lib/period.ts` defines it.
+
+### Two destinations did not exist, and neither was invented
+
+- **`/store/books/issues` is `[id]` only** — a single-issue detail route with no
+  index. Stock out lands on **`/store/books/log`** instead, which is the list
+  that actually explains the figure: issues and wastage, the store's day.
+- **There was no payments log at all.** Payments live at `/store/receive/pay`,
+  which is a FORM, and **a number must never link to a form**: a reader clicking
+  a figure is asking what it is made of, and a blank entry screen answers a
+  different question and loses their place. `/store/books/payments` was built
+  rather than the card left dead — three clickable figures and one that is not
+  teaches that *some* numbers are clickable, which is worse than none being.
+
+### OUTSTANDING TO VENDORS IS NOT PERIOD-SCOPED, and now says so
+
+`vendor_dues` is a BALANCE — what is owed now. It does not move when the period
+control moves and must not pretend to, so its link carries no period and the
+card reads **"as of today"**. That also explains, for the first time, something
+the page had never explained: why one card ignores the control above it.
+
+## SILENT CAPS — the audit, and what it found
+
+Prompted by `limit 8` against 31 vendors, every query behind a linked card and
+behind its destination was swept for `limit` / `slice`. **A cap inside a query
+is invisible at the call site.**
+
+| | |
+|---|---|
+| **Outstanding to vendors** | `.slice(0, 6)` — the card said 29 vendors and drew 6 bars, **dropping 23 with no note**. Live fault. |
+| **Stock out** | `.slice(0, 6)`, same shape — unexercised then, wrong the day issues began, which turned out to be that week |
+| **expiring** | had "and N more" — **count only, no value** |
+| `listOpenIndents` | `limit 30` behind a card; latent |
+| `getItemLedger` | already correct — says "newest 200 of N" and computes its balance over all rows |
+| typeaheads (`limit 10`/`20`) | legitimate; nothing reconciles against them |
+
+All four behind cards now use one `<Rest>` line: **largest N, then a named
+remainder carrying its VALUE, then the total.** A count alone still hides how
+much was dropped — six large vendors and twenty-three trivial ones reads
+identically to six and twenty-three comparable ones.
+
+## AND THE TWO STANDING REDS CLEARED THEMSELVES
+
+`smoke:a2` had carried two deliberate failures for weeks — *"no department has
+ever been issued to — this assertion cannot fail, so it is not a test"* and
+`issue_frequency` having no reader. **Rajesh made the first issue on 28 Aug: one
+issue, five lines, one department, ₹4,227.81.** Both went green on their own.
+
+That is the design working exactly as intended: an assertion written to fail
+until the data exists, clearing the day it does, with nobody editing it. The
+suite is fully green for the first time, and `smoke:a2` HAS joined the
+`gates` chain — the reason it was held out is gone.
+
+**And the first run against real issues found a one-paise disagreement**, which
+was the assert being wrong rather than the data: `issue_lines.value` is qty ×
+a unit cost carrying eighteen decimals, the card rounds per DEPARTMENT and the
+log rounds per ISSUE, and rounding is not associative. Compared in SQL at full
+precision now — the same correction already made on the stock category rollup,
+arrived at independently a second time, which is a fair sign it should be the
+default rather than the fix. **Where two queries must cover the same rows, ask
+that question in SQL and exactly; never by summing rounded subtotals in JS.**

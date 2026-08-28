@@ -7,7 +7,7 @@ import { listIndents } from '@/server/kitchen-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
-import { readPeriodParam, resolvePeriod } from '@/lib/period'
+import { readPeriodParam, resolvePeriod, periodParamValue } from '@/lib/period'
 import {
   cardCls,
   dataTableCls,
@@ -39,6 +39,36 @@ export const dynamic = 'force-dynamic'
  *  named row. The remainder is SHOWN, never dropped — the column has to add up
  *  to the hero above it. */
 const VENDOR_ROWS = 8
+
+/** How many bars a magnitude chart draws before the rest are named beneath it.
+ *  Six is what fits; the remainder is never silent. */
+const BAR_ROWS = 6
+
+/** Dates listed before the rest are named. */
+const EXPIRING_ROWS = 8
+
+/**
+ * WHAT A CHART LEFT OUT, WITH ITS VALUE.
+ *
+ * A bar chart is a cap by construction — six bars fit and the rest do not. The
+ * Outstanding card said "₹13,01,041 owed across 29 vendors" and drew SIX bars,
+ * dropping twenty-three with no note; a reader takes six bars under that
+ * sentence as the shape of the whole thing.
+ *
+ * "and N more" is not enough on its own. A count says how many rows are hidden
+ * and nothing about how much money is in them — six large vendors and
+ * twenty-three trivial ones is a different picture from six and twenty-three
+ * comparable ones, and the count reads identically in both.
+ */
+function Rest({ rows, unit }: { rows: { paise: number }[]; unit: string }) {
+  if (rows.length === 0) return null
+  const paise = rows.reduce((n, r) => n + r.paise, 0)
+  return (
+    <p className="mt-1.5 text-xs text-stone-500">
+      and {rows.length} more {plural(rows.length, unit)} · {formatPaise(paise)}
+    </p>
+  )
+}
 
 // The store's own dashboard. Not the owner's questions rephrased — the
 // store manager's: what came in, where it went, who is owed, what to buy,
@@ -102,6 +132,11 @@ export default async function StoreHome({
     getExpiringStock(restaurant.id, today, EXPIRING_WITHIN_DAYS),
   ])
 
+  // THE PERIOD, CARRIED EXACTLY AS IT ARRIVED. periodParamValue is the inverse
+  // of readPeriodParam and keeps a PRESET a preset — resolving 'this-month' to
+  // a range on the way out would make a link shared on Monday show Monday's
+  // dates when it is opened on Friday.
+  const drill = `?period=${encodeURIComponent(periodParamValue(periodReq.param))}`
   const purchaseTotal = purchases.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
   // The by-vendor table sits under the Goods in hero and its column must add up
   // to it. Every vendor is fetched; the screen shows the largest few and names
@@ -227,7 +262,15 @@ export default async function StoreHome({
         {/* goods in */}
         <section className={cardCls}>
           <div className="flex items-baseline justify-between gap-2">
-            <h2 className={sectionHeadCls}>Goods in</h2>
+            {/* A NUMBER YOU CAN CLICK IS A PROMISE THAT THE LIST BEHIND IT
+                EXPLAINS THAT NUMBER — so the destination reads the SAME period,
+                and a gate asserts both totals and both row counts agree. Break
+                the promise once and nobody clicks again. */}
+            <h2 className={sectionHeadCls}>
+              <Link href={`/store/books/purchases${drill}`} className="hover:underline">
+                Goods in →
+              </Link>
+            </h2>
             <span className="font-mono text-[10px] text-stone-400">purchases</span>
           </div>
           <p className="mt-1.5 text-sm text-stone-700">
@@ -298,7 +341,14 @@ export default async function StoreHome({
             and `section` is the column name leaking into the interface. */}
         <section className={cardCls}>
           <div className="flex items-baseline justify-between gap-2">
-            <h2 className={sectionHeadCls}>Stock out, by department</h2>
+            {/* /store/books/issues is a DETAIL route ([id]) with no index; the
+                store log is the list that explains this figure — issues and
+                wastage, the store's day. */}
+            <h2 className={sectionHeadCls}>
+              <Link href={`/store/books/log${drill}`} className="hover:underline">
+                Stock out, by department →
+              </Link>
+            </h2>
             <span className="font-mono text-[10px] text-stone-400">issue_lines</span>
           </div>
           <p className="mt-1.5 text-sm text-stone-700">
@@ -313,9 +363,15 @@ export default async function StoreHome({
             <div className="mt-2">
               <MagnitudeBars
                 rows={issuesBySection
-                  .slice(0, 6)
+                  .slice(0, BAR_ROWS)
                   .map((s) => ({ label: s.section, value: decimalStringToPaise(s.value) / 100 }))}
-                height={Math.max(110, Math.min(issuesBySection.length, 6) * 28 + 40)}
+                height={Math.max(110, Math.min(issuesBySection.length, BAR_ROWS) * 28 + 40)}
+              />
+              <Rest
+                rows={issuesBySection
+                  .slice(BAR_ROWS)
+                  .map((s) => ({ paise: decimalStringToPaise(s.value) }))}
+                unit="department"
               />
             </div>
           )}
@@ -324,8 +380,18 @@ export default async function StoreHome({
         {/* vendor dues */}
         <section className={`${cardCls} ${owed.assessable ? '' : unassessedToneCls}`}>
           <div className="flex items-baseline justify-between gap-2">
-            <h2 className={sectionHeadCls}>Outstanding to vendors</h2>
-            <span className="font-mono text-[10px] text-stone-400">vendor_dues</span>
+            {/* NO PERIOD ON THIS ONE, AND THAT IS THE POINT. vendor_dues is a
+                BALANCE — what is owed now — and it does not move when the date
+                range above it moves. Carrying the period into the link would
+                make it pretend to. "as of today" beside the figure explains
+                something this page has never explained: why one card ignores
+                the control at the top. */}
+            <h2 className={sectionHeadCls}>
+              <Link href="/store/books/vendors" className="hover:underline">
+                Outstanding to vendors →
+              </Link>
+            </h2>
+            <span className="font-mono text-[10px] text-stone-400">vendor_dues · as of today</span>
           </div>
           {!owed.assessable ? (
             <>
@@ -345,16 +411,20 @@ export default async function StoreHome({
               <p className="mt-1.5 text-sm text-stone-700">
                 {owed.data.length === 0
                   ? 'Nothing outstanding to any vendor.'
-                  : `${formatPaise(duesTotal)} owed across ${owed.data.length} ${plural(owed.data.length, 'vendor')}.`}
+                  : `${formatPaise(duesTotal)} owed across ${owed.data.length} ${plural(owed.data.length, 'vendor')}, as of today.`}
               </p>
               {owed.data.length > 0 && (
                 <>
                   <div className="mt-2">
                     <MagnitudeBars
                       rows={owed.data
-                        .slice(0, 6)
+                        .slice(0, BAR_ROWS)
                         .map((d) => ({ label: d.name, value: decimalStringToPaise(d.balance) / 100 }))}
-                      height={Math.max(110, Math.min(owed.data.length, 6) * 28 + 40)}
+                      height={Math.max(110, Math.min(owed.data.length, BAR_ROWS) * 28 + 40)}
+                    />
+                    <Rest
+                      rows={owed.data.slice(BAR_ROWS).map((d) => ({ paise: decimalStringToPaise(d.balance) }))}
+                      unit="vendor"
                     />
                   </div>
                   <Link
@@ -372,7 +442,11 @@ export default async function StoreHome({
         {/* payments out */}
         <section className={cardCls}>
           <div className="flex items-baseline justify-between gap-2">
-            <h2 className={sectionHeadCls}>Paid out</h2>
+            <h2 className={sectionHeadCls}>
+              <Link href={`/store/books/payments${drill}`} className="hover:underline">
+                Paid out →
+              </Link>
+            </h2>
             <span className="font-mono text-[10px] text-stone-400">payments</span>
           </div>
           <p className="mt-1.5 text-sm text-stone-700">
@@ -406,7 +480,7 @@ export default async function StoreHome({
             <span className="font-mono text-[11px] text-stone-400">expiring_stock</span>
           </div>
           <ul className="mt-2 space-y-2">
-            {expiring.slice(0, 8).map((e, i) => {
+            {expiring.slice(0, EXPIRING_ROWS).map((e, i) => {
               const state = expiryState(e.expiry_date, today)
               return (
                 <li key={`${e.item_id}-${e.bill_date}-${i}`} className="flex items-start gap-2 text-[13px]">
@@ -431,8 +505,21 @@ export default async function StoreHome({
               )
             })}
           </ul>
-          {expiring.length > 8 && (
-            <p className="mt-2 text-xs text-stone-500">and {expiring.length - 8} more.</p>
+          {expiring.length > EXPIRING_ROWS && (
+            // A COUNT ALONE STILL HIDES HOW MUCH. This one carries the value on
+            // the shelf behind those dates, for the same reason the two charts
+            // above it do — "and 5 more" reads the same whether they are worth
+            // ₹200 or ₹200,000.
+            <Rest
+              rows={expiring.slice(EXPIRING_ROWS).map((e) => ({
+                // qty × the item's weighted average — expiring_stock carries
+                // both, so the hidden rows can say what is behind them.
+                paise: Math.round(
+                  (decimalStringToPaise(e.on_hand_qty) / 100) * decimalStringToPaise(e.issue_cost ?? '0'),
+                ),
+              }))}
+              unit="date"
+            />
           )}
           <div className="mt-3">
             <Honesty verdict="a prompt, not a fact">
