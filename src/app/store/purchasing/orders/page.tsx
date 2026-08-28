@@ -7,6 +7,7 @@ import Honesty from '@/components/Honesty'
 import ViewToggle from '@/components/ViewToggle'
 import { readView, VIEW_KEYS } from '@/lib/views'
 import {
+  btnCls,
   cardCls,
   codeCls,
   dataTableCls,
@@ -25,8 +26,15 @@ export const dynamic = 'force-dynamic'
 
 // THE STORE'S OUTWARD DOCUMENT. Everything else in this app points inward — an
 // indent is kitchen-to-store, a bill records what already arrived. This is the
-// only thing that says "please send us this", and it is raised from Reorder,
-// where the app already knows what is short and who supplies it.
+// only thing that says "please send us this".
+//
+// TWO DOORS, AND THE ORDER OF THEM IS THE POINT. Reorder is the one that
+// matters: it already knows what is short and who supplies it, so the
+// suggestion is the feature. But raising an order from the shelf assumes all
+// purchasing is REPLENISHMENT, and it is not — a party booking, a dish trial,
+// a vendor's one-off deal will never appear in Reorder however good the levels
+// get. New order is that exception, and it is named as one here so the
+// suggested path does not quietly become the one nobody uses.
 
 const TONE: Record<PoStatus, string> = {
   draft: 'text-stone-500',
@@ -58,16 +66,29 @@ export default async function OrdersPage({
 
   return (
     <>
-      <header className="pb-4">
-        <h1 className={pageTitleCls}>Purchase orders</h1>
-        <p className={pageSubCls}>
-          {restaurant.name} — what was asked of a vendor, and what arrived against it. Raised from Reorder,
-          where the shelf already says what is short.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3 pb-4">
+        <div className="min-w-0">
+          <h1 className={pageTitleCls}>Purchase orders</h1>
+          <p className={pageSubCls}>
+            {restaurant.name} — what was asked of a vendor, and what arrived against it. Most start in
+            Reorder, where the shelf already says what is short; start one here for the buy it will never
+            know about — a party, a trial, a one-off deal.
+          </p>
+        </div>
+        {/* NO VENDOR PARAM. The picker on that page is the whole point of this
+            door — Reorder already covers the case where the vendor is known. */}
+        <Link href="/store/purchasing/orders/new" className={btnCls}>
+          New order →
+        </Link>
       </header>
 
-      {/* THE BLOCKER, ON THE SCREEN THAT NEEDS IT. Not one of the five active
-          vendors has a phone number, so not one order can be sent. */}
+      {/* THE BLOCKER, ON THE SCREEN THAT NEEDS IT. An order can always be
+          written and printed; it can only be SENT to a vendor with a phone
+          number, because wa.me is the channel. The figures are computed and
+          the strip goes quiet on its own — so this comment names the rule and
+          not the count. A comment quoting a live number has an expiry date,
+          and this one had passed it: it read "not one of the five active
+          vendors", from a dataset of five. There are 39. */}
       {phones.without > 0 && (
         <div className="mb-4">
           <Honesty

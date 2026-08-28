@@ -86,10 +86,10 @@ export async function assertOneRowPerItem(
 /**
  * WHAT A PURCHASE ORDER NEEDS BEFORE IT IS WORTH RAISING.
  *
- * All three are COMPUTED, never asserted: today it is 1 of 358 items with a
- * reorder level, 1 of 358 with a default vendor, and no GSTIN — and all three
- * are meant to change, so the block that reads this clears itself rather than
- * needing somebody to remember to delete it.
+ * All three are COMPUTED, never asserted, and no figure is quoted here for the
+ * same reason the phone comment below carries none: the masters are meant to
+ * fill in, so a number written into prose is a number that goes stale while
+ * the code stays right. The block that reads this clears itself.
  *
  * The two counts are different failures. With no reorder level the order opens
  * EMPTY, because the suggested quantities come from `reorder_due`; with no
@@ -303,11 +303,16 @@ export async function getLetterhead(restaurantId: string): Promise<Letterhead> {
 }
 
 /**
- * THE BLOCKER, COUNTED. Not one of the five active vendors has a phone number,
- * so not one purchase order can be sent. Surfaced on the vendor list, on the
- * order screen and in the store's readiness block — an order with nowhere to
- * go is a PDF, and that is a fact about the vendor master, not about the
- * order.
+ * THE BLOCKER, COUNTED. An order can always be written and printed; it can
+ * only be SENT to a vendor carrying a phone number, because wa.me is the
+ * channel. Surfaced on the vendor list, on the order screen and in the store's
+ * readiness block — an order with nowhere to go is a PDF, and that is a fact
+ * about the vendor master, not about the order.
+ *
+ * NO COUNT IN THIS COMMENT, deliberately: it used to open "not one of the five
+ * active vendors", which was true of a five-vendor dataset and is now simply
+ * false. The callers render what this returns; prose that restates a live
+ * figure only has an expiry date.
  */
 export async function countVendorsWithoutPhone(
   restaurantId: string,

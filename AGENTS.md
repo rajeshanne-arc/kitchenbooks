@@ -8612,3 +8612,61 @@ value and stops rather than promising a page that does not exist. The cap is 14
 — a period can be three months, so unlike a purchase day the fan-out has no
 natural ceiling — and the tail is DERIVED as parent minus shown, for the
 rounding reason above.
+
+## A COMMENT QUOTING A LIVE FIGURE HAS AN EXPIRY DATE
+
+Third instance this week of code moving and prose not, and the sharpest,
+because the rendering was never wrong:
+
+    "Not one of the five active vendors has a phone number, so not one
+     order can be sent."
+
+There are **39 active vendors and 36 have numbers.** `countVendorsWithoutPhone`
+is correct, the Honesty strip built from it is correct, and the strip goes
+quiet on its own. Only the two comments above it were frozen — one on the
+orders page, one on the query's own docblock, saying the same false sentence in
+two places.
+
+**The rule: a comment explains what the code DOES and why; the moment it
+restates a number the code computes, it has taken on a maintenance obligation
+nobody will honour.** Neither comment carries a count now. The same edit
+removed "1 of 358 items with a reorder level" from `getPoReadiness` — written
+in this same session, already an obligation, and flagged as "today" as if that
+made it safe. It does not: the honest form is to say the figure is computed and
+name what it governs.
+
+This is the prose half of a rule the gates already enforce on code — a
+hand-maintained copy of something derivable is not a record, it is a snapshot
+of an old opinion. A comment is exactly that copy, with no gate able to read it.
+
+## TWO DOORS TO AN ORDER, AND THE ORDER OF THEM IS THE POINT
+
+`/store/purchasing/orders` stated a policy — orders are raised from Reorder,
+where the shelf says what is short — in its header AND in a file comment. It is
+coherent, and it assumes **all purchasing is replenishment.**
+
+It is not. A party booking, a dish trial, a vendor's one-off deal will never
+appear in Reorder however good the levels get. `/orders/new` already existed
+with its own vendor picker; the page simply did not admit it. **The button does
+not open a new path, it stops hiding one.**
+
+**THE SUGGESTION IS THE FEATURE AND THE BUTTON IS THE EXCEPTION**, so the copy
+says which is which: most orders start in Reorder, this one is for the buy it
+will never know about. Without that the reorder-driven path quietly becomes the
+one nobody uses, which is the real loss — Reorder carries par levels, last
+rates and the vendor grouping, and a hand-typed order carries none of it.
+
+Two things deliberately NOT repeated on this screen:
+
+- **The button is not gated on the phone blocker.** A draft can be written
+  without a phone; it just cannot be SENT, which the existing strip already
+  says. Gating creation on a sending problem would block work that is fine.
+- **The vendor page's empty-order warning stays there and is not echoed here.**
+  There it earns its place, because the app could have prefilled the order and
+  could not. Here the reader has deliberately chosen to type it themselves, and
+  the same words become scolding.
+
+The file comment was rewritten in the same edit. **A comment describing a
+policy the code no longer has is worse than no comment** — it is the only
+account of intent a later reader gets, and it would have been describing the
+opposite of what shipped.
