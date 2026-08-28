@@ -232,7 +232,7 @@ export default async function ReorderPage({
                       vendor page →
                     </Link>
                     <Link
-                      href={`/store/receive/orders/new?vendor=${g.vendorId}`}
+                      href={`/store/purchasing/orders/new?vendor=${g.vendorId}`}
                       className="rounded-lg bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800"
                     >
                       Raise PO

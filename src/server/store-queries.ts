@@ -1002,7 +1002,7 @@ export async function issueContext(
 /**
  * EVERY VENDOR PAYMENT IN A WINDOW — the destination of the "Paid out" card.
  *
- * THERE WAS NO PAYMENTS LOG. Payments live at /store/receive/pay, which is a
+ * THERE WAS NO PAYMENTS LOG. Payments live at /store/purchasing/pay, which is a
  * FORM, and a number must never link to a form: a reader clicking a figure is
  * asking "what is this made of", and being handed a blank entry screen answers
  * a different question and loses their place. So the log exists now rather than

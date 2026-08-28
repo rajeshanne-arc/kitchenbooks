@@ -8352,3 +8352,122 @@ exactly that reason and still carries a bookmarked document through.
 
 **Ask of any retired URL whether its children moved with it.** The two shapes
 look identical and one of them silently 404s every deep link.
+
+## RECEIVE BECAME PURCHASING — and a tab named after one of its own children
+
+The tab held Purchase, Pay vendor, Return to vendor and Orders. **Only one of
+those four is receiving.** What it actually holds is the vendor relationship
+end to end — order, receive, pay, return — which every accounting system calls
+Purchasing. It was named after one of its own children, which is the same fault
+as a group named after a PERSON rather than a subject.
+
+    tab    Receive           -> Purchasing
+    chips  Purchase          -> Receive
+           Orders            -> Orders   (moved to SECOND)
+           Pay vendor        -> Pay
+           Return to vendor  -> Returns
+
+**The chips shorten because the tab already establishes the vendor** — "Pay
+vendor" under Purchasing says vendor twice.
+
+**ORDERS IS SECOND, and that is a recommendation rather than a finding.**
+Rajesh asked for it first; second is what shipped, and he overrules it if he
+disagrees. The reason is the frequency rule that ordered the tab strip itself
+— bills outnumber orders 330 to 4, and Receive is what somebody standing at
+the door with a bill needs. Ahead of Pay and Returns, though, because an order
+begins the sequence and those two are its tail.
+
+**THE URLS MOVED WITH THE LABELS.** A tab labelled Purchasing living at
+`/store/receive` is a trap for whoever reads it next.
+
+### THE REDIRECT ORDERING TRAP — the opposite decision to the bills case
+
+`legacyTarget`'s FIXED loop **returns on first match and prefix-matches with
+startsWith**, so a general entry placed above a specific one SWALLOWS it:
+
+    ['/store/receive', '/store/purchasing']      <- placed first
+    /store/receive/purchase  ->  /store/purchasing/purchase   <- 404
+
+That segment is called `receive` now, so the destination does not exist — and
+nothing meets the 404 until an old bookmark does. The two RENAMED children are
+listed first; the general prefix then picks up everything that kept its name
+(pay, orders, orders/<id>, orders/<id>/print).
+
+**AND IT IS THE OPPOSITE SHAPE TO THE BILLS MERGE, one commit earlier, in the
+same file.** There only the LIST moved and the document stayed, so exact-match
+BARE entries were the only safe form and a prefix would have 404'd every deep
+link. Here the WHOLE SUBTREE moved, so prefix entries are correct and a bare
+entry would have failed to carry one. **Ask which it is every time: did the
+children move with the parent?** The two shapes are indistinguishable in the
+diff and fail in opposite directions.
+
+**Two existing entries pointed INTO the old subtree and would have chained** —
+`/store/payment` → `/store/receive/pay` and `/bill` →
+`/store/receive/purchase`. A retired URL must land on a LIVE route, never on a
+second redirect, so both were retargeted. Proved by perturbation: moving the
+general prefix above its children fails the ordering assertion, fails the
+live-route assertion naming both broken destinations, and fails
+`smoke:phase-a` for all six roles.
+
+**Our own links were repointed, not left to the shim.** The shim is for links
+already in the wild. Eight files plus seven self-links inside the moved tree —
+which a grep for inbound links does not find, because they were internal.
+
+### Two premises that did not hold, reported rather than worked around
+
+- **There are no Telugu tab or chip labels to update.** `src/lib/i18n.ts` is
+  LABELS ONLY on the five staff-facing forms, exactly as it has said since
+  phase 11 — it contains zero tab or chip strings, so no Telugu label was left
+  saying Receive under a tab saying Purchasing.
+- **No `tabs.*` setting is stored**, so the tab KEY rename (`receive` →
+  `purchasing`) has no consequence today. Worth knowing for the next rename:
+  `resolveTabs` skips a key it does not recognise and then appends any default
+  the setting failed to mention, so a stored strip naming the old key would
+  have pushed the renamed tab to the END of the strip and dropped its custom
+  label — quietly, and only for restaurants that had customised it.
+
+## AN EXPAND IS NOT A NAVIGATION
+
+The purchase register loads every bill for the period and both grouped grains
+expand by FILTERING THAT ARRAY. Nothing is fetched by opening a group. The
+toggle was a `<Link>` anyway, so each click paid a full server render of a
+`force-dynamic` page and Next reset the scroll to the top: **the reader lost
+their place in order to see data the browser was already holding.**
+
+`<Link scroll={false}>` would have been the wrong fix — it hides the jump and
+keeps the wasted round trip, which is the actual fault.
+
+**THE URL IS STILL THE RECORD.** `router.replace(url, { scroll: false })` keeps
+`?day=` and `?vendor=` shareable, which was the whole point of putting them
+there, and the open key is read from the params so a pasted link arrives with
+the right group open. A client component here is not a retreat from the URL —
+it is what lets the URL be right AND the interaction be instant.
+
+**`hrefFor` could not survive the change and that is the tell.** A function
+prop cannot cross the server/client boundary, so the page stopped passing one
+and the component builds its own URL from `useSearchParams`. Where a prop
+cannot cross that line, the state it describes usually belongs on the other
+side of it.
+
+## A NAME IS A DOOR, AND A ROW IS A TOGGLE
+
+On By vendor the vendor NAME was the expand control. That is the one link on
+the row that does not go where it says: a vendor's name belongs to the vendor's
+page. **The chevron and the row background toggle; the name navigates**, and
+the name stops the click so it cannot do both.
+
+The dashboard's Outstanding-to-vendors bars got the same destination.
+`MagnitudeBars` takes an optional `href` per row and renders the axis label as
+an **SVG anchor** — a real link the browser understands, rather than a click
+handler that only works with a mouse. It is a full navigation rather than a
+client-side one, which is the honest trade for a label recharts draws inside
+its own SVG. Opt-in, so the other five call sites are untouched.
+
+**The sweep found more, reported rather than fixed:** the vendor master list is
+already fully linked (the whole row is a `<Link>`). Unlinked vendor names
+remain on the price-moves table, both shorts tables, the bill document's
+heading and the bill save reveal. **The owner dashboard's dues list cannot be
+linked at all without restructuring** — that `Card` is itself a `<Link>`, and a
+link inside a link is invalid; it would need the `footer` slot the day-sheet
+card uses. Vendor PICKERS are correctly not links, and so are the vendor page's
+own headings.

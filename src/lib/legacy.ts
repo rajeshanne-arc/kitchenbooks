@@ -25,7 +25,25 @@ const FIXED: [from: string, to: string][] = [
   ['/books/users', '/owner/setup/users'],
   ['/books/sales', '/sales/books/sales'],
   ['/books/cash', '/sales/books/cash'],
-  ['/store/payment', '/store/receive/pay'],
+  // RECEIVE BECAME PURCHASING — and the ORDER of these three matters.
+  //
+  // THE WHOLE SUBTREE MOVED, so prefix entries are right here — the opposite
+  // of the bills case, where only the list moved and the document stayed put,
+  // and BARE exact-match entries were the only safe shape. Same file, opposite
+  // decision, for opposite reasons. Ask which it is every time.
+  //
+  // THE LOOP RETURNS ON FIRST MATCH and prefix-matches with startsWith, so a
+  // general entry above a specific one SWALLOWS it: with
+  // ['/store/receive', '/store/purchasing'] first, /store/receive/purchase
+  // would rewrite to /store/purchasing/purchase — a segment that does not
+  // exist, because it is called receive now. A 404 nobody meets until an old
+  // bookmark does. So the two RENAMED children come first, and the general
+  // prefix picks up everything that kept its name: pay, orders, orders/<id>,
+  // orders/<id>/print.
+  ['/store/receive/purchase', '/store/purchasing/receive'],
+  ['/store/receive/vendor-return', '/store/purchasing/returns'],
+  ['/store/receive', '/store/purchasing'],
+  ['/store/payment', '/store/purchasing/pay'],
   ['/cash/other-income', '/sales/record/income'],
   ['/cash/non-revenue', '/sales/record/nonrevenue'],
   ['/cash/settlements', '/sales/partners'],
@@ -46,7 +64,7 @@ const FIXED: [from: string, to: string][] = [
   ['/dashboard', '/owner'],
   ['/settings', '/owner/setup/settings'],
   ['/pnl', '/owner/pnl'],
-  ['/bill', '/store/receive/purchase'],
+  ['/bill', '/store/purchasing/receive'],
   ['/issue', '/store/issue'],
   ['/wastage', '/store/stock/loss'],
   // /cash WAS the day close, and the day close now lives inside Record.
@@ -153,4 +171,4 @@ export function legacyTarget(pathname: string, role: Role): string | null {
   return null
 }
 
-export const LEGACY_PREFIXES = ['/owner/accounts', '/owner/meters', '/owner/users', '/owner/lists', '/owner/settings', '/owner/locations', '/staff/money-out/expense', '/sales/record/close', '/store/reorder', '/store/count', '/store/loss', '/store/books/stock', '/books', '/bill', '/issue', '/wastage', '/cash', '/attendance', '/expenses', '/dashboard', '/pnl', '/settings', '/store/payment']
+export const LEGACY_PREFIXES = ['/owner/accounts', '/owner/meters', '/owner/users', '/owner/lists', '/owner/settings', '/owner/locations', '/staff/money-out/expense', '/sales/record/close', '/store/reorder', '/store/count', '/store/loss', '/store/books/stock', '/store/receive', '/books', '/bill', '/issue', '/wastage', '/cash', '/attendance', '/expenses', '/dashboard', '/pnl', '/settings', '/store/payment']

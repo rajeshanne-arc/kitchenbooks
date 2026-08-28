@@ -7562,7 +7562,7 @@ async function run() {
     assert.ok(gap.includes("status === 'draft'") && gap.includes('not sent yet'))
     assert.ok(gap.includes("status === 'sent'") && gap.includes('not delivered yet'))
     assert.ok(gap.includes('Number(delivered) === 0'), 'a part-delivered order must still show its gap')
-    const page = readFileSync('src/app/store/receive/orders/[id]/page.tsx', 'utf8')
+    const page = readFileSync('src/app/store/purchasing/orders/[id]/page.tsx', 'utf8')
     assert.ok(page.includes('status={f.status}') && page.includes('delivered={f.qty_delivered}'))
   })
 
@@ -7603,7 +7603,7 @@ async function run() {
     assert.ok(q.includes("btrim(phone) = ''"), 'a blank-but-present phone would count as reachable')
     for (const [f, needle] of [
       ['src/app/store/page.tsx', 'countVendorsWithoutPhone'],
-      ['src/app/store/receive/orders/page.tsx', 'countVendorsWithoutPhone'],
+      ['src/app/store/purchasing/orders/page.tsx', 'countVendorsWithoutPhone'],
       ['src/app/store/masters/vendors/page.tsx', 'cannot be sent an order'],
       ['src/components/store/PoActions.tsx', 'nowhere to send it'],
     ] as const) {
@@ -8748,6 +8748,76 @@ async function run() {
       `      ${topN} of ${ordered.length} vendors carry 80% (they reach ` +
         `${((reached / total) * 100).toFixed(1)}%); excluding the crosser would say ${sqlSide.excluded}`,
     )
+  })
+
+  await check('a renamed child is not swallowed by its own parent prefix', async () => {
+    // COSTLY-SILENT. The FIXED loop returns on FIRST match and prefix-matches
+    // with startsWith, so a general entry placed above a specific one eats it:
+    // ['/store/receive', '/store/purchasing'] before the two renamed children
+    // sends /store/receive/purchase to /store/purchasing/purchase — a segment
+    // that does not exist, because it is called `receive` now. Nothing hits
+    // that 404 until an old bookmark does.
+    const { legacyTarget, RETIRED_URLS } = await import('../src/lib/legacy')
+    const { readdirSync, statSync } = await import('node:fs')
+
+    // Every real route, derived — never a hand-copy of the app's own tree.
+    const routes: string[] = []
+    const walk = (dir: string, url: string) => {
+      for (const e of readdirSync(dir)) {
+        const p = `${dir}/${e}`
+        if (statSync(p).isDirectory()) walk(p, e.startsWith('(') || e.startsWith('_') ? url : `${url}/${e}`)
+        else if (e === 'page.tsx') routes.push(url === '' ? '/' : url)
+      }
+    }
+    walk('src/app', '')
+    const exists = (u: string) => {
+      const parts = u.split('?')[0].split('/').filter(Boolean)
+      return routes.some((r) => {
+        const rp = r.split('/').filter(Boolean)
+        const cat = rp.findIndex((x) => x.startsWith('[[...'))
+        if (cat >= 0) return rp.slice(0, cat).every((x, i) => x === parts[i])
+        return rp.length === parts.length && rp.every((x, i) => x.startsWith('[') || x === parts[i])
+      })
+    }
+
+    // A REAL ID, so the /orders/<id> and /orders/<id>/print legs are exercised
+    // rather than skipped as "no fixture".
+    const [po] = await tsql<{ id: string }[]>`
+      select id::text as id from purchase_orders where restaurant_id = ${liveTenant} limit 1`
+    const OLD = [
+      '/store/receive',
+      '/store/receive/purchase',
+      '/store/receive/pay',
+      '/store/receive/vendor-return',
+      '/store/receive/orders',
+      '/store/receive/orders/new',
+      ...(po === undefined ? [] : [`/store/receive/orders/${po.id}`, `/store/receive/orders/${po.id}/print`]),
+      // these two pointed INTO the old subtree and would otherwise chain
+      '/store/payment',
+      '/bill',
+    ]
+    assert.ok(po !== undefined, 'no purchase order exists — the /orders/<id> legs went untested')
+    for (const u of OLD) {
+      const t = legacyTarget(u, 'store')
+      assert.ok(t !== null, `${u} resolves to nothing`)
+      assert.ok(exists(t), `${u} -> ${t}, which is not a live route`)
+      // A REDIRECT CHAIN IS A FAILURE — a retired URL must land on a live one.
+      assert.equal(legacyTarget(t, 'store'), null, `${u} -> ${t} -> ${legacyTarget(t, 'store')}`)
+    }
+
+    // AND THE ORDERING ITSELF, stated rather than inferred from the results
+    // above: both renamed children must appear BEFORE the general prefix.
+    const idx = (u: string) => RETIRED_URLS.indexOf(u)
+    assert.ok(idx('/store/receive/purchase') >= 0 && idx('/store/receive') >= 0, 'the entries are gone')
+    assert.ok(
+      idx('/store/receive/purchase') < idx('/store/receive'),
+      'the /store/receive prefix is above its renamed child and swallows it',
+    )
+    assert.ok(
+      idx('/store/receive/vendor-return') < idx('/store/receive'),
+      'the /store/receive prefix is above vendor-return and swallows it',
+    )
+    console.log(`      ${OLD.length} retired URLs, every destination live, no chains`)
   })
 
   /* ── comparison baselines ──────────────────────────────────────────── */

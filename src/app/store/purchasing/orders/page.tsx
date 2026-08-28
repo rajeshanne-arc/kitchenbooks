@@ -121,7 +121,7 @@ export default async function OrdersPage({
                 {orders.map((o) => (
                   <tr key={o.id} className={trCls}>
                     <td className={tdCodeCls}>
-                      <Link href={`/store/receive/orders/${o.id}`} className="text-emerald-700 hover:underline">
+                      <Link href={`/store/purchasing/orders/${o.id}`} className="text-emerald-700 hover:underline">
                         {o.doc_no ?? '—'}
                       </Link>
                     </td>

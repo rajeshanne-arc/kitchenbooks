@@ -131,7 +131,7 @@ export default function PoDraft({
         // elsewhere: a saved DRAFT is not finished — it has to be sent, and
         // sending lives on the order's own page. Editing an existing draft
         // stays put, because there the reveal IS the answer.
-        if (poId === undefined) router.push(`/store/receive/orders/${res.id}`)
+        if (poId === undefined) router.push(`/store/purchasing/orders/${res.id}`)
         else router.refresh()
       } else setError(res.error)
     } catch {

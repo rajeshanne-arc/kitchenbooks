@@ -455,7 +455,13 @@ export default async function StoreHome({
                     <MagnitudeBars
                       rows={owed.data
                         .slice(0, BAR_ROWS)
-                        .map((d) => ({ label: d.name, value: decimalStringToPaise(d.balance) / 100 }))}
+                        // THE NAME IS A DOOR. A vendor you are about to pay is
+                        // the one whose banking card you want open.
+                        .map((d) => ({
+                          label: d.name,
+                          value: decimalStringToPaise(d.balance) / 100,
+                          href: `/store/masters/vendors/${d.id}`,
+                        }))}
                       height={Math.max(110, Math.min(owed.data.length, BAR_ROWS) * 28 + 40)}
                     />
                     <Rest
@@ -464,7 +470,7 @@ export default async function StoreHome({
                     />
                   </div>
                   <Link
-                    href="/store/receive/pay"
+                    href="/store/purchasing/pay"
                     className="mt-2 inline-block text-xs font-medium text-emerald-700 hover:underline"
                   >
                     pay a vendor →

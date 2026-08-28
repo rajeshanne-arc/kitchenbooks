@@ -70,7 +70,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
     return (
       <>
         <header className="pb-4">
-          <Link href="/store/receive/orders" className="text-sm text-stone-500 hover:text-stone-800">
+          <Link href="/store/purchasing/orders" className="text-sm text-stone-500 hover:text-stone-800">
             ← Purchase orders
           </Link>
           <h1 className={`${pageTitleCls} mt-2`}>{po.doc_no ?? 'Draft order'}</h1>
@@ -105,7 +105,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
                 docNo={po.doc_no}
                 vendorName={po.vendor_name}
                 waHref={wa}
-                printHref={`/store/receive/orders/${po.id}/print`}
+                printHref={`/store/purchasing/orders/${po.id}/print`}
               />
             </div>
           </section>
@@ -117,7 +117,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
   return (
     <>
       <header className="pb-4">
-        <Link href="/store/receive/orders" className="text-sm text-stone-500 hover:text-stone-800">
+        <Link href="/store/purchasing/orders" className="text-sm text-stone-500 hover:text-stone-800">
           ← Purchase orders
         </Link>
         <h1 className={`${pageTitleCls} mt-2`}>{po.doc_no ?? 'Purchase order'}</h1>
@@ -151,7 +151,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             docNo={po.doc_no}
             vendorName={po.vendor_name}
             waHref={wa}
-            printHref={`/store/receive/orders/${po.id}/print`}
+            printHref={`/store/purchasing/orders/${po.id}/print`}
           />
         </div>
       </section>
@@ -208,7 +208,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           Delivered counts bills entered against this order, voided ones excluded — the view filters both
           halves of a reversed pair, so goods that came back do not read as arrived. A bill that cites no
           order is not counted at all —{' '}
-          <Link href="/store/receive/purchase" className="text-emerald-700 hover:underline">
+          <Link href="/store/purchasing/receive" className="text-emerald-700 hover:underline">
             enter one against it
           </Link>
           .

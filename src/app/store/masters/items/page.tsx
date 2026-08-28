@@ -50,7 +50,7 @@ export default async function ItemsPage({
                 it lands here with a code.
               </p>
               <Link
-                href="/store/receive/purchase"
+                href="/store/purchasing/receive"
                 className="mt-5 inline-block rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
               >
                 Enter a bill

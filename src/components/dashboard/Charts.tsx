@@ -293,20 +293,69 @@ export function DivergingBars({
    every bar. Colouring each bar darker-where-bigger would double-encode the
    length the chart already shows. */
 
+/**
+ * A CATEGORY LABEL CAN BE A DOOR. `href` on a row turns its axis label into a
+ * real anchor — a name that identifies something the reader can open should
+ * open it, and a bar chart is the one place in this app where a name was
+ * rendered as decoration.
+ *
+ * An SVG <a>, not a next/link: recharts renders ticks inside the SVG, so this
+ * is a full navigation rather than a client-side one. That is the honest
+ * trade — a real link the browser understands (middle-click, copy, keyboard)
+ * over a click handler that only works with a mouse and JavaScript.
+ *
+ * OPT-IN. Rows without an href render exactly as before, which is why the
+ * other five call sites are untouched.
+ */
+function LinkedTick({
+  x,
+  y,
+  payload,
+  hrefs,
+}: {
+  x?: number
+  y?: number
+  payload?: { value: string }
+  hrefs: Map<string, string>
+}) {
+  const label = payload?.value ?? ''
+  const href = hrefs.get(label)
+  const text = (
+    <text x={x} y={y} dy={4} textAnchor="end" fill={INK} fontSize={11}>
+      {label}
+    </text>
+  )
+  if (href === undefined) return text
+  return (
+    <a href={href} className="[&>text]:underline [&>text]:decoration-stone-300">
+      {text}
+    </a>
+  )
+}
+
 export function MagnitudeBars({
   rows,
   height = 168,
 }: {
-  rows: { label: string; value: number }[]
+  /** `href` is optional per row — with one, the axis label becomes a link */
+  rows: { label: string; value: number; href?: string }[]
   height?: number
 }) {
+  const hrefs = new Map(rows.flatMap((r) => (r.href === undefined ? [] : [[r.label, r.href] as const])))
   return (
     <div className="w-full" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={RULE} strokeWidth={1} horizontal={false} />
           <XAxis type="number" tick={axisTick} tickLine={false} axisLine={false} tickFormatter={rupeeTick} />
-          <YAxis type="category" dataKey="label" tick={axisTick} tickLine={false} axisLine={false} width={104} />
+          <YAxis
+            type="category"
+            dataKey="label"
+            tick={hrefs.size === 0 ? axisTick : <LinkedTick hrefs={hrefs} />}
+            tickLine={false}
+            axisLine={false}
+            width={104}
+          />
           <Tooltip
             cursor={{ fill: 'var(--color-stone-50)' }}
             content={({ active, payload }) => {

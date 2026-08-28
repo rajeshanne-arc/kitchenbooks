@@ -36,7 +36,7 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
     // on that over time — the same question from the line and from the year
     { href: '/store/books/shorts', label: 'Shorts' },
     // BUILT SO A NUMBER HAD SOMEWHERE TO GO. The dashboard's "Paid out" card
-    // had no destination — payments live behind a FORM at /store/receive/pay —
+    // had no destination — payments live behind a FORM at /store/purchasing/pay —
     // and a figure linked to a form answers a different question than the one
     // the reader asked.
     { href: '/store/books/payments', label: 'Paid out' },

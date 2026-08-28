@@ -50,7 +50,7 @@ export default async function NewOrderPage({
                   {v.phone === null && <span className="ml-2 text-[11px] text-red-700">no phone</span>}
                 </span>
                 <Link
-                  href={`/store/receive/orders/new?vendor=${v.id}`}
+                  href={`/store/purchasing/orders/new?vendor=${v.id}`}
                   className="text-sm font-medium text-emerald-700 hover:underline"
                 >
                   Raise →

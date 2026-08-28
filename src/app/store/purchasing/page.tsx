@@ -6,9 +6,9 @@
 // marks the first chip active at the parent URL, so the screen looks
 // identical — it just arrives once.
 //
-// Rendering Purchase — the same component the chip's own URL renders, so
+// Rendering Receive — the same component the chip's own URL renders, so
 // there is one implementation and it cannot drift. `dynamic` is declared
 // here rather than re-exported: Next parses that field statically and
 // refuses to follow it through a re-export.
 export const dynamic = 'force-dynamic'
-export { default } from './purchase/page'
+export { default } from './receive/page'

@@ -71,21 +71,32 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
     // warehouse; this one describes the job.
     { key: 'issue', href: '/store/issue', label: 'Issue' },
     {
-      key: 'receive',
-      href: '/store/receive',
-      label: 'Receive',
+      // PURCHASING, NOT RECEIVE. The tab holds order, receive, pay and return
+      // — the vendor relationship end to end — and only one of those four is
+      // receiving. It was named after one of its own children, which is the
+      // same fault as a group named after a person rather than a subject.
+      // Every accounting system on earth calls this Purchasing.
+      //
+      // THE URL MOVED WITH THE LABEL. A tab labelled Purchasing living at
+      // /store/receive is a trap for whoever reads it next.
+      key: 'purchasing',
+      href: '/store/purchasing',
+      label: 'Purchasing',
+      // THE CHIPS SHORTEN because the tab already establishes the vendor:
+      // "Pay vendor" under Purchasing says vendor twice.
       chips: [
-        { key: 'purchase', label: 'Purchase' },
-        { key: 'pay', label: 'Pay vendor' },
-        // goods going BACK, with the credit note that follows them
-        { key: 'vendor-return', label: 'Return to vendor' },
-        // ORDERS LAST, THOUGH IT COMES FIRST IN TIME. The chip row is ordered
-        // by how often a store manager reaches for it, the same argument that
-        // put Issue ahead of Receive in the tab strip: bills are entered every
-        // delivery, a purchase order is raised when the shelf runs low.
-        // Placing it first would also make it what /store/receive renders,
-        // which is not what somebody standing at the door with a bill wants.
+        { key: 'receive', label: 'Receive' },
+        // ORDERS SECOND, and this was argued rather than picked. Rajesh asked
+        // for it first; second is the recommendation, and he overrules it if
+        // he disagrees. The reason is the frequency rule that ordered the tab
+        // strip itself — bills outnumber orders 330 to 4, and Receive is what
+        // somebody standing at the door with a bill needs. Ahead of Pay and
+        // Returns, though, because an order is the start of the sequence and
+        // the other two are its tail.
         { key: 'orders', label: 'Orders' },
+        { key: 'pay', label: 'Pay' },
+        // goods going BACK, with the credit note that follows them
+        { key: 'returns', label: 'Returns' },
       ],
     },
     {

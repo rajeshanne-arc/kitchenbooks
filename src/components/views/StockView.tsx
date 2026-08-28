@@ -150,7 +150,7 @@ export default async function StockView({
   // are. A name that is not a link is not a dead end; it is honest.
   const user = await getSessionUser()
   const canOpenItems = user !== null && canAccess(user.role, '/store/masters/items')
-  const canEnterBill = user !== null && canAccess(user.role, '/store/receive/purchase')
+  const canEnterBill = user !== null && canAccess(user.role, '/store/purchasing/receive')
 
   // FILTERED OR FLAT — decided once, here. Somebody who typed "pan" wants the
   // hits, not three folded cards containing them; and by-value exists

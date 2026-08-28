@@ -42,9 +42,10 @@ const SMALL_BILL_PAISE = 100_000
 export default async function PurchasesPage({
   searchParams,
 }: {
+  // ?day= and ?vendor= are read by PurchaseGroups on the client, not here
   searchParams: Promise<{ period?: string; view?: string; q?: string; day?: string; vendor?: string }>
 }) {
-  const { period: periodParam, view, q = '', day, vendor } = await searchParams
+  const { period: periodParam, view, q = '' } = await searchParams
   const periodToday = await businessToday()
   const periodReq = readPeriodParam(periodParam, periodToday)
   const period = resolvePeriod(periodReq.param, periodToday)
@@ -60,7 +61,7 @@ export default async function PurchasesPage({
   const total = bills.reduce((n, b) => n + paiseOf(b), 0)
 
   const dayMap = new Map<string, { paise: number; bills: number; vendors: Set<string> }>()
-  const vendorMap = new Map<string, { name: string; paise: number; bills: number }>()
+  const vendorMap = new Map<string, { id: string; name: string; paise: number; bills: number }>()
   for (const b of bills) {
     const d = dayMap.get(b.bill_date) ?? { paise: 0, bills: 0, vendors: new Set<string>() }
     d.paise += paiseOf(b)
@@ -68,7 +69,7 @@ export default async function PurchasesPage({
     d.vendors.add(b.vendor_code)
     dayMap.set(b.bill_date, d)
 
-    const v = vendorMap.get(b.vendor_code) ?? { name: b.vendor_name, paise: 0, bills: 0 }
+    const v = vendorMap.get(b.vendor_code) ?? { id: b.vendor_id, name: b.vendor_name, paise: 0, bills: 0 }
     v.paise += paiseOf(b)
     v.bills += 1
     vendorMap.set(b.vendor_code, v)
@@ -84,6 +85,9 @@ export default async function PurchasesPage({
     .map(([code, v]) => ({
       key: code,
       code,
+      // the row shows the CODE and the name links by ID — the vendor page is
+      // keyed by id, and BILL_SELECT already carries it
+      vendorId: v.id,
       name: v.name,
       bills: v.bills,
       paise: v.paise,
@@ -103,17 +107,11 @@ export default async function PurchasesPage({
   const small = bills.filter((b) => paiseOf(b) < SMALL_BILL_PAISE && paiseOf(b) > 0)
   const smallPaise = small.reduce((n, b) => n + paiseOf(b), 0)
 
-  // ONE OPEN GROUP AT A TIME, in the URL — an opened day is shareable, and it
-  // behaves like every other filter here. Component state would be neither.
-  const base = (extra: Record<string, string | null>) => {
-    const p = new URLSearchParams()
-    if (periodParam !== undefined && periodParam !== '') p.set('period', periodParam)
-    if (view !== undefined && view !== '') p.set('view', view)
-    if (q !== '') p.set('q', q)
-    for (const [k, val] of Object.entries(extra)) if (val !== null) p.set(k, val)
-    const qs = p.toString()
-    return qs === '' ? '/store/books/purchases' : `/store/books/purchases?${qs}`
-  }
+  // THE OPEN GROUP IS NOT READ HERE. Opening one fetches nothing — every bill
+  // for the period is already in `bills` and the grains filter it — so the
+  // toggle belongs in the client, where it costs no round trip and keeps the
+  // reader's scroll position. PurchaseGroups still writes ?day= / ?vendor=
+  // into the URL, so a pasted link opens the right group.
 
   return (
     <>
@@ -168,7 +166,7 @@ export default async function PurchasesPage({
           </p>
           {q === '' && (
             <Link
-              href="/store/receive/purchase"
+              href="/store/purchasing/receive"
               className="mt-4 inline-block rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
             >
               Enter a bill
@@ -201,7 +199,7 @@ export default async function PurchasesPage({
                 />
               </div>
             )}
-            <ByDay groups={days} bills={bills} open={day ?? null} hrefFor={(d) => base({ day: d, vendor: null })} />
+            <ByDay groups={days} bills={bills} />
           </section>
         </div>
       ) : (
@@ -231,12 +229,7 @@ export default async function PurchasesPage({
                 been "26 other vendors · ₹7,34,635.79 · 41.3%" — the largest
                 single line on the screen, and the one thing a reader most
                 needs opened. 31 rows fit, so there is nothing to hide. */}
-            <ByVendor
-              groups={vendors}
-              bills={bills}
-              open={vendor ?? null}
-              hrefFor={(v) => base({ vendor: v, day: null })}
-            />
+            <ByVendor groups={vendors} bills={bills} />
           </section>
         </div>
       )}
