@@ -66,7 +66,20 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-bold text-stone-900">{bill.vendor_name}</h2>
+              {/* THE NAME IS A DOOR. Reading a bill and wanting the vendor —
+                  their balance, their banking card, what else they have sent —
+                  is the commonest next question this page raises, and the
+                  name was the one thing on it that answered nothing. Same
+                  matrix rule covers both paths, so no role sees a link it
+                  cannot open. */}
+              <h2 className="text-lg font-bold text-stone-900">
+                <Link
+                  href={`/store/masters/vendors/${bill.vendor_id}`}
+                  className="underline decoration-stone-300 underline-offset-4 hover:decoration-stone-600"
+                >
+                  {bill.vendor_name}
+                </Link>
+              </h2>
               {bill.is_voided && <VoidedBadge />}
               {bill.is_reversal && <ReversalBadge />}
             </div>

@@ -8463,10 +8463,12 @@ handler that only works with a mouse. It is a full navigation rather than a
 client-side one, which is the honest trade for a label recharts draws inside
 its own SVG. Opt-in, so the other five call sites are untouched.
 
-**The sweep found more, reported rather than fixed:** the vendor master list is
-already fully linked (the whole row is a `<Link>`). Unlinked vendor names
-remain on the price-moves table, both shorts tables, the bill document's
-heading and the bill save reveal. **The owner dashboard's dues list cannot be
+**The sweep found more.** The vendor master list is already fully linked (the
+whole row is a `<Link>`). **The bill document's heading is linked too** —
+reading a bill and wanting the vendor's balance or banking card is the
+commonest next question that page raises, and the name was the one thing on it
+that answered nothing. Still unlinked, reported rather than fixed: the
+price-moves table, both shorts tables, and the bill save reveal. **The owner dashboard's dues list cannot be
 linked at all without restructuring** — that `Card` is itself a `<Link>`, and a
 link inside a link is invalid; it would need the `footer` slot the day-sheet
 card uses. Vendor PICKERS are correctly not links, and so are the vendor page's
