@@ -303,3 +303,146 @@ export const periodParamValue = (p: PeriodParam): string =>
 
 export const monthLabel = (monthStart: string) =>
   utc(monthStart).toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+
+
+// ═══════════════════════════════════════════════════ COMPARISON BASELINES
+//
+// Built before the data justifies it, so the data arrives into something
+// already correct — which means it has to be RIGHT while it is still mostly
+// refusing to answer.
+//
+// EVERY FAILURE MODE HERE IS A PLAUSIBLE-LOOKING WRONG NUMBER: a baseline
+// window off by three days, a percentage against a month nobody was entering,
+// a delta on a balance. None of them announces itself, which is why this is
+// where the clock gets spent.
+
+/** What to compare against. Same shape as PeriodParam: presets are strings,
+ *  an arbitrary window is the CustomPeriod sibling. */
+export type BaselineKey = 'prev' | 'last-year' | 'none'
+export type BaselineParam = BaselineKey | CustomPeriod
+
+export const BASELINE_KEYS: BaselineKey[] = ['prev', 'last-year', 'none']
+
+export const BASELINE_LABELS: Record<BaselineKey, string> = {
+  prev: 'Previous period',
+  'last-year': 'Same period last year',
+  none: 'No comparison',
+}
+
+export const isBaselineKey = (v: unknown): v is BaselineKey =>
+  typeof v === 'string' && (BASELINE_KEYS as string[]).includes(v)
+
+/** A resolved baseline window, or the explicit refusal to draw one. */
+export type Baseline =
+  | { kind: 'none' }
+  | { kind: 'window'; from: string; to: string; label: string; days: number }
+
+/**
+ * TWO SHIFT RULES, CHOSEN BY PRESET KIND — and picking the wrong one gives
+ * 1–28 Aug against 4–31 Jul: plausible, wrong, and invisible.
+ *
+ *   CALENDAR — this-month, last-month. Shift back one calendar month KEEPING
+ *              the day-of-month bounds. 1–28 Aug → 1–28 Jul.
+ *   ROLLING  — today, yesterday, last-7-days, last-3-months, and every custom
+ *              range. Shift back by the window's OWN LENGTH. 22–28 Aug →
+ *              15–21 Aug.
+ *
+ * `last-3-months` is rolling even though its start is month-aligned, because it
+ * ENDS TODAY: on 28 Aug it is 1 Jun–28 Aug, eighty-nine days, not three whole
+ * months. Shifting it by a calendar month would compare eighty-nine days
+ * against ninety-two.
+ */
+const CALENDAR_PRESETS = new Set<string>(['this-month', 'last-month'])
+
+/** Days in a window, inclusive of both ends. */
+const spanDays = (from: string, to: string): number =>
+  Math.round((utc(to).getTime() - utc(from).getTime()) / 86_400_000) + 1
+
+/**
+ * The same day-of-month `back` months earlier, CLAMPED to the shorter month.
+ *
+ * 31 Mar → 28 Feb (or 29 in a leap year); 29 Feb → 28 Feb of a non-leap year.
+ * Date.UTC would roll 31 Feb forward to 3 Mar silently, which is the same
+ * silent-roll this file already records isDate being written for.
+ */
+function shiftMonths(date: string, back: number): string {
+  const d = utc(date)
+  const y = d.getUTCFullYear()
+  const m = d.getUTCMonth() - back
+  const dom = d.getUTCDate()
+  const lastOfTarget = new Date(Date.UTC(y, m + 1, 0)).getUTCDate()
+  return iso(new Date(Date.UTC(y, m, Math.min(dom, lastOfTarget))))
+}
+
+/**
+ * The window to compare `period` against.
+ *
+ * ANCHORED ON THE BUSINESS DAY the caller hands in, exactly as resolvePeriod
+ * is — never on a clock. Between midnight and 05:00 the books are still on
+ * yesterday, and a baseline that read the clock would assume a different day
+ * from the period it is being compared with, for two hours a night, silently.
+ *
+ * SHAPE MATCHING falls out of the calendar rule rather than being a second
+ * rule: keeping the day-of-month bounds makes a RUNNING period compare against
+ * the same elapsed slice — on 28 Aug "this month" is 1–28, so its baseline is
+ * 1–28 Jul and never the whole of July — while a COMPLETE period keeps its
+ * full bounds, so last-month's 1–31 Jul compares against 1–30 Jun.
+ */
+export function resolveBaseline(period: Period, vs: BaselineParam, today: string): Baseline {
+  if (vs === 'none') return { kind: 'none' }
+
+  // A hand-picked window is taken as given, clamped like any period: a
+  // baseline never reports days that have not happened.
+  if (typeof vs !== 'string') {
+    const to = vs.to > today ? today : vs.to
+    if (vs.from > to) return { kind: 'none' }
+    return { kind: 'window', from: vs.from, to, label: fmtRange(vs.from, to), days: spanDays(vs.from, to) }
+  }
+
+  const calendar = typeof period.key === 'string' && CALENDAR_PRESETS.has(period.key)
+  const back = vs === 'last-year' ? 12 : 1
+
+  // LAST YEAR IS ALWAYS A CALENDAR SHIFT, whatever the period's kind. "The same
+  // period last year" means the same DATES, not the same number of days ending
+  // 365 days ago — and for a leap-day period the clamp is what makes it a real
+  // date at all.
+  if (calendar || vs === 'last-year') {
+    const from = shiftMonths(period.from, back)
+    const to = shiftMonths(period.to, back)
+    return { kind: 'window', from, to, label: fmtRange(from, to), days: spanDays(from, to) }
+  }
+
+  // ROLLING: the same number of days, ending the day before this window opens.
+  const len = spanDays(period.from, period.to)
+  const to = daysBefore(period.from, 1)
+  const from = daysBefore(to, len - 1)
+  return { kind: 'window', from, to, label: fmtRange(from, to), days: len }
+}
+
+/** Read whatever arrived in ?vs=, once — the front door, like readPeriodParam.
+ *  An unrecognised value falls back to `prev` rather than throwing: this is a
+ *  comparison, and a bad one must not take the page down. */
+export function readBaselineParam(
+  v: string | undefined,
+  today: string,
+): { param: BaselineParam; error: string | null } {
+  if (v === undefined || v === '') return { param: 'prev', error: null }
+  if (isBaselineKey(v)) return { param: v, error: null }
+  const [from, to] = v.split(PERIOD_SEP)
+  if (!isDate(from) || !isDate(to)) {
+    return { param: 'prev', error: `“${v}” is not a baseline — comparing with the previous period instead` }
+  }
+  if (from > to) {
+    return {
+      param: 'prev',
+      error: `The baseline starts (${from}) after it ends (${to}) — swap them. Comparing with the previous period meanwhile.`,
+    }
+  }
+  void today
+  return { param: { kind: 'custom', from, to }, error: null }
+}
+
+/** The ?vs= value — the inverse of readBaselineParam, and a preset stays a
+ *  preset for the same reason it does on ?period=. */
+export const baselineParamValue = (b: BaselineParam): string =>
+  typeof b === 'string' ? b : `${b.from}${PERIOD_SEP}${b.to}`

@@ -7965,3 +7965,154 @@ precision now — the same correction already made on the stock category rollup,
 arrived at independently a second time, which is a fair sign it should be the
 default rather than the fix. **Where two queries must cover the same rows, ask
 that question in SQL and exactly; never by summing rounded subtotals in JS.**
+
+## COMPARISON — built before the data justifies it, so it must be right while refusing
+
+Rajesh asked for baselines now, with two months of purchases and one day of
+issues on the book. The point is not to show a percentage today; it is that
+**the data arrives into something already correct**. So the whole of this work
+is two gates and a golden table, and almost every live card currently declines
+to answer.
+
+**ONE PARAMETER, BESIDE THE PERIOD.** `?vs=prev|last-year|none`, or an explicit
+`from..to`, read by `readBaselineParam` and resolved by `resolveBaseline` — the
+same shape as `?period=`, for the same reason: a link survives a bookmark and a
+WhatsApp paste, and one front door means twelve call sites cannot disagree.
+`BaselineControl` preserves the params already on the URL, which is the rule
+`FilterInput` earned the hard way.
+
+**THE SHIFT RULE IS CHOSEN BY THE PRESET'S KIND, and the two kinds are not a
+preference.** A CALENDAR preset (`this-month`, `last-month`) shifts by whole
+months, clamping to a shorter one — the previous month of 31 March is 28
+February, not 3 March. A ROLLING preset shifts by its own length in days.
+`last-3-months` proves why: it resolves to `2026-06-01..2026-08-28`, a
+month-aligned start that ends TODAY, so it is 89 days and not three months.
+Shifting it by months would compare 89 days against 92; shifting by days gives
+`2026-03-04..2026-05-31`, which is the honest previous 89.
+
+**THE GOLDEN TABLE WAS WRITTEN BEFORE THE CODE** — nine preset rows including
+both clamps, plus a custom range, plus `none`, plus a business-day proof by
+value (two instants either side of the 05:00 cutover resolve different
+baselines). A table written afterwards agrees with whatever was built.
+
+### THE TWO GATES, and why one of them is deliberately one-sided
+
+**GATE 1 — THE BOOKS DID NOT EXIST.** If the baseline window starts before the
+FIRST ENTRY FOR THAT MEASURE, no figure is shown at all. Not "there is nothing
+to compare" but "there could not have been": a zero drawn from a month nobody
+was entering renders as a total collapse, or as an infinite rise from nothing,
+and neither announces itself.
+
+**THE FIRST-ENTRY DATE IS READ PER MEASURE, AT QUERY TIME, AND IS NEVER A
+CONSTANT.** Purchases begin 5 Jun, issues 28 Aug, wastage has not begun. They
+do not start together and never will, so a single hardcoded "the books start
+here" would be wrong for every measure but one — and wrong silently.
+
+**GATE 2 — THE BASELINE IS TOO THIN.** Below half the current window's ACTIVE
+DAYS, the percentage is withheld and both absolute figures and both day counts
+are shown. Measured live: purchases · prev is 26 active days against 4, and the
+raw ratio is **+8,447%** — a number that is arithmetically perfect and says
+only that June was entered in bulk.
+
+**IT TESTS THE BASELINE ONLY, DELIBERATELY.** A thin CURRENT period is NEWS —
+something stopped — and gating it would hide the finding. Only the percentage
+is withheld, because thinness makes only the ratio meaningless; the two sums
+are still what they are.
+
+**A BASELINE THAT NETS TO ZERO IS A THIRD CASE and says so.** `pct === null`
+with a fat baseline used to render a blank where a percentage usually sits,
+which reads as "unchanged" rather than as "undivisible". Found by the probe,
+not by reading.
+
+### The live outcomes, named — a pass rate would have said nothing
+
+| | outcome |
+|---|---|
+| purchases · prev | **GATE 2** — 4 active days vs 26; +8,447% withheld, both sums shown |
+| purchases · last-year | **GATE 1** — baseline 2025-08-01 precedes the first purchase, 2026-06-05 |
+| issues · prev | **GATE 1** — first issue 28 Aug, baseline 1–28 Jul |
+| issues · prev, standing in September | **GATE 1**, *not* gate 2 |
+
+**THE LAST ROW CORRECTS THE BRIEF, and the correction is the useful part.** The
+prediction was that September would show August as THIN. It will not: August's
+window STARTS 1 Aug and the first issue is the 28th, so gate 1 speaks first and
+speaks correctly — an August total built from four days of one is not a fair
+month to divide by. Gate 2 becomes reachable for issues in OCTOBER, when the
+baseline window lies wholly after the measure began. **Gate 1 subsumes gate 2
+for any measure in its first partial month**, which is not an overlap to remove:
+the stronger refusal is the right one.
+
+**BOTH PREDICATES LIVE IN `src/lib/compare.ts`, NOT INSIDE THE COMPONENT.** They
+are the whole of the correctness, and a predicate that exists only inside a
+component cannot be asserted by value — so one definition is read by the screen
+and by the gate. The September case above is frozen there by name, because it
+reads wrong and somebody will try to fix it. Proved able to fail: making gate 2
+two-sided — the most plausible wrong edit — trips the assertion that a thin
+CURRENT period must survive to the screen.
+
+**BALANCES ARE NEVER COMPARED.** `vendor_dues` and `stock_on_hand` are what is
+owed and what is on the shelf NOW; they do not move when the range above them
+moves, so a baseline would be a comparison against a state that was never
+photographed. Exactly two `<Compare>` mounts exist on the store dashboard, both
+over FLOWS, and the dues card keeps "as of today" beside its figure.
+
+**NO ROUND TRIPS WERE ADDED.** Both windows travel in ONE statement per measure
+— `getPurchaseSeries` and `getIssuesBySection` tag each row with its window —
+and the page is still 19 queries, measured before and after. The issues query
+LEFT JOINs from a `meta` CTE so a row always exists carrying the first-entry
+date and the day counts: **a grouped query returns NO ROWS when the window is
+empty, which is precisely the state the gates have to speak in.**
+
+### Four faults in one query, and three of them are in this file already
+
+Folding the second window in broke it four times, and only the last was new:
+
+1. **The CASE repeated in the GROUP BY.** Identical in the source and not in
+   the wire: postgres.js numbers each interpolation hole separately, so the two
+   copies arrive as different parameter numbers and Postgres reads them as two
+   different expressions. Tag the window once in a subquery and group by the
+   alias.
+2. **An interpolation hole inside a SQL comment.** Writing a dollar-brace
+   sequence in a comment to EXPLAIN the parameter numbering is not inert: it is
+   a real interpolation, and it put a lone `$` into the statement. The rule was
+   already written down; I broke it inside the session that cites it.
+3. **Backticks inside a SQL comment inside a template literal** — the exact
+   fault the gate exists for, made a fifth time.
+4. **`window` is a RESERVED WORD.** Legal as an `AS` label, a syntax error the
+   moment it is referenced bare in a select list or a `GROUP BY` — so it parsed
+   happily until the grouping moved into a subquery, then failed one line away
+   from where it had always been fine. Renamed to `win`.
+
+**And the paise rule, avoided rather than paid for a third time.** The baseline
+total is summed IN SQL at full numeric precision. Reducing the returned rows
+with `Number()` would round every department's subtotal to a float before
+adding them — the same fault as the stock rollup and the stock-out drill-down,
+and it was a live line of code here before it was deleted.
+
+### THE FIX FOR ONE FAULT HID A SECOND ONE IN THE SAME LINES
+
+The Stock-out reconciliation was rewritten last session to compare in SQL at
+full precision rather than summing paise-rounded groups. That correction was
+right — and the query it produced compared **two byte-identical CTEs**. It
+asserted that a query equals itself, and it shipped green.
+
+**The rounding fix is what made the vacuity invisible.** The block had a fresh,
+correct, carefully-argued comment about associativity sitting directly above an
+assertion that could not fail; reading it, the eye checks the reasoning and the
+reasoning is sound. Nothing about "compare both sides in SQL" implies the two
+sides are different computations, and that is the step that went missing.
+
+**THE CARD SIDE MUST COME FROM THE APP.** It now takes the department subtotals
+`getIssuesBySection` actually returned, hands them BACK into SQL, and sums them
+there — full precision on the way in, a genuinely different computation from the
+log's own sum. Proved by dropping one department from the card side: it fails
+naming both figures. The message also says what a real disagreement would mean,
+because the card's `HAVING sum > 0` drops a department that nets to zero while
+the log still shows it — a reporting gap to investigate, never a tolerance to
+widen.
+
+**The general form, and it is new:** *a check written while fixing a genuine
+fault inherits that fault's credibility.* Ask of the corrected version the same
+question you would ask of a fresh one — what would this look like if it failed?
+If both sides of a comparison were written in the same keystroke, they are
+probably the same side twice.

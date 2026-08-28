@@ -416,35 +416,134 @@ export async function listStoreLog(
 // absent days stay absent rather than being drawn as zero.
 
 /** Money in the door, by day — purchases net of voids. */
+/**
+ * THE CURRENT WINDOW AND ITS BASELINE, IN ONE ROUND TRIP.
+ *
+ * A comparison must add no trips: the page already fans out nineteen, and a
+ * second batch per measure would be three more on a screen whose whole design
+ * argument is one fan-out. So both windows ride the SAME statement — the WHERE
+ * widens to cover the union and each row says which window it belongs to.
+ *
+ * `first_entry` is the ALL-TIME minimum for this measure, as an uncorrelated
+ * subquery so Postgres runs it once as an InitPlan rather than per row. It is
+ * what the "books did not exist" gate reads, and it is READ PER MEASURE at
+ * query time — never a constant. Purchases began 5 Jun, issues 28 Aug, wastage
+ * has not begun; they do not start together and never will.
+ */
 export async function getPurchaseSeries(
   restaurantId: string,
   from: string,
   to: string,
-): Promise<{ date: string; total: string }[]> {
-  return tsql<{ date: string; total: string }[]>`
-    select bill_date::text as date, sum(bill_total)::text as total
+  /** the baseline window, or null for no comparison */
+  base: { from: string; to: string } | null = null,
+): Promise<ComparedSeries> {
+  const bFrom = base?.from ?? from
+  const bTo = base?.to ?? to
+  const rows = await tsql<{ date: string; total: string; window: string; first_entry: string | null }[]>`
+    select bill_date::text as date, sum(bill_total)::text as total,
+           case when bill_date between ${from}::date and ${to}::date then 'current' else 'baseline' end as window,
+           (select min(bill_date)::text from purchases where restaurant_id = ${restaurantId}) as first_entry
     from purchases
-    where restaurant_id = ${restaurantId} and bill_date between ${from}::date and ${to}::date
+    where restaurant_id = ${restaurantId}
+      and (bill_date between ${from}::date and ${to}::date
+           or (${base !== null} and bill_date between ${bFrom}::date and ${bTo}::date))
     group by bill_date
     having sum(bill_total) <> 0
     order by bill_date asc`
+  return splitWindows(rows)
 }
 
 /** Issue value per section across the period — where the stock went. */
+/** Same one-trip shape as getPurchaseSeries: both windows in one statement,
+ *  each row saying which it belongs to, and the measure's OWN all-time first
+ *  entry — issues began 28 Aug where purchases began 5 Jun. */
 export async function getIssuesBySection(
   restaurantId: string,
   from: string,
   to: string,
-): Promise<{ section: string; value: string }[]> {
-  return tsql<{ section: string; value: string }[]>`
-    select s.name as section, sum(l.value)::text as value
-    from issue_lines l
-    join issues i on i.id = l.issue_id
-    join sections s on s.id = i.section_id
-    where i.restaurant_id = ${restaurantId} and i.issue_date between ${from}::date and ${to}::date
-    group by s.name, s.sort_order
-    having sum(l.value) > 0
-    order by sum(l.value) desc`
+  base: { from: string; to: string } | null = null,
+): Promise<{
+  rows: { section: string; value: string }[]
+  baselineTotal: string
+  currentDays: number
+  baselineDays: number
+  firstEntry: string | null
+}> {
+  const bFrom = base?.from ?? from
+  const bTo = base?.to ?? to
+  // ONE STATEMENT. The meta CTE is LEFT JOINed to the grouping rather than
+  // queried separately, for two reasons: a second query would be a second round
+  // trip on a page whose whole design argument is one fan-out, and — the part
+  // that actually bites — a grouped query returns NO ROWS when the window is
+  // empty, which is precisely the state issues are in. Joining from meta means
+  // there is always a row carrying the first-entry date and the day counts, so
+  // the gates can speak even when the measure has nothing to say.
+  const rows = await tsql<{
+    section: string | null
+    value: string | null
+    win: string | null
+    first_entry: string | null
+    base_total: string
+    cur_days: number
+    base_days: number
+  }[]>`
+    with meta as (
+      select (select min(issue_date)::text from issues where restaurant_id = ${restaurantId}) as first_entry,
+             count(distinct i.issue_date) filter (
+               where i.issue_date between ${from}::date and ${to}::date)::int as cur_days,
+             count(distinct i.issue_date) filter (
+               where ${base !== null} and i.issue_date between ${bFrom}::date and ${bTo}::date)::int as base_days,
+             -- THE BASELINE TOTAL IS SUMMED IN SQL, at full numeric precision.
+             -- Reducing the returned rows with Number() in JS would round every
+             -- department's subtotal to a float before adding them, which is the
+             -- paise fault this repo has now paid for twice. Uncorrelated, so it
+             -- costs no extra round trip.
+             coalesce((select sum(l2.value) from issue_lines l2
+                       join issues i2 on i2.id = l2.issue_id
+                       where i2.restaurant_id = ${restaurantId}
+                         and ${base !== null}
+                         and i2.issue_date between ${bFrom}::date and ${bTo}::date), 0)::text as base_total
+      from issues i where i.restaurant_id = ${restaurantId}
+    ), tagged as (
+      -- THE WINDOW IS TAGGED ONCE, IN A SUBQUERY, and grouped by the alias.
+      -- Repeating the CASE in the GROUP BY looks identical in the source and is
+      -- not: postgres.js numbers each interpolation hole separately, so the two
+      -- copies arrive as different parameter numbers and Postgres reads them as
+      -- two different expressions — "column i.issue_date must appear in the
+      -- GROUP BY clause". Tagging once removes the second copy entirely.
+      -- win, not window: WINDOW is a reserved word, legal as an AS label and
+      -- a syntax error the moment it is referenced bare in a select list or a
+      -- GROUP BY. It parsed happily until the grouping moved into a subquery.
+      select s.name as section, s.sort_order, l.value,
+             case when i.issue_date between ${from}::date and ${to}::date
+                  then 'current' else 'baseline' end as win
+      from issue_lines l
+      join issues i on i.id = l.issue_id
+      join sections s on s.id = i.section_id
+      where i.restaurant_id = ${restaurantId}
+        and (i.issue_date between ${from}::date and ${to}::date
+             or (${base !== null} and i.issue_date between ${bFrom}::date and ${bTo}::date))
+    ), grp as (
+      select section, win, sum(value)::text as value, sum(value) as v
+      from tagged
+      group by section, win
+      having sum(value) > 0
+    )
+    select grp.section, grp.value, grp.win,
+           meta.first_entry, meta.base_total, meta.cur_days, meta.base_days
+    from meta left join grp on true
+    order by grp.v desc nulls last`
+
+  const current = rows
+    .filter((r) => r.win === 'current' && r.section !== null)
+    .map((r) => ({ section: r.section as string, value: r.value as string }))
+  return {
+    rows: current,
+    baselineTotal: rows[0]?.base_total ?? '0',
+    currentDays: rows[0]?.cur_days ?? 0,
+    baselineDays: rows[0]?.base_days ?? 0,
+    firstEntry: rows[0]?.first_entry ?? null,
+  }
 }
 
 /** Payments made in the period, and what they totalled. */
@@ -930,4 +1029,36 @@ export async function listPaymentsLog(
     where p.restaurant_id = ${restaurantId}
       and p.paid_date between ${from}::date and ${to}::date
     order by p.paid_date desc, p.created_at desc`
+}
+
+
+/**
+ * One measure, two windows, and what the gates need to judge them.
+ *
+ * `activeDays` counts DISTINCT DATES carrying an entry — not calendar days in
+ * the window. Twenty-six active days against four is the difference between a
+ * month somebody was entering and a month somebody was not, and calendar length
+ * cannot see it: both windows are twenty-eight days long.
+ */
+export type ComparedSeries = {
+  current: { date: string; total: string }[]
+  baseline: { date: string; total: string }[]
+  currentDays: number
+  baselineDays: number
+  /** the ALL-TIME first entry for this measure, or null if there is none */
+  firstEntry: string | null
+}
+
+function splitWindows(
+  rows: { date: string; total: string; window: string; first_entry: string | null }[],
+): ComparedSeries {
+  const current = rows.filter((r) => r.window === 'current').map(({ date, total }) => ({ date, total }))
+  const baseline = rows.filter((r) => r.window === 'baseline').map(({ date, total }) => ({ date, total }))
+  return {
+    current,
+    baseline,
+    currentDays: current.length,
+    baselineDays: baseline.length,
+    firstEntry: rows[0]?.first_entry ?? null,
+  }
 }

@@ -7,7 +7,7 @@ import { listIndents } from '@/server/kitchen-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
-import { readPeriodParam, resolvePeriod, periodParamValue } from '@/lib/period'
+import { readPeriodParam, resolvePeriod, periodParamValue, readBaselineParam, resolveBaseline } from '@/lib/period'
 import {
   cardCls,
   dataTableCls,
@@ -28,6 +28,8 @@ import { getExpiringStock } from '@/server/store-queries'
 import { EXPIRING_WITHIN_DAYS, expiryPrompt, expiryState, NO_LOT_TRACKING } from '@/lib/expiry'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import PeriodControl from '@/components/dashboard/PeriodControl'
+import BaselineControl from '@/components/dashboard/BaselineControl'
+import Compare from '@/components/dashboard/Compare'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
 import { MagnitudeBars, SalesLine } from '@/components/dashboard/Charts'
@@ -87,9 +89,9 @@ const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : ma
 export default async function StoreHome({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>
+  searchParams: Promise<{ period?: string; vs?: string }>
 }) {
-  const { period: periodParam } = await searchParams
+  const { period: periodParam, vs } = await searchParams
   const today = await businessToday()
   // ONE front door for ?period=, so preset/custom precedence is decided in
   // one place rather than in twelve hand-written ternaries.
@@ -98,6 +100,12 @@ export default async function StoreHome({
   const period = resolvePeriod(periodReq.param, periodToday)
 
   const restaurant = await getRestaurant()
+  const drill = `?period=${encodeURIComponent(periodParamValue(periodReq.param))}`
+  // THE BASELINE ANCHORS ON THE SAME BUSINESS DAY the period does. Reading a
+  // clock here would make the two disagree for the two hours a night between
+  // midnight and the 05:00 cutover — silently, and only then.
+  const vsReq = readBaselineParam(vs, periodToday)
+  const baseline = resolveBaseline(period, vsReq.param, periodToday)
   const [
     openIndents,
     purchases,
@@ -110,8 +118,8 @@ export default async function StoreHome({
     itemsWithLevel,
   ] = await Promise.all([
     listOpenIndents(restaurant.id),
-    getPurchaseSeries(restaurant.id, period.from, period.to),
-    getIssuesBySection(restaurant.id, period.from, period.to),
+    getPurchaseSeries(restaurant.id, period.from, period.to, baseline.kind === 'window' ? baseline : null),
+    getIssuesBySection(restaurant.id, period.from, period.to, baseline.kind === 'window' ? baseline : null),
     getPaymentsTotal(restaurant.id, period.from, period.to),
     getPurchasesByVendor(restaurant.id, period.from, period.to),
     listVendorsWithDues(restaurant.id),
@@ -136,8 +144,7 @@ export default async function StoreHome({
   // of readPeriodParam and keeps a PRESET a preset — resolving 'this-month' to
   // a range on the way out would make a link shared on Monday show Monday's
   // dates when it is opened on Friday.
-  const drill = `?period=${encodeURIComponent(periodParamValue(periodReq.param))}`
-  const purchaseTotal = purchases.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
+  const purchaseTotal = purchases.current.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
   // The by-vendor table sits under the Goods in hero and its column must add up
   // to it. Every vendor is fetched; the screen shows the largest few and names
   // the remainder, so nothing is dropped silently.
@@ -146,7 +153,7 @@ export default async function StoreHome({
     count: Math.max(0, byVendor.length - VENDOR_ROWS),
     paise: byVendor.slice(VENDOR_ROWS).reduce((n, v) => n + decimalStringToPaise(v.total), 0),
   }
-  const issueTotal = issuesBySection.reduce((n, s) => n + decimalStringToPaise(s.value), 0)
+  const issueTotal = issuesBySection.rows.reduce((n, s) => n + decimalStringToPaise(s.value), 0)
   const duesTotal = dues.reduce((n, d) => n + decimalStringToPaise(d.balance), 0)
 
   // vendor_dues only lists non-zero balances, so an empty list is either a
@@ -189,6 +196,9 @@ export default async function StoreHome({
           defect on it. */}
       <div className="pb-4">
         <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/store" />
+        <div className="mt-2">
+          <BaselineControl value={vsReq.param} error={vsReq.error} />
+        </div>
       </div>
 
       {/* what needs doing right now, above everything measured */}
@@ -274,21 +284,35 @@ export default async function StoreHome({
             <span className="font-mono text-[10px] text-stone-400">purchases</span>
           </div>
           <p className="mt-1.5 text-sm text-stone-700">
-            {purchases.length === 0
+            {purchases.current.length === 0
               ? 'No bills entered for this period.'
-              : `${formatPaise(purchaseTotal)} across ${purchases.length} ${plural(purchases.length, 'day')}.`}
+              : `${formatPaise(purchaseTotal)} across ${purchases.current.length} ${plural(purchases.current.length, 'day')}.`}
           </p>
-          {purchases.length === 1 ? (
+          {purchases.current.length === 1 ? (
             <p className={`mt-1 text-[26px] ${heroNumCls} text-stone-900`}>
-              {formatMoneyString(purchases[0].total)}
+              {formatMoneyString(purchases.current[0].total)}
             </p>
           ) : (
-            purchases.length > 1 && (
+            purchases.current.length > 1 && (
               <div className="mt-2">
-                <SalesLine points={purchases.map((p) => ({ date: p.date, revenue: p.total, orders: 0 }))} />
+                <SalesLine
+                  points={purchases.current.map((p) => ({ date: p.date, revenue: p.total, orders: 0 }))}
+                />
               </div>
             )
           )}
+
+          {/* FLOWS COMPARE. This is a sum over a window, so a delta between two
+              windows is a real quantity. */}
+          <Compare
+            baseline={baseline}
+            now={purchaseTotal}
+            nowDays={purchases.currentDays}
+            then={purchases.baseline.reduce((n, p) => n + decimalStringToPaise(p.total), 0)}
+            thenDays={purchases.baselineDays}
+            firstEntry={purchases.firstEntry}
+            noun="purchase"
+          />
 
           {/* WHO IT CAME FROM — under the number it breaks down.
               This table was under PAID OUT, headed "Bought from", contradicting
@@ -352,29 +376,41 @@ export default async function StoreHome({
             <span className="font-mono text-[10px] text-stone-400">issue_lines</span>
           </div>
           <p className="mt-1.5 text-sm text-stone-700">
-            {issuesBySection.length === 0
+            {issuesBySection.rows.length === 0
               ? 'Nothing issued in this period.'
-              : `${formatPaise(issueTotal)} left the store for ${issuesBySection.length} ${plural(
-                  issuesBySection.length,
+              : `${formatPaise(issueTotal)} left the store for ${issuesBySection.rows.length} ${plural(
+                  issuesBySection.rows.length,
                   'department',
                 )}.`}
           </p>
-          {issuesBySection.length > 0 && (
+          {issuesBySection.rows.length > 0 && (
             <div className="mt-2">
               <MagnitudeBars
-                rows={issuesBySection
+                rows={issuesBySection.rows
                   .slice(0, BAR_ROWS)
                   .map((s) => ({ label: s.section, value: decimalStringToPaise(s.value) / 100 }))}
-                height={Math.max(110, Math.min(issuesBySection.length, BAR_ROWS) * 28 + 40)}
+                height={Math.max(110, Math.min(issuesBySection.rows.length, BAR_ROWS) * 28 + 40)}
               />
               <Rest
-                rows={issuesBySection
+                rows={issuesBySection.rows
                   .slice(BAR_ROWS)
                   .map((s) => ({ paise: decimalStringToPaise(s.value) }))}
                 unit="department"
               />
             </div>
           )}
+
+          {/* FLOWS COMPARE — a sum over a window. Issues began 28 Aug, so a
+              July baseline predates the measure entirely and gate 1 speaks. */}
+          <Compare
+            baseline={baseline}
+            now={issueTotal}
+            nowDays={issuesBySection.currentDays}
+            then={decimalStringToPaise(issuesBySection.baselineTotal)}
+            thenDays={issuesBySection.baselineDays}
+            firstEntry={issuesBySection.firstEntry}
+            noun="issue"
+          />
         </section>
 
         {/* vendor dues */}

@@ -16,7 +16,14 @@
 import assert from 'node:assert/strict'
 // period.ts is pure, so it imports statically; everything that touches the
 // database is pulled in AFTER the env file is loaded, as the other smokes do.
-import { resolvePeriod, isPeriodKey, PERIOD_KEYS, type PeriodKey } from '../src/lib/period'
+import {
+  resolvePeriod,
+  resolveBaseline,
+  isPeriodKey,
+  PERIOD_KEYS,
+  type BaselineKey,
+  type PeriodKey,
+} from '../src/lib/period'
 import { fyLabel, fyRange, parseFyStartMonth } from '../src/lib/fy'
 
 process.loadEnvFile('.env.local')
@@ -8451,6 +8458,99 @@ async function run() {
     console.log('      classic · compact · message — the picker renders each one, legacy "plain" reads as classic')
   })
 
+  /* ── comparison baselines ──────────────────────────────────────────── */
+  console.log('\nthe baseline window, by value')
+
+  await check('the golden table — every row, today INJECTED', () => {
+    // THE TABLE IS THE ARTIFACT; the implementation is what makes it pass.
+    // Every row hands `today` in. A row that read the clock would pass tonight
+    // and rot by morning, which is the failure this whole file exists to catch
+    // and would be embarrassing in the check written to prevent it.
+    const GOLDEN: [today: string, period: string, vs: BaselineKey, expect: string][] = [
+      // CALENDAR — shift one month, keep the day-of-month bounds.
+      ['2026-08-28', 'this-month', 'prev', '2026-07-01..2026-07-28'],
+      ['2026-08-28', 'this-month', 'last-year', '2025-08-01..2025-08-28'],
+      // Both FULL, because the current period is COMPLETE — shape matching
+      // falls out of the calendar rule rather than being a second rule.
+      ['2026-08-28', 'last-month', 'prev', '2026-06-01..2026-06-30'],
+      // ROLLING — shift by the window's own length.
+      ['2026-08-28', 'last-7-days', 'prev', '2026-08-15..2026-08-21'],
+      ['2026-08-28', 'today', 'prev', '2026-08-27..2026-08-27'],
+      ['2026-08-28', 'yesterday', 'prev', '2026-08-26..2026-08-26'],
+      // DERIVED HERE rather than handed down, from how period.ts actually
+      // resolves this preset: it is month-aligned at the START but ends TODAY,
+      // so on 28 Aug it is 1 Jun–28 Aug — EIGHTY-NINE days, not three whole
+      // months. Rolling, therefore, and shifting it by a calendar month would
+      // compare eighty-nine days against ninety-two.
+      ['2026-08-28', 'last-3-months', 'prev', '2026-03-04..2026-05-31'],
+      // CLAMPS. Date.UTC would roll 31 Feb forward to 3 Mar in silence.
+      ['2026-03-31', 'this-month', 'prev', '2026-02-01..2026-02-28'],
+      ['2028-02-29', 'this-month', 'last-year', '2027-02-01..2027-02-28'],
+    ]
+    for (const [today, key, vs, expect] of GOLDEN) {
+      const p = resolvePeriod(key as PeriodKey, today)
+      const b = resolveBaseline(p, vs, today)
+      assert.equal(b.kind, 'window', `${key}/${vs} on ${today} drew no baseline`)
+      const got = `${(b as { from: string }).from}..${(b as { to: string }).to}`
+      assert.equal(got, expect, `${key}/${vs} on ${today}: ${got}`)
+    }
+
+    // CUSTOM ranges are rolling too.
+    const custom = resolvePeriod({ kind: 'custom', from: '2026-08-01', to: '2026-08-10' }, '2026-08-28')
+    const cb = resolveBaseline(custom, 'prev', '2026-08-28')
+    assert.equal(`${(cb as { from: string }).from}..${(cb as { to: string }).to}`, '2026-07-22..2026-07-31')
+
+    // NO COMPARISON is a real answer, not an empty window.
+    assert.equal(resolveBaseline(resolvePeriod('this-month', '2026-08-28'), 'none', '2026-08-28').kind, 'none')
+
+    // THE BASELINE ANCHORS ON THE BUSINESS DAY, PROVED BY VALUE rather than
+    // asserted: `today` is a parameter all the way down, so handing in the two
+    // dates either side of the 05:00 cutover gives two different baselines. If
+    // anything on this path read a clock, both calls would return the same
+    // window whatever was passed.
+    const beforeCutover = resolveBaseline(resolvePeriod('today', '2026-08-27'), 'prev', '2026-08-27')
+    const afterCutover = resolveBaseline(resolvePeriod('today', '2026-08-28'), 'prev', '2026-08-28')
+    assert.equal((beforeCutover as { from: string }).from, '2026-08-26')
+    assert.equal((afterCutover as { from: string }).from, '2026-08-27')
+    assert.notEqual((beforeCutover as { from: string }).from, (afterCutover as { from: string }).from)
+
+    console.log(`      ${GOLDEN.length} golden rows + custom + none · last-3-months resolves 2026-06-01..08-28 (89d) → 2026-03-04..05-31`)
+  })
+
+  await check('the two gates, by value — including the one that reads wrong', async () => {
+    const { cannotAssess, baselineTooThin, THIN_RATIO } = await import('../src/lib/compare')
+    const win = (from: string, to: string) =>
+      ({ kind: 'window', from, to, label: from, days: 1 }) as const
+
+    // GATE 1 · the books did not exist. The date is read PER MEASURE — issues
+    // begin 28 Aug, purchases 5 Jun — so one hardcoded start would be wrong for
+    // every measure but one, and wrong silently.
+    assert.equal(cannotAssess(win('2026-07-01', '2026-07-28'), '2026-08-28'), true)
+    assert.equal(cannotAssess(win('2026-09-01', '2026-09-30'), '2026-08-28'), false)
+    assert.equal(cannotAssess(win('2026-08-28', '2026-09-04'), '2026-08-28'), false, 'the first day itself is in')
+    assert.equal(cannotAssess(win('2026-01-01', '2026-01-31'), null), true, 'never recorded at all')
+    assert.equal(cannotAssess({ kind: 'none' }, null), false, 'no comparison asked for is not a refusal')
+
+    // GATE 2 · one-sided. A thin BASELINE withholds the ratio; a thin CURRENT
+    // period is NEWS and must survive to the screen.
+    assert.equal(baselineTooThin(4, 26), true, 'a quarter of the days is thin')
+    assert.equal(baselineTooThin(13, 26), false, 'exactly half is the boundary, and it is in')
+    assert.equal(baselineTooThin(26, 4), false, 'a thin CURRENT period is news, never gated')
+    assert.equal(baselineTooThin(0, 1), true)
+    assert.equal(baselineTooThin(0, 0), false, 'two empty windows are not "thin", they are empty')
+    assert.equal(THIN_RATIO, 2)
+
+    // THE CASE THAT READS WRONG AND IS RIGHT, frozen because somebody will
+    // "fix" it: standing in September, issues began on 28 Aug, so August looks
+    // like the thin baseline. It is not — gate 1 speaks first, because the
+    // window STARTS on 1 Aug and a total built from four days of one is not a
+    // month to divide by. Gate 2 becomes reachable in October.
+    assert.equal(cannotAssess(win('2026-08-01', '2026-08-31'), '2026-08-28'), true,
+      'September must refuse on gate 1, not report August as merely thin')
+
+    console.log('      gate 1 subsumes gate 2 in a measure’s first partial month — the stronger refusal wins')
+  })
+
   /* ── the store dashboard's one reconciliation ──────────────────────── */
   console.log('\nthe by-vendor table adds up to the number above it')
 
@@ -8473,7 +8573,7 @@ async function run() {
 
     // ── GOODS IN → /store/books/purchases
     const series = await getPurchaseSeries(liveTenant, from, to)
-    const card = series.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
+    const card = series.current.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
     const [dest] = await tsql<{ v: string; n: number }[]>`
       select coalesce(sum(bill_total), 0)::text as v, count(*)::int as n
       from purchases where restaurant_id = ${liveTenant} and bill_date between ${from}::date and ${to}::date`
@@ -8487,7 +8587,7 @@ async function run() {
     const [days] = await tsql<{ n: number }[]>`
       select count(distinct bill_date)::int as n from purchases
       where restaurant_id = ${liveTenant} and bill_date between ${from}::date and ${to}::date`
-    assert.equal(series.length, days.n, `Goods in shows ${series.length} days; the window holds ${days.n}`)
+    assert.equal(series.current.length, days.n, `Goods in shows ${series.current.length} days; the window holds ${days.n}`)
 
     // ── PAID OUT → /store/books/payments
     const paid = await getPaymentsTotal(liveTenant, from, to)
@@ -8511,14 +8611,20 @@ async function run() {
     // the stock category rollup — ask the exact question exactly, because the
     // question is "do these cover the same rows" and that has an exact answer.
     // A tolerance here is what would let a real missing issue through.
+    //
+    // AND THE FIRST VERSION OF THIS COULD NOT FAIL: the two CTEs were BYTE
+    // IDENTICAL, so it asserted a query equals itself. Written while fixing the
+    // one-paise rounding above, and the rounding fix was real — which is what
+    // made the vacuity invisible. THE CARD SIDE MUST COME FROM THE APP. The
+    // department subtotals go back INTO SQL and are summed there at full
+    // precision, so nothing is rounded on the way and the two sides are
+    // genuinely two different computations.
     const bySection = await getIssuesBySection(liveTenant, from, to)
     const storeLog = await listStoreLog(liveTenant, 150, from, to)
+    const cardValues = bySection.rows.map((r) => r.value)
     const [issueCheck] = await tsql<{ card: string; log: string; ok: boolean }[]>`
       with card as (
-        select coalesce(sum(il.value), 0) v
-        from issue_lines il join issues i on i.id = il.issue_id
-        where il.restaurant_id = ${liveTenant}
-          and i.issue_date between ${from}::date and ${to}::date
+        select coalesce((select sum(x::numeric) from unnest(${cardValues}::text[]) x), 0) v
       ), lg as (
         select coalesce(sum(il.value), 0) v
         from issue_lines il join issues i on i.id = il.issue_id
@@ -8528,7 +8634,9 @@ async function run() {
       select card.v::text as card, lg.v::text as log, (card.v = lg.v) as ok from card, lg`
     assert.ok(
       issueCheck.ok,
-      `Stock out shows ${issueCheck.card}; the store log's issues total ${issueCheck.log}`,
+      `Stock out shows ${issueCheck.card}; the store log's issues total ${issueCheck.log}. ` +
+        `If a department has netted to zero or below, the card's HAVING drops it and the log still shows it — ` +
+        `that disagreement is a real reporting gap, not a tolerance to widen.`,
     )
     // And the COUNT, which is the half a sum cannot see: every issue in the
     // window must reach the log.
@@ -8540,10 +8648,10 @@ async function run() {
       issueCount.n,
       `the store log lists ${storeLog.filter((r) => r.kind === 'issue').length} issues; the window holds ${issueCount.n}`,
     )
-    const cardIssues = bySection.reduce((n, r) => n + decimalStringToPaise(r.value), 0)
+    const cardIssues = bySection.rows.reduce((n, r) => n + decimalStringToPaise(r.value), 0)
 
     console.log(
-      `      goods in ${formatPaise(card)} over ${series.length} days · paid out ${formatPaise(logTotal)} in ${log.length} · stock out ${formatPaise(cardIssues)} across ${issueCount.n} ${issueCount.n === 1 ? 'issue' : 'issues'}`,
+      `      goods in ${formatPaise(card)} over ${series.current.length} days · paid out ${formatPaise(logTotal)} in ${log.length} · stock out ${formatPaise(cardIssues)} across ${issueCount.n} ${issueCount.n === 1 ? 'issue' : 'issues'}`,
     )
   })
 
