@@ -18,6 +18,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export async function listLocations(
   restaurantId: string,
   includeRetired = true,
+  showClosed = false,
 ): Promise<StorageLocation[]> {
   return tsql<StorageLocation[]>`
     select l.id, l.name, l.kind, l.sort_order, l.note, l.status,
@@ -27,6 +28,10 @@ export async function listLocations(
     from storage_locations l
     where l.restaurant_id = ${restaurantId}
       and (${includeRetired} or l.status = 'active')
+      -- ARCHIVED, NOT DELETED. A merged or discarded row leaves the browsing
+      -- list and stays findable — see src/lib/closed.ts. Retired is NOT one of
+      -- these: a retired row may come back and stays visible, marked.
+      and (${showClosed} or l.status not in ('merged', 'discarded'))
     order by l.sort_order asc, l.name asc`
 }
 

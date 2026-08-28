@@ -29,6 +29,7 @@ import { useLang } from '@/components/useLang'
 import Honesty from '@/components/Honesty'
 import { useBusinessToday } from '@/components/BusinessDay'
 import BackdatedCost from '@/components/BackdatedCost'
+import { chipHref } from '@/lib/routes'
 
 export function FirstCountWarning({ days }: { days: number }) {
   if (days >= 14) return null
@@ -223,7 +224,7 @@ export default function CountEntry({
           Decide about this count →
         </Link>
         <Link
-          href="/store/stock/count"
+          href={chipHref('store', 'stock', 'count')}
           className="block text-center text-sm font-medium text-stone-500 hover:text-stone-800"
         >
           Back to counts

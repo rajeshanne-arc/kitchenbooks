@@ -155,11 +155,15 @@ export type BillLine = {
 export type DuesSnap = { balance: string; purchased: string; paid: string }
 
 export type VendorListRow = {
+  /** where a closed code went, and why — see src/lib/closed.ts */
+  merged_into_code?: string | null
+  closed_reason?: string | null
+  closed_by?: string | null
   id: string
   code: string
   name: string
   category_name: string
-  status: 'active' | 'inactive'
+  status: MasterStatus
   balance: string
   /** NULL when nobody can be rung. A purchase order to a vendor with no
    *  number can be written and printed and never sent. */
@@ -254,12 +258,16 @@ export type VendorDueRow = {
 }
 
 export type ItemListRow = {
+  /** where a closed code went, and why — see src/lib/closed.ts */
+  merged_into_code?: string | null
+  closed_reason?: string | null
+  closed_by?: string | null
   id: string
   code: string
   name: string
   category_name: string
   purchase_unit: string
-  status: 'active' | 'inactive'
+  status: MasterStatus
   prefill_rate: string | null
 }
 

@@ -13,6 +13,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export async function listMoneyAccounts(
   restaurantId: string,
   includeRetired = false,
+  showClosed = false,
 ): Promise<MoneyAccount[]> {
   return tsql<MoneyAccount[]>`
     select id, name, kind, identifier, is_till,
@@ -22,6 +23,10 @@ export async function listMoneyAccounts(
     from money_accounts
     where restaurant_id = ${restaurantId}
       and (${includeRetired} or status = 'active')
+      -- ARCHIVED, NOT DELETED. A merged or discarded row leaves the browsing
+      -- list and stays findable — see src/lib/closed.ts. Retired is NOT one of
+      -- these: a retired row may come back and stays visible, marked.
+      and (${showClosed} or status not in ('merged', 'discarded'))
     order by sort_order asc, name asc`
 }
 

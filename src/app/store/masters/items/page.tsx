@@ -1,17 +1,23 @@
 import Link from 'next/link'
 import { Suspense } from 'react'
 import FilterInput from '@/components/books/FilterInput'
-import { RetiredBadge } from '@/components/books/Badges'
+import { StatusBadge } from '@/components/books/Badges'
+import ShowClosed from '@/components/books/ShowClosed'
 import { getRestaurant } from '@/server/queries'
 import { listItems } from '@/server/books-queries'
 import { formatMoneyString } from '@/lib/money'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ItemsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const { q = '' } = await searchParams
+export default async function ItemsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; closed?: string }>
+}) {
+  const { q = '', closed } = await searchParams
   const restaurant = await getRestaurant()
-  const items = await listItems(restaurant.id, q.slice(0, 60))
+  const showClosed = closed === '1'
+  const items = await listItems(restaurant.id, q.slice(0, 60), showClosed)
 
   return (
     <section>
@@ -25,6 +31,12 @@ export default async function ItemsPage({ searchParams }: { searchParams: Promis
       </div>
       <Suspense>
         <FilterInput placeholder="Filter items by name or code" />
+      </Suspense>
+      {/* THE REVEAL. Browsing hides a merged or discarded row; searching finds
+          it anyway, because a code somebody read off an old bill must still
+          answer. This is for the third case — looking for what was closed. */}
+      <Suspense>
+        <ShowClosed on={showClosed} searching={q !== ''} noun="items" />
       </Suspense>
       {items.length === 0 ? (
         <div className="mt-8 rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-10 text-center">
@@ -53,17 +65,30 @@ export default async function ItemsPage({ searchParams }: { searchParams: Promis
               <Link
                 href={`/store/masters/items/${i.id}`}
                 className={`flex items-center justify-between gap-3 rounded-lg px-2 py-3 hover:bg-stone-50 ${
-                  i.status === 'inactive' ? 'opacity-60' : ''
+                  i.status === 'active' ? '' : 'opacity-60'
                 }`}
               >
                 <span className="min-w-0">
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="truncate text-[15px] font-medium text-stone-900">{i.name}</span>
-                    {i.status === 'inactive' && <RetiredBadge />}
+                    <StatusBadge status={i.status} />
                   </span>
                   <span className="mt-0.5 block text-xs text-stone-500">
                     <span className="font-mono">{i.code}</span> · {i.category_name} · per {i.purchase_unit}
                   </span>
+                  {/* AFTER A DISCARD THERE IS NO NEGATIVE TWIN TO READ. The
+                      approval's reason is the only account of why this code went
+                      quiet that will ever exist, so the row that survives
+                      carries it — with the name of whoever allowed it. */}
+                  {(i.status === 'merged' || i.status === 'discarded') && (
+                    <span className="mt-0.5 block text-xs text-stone-500">
+                      {i.merged_into_code != null && (
+                        <>became <span className="font-mono">{i.merged_into_code}</span> · </>
+                      )}
+                      {i.closed_reason != null ? <>“{i.closed_reason}”</> : 'no reason recorded'}
+                      {i.closed_by != null && <> · approved by {i.closed_by}</>}
+                    </span>
+                  )}
                 </span>
                 {i.prefill_rate !== null ? (
                   <span className="shrink-0 text-sm tabular-nums text-stone-500">

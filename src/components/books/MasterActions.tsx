@@ -41,6 +41,7 @@ import {
   thNumCls,
   trCls,
 } from '@/components/ui'
+import { tabHref } from '@/lib/routes'
 
 type Row = { id: string; code: string; name: string; status: string }
 type Target = { id: string; code: string; name: string; units: string }
@@ -188,7 +189,7 @@ export default function MasterActions({
           <SaveAck
             headline={done}
             sub={`${row.code} · ${row.name}`}
-            actions={[{ href: '/owner/setup/approvals', label: 'See the approvals queue' }]}
+            actions={[{ href: tabHref('owner', 'approvals'), label: 'See the approvals queue' }]}
           />
         </div>
       )}

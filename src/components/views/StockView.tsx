@@ -13,6 +13,7 @@ import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
 import type { CategoryRollupRow, StockRow, StockView as StockViewMode } from '@/lib/types'
 import { AbcBadge } from '@/components/stock/Abc'
+import { chipHref } from '@/lib/routes'
 
 /**
  * STOCK ON HAND — the owner's monthly question: what is it worth.
@@ -246,7 +247,7 @@ export default async function StockView({
 
       {cat !== '' && (
         <p className="mt-3 text-sm text-stone-600">
-          <Link href="/store/stock/on-hand" className="font-semibold text-emerald-800 hover:underline">
+          <Link href={chipHref('store', 'stock', 'on-hand')} className="font-semibold text-emerald-800 hover:underline">
             ← All categories
           </Link>
           <span className="ml-2 text-stone-500">
@@ -271,7 +272,7 @@ export default async function StockView({
                 </p>
                 {canEnterBill && (
                   <Link
-                    href="/store/receive/purchase"
+                    href={chipHref('store', 'receive', 'purchase')}
                     className="mt-5 inline-block rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
                   >
                     Enter a bill

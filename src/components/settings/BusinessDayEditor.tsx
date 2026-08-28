@@ -26,6 +26,7 @@ import { toast } from '@/components/Toasts'
 import Honesty from '@/components/Honesty'
 import { btnCls, cardCls, fieldLabelCls, inputCls, sectionHeadCls } from '@/components/ui'
 import SaveAck from '@/components/SaveAck'
+import { tabHref } from '@/lib/routes'
 
 /** A SHORT list of common zones as suggestions, not 400 rendered options. The
  *  field still accepts any IANA name — Postgres' own catalogue is the check,
@@ -148,7 +149,7 @@ export default function BusinessDayEditor({
           {canSeeDisagreements && (
             <>
               {' '}
-              <Link href="/owner" className="underline underline-offset-2">
+              <Link href={tabHref('owner', 'dashboard')} className="underline underline-offset-2">
                 The dashboard reports disagreements
               </Link>{' '}
               once a day with order times has been fetched — until then an empty result means nothing has

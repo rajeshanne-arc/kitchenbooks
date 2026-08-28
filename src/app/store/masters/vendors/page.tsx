@@ -1,17 +1,19 @@
 import Link from 'next/link'
 import { Suspense } from 'react'
 import FilterInput from '@/components/books/FilterInput'
-import { RetiredBadge } from '@/components/books/Badges'
+import { StatusBadge } from '@/components/books/Badges'
+import ShowClosed from '@/components/books/ShowClosed'
 import { getRestaurant } from '@/server/queries'
 import { listVendors } from '@/server/books-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 
 export const dynamic = 'force-dynamic'
 
-export default async function VendorsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const { q = '' } = await searchParams
+export default async function VendorsPage({ searchParams }: { searchParams: Promise<{ q?: string; closed?: string }> }) {
+  const { q = '', closed } = await searchParams
+  const showClosed = closed === '1'
   const restaurant = await getRestaurant()
-  const vendors = await listVendors(restaurant.id, q.slice(0, 60))
+  const vendors = await listVendors(restaurant.id, q.slice(0, 60), showClosed)
 
   return (
     <section>
@@ -25,6 +27,9 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
       </div>
       <Suspense>
         <FilterInput placeholder="Filter vendors by name or code" />
+      </Suspense>
+      <Suspense>
+        <ShowClosed on={showClosed} searching={q !== ''} noun="vendors" />
       </Suspense>
       {vendors.length === 0 ? (
         <div className="mt-8 rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-10 text-center">
@@ -61,7 +66,7 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
                   <span className="min-w-0">
                     <span className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-[15px] font-medium text-stone-900">{v.name}</span>
-                      {v.status === 'inactive' && <RetiredBadge />}
+                      <StatusBadge status={v.status} />
                     </span>
                     <span className="mt-0.5 block text-xs text-stone-500">
                       <span className="font-mono">{v.code}</span> · {v.category_name}

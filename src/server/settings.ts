@@ -31,11 +31,18 @@ export async function getList(restaurantId: string, key: ListKey): Promise<strin
 }
 
 /** Every row of every managed list (retired included) for the Lists screen. */
-export async function getAllListOptions(restaurantId: string): Promise<ListOptionRow[]> {
+export async function getAllListOptions(
+  restaurantId: string,
+  showClosed = false,
+): Promise<ListOptionRow[]> {
   return tsql<ListOptionRow[]>`
     select id, list_key, value, sort_order, status
     from list_options
     where restaurant_id = ${restaurantId}
+      -- ARCHIVED, NOT DELETED — see src/lib/closed.ts. A discarded value was
+      -- never real; a RETIRED one still shows, because entries that used it
+      -- keep the word and somebody may want it offered again.
+      and (${showClosed} or status not in ('merged', 'discarded'))
     order by list_key asc, sort_order asc, value asc`
 }
 

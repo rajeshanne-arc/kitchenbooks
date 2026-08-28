@@ -7740,3 +7740,93 @@ A folded category must not hide a negative, so a category row carries
 data and cannot today**: negative stock needs issues exceeding purchases, and
 there are no issues at all. Built, commented as unexercised, and reported as
 such rather than greened with manufactured data.
+
+
+## A CODE IS A ONE-TIME ASSIGNMENT — the document-number rule, applied to masters
+
+The document numbering rule already says it for voids: **never reused, never
+renumbered**, because a number is what a question names months later and has to
+mean exactly one thing forever, including when that thing was a mistake. The
+same holds for a master code, for a sharper reason:
+
+> **Reusing a retired or discarded code creates phantom inventory records,
+> confuses historical reporting, and makes reconciliation against old purchase
+> orders unreliable.** Two different products sharing one code across months of
+> ledger, with nothing on any screen looking wrong until somebody tries to
+> reconcile — which is exactly the moment they need it to be right.
+
+HKP-024 is discarded and keeps its code forever. The next housekeeping item is
+HKP-025.
+
+**CHECKED RATHER THAN ASSUMED, because reading a WHERE clause is not the same as
+watching it answer.** All six generators — items and vendors twice each (the
+bill flow and the standalone master), recipes, staff — take `max()` over EVERY
+row with no status filter, so they were already right. The counterfactual is
+what makes the check worth a compile cycle:
+
+    HKP series, live:  max over all rows = 24  →  next is HKP-025
+                       max over active   = 23  →  next would be HKP-024 AGAIN
+
+The gate asserts both halves: no generator's SQL mentions `status`, AND the two
+counts still DISAGREE on live data — because equal numbers would mean the
+fixture can no longer tell the two rules apart, and the check would be vacuous
+while staying green. It also asserts the highest HKP code is still `discarded`,
+so the day somebody un-discards it the gate says the fixture has gone rather
+than quietly testing nothing.
+
+## ARCHIVED, NOT DELETED — and browsing hides what searching finds
+
+Three words, three meanings, and the list treats them differently:
+
+| | |
+|---|---|
+| **retired** | we stopped using it; it may come back — stays on the list, marked |
+| **discarded** | it was never real; it must never come back — **leaves the list** |
+| **merged** | look over there instead — **leaves the list** |
+
+The industry pattern is unambiguous: a discontinued item is marked and then
+ARCHIVED — searchable, absent from the regular inventory view. A list that keeps
+showing rows nobody may use again gets longer forever and teaches people to
+scroll past things.
+
+**THE RULE THAT SATISFIES BOTH HALVES AT ONCE, in `src/lib/closed.ts`:**
+
+> **browsing hides them · SEARCHING FINDS THEM ALWAYS**
+
+A merged code has to stay resolvable — that is the entire reason the row was
+kept rather than deleted — so a query text turns the filter off by itself.
+Somebody typing a code is asking about that code, and answering "no such item"
+for one they read off an old bill is the worst possible reading of "archived".
+A gate asserts every closed code is still found by searching its own code.
+
+Applied to all seven entity types. A closed row carries WHY and WHO: after a
+discard there is no negative twin to read, so the approval's reason is the only
+account that will ever exist, and the row shows it with the name of whoever
+allowed it. Measured: 358 items browsing, 360 revealed, HKP-024 findable by code
+reading *"discarded — duplicate / rajeshanne"*.
+
+## EVERY TAB DESTINATION IS ASKED FOR, NOT REMEMBERED
+
+Discarding an item linked to `/owner/setup/approvals`. Approvals had become a
+main tab at `/owner/approvals` and one literal string did not move with it —
+**the third hand-maintained copy of a route**, after the retired-URL list at 51
+against 57 and DOC_TYPES at eight against nine.
+
+Two fixes and only the second stops it recurring: the old path is a retired URL
+now, and `src/lib/routes.ts` answers `tabHref(group, key)` and
+`chipHref(group, tab, chip)` from `tabs.ts` — the registry the tab strip, the
+chip row and the settings editor already read. It THROWS on an unknown key
+rather than returning a plausible path: a link is a promise that a page exists,
+and a silent fallback keeps that promise loosely, which is how the stale one
+survived.
+
+**SCOPED TO TAB AND CHIP DESTINATIONS, deliberately.** A deep link —
+`/store/masters/items/<id>`, `/owner/day/<date>` — cannot move when a tab moves,
+has no registry entry, and could not be expressed through one. The gate compares
+literal hrefs in `src/components` against the 75 live tab and chip routes and
+fails on a match; `tabs.ts`, `routes.ts`, `legacy.ts` and `roles.ts` are PRINTED
+exemptions, because the registry is where the strings live and the retired-URL
+shims map old paths no registry knows about.
+
+A blanket "no literal routes" rule would have flagged sixteen deep links that
+are not the problem. **The class that broke is the class that has an answer.**

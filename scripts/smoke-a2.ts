@@ -5286,7 +5286,12 @@ async function run() {
       // hiding them. Only a WHERE-side filter hides.
       const stripped = body.replace(/order by[\s\S]*?`/gi, '`')
       if (/status\s*=\s*'active'/.test(stripped) && !/includeRetired/.test(body)) hiding.push(`${table} (${m.fn})`)
-      if (!/RetiredBadge|line-through|opacity-50|· retired|'inactive'/.test(readFileSync(m.marks, 'utf8'))) {
+      // StatusBadge is the one place that decides which of the four words a row
+      // wears — retired, discarded, merged, or nothing — and it renders
+      // RetiredBadge for an inactive row. Accepted here alongside the literal,
+      // because this asserts that the retired are MARKED, not which component
+      // does the marking.
+      if (!/RetiredBadge|StatusBadge|line-through|opacity-50|· retired|'inactive'/.test(readFileSync(m.marks, 'utf8'))) {
         unmarked.push(`${table} (${m.marks.replace('src/', '')})`)
       }
     }
@@ -8444,6 +8449,144 @@ async function run() {
     assert.ok(msgAt !== -1, 'there is no message layout')
     assert.ok(msgAt < tableAt, 'the message layout does not return before the table')
     console.log('      classic · compact · message — the picker renders each one, legacy "plain" reads as classic')
+  })
+
+  /* ── no component carries a literal tab route ──────────────────────── */
+  console.log('\nevery tab destination is asked for, not remembered')
+
+  await check('no component hard-codes a route that a tab move would break', async () => {
+    // THE THIRD HAND-MAINTAINED COPY OF A ROUTE. Discarding an item linked to
+    // /owner/setup/approvals; Approvals had become a main tab at
+    // /owner/approvals and one literal did not move with it — the same shape as
+    // the retired-URL list at 51 against 57, and DOC_TYPES at eight against
+    // nine. Rajesh has more tab moves planned, so this has to hold first.
+    //
+    // SCOPED TO TAB AND CHIP DESTINATIONS. A deep link — /store/masters/items/
+    // <id>, /owner/day/<date> — cannot move when a tab moves, has no registry
+    // entry, and could not be expressed through one. Flagging those would be
+    // ceremony; the class that broke is the class that has an answer.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const { allTabRoutes } = await import('../src/lib/routes')
+    const routes = new Set(allTabRoutes())
+    assert.ok(routes.size > 30, `only ${routes.size} tab routes — the registry is not being read`)
+
+    // THE EXEMPTIONS ARE PRINTED, NOT FILTERED. Both must hold literals: the
+    // registry is where the strings live, and the retired-URL shims map OLD
+    // paths that no registry knows about to new ones.
+    const EXEMPT = [
+      'src/lib/tabs.ts',
+      'src/lib/routes.ts',
+      'src/lib/legacy.ts',
+      'src/lib/roles.ts',
+    ]
+    const offenders: string[] = []
+    for (const f of walk('src/components')) {
+      if (EXEMPT.includes(f)) continue
+      const src = readFileSync(f, 'utf8')
+      for (const m of src.matchAll(/href=[{]?["'`](\/[a-z0-9/_-]*)["'`]/g)) {
+        if (routes.has(m[1])) offenders.push(`${f.replace('src/', '')} → ${m[1]}`)
+      }
+    }
+    assert.deepEqual(
+      offenders,
+      [],
+      'a component hard-codes a tab destination — use tabHref/chipHref so a tab move is one edit',
+    )
+    console.log(`      ${routes.size} tab and chip routes · exempt: ${EXEMPT.map((e) => e.replace('src/lib/', '')).join(', ')}`)
+  })
+
+  /* ── a code is a one-time assignment ───────────────────────────────── */
+  console.log('\nevery code is allocated once and never again')
+
+  await check('no code generator counts only ACTIVE rows', async () => {
+    // A REUSED CODE CORRUPTS HISTORY SILENTLY, which is why this is worth a
+    // compile cycle where the filtering beside it is not. If a generator took
+    // its next number from ACTIVE rows, discarding the highest code in a series
+    // would hand that number to the next item — two different products sharing
+    // one code across months of ledger, and nothing on any screen looking
+    // wrong until somebody tried to reconcile against an old purchase order.
+    //
+    // Six generators: items and vendors (twice each — the bill flow and the
+    // standalone master), recipes, and staff. Found by their shape rather than
+    // listed, so a seventh is caught the day it is written.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+    const gens: { file: string; sql: string }[] = []
+    for (const f of walk('src/server')) {
+      const src = readFileSync(f, 'utf8')
+      for (const m of src.matchAll(/select coalesce\(max\([^`]*?`/g)) {
+        gens.push({ file: f.replace('src/', ''), sql: m[0] })
+      }
+    }
+    assert.ok(gens.length >= 6, `only ${gens.length} code generators found — the sweep is not reaching them`)
+    const filtered = gens.filter((g) => /\bstatus\b/.test(g.sql))
+    assert.deepEqual(
+      filtered.map((g) => g.file),
+      [],
+      'a code generator filters on status — discarding the highest code would hand its number to the next item',
+    )
+
+    // AND THE SAME THING MEASURED, because reading a WHERE clause is not the
+    // same as watching it answer. HKP-024 is discarded on the live tenant:
+    // counting every row gives 24 and the next code is HKP-025; counting only
+    // active rows gives 23, which would be HKP-024 for a second time.
+    const { tsql } = await import('../src/lib/db')
+    const [n] = await tsql<{ all: number; active: number; highest: string; st: string }[]>`
+      select (select max(nullif(split_part(code, '-', 2), '')::int) from items
+               where restaurant_id = ${liveTenant} and code like 'HKP-%') as all,
+             (select max(nullif(split_part(code, '-', 2), '')::int) from items
+               where restaurant_id = ${liveTenant} and code like 'HKP-%' and status = 'active') as active,
+             (select code from items where restaurant_id = ${liveTenant} and code like 'HKP-%'
+               order by nullif(split_part(code, '-', 2), '')::int desc limit 1) as highest,
+             (select status from items where restaurant_id = ${liveTenant} and code like 'HKP-%'
+               order by nullif(split_part(code, '-', 2), '')::int desc limit 1) as st`
+    // The counterfactual is the assertion. Equal numbers would mean the live
+    // data cannot tell the two rules apart, and the check would be vacuous.
+    assert.equal(n.st, 'discarded', `${n.highest} is ${n.st} — the fixture no longer proves anything`)
+    assert.ok(n.all > n.active, 'counting all rows and counting active rows agree — nothing is being tested')
+    console.log(
+      `      ${gens.length} generators, none filtering status · ${n.highest} is ${n.st}: all=${n.all} (next HKP-${String(n.all + 1).padStart(3, '0')}) vs active-only=${n.active} (would reuse ${n.highest})`,
+    )
+  })
+
+  await check('a closed code stays resolvable and searchable', async () => {
+    // HIDING IS NOT DELETING. A merged or discarded row leaves the default
+    // list, and the whole point of keeping the row is that looking the code up
+    // still answers — so the search must still find it. A filter that hid it
+    // from search as well would quietly undo the reason it was kept.
+    const { tsql } = await import('../src/lib/db')
+    const closed = await tsql<{ code: string; status: string; merged: string | null }[]>`
+      select i.code, i.status, m.code as merged
+      from items i left join items m on m.id = i.merged_into
+      where i.restaurant_id = ${liveTenant} and i.status in ('merged', 'discarded')`
+    if (closed.length === 0) {
+      console.log('      UNTESTED — no item is merged or discarded on this tenant')
+      return
+    }
+    const { listItems } = await import('../src/server/books-queries')
+    for (const c of closed) {
+      const hits = await listItems(liveTenant, c.code)
+      assert.ok(
+        hits.some((h) => h.code === c.code),
+        `${c.code} is ${c.status} and cannot be found by searching its own code`,
+      )
+    }
+    console.log(`      ${closed.length} closed code(s) still found by search: ${closed.map((c) => `${c.code} (${c.status})`).join(', ')}`)
   })
 
   console.log(

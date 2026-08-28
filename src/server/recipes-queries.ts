@@ -45,7 +45,11 @@ export async function listDishCosts(
            dc.flag
     from dish_costs dc
     join sections s on s.restaurant_id = dc.restaurant_id and s.code = dc.section_code
+    join recipes dr on dr.restaurant_id = dc.restaurant_id and dr.id = dc.recipe_id
     where dc.restaurant_id = ${restaurantId}
+      -- ARCHIVED, NOT DELETED — see src/lib/closed.ts. A merged or discarded
+      -- card leaves the browsing list; a retired one stays, marked.
+      and dr.status not in ('merged', 'discarded')
     order by ${
       order === 'by-food-cost'
         ? sql`(dc.uncosted_lines > 0) asc, dc.food_cost_pct desc nulls last,`
@@ -64,6 +68,9 @@ export async function listSubCosts(restaurantId: string): Promise<SubCostRow[]> 
     from recipe_costs rc
     join recipes r on r.id = rc.recipe_id
     where rc.restaurant_id = ${restaurantId} and rc.kind = 'sub'
+      -- ARCHIVED, NOT DELETED — see src/lib/closed.ts. A merged or discarded
+      -- card leaves the browsing list; a retired one stays, marked.
+      and r.status not in ('merged', 'discarded')
     order by rc.code asc`
 }
 

@@ -108,12 +108,20 @@ export async function assertMeterAllowed(restaurantId: string, kind: MeterKind):
 
 // ─────────────────────────────── the master ───────────────────────────────
 
-export async function listMeters(restaurantId: string, includeRetired = false): Promise<MeterRow[]> {
+export async function listMeters(
+  restaurantId: string,
+  includeRetired = false,
+  showClosed = false,
+): Promise<MeterRow[]> {
   return tsql<MeterRow[]>`
     select id, name, kind, unit, assumed_rate::text as assumed_rate, status
     from meters
     where restaurant_id = ${restaurantId}
       and (${includeRetired} or status = 'active')
+      -- ARCHIVED, NOT DELETED. A merged or discarded row leaves the browsing
+      -- list and stays findable — see src/lib/closed.ts. Retired is NOT one of
+      -- these: a retired row may come back and stays visible, marked.
+      and (${showClosed} or status not in ('merged', 'discarded'))
     order by kind asc, name asc`
 }
 

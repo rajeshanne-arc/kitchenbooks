@@ -5,6 +5,7 @@
 // facts, not recomputations.
 import 'server-only'
 import { sql, tsql } from '@/lib/db'
+import { includeClosed } from '@/lib/closed'
 import type {
   BillLine,
   BillRow,
@@ -121,8 +122,13 @@ export async function listVendorsWithDues(
     order by d.balance desc, v.name asc`
 }
 
-export async function listVendors(restaurantId: string, q: string): Promise<VendorListRow[]> {
+export async function listVendors(
+  restaurantId: string,
+  q: string,
+  showClosed = false,
+): Promise<VendorListRow[]> {
   const like = `%${q}%`
+  const closed = includeClosed(q, showClosed)
   return tsql<VendorListRow[]>`
     select v.id, v.code, v.name, c.name as category_name, v.status,
            -- CARRIED SO THE LIST CAN SAY WHO CANNOT BE SENT AN ORDER. Not one
@@ -136,6 +142,7 @@ export async function listVendors(restaurantId: string, q: string): Promise<Vend
     left join vendor_dues d on d.vendor_id = v.id
     where v.restaurant_id = ${restaurantId}
       and (v.name ilike ${like} or v.code ilike ${like})
+      ${closed ? sql`` : sql`and v.status not in ('merged', 'discarded')`}
     order by v.status asc, v.code asc`
 }
 
@@ -180,16 +187,37 @@ export async function getDues(vendorId: string): Promise<DuesSnap> {
   return rows[0] ?? { balance: '0', purchased: '0', paid: '0' }
 }
 
-export async function listItems(restaurantId: string, q: string): Promise<ItemListRow[]> {
+export async function listItems(
+  restaurantId: string,
+  q: string,
+  showClosed = false,
+): Promise<ItemListRow[]> {
   const like = `%${q}%`
+  // BROWSING HIDES A CLOSED ROW; SEARCHING FINDS IT. See src/lib/closed.ts —
+  // a merged code has to stay resolvable, so a query text turns the filter off
+  // by itself. Answering "no such item" for a code somebody read off an old
+  // bill is the worst possible reading of "archived".
+  const closed = includeClosed(q, showClosed)
   return tsql<ItemListRow[]>`
     select i.id, i.code, i.name, c.name as category_name, i.purchase_unit, i.status,
-           r.prefill_rate::text as prefill_rate
+           r.prefill_rate::text as prefill_rate,
+           m.code as merged_into_code,
+           a.reason as closed_reason, a.decided_by as closed_by
     from items i
     join categories c on c.code = i.category
     left join item_rates r on r.item_id = i.id
+    left join items m on m.restaurant_id = i.restaurant_id and m.id = i.merged_into
+    -- WHY IT WAS CLOSED, AND WHO SAID SO. After a discard there is no negative
+    -- twin to read; the approval's reason is the only account of it that will
+    -- ever exist, so the row that survives carries it.
+    left join lateral (
+      select ar.reason, ar.decided_by from approval_requests ar
+      where ar.restaurant_id = i.restaurant_id and ar.entity_id = i.id and ar.status = 'applied'
+      order by ar.applied_at desc limit 1
+    ) a on true
     where i.restaurant_id = ${restaurantId}
       and (i.name ilike ${like} or i.code ilike ${like})
+      ${closed ? sql`` : sql`and i.status not in ('merged', 'discarded')`}
     order by i.status asc, i.code asc`
 }
 
