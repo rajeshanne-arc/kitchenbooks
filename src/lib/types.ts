@@ -3138,6 +3138,7 @@ export type ShortRow = {
   doc_no: string | null
   vendor_id: string
   vendor_name: string
+  item_id: string
   item_code: string
   item_name: string
   purchase_unit: string
@@ -3671,6 +3672,7 @@ export const DOCUMENT_STYLES: DocumentStyle[] = ['classic', 'compact', 'message'
 export type PriceMovementRow = {
   vendor_id: string
   vendor_name: string
+  item_id: string
   item_code: string
   item_name: string
   purchase_unit: string

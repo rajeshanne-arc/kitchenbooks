@@ -8473,10 +8473,18 @@ claim against one, so in both the vendor is where the reader goes next.
 `price_movements` had always published `vendor_id`; only the select list was
 leaving it behind.
 
-Still unlinked, reported rather than fixed: the bill save reveal, and the
-ITEM names on the price-moves and shorts tables — `price_movements` publishes
-`item_id` as well, so that one is the same one-line change whenever it is
-wanted. **The owner dashboard's dues list cannot be
+**The ITEM names on those two tables are linked too.** `price_movements`
+publishes `item_id`, and both shorts queries already joined `items` — in each
+case the id was sitting in the relation and only the select list was leaving it
+behind, which is worth noticing as a pattern: *the reason a name is not a link
+is usually that nobody asked the query for the id, not that the id is
+unavailable.* The bill and issue DOCUMENTS already linked their items.
+
+Still unlinked, reported rather than fixed: the bill save reveal; the vendor
+list on the owner dashboard (blocked — its `Card` is a `<Link>`); the item
+names on the indent gap, adjustments and department pages; and the POS item
+names in the sales books, which are a different thing entirely — a POS item is
+not a stock item until somebody maps it, and half of them never will be. **The owner dashboard's dues list cannot be
 linked at all without restructuring** — that `Card` is itself a `<Link>`, and a
 link inside a link is invalid; it would need the `footer` slot the day-sheet
 card uses. Vendor PICKERS are correctly not links, and so are the vendor page's

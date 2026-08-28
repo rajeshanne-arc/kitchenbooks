@@ -110,7 +110,11 @@ export default async function PriceMovesPage({
                     return (
                       <tr key={`${r.item_code}-${r.bill_date}-${i}`} className={trCls}>
                         <td className={tdCls}>
-                          {r.item_name}
+                          {/* the item, because "what did this cost before" and
+                              "what is it worth now" are one question */}
+                          <Link href={`/store/masters/items/${r.item_id}`} className="underline decoration-stone-300 underline-offset-2 hover:decoration-stone-600">
+                            {r.item_name}
+                          </Link>
                           <span className={`${tdCodeCls} border-0 p-0`}> {r.item_code}</span>
                         </td>
                         <td className={`${tdCls} text-stone-600`}>

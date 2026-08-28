@@ -51,7 +51,7 @@ export async function listShorts(restaurantId: string, limit = 300): Promise<Val
   return tsql<ValuedShort[]>`
     select s.id, s.purchase_line_id, pl.purchase_id, p.bill_date::text as bill_date, p.doc_no,
            p.vendor_id, v.name as vendor_name,
-           i.code as item_code, i.name as item_name, i.purchase_unit,
+           i.id as item_id, i.code as item_code, i.name as item_name, i.purchase_unit,
            pl.qty::text as qty_received, s.qty_short::text as qty_short, pl.rate::text as rate,
            (pl.qty + s.qty_short)::text as qty_billed,
            (s.qty_short * pl.rate)::text as short_value,
@@ -70,7 +70,7 @@ export async function listShortsForPurchase(restaurantId: string, purchaseId: st
   return tsql<ValuedShort[]>`
     select s.id, s.purchase_line_id, pl.purchase_id, p.bill_date::text as bill_date, p.doc_no,
            p.vendor_id, v.name as vendor_name,
-           i.code as item_code, i.name as item_name, i.purchase_unit,
+           i.id as item_id, i.code as item_code, i.name as item_name, i.purchase_unit,
            pl.qty::text as qty_received, s.qty_short::text as qty_short, pl.rate::text as rate,
            (pl.qty + s.qty_short)::text as qty_billed,
            (s.qty_short * pl.rate)::text as short_value,
@@ -89,7 +89,7 @@ export async function getShort(restaurantId: string, id: string): Promise<Valued
   const rows = await tsql<ValuedShort[]>`
     select s.id, s.purchase_line_id, pl.purchase_id, p.bill_date::text as bill_date, p.doc_no,
            p.vendor_id, v.name as vendor_name,
-           i.code as item_code, i.name as item_name, i.purchase_unit,
+           i.id as item_id, i.code as item_code, i.name as item_name, i.purchase_unit,
            pl.qty::text as qty_received, s.qty_short::text as qty_short, pl.rate::text as rate,
            (pl.qty + s.qty_short)::text as qty_billed,
            (s.qty_short * pl.rate)::text as short_value,

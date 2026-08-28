@@ -133,7 +133,11 @@ export default async function ShortsPage() {
                               {s.vendor_name}
                             </Link>
                           </td>
-                          <td className={tdCls}>{s.item_name}</td>
+                          <td className={tdCls}>
+                            <Link href={`/store/masters/items/${s.item_id}`} className="underline decoration-stone-300 underline-offset-2 hover:decoration-stone-600">
+                              {s.item_name}
+                            </Link>
+                          </td>
                           <td className={tdCodeCls}>{s.item_code}</td>
                           <td className={`${tdCls} text-[13px] text-stone-500`}>{SHORT_KIND_LABELS[s.kind]}</td>
                           <td className={`${tdNumCls} text-stone-500`}>{s.qty_billed}</td>
@@ -222,7 +226,11 @@ export default async function ShortsPage() {
                             {s.vendor_name}
                           </Link>
                         </td>
-                        <td className={tdCls}>{s.item_name}</td>
+                        <td className={tdCls}>
+                          <Link href={`/store/masters/items/${s.item_id}`} className="underline decoration-stone-300 underline-offset-2 hover:decoration-stone-600">
+                            {s.item_name}
+                          </Link>
+                        </td>
                         <td className={`${tdCls} text-[13px] text-stone-500`}>{SHORT_KIND_LABELS[s.kind]}</td>
                         <td className={`${tdNumCls} text-stone-500`}>
                           {s.qty_short} <span className="text-stone-400">{s.purchase_unit}</span>
