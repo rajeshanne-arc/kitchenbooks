@@ -16,6 +16,7 @@ import { saveBill } from '@/server/save-bill'
 import VendorPicker from './VendorPicker'
 import ItemPicker from './ItemPicker'
 import SaveReveal from './SaveReveal'
+import BillPhotoStage, { type StagedPhoto, uploadStaged } from './books/BillPhotoStage'
 import { inputCls, numCls } from './ui'
 import { sectionHeadCls, selectCls } from '@/components/ui'
 import { priceMove } from '@/lib/price'
@@ -99,6 +100,12 @@ export default function BillEntry({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<SavedBill | null>(null)
+  // STAGED, NOT UPLOADED. Photographs are taken while the bill is being typed —
+  // the paper is in the storeman's hand right then — but there is no
+  // purchase_id to attach them to until it saves. They are compressed on pick
+  // (so the size is known immediately) and sent AFTER the save returns.
+  const [photos, setPhotos] = useState<StagedPhoto[]>([])
+  const [photoNote, setPhotoNote] = useState<string | null>(null)
 
   // The order list follows the vendor, and clears with it: an order belongs to
   // one vendor, and offering another's would let a delivery be filed against a
@@ -243,6 +250,22 @@ export default function BillEntry({
       const res = await saveBill(payload)
       if (res.ok) {
         setSaved(res)
+        // NOT AWAITED, DELIBERATELY. The bill is recorded; the reveal shows
+        // now. A storeman at the delivery door on bad wifi walks away with the
+        // entry made — losing a photo is an inconvenience, losing six typed
+        // lines is why people stop using an app.
+        const staged = photos
+        setPhotos([])
+        setPhotoNote(null)
+        if (staged.length > 0) {
+          void uploadStaged(staged, res.purchase.id).then((failed) => {
+            if (failed > 0) {
+              setPhotoNote(
+                `The bill is saved and correct. ${failed} of ${staged.length} photo${staged.length === 1 ? '' : 's'} did not upload — open the bill and add ${failed === 1 ? 'it' : 'them'} there.`,
+              )
+            }
+          })
+        }
         resetForNext()
       } else {
         setError(res.error)
@@ -391,6 +414,11 @@ export default function BillEntry({
           {error}
         </div>
       )}
+
+      {/* BILL PHOTO — below the lines, above Save. The Save button's own
+          `canSave` has never depended on upload state and must not start: a
+          photograph is optional and a bill with none is ordinary. */}
+      <BillPhotoStage staged={photos} onChange={setPhotos} note={photoNote} />
 
       {/* clearance for the fixed bar below — the bar is why this screen
           needs bottom room, so this screen reserves it rather than every

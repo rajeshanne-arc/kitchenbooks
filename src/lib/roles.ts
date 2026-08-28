@@ -83,6 +83,14 @@ const RULES: [prefix: string, roles: Role[]][] = [
   ['/kitchen', ['chef', 'manager', 'owner']],
 
   // --- store group -----------------------------------------------------
+  // BILL PHOTOS ARE A NAVIGABLE ROUTE, so they are in the matrix like any
+  // other. Most API routes never appear here because nothing LINKS to them —
+  // they are fetched by a component that is already on an admitted page. This
+  // one is an <a href> a person clicks to open the paper, so it is a door, and
+  // a door that is not in the matrix is a door nothing governs. The handler
+  // asks canAccess for THIS path, so the route and the link agree by
+  // construction rather than by two lists being kept in step.
+  ['/api/attachments', ['store', 'manager', 'owner']],
   ['/store', ['store', 'manager', 'owner']],
 
   // --- sales group (cashier) -------------------------------------------

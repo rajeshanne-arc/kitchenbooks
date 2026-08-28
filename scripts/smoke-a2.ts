@@ -5573,6 +5573,19 @@ async function run() {
       'components/accountant/UnmatchButton.tsx': 'inline row control — the line moves back to the unmatched list, which IS the change',
       'components/kitchen/CancelIndent.tsx': 'inline row control — the indent flips to cancelled and its gap column stops reading as a shortage',
       'components/store/SettleShort.tsx': 'inline row control — the short leaves the open list, which is the whole finding it was on',
+      // THE PAGE IS THE ACKNOWLEDGEMENT, literally. A photograph that uploads
+      // appears in the list as "Page 2 · 210 KB · rajeshanne · <time>", which
+      // is the row-is-the-acknowledgement case the masters already use — and
+      // it says NUMBERS, including the compression ("3.1 MB → 210 KB") while
+      // it is in flight. On failure it says the thing that matters instead:
+      // the bill is saved and correct, and only the picture did not arrive.
+      'components/books/BillPhotos.tsx': 'the row IS the acknowledgement — the page appears in the list with its size, who added it and when',
+      // The staging half. This one CANNOT render a SaveAck by construction: it
+      // uploads AFTER the bill has saved and the form has already reset, and
+      // BillEntry's own SaveReveal is on screen at that moment. A second
+      // acknowledgement beside it would be two voices about one save. Failures
+      // surface on the form as the sentence that matters — the bill is safe.
+      'components/books/BillPhotoStage.tsx': 'uploads after the save, while SaveReveal is already on screen — a second band would be two voices',
       // The same category, one step further: this one sits inside a master's
       // row and REPLACES ITSELF with "Sent to the owner — nothing has changed
       // yet", which is the acknowledgement. A hatched band would be reporting a
@@ -8900,6 +8913,85 @@ async function run() {
       assert.equal(childRows, set.size, `${code} would render ${childRows} day rows under a header saying ${set.size}`)
     }
     console.log(`      ${days.size} department(s), ${rows.length} rows, ${split} day(s) split across sessions`)
+  })
+
+  /* ── bill photos: the tenant boundary a policy cannot reach ────────── */
+  console.log('\nan attachment key belongs to exactly one restaurant')
+
+  await check('a key under another tenant is refused, even when the ROW is ours', async () => {
+    // STORAGE IS NOT COVERED BY RLS OR BY audit:tenancy. Both walk SQL; neither
+    // can see inside a blob store. The path is the only tenant boundary a
+    // stored object has, so it is a function with a test rather than a
+    // convention — `docs/attachments-storage-decision.md` says a test has to
+    // hold this, and this is that test.
+    const { keyBelongsTo, storageKey } = await import('../src/lib/attachment-entities')
+    const { readAttachment, AttachmentRefusal } = await import('../src/server/attachments-queries')
+    const { withTenant } = await import('../src/lib/tenant')
+    const probe = process.env.KB_PROBE_TENANT as string
+
+    // TWO GENUINELY DIFFERENT TENANTS, or the test is vacuous: a check that
+    // passes because both objects belong to the same restaurant has proved
+    // nothing at all.
+    assert.notEqual(liveTenant, probe, 'the two tenants are the same — this proves nothing')
+
+    // ── by value first, including the case that makes the trailing slash
+    //    load-bearing: without it a tenant whose id PREFIXES another's would
+    //    match its neighbour's objects.
+    assert.equal(keyBelongsTo(storageKey(liveTenant, 'purchase', 'p1', 'u1', 'jpg'), liveTenant), true)
+    assert.equal(keyBelongsTo(storageKey(probe, 'purchase', 'p1', 'u1', 'jpg'), liveTenant), false)
+    assert.equal(keyBelongsTo(`${liveTenant}x/purchase/p/u.jpg`, liveTenant), false, 'the trailing slash is load-bearing')
+    assert.equal(keyBelongsTo('', liveTenant), false)
+    assert.equal(keyBelongsTo(storageKey(liveTenant, 'purchase', 'p', 'u', 'jpg'), ''), false)
+    // RESTAURANT FIRST. Get the segment order wrong and the check silently
+    // matches nothing — or everything.
+    assert.ok(storageKey(liveTenant, 'purchase', 'p1', 'u1', 'jpg').startsWith(`${liveTenant}/`))
+
+    // ── AND THROUGH THE APP'S OWN READ, on a fixture that rolls back.
+    //    `attachments` has INSERT and SELECT and no DELETE, so the probe must
+    //    discard or it would leave a permanent row.
+    let sameTenantOk = false
+    let crossRefusal: unknown = null
+    try {
+      await withTenant(liveTenant, () =>
+        txn(async (tx) => {
+          const [ours] = await tx<{ id: string }[]>`
+            insert into attachments (restaurant_id, entity_type, entity_id, kind, storage_key, uploaded_by)
+            values (${liveTenant}, 'purchase', null, 'photo',
+                    ${storageKey(liveTenant, 'purchase', 'zz', 'zz', 'jpg')}, 'zz-gate')
+            returning id`
+          await readAttachment(liveTenant, ours.id, tx)
+          sameTenantOk = true
+
+          // THE CASE RLS CANNOT CATCH, and the whole reason the prefix check
+          // exists: the ROW is legitimately ours — it passes every policy —
+          // and its KEY points into another restaurant's space. Only the
+          // prefix check stands between that row and somebody else's paper.
+          const [bad] = await tx<{ id: string }[]>`
+            insert into attachments (restaurant_id, entity_type, entity_id, kind, storage_key, uploaded_by)
+            values (${liveTenant}, 'purchase', null, 'photo',
+                    ${storageKey(probe, 'purchase', 'zz', 'zz', 'jpg')}, 'zz-gate')
+            returning id`
+          try {
+            await readAttachment(liveTenant, bad.id, tx)
+          } catch (e) {
+            crossRefusal = e
+          }
+          throw new Error('KB_ROLLBACK')
+        }),
+      )
+    } catch (e) {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    }
+
+    assert.ok(sameTenantOk, 'our own attachment was refused — the check is too strict to be useful')
+    assert.ok(
+      crossRefusal instanceof AttachmentRefusal,
+      'a row of OURS pointing at another tenant\'s key was read — the prefix check did not fire',
+    )
+    const msg = (crossRefusal as Error).message
+    // The refusal must not name the other tenant back to the caller.
+    assert.ok(!msg.includes(probe), 'the refusal leaked the other restaurant’s id')
+    console.log(`      live vs probe · refused: ${msg}`)
   })
 
   /* ── comparison baselines ──────────────────────────────────────────── */

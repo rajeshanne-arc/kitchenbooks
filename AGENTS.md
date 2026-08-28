@@ -8670,3 +8670,93 @@ The file comment was rewritten in the same edit. **A comment describing a
 policy the code no longer has is worse than no comment** — it is the only
 account of intent a later reader gets, and it would have been describing the
 opposite of what shipped.
+
+## BILL PHOTOS — the first thing that can be checked against something OUTSIDE the app
+
+Every reconciliation built so far compares one query with another: internally
+consistent, and **completely blind to a rate typed wrong**. A photograph of the
+paper is the only check on that, which is why it is worth having before
+anything reads it.
+
+**STAGE 1 STORES AND SHOWS. IT DOES NOT READ.** No OCR, no extraction, no
+prefill, no thumbnails — a thumbnail is server-side image processing. **No image
+dependency was added**; `createImageBitmap` and a canvas do the compression in
+the browser.
+
+### THE BRIEF OFFERED TWO ROUTES AND BOTH WERE THE SAME TRADE
+
+(a) supabase-js with a service key and browser uploads via a signed URL, or
+(b) our own route streaming to Supabase Storage. They differ in where the bytes
+flow and **not at all in the credential**: both need an `sb_secret_…` key, the
+documented replacement for `service_role`, whose stated purpose is to BYPASS
+row-level security. That is a master key to all 65+ tenant tables — `app_users`
+included — added in order to store a photograph.
+
+`docs/attachments-storage-decision.md` had already argued this and AGENTS.md
+records the outcome as APPROVED: **Vercel Blob**. So the answer was neither of
+the two offered, and the reason is the one the brief itself cared about.
+
+**A blob token that leaks costs the photographs. That key would cost the
+books.** Blast radius is the whole argument.
+
+It also settled the sub-question without needing to: browser-direct upload
+exists to keep a 4 MB body off the function, and **§4 compresses to ~200 KB
+before anything is sent**, so the problem the optimisation solves is gone.
+Server-side upload keeps the token off the client entirely — no signed URL to
+mis-scope.
+
+### THE TABLE ALREADY EXISTED
+
+The brief specified a new `purchase_photos`. `attachments` was already there —
+RLS **enabled and forced**, one policy, INSERT + SELECT, no DELETE, zero rows,
+polymorphic on `(entity_type, entity_id)` and therefore already one-to-many.
+The decision doc names a bill photo as one of its two intended first readers.
+Building a second attachment table beside an empty one is duplication by this
+codebase's own test, so: no migration, no new RLS policy, no `page_no` (pages
+order by `created_at`, and speculative columns for Stage 2 were refused).
+
+### THE TENANT BOUNDARY IS A FUNCTION WITH A TEST, BECAUSE NOTHING ELSE CAN REACH IT
+
+    <restaurant_id>/<entity_type>/<entity_id>/<uuid>.<ext>
+
+**Restaurant FIRST**, so the check is one string comparison with no join. Get
+the segment order wrong and it silently matches nothing — or everything.
+
+`audit:tenancy` walks SQL. RLS protects rows. **Neither can see inside a blob
+store**, so `keyBelongsTo` is the only thing between two restaurants' paper,
+and the trailing slash in it is load-bearing: without it a tenant whose id
+prefixed another's would match its neighbour's objects.
+
+**THE CASE RLS CANNOT CATCH is the one the gate is built around.** A row that
+is legitimately ours — passing every policy — whose KEY points into another
+restaurant's space. Only the prefix check stands there. The gate inserts
+exactly that row on the live tenant inside a rolled-back transaction and
+asserts the app's own `readAttachment` refuses it, having first asserted the
+two tenants are genuinely different (both objects under one tenant would prove
+nothing). It also asserts the refusal does not name the other tenant back.
+
+Proved able to fail twice: dropping the trailing slash, and disabling the check
+outright — *"a row of OURS pointing at another tenant's key was read."*
+
+### THE SAVE NEVER WAITS ON THE PHOTO
+
+The bill saves FIRST and returns; photographs are staged during entry,
+compressed on pick, and uploaded against the saved id **without being awaited**.
+`canSave` has never depended on upload state and a gate would notice if it
+started. A failure says *the bill is saved and correct and only the picture did
+not arrive*, and retry lives on the bill itself — no queue, no nag, no "bills
+missing photos" list. **330 bills already have none and that is ordinary.**
+
+A storeman at the delivery door on bad wifi walks away with the entry made.
+Losing a photo is an inconvenience; losing six typed lines is why people stop
+using an app.
+
+### WHAT IS NOT BUILT, AND WHY IT IS ONE FILE
+
+`src/server/blob.ts` is the seam and both of its functions refuse by name. Three
+things must be true before they can be written, and none is settleable from
+here: a store must exist (there is none, and no token in any environment), it
+must be `access: 'private'` — a public blob is readable by anyone holding the
+URL, which would make the read route decoration — and **the store's region is
+fixed at creation**, with functions pinned to `bom1` and the database in
+`ap-south-1`. Everything else is backend-agnostic and done.

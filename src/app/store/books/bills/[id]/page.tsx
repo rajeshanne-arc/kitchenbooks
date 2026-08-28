@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
+import { listAttachments } from '@/server/attachments-queries'
 import { getBill, getBillLines, getVoidedBy } from '@/server/books-queries'
 import { listShortsForPurchase } from '@/server/shorts-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
@@ -8,6 +9,7 @@ import { fmtDate, fmtDateTime } from '@/lib/format'
 import { ReversalBadge, VoidedBadge } from '@/components/books/Badges'
 import VoidBill from '@/components/books/VoidBill'
 import BillShorts from '@/components/store/BillShorts'
+import BillPhotos from '@/components/books/BillPhotos'
 import { cardCls, docNoCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
@@ -21,11 +23,12 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
   const bill = await getBill(restaurant.id, id)
   if (!bill) notFound()
 
-  const [lines, voidedBy, original, shorts] = await Promise.all([
+  const [lines, voidedBy, original, shorts, photos] = await Promise.all([
     getBillLines(bill.id),
     bill.is_voided ? getVoidedBy(bill.id) : Promise.resolve(null),
     bill.reverses_id !== null ? getBill(restaurant.id, bill.reverses_id) : Promise.resolve(null),
     listShortsForPurchase(restaurant.id, bill.id),
+    listAttachments(restaurant.id, 'purchase', bill.id),
   ])
 
   // A short is owed on the bill that was actually delivered against. A
@@ -157,6 +160,13 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
             </dd>
           </div>
         </dl>
+      </section>
+
+      {/* THE PAPER, directly under the figures it is evidence for. Every other
+          reconciliation in this app compares one query with another; this is
+          the only thing that can be checked against something outside it. */}
+      <section className={cardCls}>
+        <BillPhotos purchaseId={id} initial={photos} />
       </section>
 
       <BillShorts
