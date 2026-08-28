@@ -446,6 +446,20 @@ export async function getPaymentsTotal(
 }
 
 /** What the store bought in the period, per vendor — the trip ledger. */
+/**
+ * WHO THE PERIOD'S GOODS CAME FROM — EVERY vendor, not the top eight.
+ *
+ * THE CAP WAS SILENT AND IT WAS ALREADY WRONG. This returned `limit 8`, and
+ * the table sits under the Goods in hero: on 1–28 Aug there are THIRTY-ONE
+ * vendors, so the column showed ₹13,08,177.71 beneath a heading saying
+ * ₹17,77,607.50 — ₹4.69 lakh missing, in a table whose whole job is to break
+ * that number down. Nobody adds eight rows by eye to notice.
+ *
+ * Thirty-one rows is a trivial payload, so the truncation moves to the SCREEN
+ * where it can be named: the page shows the largest few and folds the rest into
+ * one labelled row, so the column still adds up to the hero. No silent caps —
+ * a top-N that does not say what it dropped reads as "all of it".
+ */
 export async function getPurchasesByVendor(
   restaurantId: string,
   from: string,
@@ -458,8 +472,7 @@ export async function getPurchasesByVendor(
     where p.restaurant_id = ${restaurantId} and p.bill_date between ${from}::date and ${to}::date
     group by v.name
     having sum(p.bill_total) <> 0
-    order by sum(p.bill_total) desc
-    limit 8`
+    order by sum(p.bill_total) desc`
 }
 
 /** Items at or below their reorder level, straight from reorder_due.

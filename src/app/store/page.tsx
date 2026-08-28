@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import { countItemsWithReorderLevel, countReorderDue, getIssuesBySection, getPaymentsTotal, getPurchaseSeries, getPurchasesByVendor, getSectionConsumptionDaily, listOpenIndents } from '@/server/store-queries'
+import { countItemsWithReorderLevel, countReorderDue, getIssuesBySection, getPaymentsTotal, getPurchaseSeries, getPurchasesByVendor, listOpenIndents } from '@/server/store-queries'
 import { getStockAlarms } from '@/server/dashboard-queries'
 import { listActiveVendors, listVendorsWithDues } from '@/server/books-queries'
 import { listIndents } from '@/server/kitchen-queries'
@@ -27,7 +27,6 @@ import { countVendorsWithoutPhone } from '@/server/po-queries'
 import { getExpiringStock } from '@/server/store-queries'
 import { EXPIRING_WITHIN_DAYS, expiryPrompt, expiryState, NO_LOT_TRACKING } from '@/lib/expiry'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
-import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
@@ -35,6 +34,11 @@ import { MagnitudeBars, SalesLine } from '@/components/dashboard/Charts'
 import { businessToday } from '@/server/business-day'
 
 export const dynamic = 'force-dynamic'
+
+/** How many vendors the Goods in table lists before folding the rest into one
+ *  named row. The remainder is SHOWN, never dropped — the column has to add up
+ *  to the hero above it. */
+const VENDOR_ROWS = 8
 
 // The store's own dashboard. Not the owner's questions rephrased — the
 // store manager's: what came in, where it went, who is owed, what to buy,
@@ -74,7 +78,6 @@ export default async function StoreHome({
     alarms,
     reorderCount,
     itemsWithLevel,
-    consumption,
   ] = await Promise.all([
     listOpenIndents(restaurant.id),
     getPurchaseSeries(restaurant.id, period.from, period.to),
@@ -85,7 +88,6 @@ export default async function StoreHome({
     getStockAlarms(restaurant.id),
     countReorderDue(restaurant.id),
     countItemsWithReorderLevel(restaurant.id),
-    getSectionConsumptionDaily(restaurant.id, period.from, period.to),
   ])
 
   // A SECOND BATCH ON PURPOSE. The pool is 12 and the group layout is
@@ -101,6 +103,14 @@ export default async function StoreHome({
   ])
 
   const purchaseTotal = purchases.reduce((n, p) => n + decimalStringToPaise(p.total), 0)
+  // The by-vendor table sits under the Goods in hero and its column must add up
+  // to it. Every vendor is fetched; the screen shows the largest few and names
+  // the remainder, so nothing is dropped silently.
+  const byVendorTotal = byVendor.reduce((n, v) => n + decimalStringToPaise(v.total), 0)
+  const byVendorRest = {
+    count: Math.max(0, byVendor.length - VENDOR_ROWS),
+    paise: byVendor.slice(VENDOR_ROWS).reduce((n, v) => n + decimalStringToPaise(v.total), 0),
+  }
   const issueTotal = issuesBySection.reduce((n, s) => n + decimalStringToPaise(s.value), 0)
   const duesTotal = dues.reduce((n, d) => n + decimalStringToPaise(d.balance), 0)
 
@@ -137,34 +147,11 @@ export default async function StoreHome({
         <MyQueriesPanel />
       </div>
 
-      {/* The books' own diagnostics, routed here because the store is where a
-          bill number is typed and where a vendor's tax registration is
-          editable. The accountant still sees both on Review; this is the same
-          fact reaching the desk that can clear it. Renders nothing when there
-          is nothing owed. */}
-      <div className="pb-4">
-        <GroupDiagnostics
-          restaurantId={restaurant.id}
-          group="store"
-          extra={{
-            'Purchases with no bill number': {
-              action: { href: '/store/books/bills', label: 'The bills log' },
-            },
-            'Active vendors with no tax registration recorded': {
-              action: { href: '/store/masters/vendors', label: 'Vendors' },
-            },
-          }}
-        />
-      </div>
-
-      <div className="pb-4">
-        <ConsumptionByDept
-          rows={consumption}
-          title="Issued out, by department"
-          caption={`${fmtDate(period.from)} — ${fmtDate(period.to)}, net of anything sent back`}
-        />
-      </div>
-
+      {/* ── BAND 1 · NEEDS YOU NOW ────────────────────────────────────────
+          THE PERIOD CONTROL COMES FIRST, above everything it scopes. It was
+          rendering BELOW three period-scoped cards, so the page answered for a
+          window the reader had not yet been shown — the single most visible
+          defect on it. */}
       <div className="pb-4">
         <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/store" />
       </div>
@@ -235,6 +222,7 @@ export default async function StoreHome({
         </span>
       </Link>
 
+      {/* ── BAND 2 · WHAT HAPPENED ─────────────────────────────────────── */}
       <div className="grid gap-3 sm:grid-cols-2">
         {/* goods in */}
         <section className={cardCls}>
@@ -258,12 +246,59 @@ export default async function StoreHome({
               </div>
             )
           )}
+
+          {/* WHO IT CAME FROM — under the number it breaks down.
+              This table was under PAID OUT, headed "Bought from", contradicting
+              a payments hero of ₹5,10,307 with roughly ₹15 lakh of purchases.
+              It was in the wrong card, not badly labelled, so it moved rather
+              than being relabelled.
+              THE COLUMN ADDS UP TO THE HERO EXACTLY. Only the largest few are
+              listed and the rest are folded into ONE NAMED ROW rather than
+              dropped — a top-N that does not say what it left out reads as all
+              of it, and this query used to stop at eight of thirty-one. */}
+          {byVendor.length > 0 && (
+            <div className="mt-3 overflow-x-auto border-t border-rule-soft pt-2">
+              <table className={dataTableCls}>
+                <thead>
+                  <tr>
+                    <th className={thCls}>Bought from</th>
+                    <th className={thNumCls}>Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {byVendor.slice(0, VENDOR_ROWS).map((v) => (
+                    <tr key={v.vendor} className={trCls}>
+                      <td className={tdCls}>{v.vendor}</td>
+                      <td className={tdNumCls}>{formatMoneyString(v.total)}</td>
+                    </tr>
+                  ))}
+                  {byVendorRest.count > 0 && (
+                    <tr className={trCls}>
+                      <td className={`${tdCls} text-stone-500`}>
+                        {byVendorRest.count} other {plural(byVendorRest.count, 'vendor')}
+                      </td>
+                      <td className={`${tdNumCls} text-stone-500`}>{formatPaise(byVendorRest.paise)}</td>
+                    </tr>
+                  )}
+                  <tr className={trCls}>
+                    <td className={`${tdCls} font-semibold`}>All vendors</td>
+                    <td className={`${tdNumCls} font-semibold`}>{formatPaise(byVendorTotal)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
 
-        {/* stock out, by section */}
+        {/* ONE CARD, NOT TWO. This and ConsumptionByDept reported the same
+            fact from the same source and both said nothing was issued, six
+            hundred pixels apart. This one keeps the grid position and the
+            magnitude bars; the other is gone.
+            DEPARTMENT, NOT SECTION — the app says department everywhere else,
+            and `section` is the column name leaking into the interface. */}
         <section className={cardCls}>
           <div className="flex items-baseline justify-between gap-2">
-            <h2 className={sectionHeadCls}>Stock out, by section</h2>
+            <h2 className={sectionHeadCls}>Stock out, by department</h2>
             <span className="font-mono text-[10px] text-stone-400">issue_lines</span>
           </div>
           <p className="mt-1.5 text-sm text-stone-700">
@@ -271,7 +306,7 @@ export default async function StoreHome({
               ? 'Nothing issued in this period.'
               : `${formatPaise(issueTotal)} left the store for ${issuesBySection.length} ${plural(
                   issuesBySection.length,
-                  'section',
+                  'department',
                 )}.`}
           </p>
           {issuesBySection.length > 0 && (
@@ -353,26 +388,6 @@ export default async function StoreHome({
               {formatMoneyString(paymentsTotal.total)}
             </p>
           )}
-          {byVendor.length > 0 && (
-            <div className="mt-3 overflow-x-auto border-t border-rule-soft pt-2">
-              <table className={dataTableCls}>
-                <thead>
-                  <tr>
-                    <th className={thCls}>Bought from</th>
-                    <th className={thNumCls}>Value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {byVendor.map((v) => (
-                    <tr key={v.vendor} className={trCls}>
-                      <td className={tdCls}>{v.vendor}</td>
-                      <td className={tdNumCls}>{formatMoneyString(v.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </section>
       </div>
 
@@ -428,9 +443,36 @@ export default async function StoreHome({
         </section>
       )}
 
-      {/* READINESS — things that are empty until somebody does them, and that
-          block nothing until the day they matter. An empty list here is never
-          evidence that all is well; it is evidence nobody has been asked. */}
+      {/* ── BAND 3 · WHAT IS MISSING ──────────────────────────────────────
+          READINESS — things that are empty until somebody does them. An empty
+          list here is never evidence that all is well; it is evidence nobody
+          has been asked.
+          ORDERED BY WHAT THEY BLOCK, not by the order they were written. 357
+          of 358 items carry no storage location, which blocks the count sheet
+          ENTIRELY — every one of them lands under "Not placed yet", which on a
+          real walk means walked past. A vendor with no phone blocks nothing
+          until somebody raises a purchase order. So placement leads. */}
+      {/* The books' own diagnostics, routed here because the store is where a
+          bill number is typed and where a vendor's tax registration is
+          editable. The accountant still sees both on Review; this is the same
+          fact reaching the desk that can clear it. ADJACENT to "Still to set
+          up" because they answer one question — what is not done — and six
+          hundred pixels apart they read as two unrelated complaints. */}
+      <div className="mt-3">
+        <GroupDiagnostics
+          restaurantId={restaurant.id}
+          group="store"
+          extra={{
+            'Purchases with no bill number': {
+              action: { href: '/store/books/bills', label: 'The bills log' },
+            },
+            'Active vendors with no tax registration recorded': {
+              action: { href: '/store/masters/vendors', label: 'Vendors' },
+            },
+          }}
+        />
+      </div>
+
       {(placement.unplaced > 0 || phones.without > 0 || (reorderCount === 0 && itemsWithLevel === 0)) && (
         <section className={`${cardCls} mt-3`}>
           <h2 className={sectionHeadCls}>Still to set up</h2>
@@ -440,6 +482,26 @@ export default async function StoreHome({
                 No item carries a reorder level, so nothing can ever appear on the Reorder tab. That list is empty
                 because the question has not been asked — not because the store is full. Set levels under Masters →
                 Items.
+              </Honesty>
+            )}
+            {/* PLACE YOUR ITEMS. Nothing is blocked by this until the first
+                physical count — and then an unplaced item is one the sheet
+                cannot put on anybody's route, so it gets walked past. */}
+            {placement.unplaced > 0 && (
+              <Honesty
+                verdict="items not placed"
+                meter={{
+                  filled: placement.total - placement.unplaced,
+                  total: placement.total,
+                  unit: 'items placed',
+                }}
+                action={{ href: '/store/masters/items', label: 'Place them on the item master' }}
+              >
+                {placement.unplaced} of {placement.total} active{' '}
+                {placement.unplaced === 1 ? 'item has' : 'items have'} no storage location. The count sheet walks the
+                store in location order, so {placement.unplaced === 1 ? 'it lands' : 'they land'} at the bottom under
+                “Not placed yet” — which on a real walk means walked past. Nothing else is affected until somebody
+                counts.
               </Honesty>
             )}
             {/* NOWHERE TO SEND AN ORDER. A purchase order can be written and
@@ -461,26 +523,6 @@ export default async function StoreHome({
                 {phones.without === 1 ? 'vendor has' : 'vendors have'} no phone number, so a purchase order to{' '}
                 {phones.without === 1 ? 'them' : 'any of them'} can be written and printed but never sent. A
                 purchase order with nowhere to send it is a PDF.
-              </Honesty>
-            )}
-            {/* PLACE YOUR ITEMS. Nothing is blocked by this until the first
-                physical count — and then an unplaced item is one the sheet
-                cannot put on anybody's route, so it gets walked past. */}
-            {placement.unplaced > 0 && (
-              <Honesty
-                verdict="items not placed"
-                meter={{
-                  filled: placement.total - placement.unplaced,
-                  total: placement.total,
-                  unit: 'items placed',
-                }}
-                action={{ href: '/store/masters/items', label: 'Place them on the item master' }}
-              >
-                {placement.unplaced} of {placement.total} active{' '}
-                {placement.unplaced === 1 ? 'item has' : 'items have'} no storage location. The count sheet walks the
-                store in location order, so {placement.unplaced === 1 ? 'it lands' : 'they land'} at the bottom under
-                “Not placed yet” — which on a real walk means walked past. Nothing else is affected until somebody
-                counts.
               </Honesty>
             )}
           </div>

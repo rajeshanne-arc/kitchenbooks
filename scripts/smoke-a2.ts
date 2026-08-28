@@ -8451,6 +8451,44 @@ async function run() {
     console.log('      classic · compact · message — the picker renders each one, legacy "plain" reads as classic')
   })
 
+  /* ── the store dashboard's one reconciliation ──────────────────────── */
+  console.log('\nthe by-vendor table adds up to the number above it')
+
+  await check('goods in reconciles to its by-vendor breakdown', async () => {
+    // THE TABLE MOVED AND THE MOVE CREATED THE OBLIGATION. It used to sit under
+    // PAID OUT — a purchases table under a payments hero, contradicting the
+    // number above it by about ten lakh. Under GOODS IN it breaks that number
+    // down, so its column has to add up to it, and a reconciliation between two
+    // queries over one window is exactly the kind that fails quietly.
+    //
+    // AND IT WAS ALREADY WRONG BEFORE THE MOVE: getPurchasesByVendor carried a
+    // silent `limit 8` and this period has THIRTY-ONE vendors, so the column
+    // would have shown ₹13,08,177.71 under a hero of ₹17,77,607.50. The cap is
+    // gone from the query; the SCREEN shows the largest few and folds the rest
+    // into one named row, so nothing is dropped without saying so.
+    const { getPurchasesByVendor } = await import('../src/server/store-queries')
+    const { tsql } = await import('../src/lib/db')
+    const { decimalStringToPaise, formatPaise } = await import('../src/lib/money')
+    const from = '2026-08-01'
+    const to = '2026-08-28'
+
+    const rows = await getPurchasesByVendor(liveTenant, from, to)
+    const [hero] = await tsql<{ v: string }[]>`
+      select coalesce(sum(bill_total), 0)::text as v from purchases
+      where restaurant_id = ${liveTenant} and bill_date between ${from}::date and ${to}::date`
+
+    const table = rows.reduce((n, r) => n + decimalStringToPaise(r.total), 0)
+    const heroPaise = decimalStringToPaise(hero.v)
+    assert.equal(
+      table,
+      heroPaise,
+      `the by-vendor table sums to ${formatPaise(table)} under a Goods in hero of ${formatPaise(heroPaise)}`,
+    )
+    // The cap must stay gone. A top-N here is the fault, not a tidy-up.
+    assert.ok(rows.length > 8, `only ${rows.length} vendors returned — the limit may be back`)
+    console.log(`      ${rows.length} vendors · table ${formatPaise(table)} = hero ${formatPaise(heroPaise)}`)
+  })
+
   /* ── no component carries a literal tab route ──────────────────────── */
   console.log('\nevery tab destination is asked for, not remembered')
 

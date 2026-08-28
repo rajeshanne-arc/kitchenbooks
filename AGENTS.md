@@ -7830,3 +7830,54 @@ shims map old paths no registry knows about.
 
 A blanket "no literal routes" rule would have flagged sixteen deep links that
 are not the problem. **The class that broke is the class that has an answer.**
+
+
+## THE STORE DASHBOARD — three bands, and a table under the wrong number
+
+**BAND 1 needs you now · BAND 2 what happened · BAND 3 what is missing.**
+`MyQueriesPanel` stays above all three: it is a person asking this person a
+question, and it outranks the store's own numbers.
+
+**The period control was rendering BELOW three period-scoped cards** — the page
+answered for a window the reader had not been shown. It is first now, above
+everything it scopes.
+
+**Two cards reported one fact.** "Issued out, by department" and "Stock out, by
+section" read the same source and both said nothing was issued, six hundred
+pixels apart. One card now, named **by department** — the app says department
+everywhere else and `section` was the column name leaking into the interface.
+
+**Readiness is ordered by WHAT IT BLOCKS**, not by the order the checks were
+written. 357 of 358 items carry no storage location, which blocks the count
+sheet entirely; a vendor with no phone blocks nothing until somebody raises a
+purchase order. Placement leads.
+
+### A PURCHASES TABLE UNDER A PAYMENTS HERO — and the cap underneath it
+
+The Paid out card's hero was `paymentsTotal`, ₹5,10,307 across 17 payments, and
+the table beneath it was `getPurchasesByVendor` headed "Bought from", summing
+about ₹15 lakh. **The data was in the wrong card, not badly labelled**, so it
+moved to Goods in rather than being relabelled — the relabel would have made the
+sentence true and left a reader no way to reconcile either number.
+
+**Moving it created the obligation, and revealed that it was already broken.**
+Under Goods in the column must add up to the hero — and `getPurchasesByVendor`
+carried a silent `limit 8` while this period has **thirty-one vendors**. It
+would have shown ₹13,08,177.71 under a heading saying ₹17,77,607.50: ₹4.69 lakh
+missing from the one table whose entire job is to break that number down, and
+nobody adds eight rows by eye to notice.
+
+The cap is out of the query — thirty-one rows is a trivial payload — and the
+truncation moved to the SCREEN where it can be named: the largest eight, then
+one row reading "23 other vendors · ₹4,69,429.79", then the total. **A top-N
+that does not say what it dropped reads as all of it.**
+
+Asserted exactly, in paise, with the count checked too so the cap cannot come
+back as a tidy-up. Restoring the `limit 8` fails it by name:
+*"the by-vendor table sums to ₹13,08,177.71 under a Goods in hero of
+₹17,77,607.50"*.
+
+**Everything else in that change was VISIBLE** — band order, a moved table, a
+duplicate card, a sort order — and was fixed and opened rather than proved, per
+the wall-clock rule. The reconciliation was the one piece that could have failed
+in silence.
