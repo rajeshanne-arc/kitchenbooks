@@ -8869,6 +8869,39 @@ async function run() {
     console.log(`      ${items.length} items across ${rollup.rows.length} categories, none unplaced`)
   })
 
+  await check('a department expands to as many rows as its Days figure claims', async () => {
+    // THE VIEW'S GRAIN IS (department, day, SESSION) and the parent row counts
+    // DISTINCT DAYS, so rendering the raw rows as children would show more
+    // lines than the header above them claims. Grouping the children by date
+    // is what makes the two agree — and the count is the half that catches it,
+    // because the VALUE is identical either way.
+    const rows = await tsql<{ code: string; day: string; session: string; v: string }[]>`
+      select section_code as code, move_date::text as day, session, consumed_value::text as v
+      from section_consumption_daily where restaurant_id = ${liveTenant}`
+    assert.ok(rows.length > 0, 'nothing has been issued — this check examined nothing')
+
+    // THE FIXTURE MUST BE ABLE TO TELL THE TWO GROUPINGS APART. With one
+    // session per day they agree and this would pass under either. Live data
+    // has a department taking stock twice in one day, which is the only shape
+    // that distinguishes them.
+    const perDay = new Map<string, number>()
+    for (const r of rows) perDay.set(`${r.code}|${r.day}`, (perDay.get(`${r.code}|${r.day}`) ?? 0) + 1)
+    const split = [...perDay.values()].filter((n) => n > 1).length
+    assert.ok(split > 0, 'no department has two sessions in a day — the grouping is untested')
+
+    const days = new Map<string, Set<string>>()
+    for (const r of rows) {
+      const set = days.get(r.code) ?? new Set<string>()
+      set.add(r.day)
+      days.set(r.code, set)
+    }
+    for (const [code, set] of days) {
+      const childRows = new Set(rows.filter((r) => r.code === code).map((r) => r.day)).size
+      assert.equal(childRows, set.size, `${code} would render ${childRows} day rows under a header saying ${set.size}`)
+    }
+    console.log(`      ${days.size} department(s), ${rows.length} rows, ${split} day(s) split across sessions`)
+  })
+
   /* ── comparison baselines ──────────────────────────────────────────── */
   console.log('\nthe baseline window, by value')
 

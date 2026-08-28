@@ -8581,7 +8581,34 @@ Reported, not built.
 | **Dashboard MagnitudeBars** (owner waste, sales modes, staff going, store issues/dues) | rows YES, CHILDREN NO | **navigate** | a bar's label is a category; its children are the underlying events, which no dashboard loads. This is exactly the fetch-on-expand the rule forbids |
 | `owner` alarms / dayGaps / missing / settlements, `staff` absence | YES — all `slice(0, N)` over loaded arrays | **not groups** | these are truncated LISTS, not parents. They want the `<Rest>` treatment (a named remainder carrying value), which several already have |
 
-**The one that would change if asked:** ConsumptionByDept is the only genuine
-candidate, and it fails on purpose rather than on data — the question "which
-days made up this department's consumption" is real, but it is not the question
-the card is on screen to answer.
+**ConsumptionByDept was the only genuine candidate and it was asked for, so it
+is built** — see below.
+
+### A department expands to its DAYS, and three things it decided differently
+
+The rule admitted it easily: the component receives every (department, day,
+session) row and aggregates them itself, so opening one fetches nothing. What
+it did NOT inherit from the stock fold is more interesting than what it did.
+
+**THE CHILDREN GROUP BY DATE, NOT BY ROW.** The view's grain is (department,
+day, SESSION), and live data already has a department taking stock twice in one
+day. Listing the raw rows would put TWO lines under a parent whose own "Days"
+column says ONE. Grouping by date makes the child count equal that figure
+exactly — and the COUNT is the half that catches it, because the value is
+identical either way. That is also what makes the gate non-vacuous: with one
+session per day the two groupings agree and the assertion would pass under
+either, so it checks first that a split day exists at all.
+
+**NEWEST FIRST, NOT TOP-N BY VALUE.** Days are a time series, not a ranking.
+"Top ten by value" is the right cap for a category of items and the wrong
+question about a run of days — the day somebody is asking about is almost
+always a recent one.
+
+**NO "SEE ALL", and that is a finding rather than an omission.** The stock fold
+caps at ten and sends the reader to `?cat=`. Here there is nowhere to send
+them: **no per-day consumption view exists anywhere in the app.** The
+department page reports a period TOTAL, not these rows. So the tail names its
+value and stops rather than promising a page that does not exist. The cap is 14
+— a period can be three months, so unlike a purchase day the fan-out has no
+natural ceiling — and the tail is DERIVED as parent minus shown, for the
+rounding reason above.
