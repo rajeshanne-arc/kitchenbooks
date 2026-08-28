@@ -8820,6 +8820,55 @@ async function run() {
     console.log(`      ${OLD.length} retired URLs, every destination live, no chains`)
   })
 
+  await check('no item falls out of the category fold', async () => {
+    // THE EXACT QUESTION, ASKED EXACTLY. The fold shows a category's top ten
+    // and one line for the rest, and the rest is DERIVED as subtotal minus
+    // shown — so "shown + tail = subtotal" is true by construction and
+    // asserting it would prove nothing.
+    //
+    // What can actually go wrong is an ITEM falling out of the fold: the
+    // component groups the loaded rows by category code, and a row whose code
+    // does not match any rollup group would vanish from every expansion while
+    // the header above it stayed correct. That has an exact answer, so it is
+    // computed in SQL at full precision rather than by summing paise — the
+    // rollup rounds once and a per-item sum rounds N times, and measured on
+    // live data those differ by a paise in three categories with nothing
+    // missing at all.
+    const { listStock, stockCategoryRollup } = await import('../src/server/store-queries')
+    const items = await listStock(liveTenant, '', 'by-value', '')
+    const rollup = await stockCategoryRollup(liveTenant)
+    assert.ok(items.length > 0 && rollup.rows.length > 0, 'nothing to group — this check examined nothing')
+
+    // COUNT BESIDE SUM. The count is exact integer arithmetic and is the half
+    // that catches a truncation; the value is the half that catches a wrong row.
+    const counted = new Map<string, number>()
+    for (const r of items) counted.set(r.category || '', (counted.get(r.category || '') ?? 0) + 1)
+    let placed = 0
+    for (const g of rollup.rows) {
+      const n = counted.get(g.category) ?? 0
+      assert.equal(n, g.items, `${g.category || '—'}: the fold would show ${n} items under a header saying ${g.items}`)
+      placed += n
+    }
+    assert.equal(placed, items.length, `${items.length - placed} item(s) belong to no category group and would vanish`)
+
+    // AND THE VALUE, in SQL, at full precision — one query, two sides.
+    const [v] = await tsql<{ n: number }[]>`
+      with per_item as (
+        select coalesce(s.category, '') as cat, sum(s.on_hand_value) as v
+        from stock_on_hand s where s.restaurant_id = ${liveTenant} group by 1
+      ), per_group as (
+        select coalesce(s.category, '') as cat, sum(s.on_hand_value) as v
+        from stock_on_hand s
+        join items i on i.id = s.item_id
+        where s.restaurant_id = ${liveTenant} group by 1
+      )
+      select count(*)::int as n from per_item i
+      full join per_group g on g.cat = i.cat
+      where i.v is distinct from g.v`
+    assert.equal(v.n, 0, `${v.n} category(ies) disagree between the item rows and the fold`)
+    console.log(`      ${items.length} items across ${rollup.rows.length} categories, none unplaced`)
+  })
+
   /* ── comparison baselines ──────────────────────────────────────────── */
   console.log('\nthe baseline window, by value')
 

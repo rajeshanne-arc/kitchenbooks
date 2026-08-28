@@ -5,6 +5,7 @@ import { getVendorBills, getVendorDetail, getVendorPayments } from '@/server/boo
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getList } from '@/server/settings'
 import { getVendorReturnReasons } from '@/server/vendor-return-queries'
+import { getPoReadiness } from '@/server/po-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { StatusBadge } from '@/components/books/Badges'
@@ -15,7 +16,9 @@ import VendorEdit from '@/components/books/VendorEdit'
 import MasterActions, { ClosedNote } from '@/components/books/MasterActions'
 import { pendingFor, REQUESTERS } from '@/server/approvals-queries'
 import { getSessionUser } from '@/server/current-user'
+import Honesty from '@/components/Honesty'
 import {
+  btnCls,
   cardCls,
   dataTableCls,
   heroNumCls,
@@ -43,7 +46,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
   const vendor = await getVendorDetail(restaurant.id, id)
   if (!vendor) notFound()
 
-  const [bills, payments, modes, accounts, returnReasons, open, user] = await Promise.all([
+  const [bills, payments, modes, accounts, returnReasons, open, user, poReady] = await Promise.all([
     getVendorBills(restaurant.id, id),
     getVendorPayments(id),
     getList(restaurant.id, 'payment_mode'),
@@ -51,6 +54,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
     getVendorReturnReasons(restaurant.id, id),
     pendingFor(restaurant.id, id),
     getSessionUser(),
+    getPoReadiness(restaurant.id),
   ])
   const balP = decimalStringToPaise(vendor.balance)
   const hasBank =
@@ -113,7 +117,54 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
         </div>
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      {/* THE ONE THING YOU CAN DO FROM HERE. This page carried banking,
+          contact, payments, bills and returns — every fact about a vendor and
+          no action on any of them. Raising an order is the act the facts are
+          read for, and the URL is the one Reorder already uses, so nothing new
+          sits behind it. */}
+      <section className={`${cardCls} mt-4`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className={sectionHeadCls}>Raise a purchase order</h3>
+            <p className="mt-1 text-sm text-stone-600">opens with {vendor.name} already chosen</p>
+          </div>
+          <Link href={`/store/purchasing/orders/new?vendor=${vendor.id}`} className={btnCls}>
+            Raise PO →
+          </Link>
+        </div>
+
+        {/* COMPUTED, NEVER ASSERTED — every figure here is read at request
+            time, so the block clears itself the day the masters are filled in
+            rather than waiting for somebody to remember to delete it. */}
+        {(poReady.withReorderLevel * 4 < poReady.activeItems ||
+          poReady.withDefaultVendor * 4 < poReady.activeItems ||
+          !poReady.hasGstin) && (
+          <div className="mt-3">
+            <Honesty verdict="an order raised today would be typed from memory">
+              {poReady.withReorderLevel * 4 < poReady.activeItems && (
+                <>
+                  {poReady.withReorderLevel} of {poReady.activeItems} active items carry a reorder level, so the
+                  order opens EMPTY — the suggested quantities come from that figure.{' '}
+                </>
+              )}
+              {poReady.withDefaultVendor * 4 < poReady.activeItems && (
+                <>
+                  {poReady.withDefaultVendor} of {poReady.activeItems} name a default vendor, so nothing narrows
+                  the item list to what {vendor.name} actually sells.{' '}
+                </>
+              )}
+              {!poReady.hasGstin && (
+                <>
+                  And the letterhead carries no GSTIN, so what prints is not a document a vendor&rsquo;s accountant
+                  will accept.
+                </>
+              )}
+            </Honesty>
+          </div>
+        )}
+      </section>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {/* banking — the copy-me card */}
         <section className={cardCls}>
           <h3 className={sectionHeadCls}>Banking</h3>

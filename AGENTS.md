@@ -8489,3 +8489,99 @@ linked at all without restructuring** — that `Card` is itself a `<Link>`, and 
 link inside a link is invalid; it would need the `footer` slot the day-sheet
 card uses. Vendor PICKERS are correctly not links, and so are the vendor page's
 own headings.
+
+## A GROUP EXPANDS IN PLACE WHEN ITS CHILDREN ARE ALREADY ON THE PAGE
+
+That is the whole test. **An expand that has to FETCH is worse than a link that
+moves you, because it hangs where a link at least goes somewhere.**
+
+**THE EARLIER RULING HERE WAS WRONG AND THE NUMBERS WERE RIGHT.** Stock was
+given navigate-don't-expand on fan-out — Dry Goods is 115 items against a
+busiest purchase day of 25 bills. That priced expansion's cost and **never
+priced navigation's**: a round trip, a scroll jump, and the loss of the summary
+the reader was looking at. 115 and 25 are not the same problem, but the answer
+to that is a CAP, not a page.
+
+A category opens to its **top ten by value** and one line for the rest —
+carrying the VALUE, never a bare count. Ten or fewer shows all and no tail.
+"See all" navigates to `?cat=`, unchanged. `?cat=` and `?open=` are different
+things and both work: cat is the full filtered list, open is a peek.
+
+**THE PREMISE WAS WRONG AND THE RULE STILL DECIDED IT.** The brief said the
+children were already loaded. They are — in the by-VALUE view. The fold lives
+in the by-CATEGORY view, where `rows` was deliberately `[]` and only fifteen
+summary lines were fetched. So the branch now loads them, which is **one added
+query, the same one by-value already runs**. Stated rather than glossed: the
+rule is about what the page HAS, so the honest way to satisfy it is to make the
+page have them, not to pretend it did.
+
+### THE TAIL IS DERIVED, AND THAT IS CORRECTNESS
+
+`shown + tail = subtotal` is now true BY CONSTRUCTION, because the tail is
+`subtotal − shown` rather than a second sum of its own rows. Measured on live
+data first, which is why: summing 105 item values AFTER rounding each to paise
+came out a paise ABOVE the header for Dry Goods and a paise BELOW for
+Vegetables and Sauces. Nothing was missing — `on_hand_value` is qty × a
+weighted average carrying eighteen decimals, the header rounds once in SQL, and
+**rounding is not associative**. Third independent arrival at that in this
+codebase.
+
+**So the assertion had to change with it.** "shown + tail = subtotal" would now
+be vacuous. The real risk is an ITEM falling out of the fold — a row whose
+category code matches no group vanishing from every expansion while the header
+above it stays correct — and that has an exact answer: counts per category
+against the rollup's own `items`, plus a full-precision SQL comparison of the
+two groupings. **Ask the exact question exactly; a tolerance is what would let
+a real missing row through.**
+
+### MOVING A LITERAL OUT OF A FILE MOVES IT OUT OF ITS GATE
+
+Extracting `StockLine` into its own file broke LAW 1 and `audit:matrix` caught
+it on the next run — twice, on `/kitchen/books` and `/kitchen/books/stock`.
+
+Nothing about the guard changed: `StockLine` still took `canOpenItems` and
+still honoured it. But the audit marks an href gated only when **the file
+holding the literal consults the matrix**, and the `canAccess` call stayed
+behind in `StockView`. A chef reads that page and cannot open the item master.
+
+The fix is not an exemption. `StockLine` takes `role` and calls `canAccess`
+itself — the `DateLink` shape, for the `DateLink` reason: it gates a link to a
+page its reader may not be able to open. It is also strictly safer than the
+boolean, because a caller passing `canOpenItems` wrongly would leak and
+`canAccess(role, …)` cannot be got wrong that way.
+
+**The lesson generalises past this file: a guard and the thing it guards must
+live where a reader — human or gate — can see them together.**
+
+## THE VENDOR PAGE HAD NO WAY TO ACT
+
+It carried banking, contact, payments, bills and returns — every fact about a
+vendor and nothing to do about any of them. **Raise PO** now sits directly
+under the header, pointing at the URL Reorder already uses, so nothing new sits
+behind it.
+
+Beneath it, while the condition holds, an amber block that is **computed, never
+asserted**: today 1 of 358 active items carries a reorder level and 1 of 358
+names a default vendor, and the letterhead has no GSTIN. Those are three
+different failures — with no reorder level the order opens EMPTY because the
+quantities come from `reorder_due`; with no default vendor nothing narrows the
+item list to this vendor's goods; with no GSTIN what prints is not a document a
+vendor's accountant will accept. The block clears itself when they change,
+rather than waiting for somebody to remember to delete it.
+
+## SURVEY — which groups may expand, and why
+
+Reported, not built.
+
+| surface | children loaded? | verdict | why |
+|---|---|---|---|
+| **Stock by category** | now YES (one added query) | **expand, capped at 10** | 360 rows on the page; a category is a peek, `?cat=` is the full list |
+| **Reorder per-vendor cards** | YES — `listReorderDue` returns every due item and `<ReorderTable rows={g.rows}>` already renders them | **neither — already fully expanded** | nothing is hidden, so there is nothing to expand. A fold here would ADD a click |
+| **ConsumptionByDept** | YES — it receives `SectionConsumptionDay[]` and aggregates in the component | **could expand; low value** | the children are per-DAY rows for one department, which answers a different question from the bar. Would need a reason before a mechanism |
+| **Dashboard MagnitudeBars** (owner waste, sales modes, staff going, store issues/dues) | rows YES, CHILDREN NO | **navigate** | a bar's label is a category; its children are the underlying events, which no dashboard loads. This is exactly the fetch-on-expand the rule forbids |
+| `owner` alarms / dayGaps / missing / settlements, `staff` absence | YES — all `slice(0, N)` over loaded arrays | **not groups** | these are truncated LISTS, not parents. They want the `<Rest>` treatment (a named remainder carrying value), which several already have |
+
+**The one that would change if asked:** ConsumptionByDept is the only genuine
+candidate, and it fails on purpose rather than on data — the question "which
+days made up this department's consumption" is real, but it is not the question
+the card is on screen to answer.

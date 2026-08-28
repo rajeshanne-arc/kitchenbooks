@@ -1,18 +1,18 @@
 import Link from 'next/link'
 import { Suspense } from 'react'
 import FilterInput from '@/components/books/FilterInput'
-import { RetiredBadge } from '@/components/books/Badges'
 import { getRestaurant } from '@/server/queries'
 import { issueContext, listStock, stockCategoryRollup, stockTotalValue } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import Honesty from '@/components/Honesty'
+import StockLine from '@/components/stock/StockLine'
+import StockCategories from '@/components/stock/StockCategories'
 import NothingIssued from '@/components/stock/NothingIssued'
 import ViewToggle from '@/components/ViewToggle'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import { getSessionUser } from '@/server/current-user'
-import { canAccess } from '@/lib/roles'
-import type { CategoryRollupRow, StockRow, StockView as StockViewMode } from '@/lib/types'
-import { AbcBadge } from '@/components/stock/Abc'
+import { canAccess, type Role } from '@/lib/roles'
+import type { CategoryRollupRow, StockView as StockViewMode } from '@/lib/types'
 import { chipHref } from '@/lib/routes'
 
 /**
@@ -42,94 +42,7 @@ const VIEWS = [
   },
 ]
 
-/** Days of cover, or the reason there is no answer. NEVER a number below
- *  seven days of history: one issue makes max = min, and the average would
- *  read the whole quantity as a single day's usage. */
-function Cover({ row }: { row: StockRow }) {
-  if (row.days_on_hand === null) {
-    return (
-      <span className="text-stone-400" title="Needs at least 7 days of issue history before an average means anything">
-        {row.days_of_history === null ? 'no issue history' : 'not enough history'}
-      </span>
-    )
-  }
-  const d = Number(row.days_on_hand)
-  const tone = d < 3 ? 'text-red-700 font-semibold' : d < 7 ? 'text-doubt' : 'text-stone-600'
-  return (
-    <span className={tone} title={`${row.days_of_history} days of issue history behind this`}>
-      {d < 10 ? d.toFixed(1) : Math.round(d)} days
-    </span>
-  )
-}
 
-/**
- * ONE ROW DEFINITION, rendered grouped and flat alike. Two copies would be two
- * places for the next change — the argument that already made AbcBadge shared.
- * `showCategory` is the only difference: inside a category card it would repeat
- * the heading, and in the flat list it is the missing context.
- */
-function StockLine({
-  r,
-  canOpenItems,
-  showCategory,
-}: {
-  r: StockRow
-  canOpenItems: boolean
-  showCategory: boolean
-}) {
-  const negative = Number(r.on_hand_qty) < 0
-  return (
-    <li className={r.status === 'inactive' ? 'opacity-60' : ''}>
-      <div className="py-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <AbcBadge abc={r.abc} />
-              {canOpenItems ? (
-                <Link
-                  href={`/store/masters/items/${r.item_id}`}
-                  className="truncate text-[15px] font-medium text-stone-900 hover:underline"
-                >
-                  {r.name}
-                </Link>
-              ) : (
-                <span className="truncate text-[15px] font-medium text-stone-900">{r.name}</span>
-              )}
-              {r.status === 'inactive' && <RetiredBadge />}
-            </div>
-            <div className="mt-0.5 text-xs text-stone-500">
-              <span className="font-mono">{r.code}</span>
-              {showCategory && <> · {r.category_name}</>} · <Cover row={r} />
-              {r.issue_cost !== null && (
-                <>
-                  {' '}
-                  · avg {formatMoneyString(r.issue_cost)}/{r.purchase_unit}
-                </>
-              )}
-              {r.pct_of_value !== null && <> · {r.pct_of_value}% of stock value</>}
-            </div>
-          </div>
-          <div className="shrink-0 text-right">
-            <div className={`text-[15px] font-bold tabular-nums ${negative ? 'text-red-700' : 'text-stone-900'}`}>
-              {r.on_hand_qty} {r.purchase_unit}
-            </div>
-            <div className={`text-xs tabular-nums ${negative ? 'text-red-600' : 'text-stone-500'}`}>
-              {formatMoneyString(r.on_hand_value)}
-            </div>
-          </div>
-        </div>
-        {negative && (
-          <div className="mt-2">
-            <Honesty level="alarm" verdict="impossible" compact>
-              More has been issued than was ever bought on record. Stock cannot go below zero — a bill is
-              missing.
-            </Honesty>
-          </div>
-        )}
-      </div>
-    </li>
-  )
-}
 
 export default async function StockView({
   q = '',
@@ -149,7 +62,10 @@ export default async function StockView({
   // bill screen, so those links are not painted for them — the numbers still
   // are. A name that is not a link is not a dead end; it is honest.
   const user = await getSessionUser()
-  const canOpenItems = user !== null && canAccess(user.role, '/store/masters/items')
+  // The stock rows ask the matrix themselves (see StockLine) — this only has
+  // to say WHO is reading. A signed-out reader never reaches this page; the
+  // narrowest role is the safe answer if one somehow does.
+  const role: Role = user?.role ?? 'chef'
   const canEnterBill = user !== null && canAccess(user.role, '/store/purchasing/receive')
 
   // FILTERED OR FLAT — decided once, here. Somebody who typed "pan" wants the
@@ -158,8 +74,17 @@ export default async function StockView({
   const filtered = q !== '' || cat !== ''
   const flat = filtered || view === 'by-value'
 
+  // THE CHILDREN HAVE TO BE ON THE PAGE FOR THE FOLD TO EXPAND IN PLACE, and
+  // in the by-category view they were NOT: `rows` was deliberately empty here,
+  // because the fold only ever rendered fifteen summary lines. So this branch
+  // now loads them too — the same single query the by-value view already runs,
+  // ordered by value, which is exactly what "top ten by value" needs.
+  //
+  // That is one added query on this view, and it is the price of the rule: an
+  // expand that has to FETCH is worse than a link that moves you, because it
+  // hangs where a link at least goes somewhere.
   const [rows, total, rollup, ctx] = await Promise.all([
-    flat ? listStock(restaurant.id, q.slice(0, 60), view, cat) : Promise.resolve([] as StockRow[]),
+    listStock(restaurant.id, q.slice(0, 60), flat ? view : 'by-value', cat),
     stockTotalValue(restaurant.id),
     flat
       ? Promise.resolve({ rows: [] as CategoryRollupRow[], reconciles: true, cardExact: '0', rollupExact: '0' })
@@ -272,7 +197,7 @@ export default async function StockView({
                 </p>
                 {canEnterBill && (
                   <Link
-                    href={chipHref('store', 'receive', 'purchase')}
+                    href={chipHref('store', 'purchasing', 'receive')}
                     className="mt-5 inline-block rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
                   >
                     Enter a bill
@@ -291,7 +216,7 @@ export default async function StockView({
             </div>
             <ul className="mt-1 divide-y divide-rule-soft">
               {rows.map((r) => (
-                <StockLine key={r.item_id} r={r} canOpenItems={canOpenItems} showCategory />
+                <StockLine key={r.item_id} r={r} role={role} showCategory />
               ))}
             </ul>
           </section>
@@ -325,62 +250,12 @@ export default async function StockView({
                   </span>
                 </div>
 
-                <ul className="mt-1.5 divide-y divide-rule-soft overflow-hidden rounded-2xl border border-rule bg-cell">
-                  {band.map((g) => {
-                    // ONE DENOMINATOR THROUGHOUT — every percentage is against
-                    // the whole ₹25.9L, so a row and a heading never need
-                    // explaining against each other.
-                    const share = totalPaise > 0 ? (decimalStringToPaise(g.value) / totalPaise) * 100 : 0
-                    return (
-                      <li key={g.category || 'unclassified'}>
-                        <Link
-                          href={`?cat=${encodeURIComponent(g.category)}`}
-                          className="block px-4 py-3 hover:bg-stone-50"
-                        >
-                          <div className="flex items-baseline justify-between gap-3">
-                            <span className="min-w-0 truncate text-[15px] font-medium text-stone-900">
-                              <span aria-hidden className="mr-1.5 text-stone-400">
-                                ›
-                              </span>
-                              {g.category_name}
-                              <span className="ml-2 text-xs font-normal text-stone-500">
-                                {g.items} item{g.items === 1 ? '' : 's'}
-                              </span>
-                              {/* A FOLDED CATEGORY CANNOT HIDE A NEGATIVE.
-                                  Unexercised today — negative stock needs
-                                  issues exceeding purchases and there are no
-                                  issues at all — so this path has never
-                                  rendered against real data. */}
-                              {g.negatives > 0 && (
-                                <span className="ml-2 rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[11px] font-semibold text-red-700">
-                                  {g.negatives} negative
-                                </span>
-                              )}
-                            </span>
-                            <span className="shrink-0 text-right">
-                              <span className="font-mono text-[15px] font-bold tabular-nums text-stone-900">
-                                {formatMoneyString(g.value)}
-                              </span>
-                              <span className="ml-2 font-mono text-[11px] tabular-nums text-stone-400">
-                                {share.toFixed(1)}%
-                              </span>
-                            </span>
-                          </div>
-                          <div
-                            className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-stone-100"
-                            role="img"
-                            aria-label={`${g.category_name} is ${share.toFixed(1)}% of stock value`}
-                          >
-                            <div
-                              className="h-full rounded-full bg-emerald-700"
-                              style={{ width: `${Math.max(share, 0.5)}%` }}
-                            />
-                          </div>
-                        </Link>
-                      </li>
-                    )
-                  })}
-                </ul>
+                <StockCategories
+                  groups={band}
+                  items={rows}
+                  totalPaise={totalPaise}
+                  role={role}
+                />
               </div>
             )
           })}

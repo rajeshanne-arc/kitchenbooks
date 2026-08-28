@@ -83,6 +83,43 @@ export async function assertOneRowPerItem(
   )
 }
 
+/**
+ * WHAT A PURCHASE ORDER NEEDS BEFORE IT IS WORTH RAISING.
+ *
+ * All three are COMPUTED, never asserted: today it is 1 of 358 items with a
+ * reorder level, 1 of 358 with a default vendor, and no GSTIN — and all three
+ * are meant to change, so the block that reads this clears itself rather than
+ * needing somebody to remember to delete it.
+ *
+ * The two counts are different failures. With no reorder level the order opens
+ * EMPTY, because the suggested quantities come from `reorder_due`; with no
+ * default vendor nothing narrows the item list to this vendor's own goods.
+ * Either way every line is typed from memory.
+ */
+export async function getPoReadiness(restaurantId: string): Promise<{
+  activeItems: number
+  withReorderLevel: number
+  withDefaultVendor: number
+  hasGstin: boolean
+}> {
+  return txn(async (tx) => {
+    const [items] = await tx<{ total: number; reorder: number; vendored: number }[]>`
+      select count(*)::int as total,
+             count(*) filter (where reorder_level is not null and reorder_level > 0)::int as reorder,
+             count(*) filter (where default_vendor_id is not null)::int as vendored
+      from items
+      where restaurant_id = ${restaurantId} and status = 'active'`
+    const [r] = await tx<{ gstin: string | null }[]>`
+      select gstin from restaurants where id = ${restaurantId}`
+    return {
+      activeItems: items?.total ?? 0,
+      withReorderLevel: items?.reorder ?? 0,
+      withDefaultVendor: items?.vendored ?? 0,
+      hasGstin: r?.gstin !== null && r?.gstin !== undefined && r.gstin.trim() !== '',
+    }
+  })
+}
+
 /** Every order, newest first. `open` narrows to the two states that are still
  *  somebody's job — a draft nobody sent and an order nobody has delivered. */
 export async function listPurchaseOrders(
