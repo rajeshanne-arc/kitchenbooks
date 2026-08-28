@@ -8467,8 +8467,16 @@ its own SVG. Opt-in, so the other five call sites are untouched.
 whole row is a `<Link>`). **The bill document's heading is linked too** —
 reading a bill and wanting the vendor's balance or banking card is the
 commonest next question that page raises, and the name was the one thing on it
-that answered nothing. Still unlinked, reported rather than fixed: the
-price-moves table, both shorts tables, and the bill save reveal. **The owner dashboard's dues list cannot be
+that answered nothing. **The price-moves table and both shorts tables are
+linked too** — a price move is an argument with a vendor and an open short is a
+claim against one, so in both the vendor is where the reader goes next.
+`price_movements` had always published `vendor_id`; only the select list was
+leaving it behind.
+
+Still unlinked, reported rather than fixed: the bill save reveal, and the
+ITEM names on the price-moves and shorts tables — `price_movements` publishes
+`item_id` as well, so that one is the same one-line change whenever it is
+wanted. **The owner dashboard's dues list cannot be
 linked at all without restructuring** — that `Card` is itself a `<Link>`, and a
 link inside a link is invalid; it would need the `footer` slot the day-sheet
 card uses. Vendor PICKERS are correctly not links, and so are the vendor page's

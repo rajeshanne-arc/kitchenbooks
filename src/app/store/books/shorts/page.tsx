@@ -124,7 +124,15 @@ export default async function ShortsPage() {
                             </Link>
                             {s.doc_no !== null && <div className={docNoCls}>{s.doc_no}</div>}
                           </td>
-                          <td className={tdCls}>{s.vendor_name}</td>
+                          <td className={tdCls}>
+                            {/* an open short is a claim AGAINST this vendor */}
+                            <Link
+                              href={`/store/masters/vendors/${s.vendor_id}`}
+                              className="underline decoration-stone-300 underline-offset-2 hover:decoration-stone-600"
+                            >
+                              {s.vendor_name}
+                            </Link>
+                          </td>
                           <td className={tdCls}>{s.item_name}</td>
                           <td className={tdCodeCls}>{s.item_code}</td>
                           <td className={`${tdCls} text-[13px] text-stone-500`}>{SHORT_KIND_LABELS[s.kind]}</td>
@@ -206,7 +214,14 @@ export default async function ShortsPage() {
                             {fmtDate(s.bill_date)}
                           </Link>
                         </td>
-                        <td className={tdCls}>{s.vendor_name}</td>
+                        <td className={tdCls}>
+                          <Link
+                            href={`/store/masters/vendors/${s.vendor_id}`}
+                            className="underline decoration-stone-300 underline-offset-2 hover:decoration-stone-600"
+                          >
+                            {s.vendor_name}
+                          </Link>
+                        </td>
                         <td className={tdCls}>{s.item_name}</td>
                         <td className={`${tdCls} text-[13px] text-stone-500`}>{SHORT_KIND_LABELS[s.kind]}</td>
                         <td className={`${tdNumCls} text-stone-500`}>

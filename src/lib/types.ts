@@ -3669,6 +3669,7 @@ export const DOCUMENT_STYLES: DocumentStyle[] = ['classic', 'compact', 'message'
  *  cost on THAT delivery, which is the figure that turns a percentage into a
  *  decision. */
 export type PriceMovementRow = {
+  vendor_id: string
   vendor_name: string
   item_code: string
   item_name: string

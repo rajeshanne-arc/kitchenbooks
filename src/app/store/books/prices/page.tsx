@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getPriceMovements } from '@/server/store-queries'
 import { businessToday } from '@/server/business-day'
@@ -112,7 +113,16 @@ export default async function PriceMovesPage({
                           {r.item_name}
                           <span className={`${tdCodeCls} border-0 p-0`}> {r.item_code}</span>
                         </td>
-                        <td className={`${tdCls} text-stone-600`}>{r.vendor_name}</td>
+                        <td className={`${tdCls} text-stone-600`}>
+                          {/* A PRICE MOVE IS AN ARGUMENT WITH A VENDOR, so the
+                              vendor is where the reader goes next. */}
+                          <Link
+                            href={`/store/masters/vendors/${r.vendor_id}`}
+                            className="underline decoration-stone-300 underline-offset-2 hover:decoration-stone-600"
+                          >
+                            {r.vendor_name}
+                          </Link>
+                        </td>
                         <td className={`${tdCls} text-stone-600`}>
                           {fmtDate(r.bill_date)}
                           {r.previous_date !== null && (

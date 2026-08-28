@@ -815,7 +815,9 @@ export async function getPriceMovements(
 ): Promise<{ rows: PriceMovementRow[]; firstPurchases: number }> {
   return txn(async (tx) => {
     const rows = await tx<PriceMovementRow[]>`
-      select vendor_name, item_code, item_name, purchase_unit,
+      -- vendor_id so the name can be a door. The view has always published
+      -- it; only the select list was leaving it behind.
+      select vendor_id, vendor_name, item_code, item_name, purchase_unit,
              bill_date::text as bill_date, bill_no,
              qty::text as qty, rate::text as rate,
              previous_rate::text as previous_rate,
