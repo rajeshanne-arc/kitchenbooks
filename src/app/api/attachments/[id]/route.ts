@@ -10,7 +10,7 @@ import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
 import { readAttachment, AttachmentRefusal } from '@/server/attachments-queries'
-import { getObject, BlobUnconfigured } from '@/server/blob'
+import { getObject, BlobUnconfigured, BlobNotFound } from '@/server/blob'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +35,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     })
   } catch (e) {
     if (e instanceof AttachmentRefusal) return new Response(e.message, { status: 404 })
+    if (e instanceof BlobNotFound) return new Response(e.message, { status: 404 })
     if (e instanceof BlobUnconfigured) return new Response(e.message, { status: 503 })
     console.error('attachment read failed', e)
     return new Response('Could not read that file', { status: 500 })

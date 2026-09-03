@@ -8751,12 +8751,39 @@ A storeman at the delivery door on bad wifi walks away with the entry made.
 Losing a photo is an inconvenience; losing six typed lines is why people stop
 using an app.
 
-### WHAT IS NOT BUILT, AND WHY IT IS ONE FILE
+### THE STORE, AND THE CREDENTIAL THAT CANNOT LEAVE VERCEL
 
-`src/server/blob.ts` is the seam and both of its functions refuse by name. Three
-things must be true before they can be written, and none is settleable from
-here: a store must exist (there is none, and no token in any environment), it
-must be `access: 'private'` — a public blob is readable by anyone holding the
-URL, which would make the read route decoration — and **the store's region is
-fixed at creation**, with functions pinned to `bom1` and the database in
-`ap-south-1`. Everything else is backend-agnostic and done.
+`kitchenbooks-blob`, **region bom1**, **Access: Private** — the same region the
+functions are pinned to and the database lives in. The CLI's default is `iad1`
+and the region is FIXED AT CREATION, so that flag was the one thing worth
+checking before running the command.
+
+`put` and `get` both pass `access: 'private'` explicitly, verified against
+`@vercel/blob@2.8.0`'s own type declarations rather than written from memory. A
+public blob is readable by anyone holding the URL, with no session and no
+matrix, which would make the read route decoration.
+
+**OIDC FIRST, read at CALL TIME.** `VERCEL_OIDC_TOKEN` rotates, so a
+module-level read would pin the first value a warm instance saw and start
+failing when it expired. `BLOB_READ_WRITE_TOKEN` is the fallback.
+
+**A REDACTED PULL IS NOT A CREDENTIAL, and it is worse than an absent one.**
+`BLOB_READ_WRITE_TOKEN` is marked Sensitive, so `vercel env pull` writes the
+literal string `[SENSITIVE]`. That made `blobConfigured()` answer YES and the
+upload then failed at the call with "Access denied" — a configured-looking
+system that is not configured. The check now requires the token to actually
+look like one.
+
+**AND THE STORAGE LEG CANNOT BE EXERCISED FROM A LAPTOP**, which is worth
+writing down so nobody spends an afternoon rediscovering it: the RW token is
+unpullable by design, and OIDC is **not enabled for the `development`
+environment** — so neither this code nor the `vercel blob` CLI itself can reach
+the store from here. Both credentials are injected in Production and Preview,
+so the round trip runs there. Enabling OIDC for Development is the single
+setting that would make it locally testable.
+
+What that leaves proven and unproven is worth stating plainly rather than
+blurring: the tenant boundary is proved by value and by two perturbations
+against two real tenants; the store's existence, region and privacy are read
+back from the platform; the byte round trip is **unverified on this machine**
+and runs first on a deployment.

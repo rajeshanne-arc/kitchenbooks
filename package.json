@@ -28,9 +28,11 @@
     "audit:tenancy": "NODE_OPTIONS='--conditions react-server' tsx scripts/audit-tenancy.ts",
     "smoke:tenancy": "NODE_OPTIONS='--conditions react-server' tsx scripts/smoke-tenancy.ts",
     "import:stock": "NODE_OPTIONS='--conditions react-server' tsx scripts/import-stock-sheet.ts",
+    "import:purchases-aug27-31": "NODE_OPTIONS='--conditions react-server' tsx scripts/import-purchases-aug27-31.ts",
     "gates": "npm run lint && npm run audit:schema && npm run audit:tenancy && npm run audit:matrix && npm run smoke:phase-a && npm run smoke:a2"
   },
   "dependencies": {
+    "@vercel/blob": "^2.8.0",
     "bcryptjs": "^3.0.3",
     "next": "16.3.0",
     "postgres": "^3.4.9",
