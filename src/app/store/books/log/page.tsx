@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { businessToday } from '@/server/business-day'
 import { readPeriodParam, resolvePeriod } from '@/lib/period'
+import PeriodControl from '@/components/dashboard/PeriodControl'
 import { listStoreLog } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -17,13 +18,16 @@ export default async function StoreLogPage({
   const restaurant = await getRestaurant()
   // PERIOD-SCOPED, because this is where "Stock out" lands. A drill-down that
   // answers over a different window than the number it was clicked from is a
-  // lie that renders perfectly. No ?period means all time, which is what the
-  // Books tab shows when nobody has picked one.
+  // lie that renders perfectly.
   const { period: periodParam } = await searchParams
   const periodToday = await businessToday()
   const periodReq = readPeriodParam(periodParam, periodToday)
-  const period = periodParam === undefined ? null : resolvePeriod(periodReq.param, periodToday)
-  const rows = await listStoreLog(restaurant.id, 150, period?.from, period?.to)
+  // ALWAYS A PERIOD NOW. It used to show all time until a ?period= arrived
+  // from a dashboard drill-down, so the same URL meant two different questions
+  // depending on how you got there — and the control that would have said so
+  // was not on the page.
+  const period = resolvePeriod(periodReq.param, periodToday)
+  const rows = await listStoreLog(restaurant.id, 150, period.from, period.to)
 
   if (rows.length === 0) {
     return (
@@ -52,11 +56,9 @@ export default async function StoreLogPage({
 
   return (
     <section className="mt-2">
-      {period !== null && (
-        <p className="pb-2 text-sm text-stone-500">
-          {period.label} · {fmtDate(period.from)} — {fmtDate(period.to)}
-        </p>
-      )}
+      <div className="pb-3">
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/store/books/log" />
+      </div>
       <ul className="divide-y divide-rule-soft">
         {rows.map((r) => {
           const neg = decimalStringToPaise(r.value) < 0

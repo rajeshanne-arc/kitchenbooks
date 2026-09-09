@@ -12,6 +12,7 @@ import { getRestaurant } from '@/server/queries'
 import { listPaymentsLog } from '@/server/store-queries'
 import { businessToday } from '@/server/business-day'
 import { readPeriodParam, resolvePeriod } from '@/lib/period'
+import PeriodControl from '@/components/dashboard/PeriodControl'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import {
@@ -55,6 +56,13 @@ export default async function PaymentsLogPage({
           {period.label} · {fmtDate(period.from)} — {fmtDate(period.to)} · every vendor payment in the window
         </p>
       </header>
+
+      {/* IT WAS ALREADY SCOPED BY ?period= AND HAD NO CONTROL — the answer
+          moved with dates the reader could neither see nor set, which is the
+          worse half of the fault this pass is fixing. */}
+      <div className="pb-4">
+        <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/store/books/payments" />
+      </div>
 
       {rows.length === 0 ? (
         <div className="mt-8 rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-10 text-center">

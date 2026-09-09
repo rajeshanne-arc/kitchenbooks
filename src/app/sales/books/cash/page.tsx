@@ -1,3 +1,6 @@
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
+import { businessToday } from '@/server/business-day'
+import PeriodControl from '@/components/dashboard/PeriodControl'
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getLadder, getOwnersOwed, listOtherIncome, listVouchers } from '@/server/cash-queries'
@@ -7,17 +10,30 @@ import { cardCls, docNoCls, sectionHeadCls } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
 
-export default async function BooksCashPage() {
+export default async function BooksCashPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>
+}) {
+  const { period: periodParam } = await searchParams
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
   const restaurant = await getRestaurant()
+  const range = { from: period.from, to: period.to }
   const [ladder, owners, vouchers, income] = await Promise.all([
-    getLadder(restaurant.id),
+    getLadder(restaurant.id, 45, range),
+    // OWNERS OWED IS A BALANCE and ignores the control on purpose — what an
+    // owner is still out of pocket does not move when the dates do. Labelled
+    // in the same words the Outstanding card uses: "as of today".
     getOwnersOwed(restaurant.id),
-    listVouchers(restaurant.id),
-    listOtherIncome(restaurant.id),
+    listVouchers(restaurant.id, 60, range),
+    listOtherIncome(restaurant.id, 60, range),
   ])
 
   return (
     <section className="mt-4 space-y-5">
+      <PeriodControl period={period} today={periodToday} error={periodReq.error} basePath="/sales/books/cash" />
       <div className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>Day closes</h2>
@@ -89,6 +105,10 @@ export default async function BooksCashPage() {
       <div className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>Owners owed</h2>
+          {/* IT VISIBLY IGNORES THE CONTROL ABOVE IT, and the label is what
+              makes that legible rather than looking like a bug. Same words as
+              the owner dashboard's Outstanding card. */}
+          <span className="font-mono text-[10px] text-stone-400">as of today · owners_owed</span>
           <span className="text-xs text-stone-400">one voucher log, netted · owners_owed</span>
         </div>
         {owners.length === 0 ? (

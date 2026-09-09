@@ -27,10 +27,16 @@ const LADDER_SELECT = `
           where dc.restaurant_id = l.restaurant_id and dc.close_date = l.close_date) as filings
   from day_close_ladder l`
 
-export async function getLadder(restaurantId: string, limit = 45): Promise<DayCloseLadderRow[]> {
+export async function getLadder(
+  restaurantId: string,
+  limit = 45,
+  range: { from: string; to: string } | null = null,
+): Promise<DayCloseLadderRow[]> {
   return tsql<DayCloseLadderRow[]>`
     ${sql.unsafe(LADDER_SELECT)}
     where l.restaurant_id = ${restaurantId}
+      and (${range === null} or l.close_date between ${range?.from ?? '1900-01-01'}::date
+                                                 and ${range?.to ?? '9999-12-31'}::date)
     order by l.close_date desc
     limit ${limit}`
 }
@@ -187,10 +193,16 @@ export async function getVoucher(restaurantId: string, id: string): Promise<Vouc
   return rows[0] ?? null
 }
 
-export async function listVouchers(restaurantId: string, limit = 60): Promise<VoucherRow[]> {
+export async function listVouchers(
+  restaurantId: string,
+  limit = 60,
+  range: { from: string; to: string } | null = null,
+): Promise<VoucherRow[]> {
   return tsql<VoucherRow[]>`
     ${sql.unsafe(VOUCHER_SELECT)}
     where restaurant_id = ${restaurantId}
+      and (${range === null} or voucher_date between ${range?.from ?? '1900-01-01'}::date
+                                                 and ${range?.to ?? '9999-12-31'}::date)
     order by voucher_date desc, created_at desc
     limit ${limit}`
 }
@@ -207,10 +219,16 @@ export async function getOtherIncome(restaurantId: string, id: string): Promise<
   return rows[0] ?? null
 }
 
-export async function listOtherIncome(restaurantId: string, limit = 60): Promise<OtherIncomeRow[]> {
+export async function listOtherIncome(
+  restaurantId: string,
+  limit = 60,
+  range: { from: string; to: string } | null = null,
+): Promise<OtherIncomeRow[]> {
   return tsql<OtherIncomeRow[]>`
     ${sql.unsafe(INCOME_SELECT)}
     where restaurant_id = ${restaurantId}
+      and (${range === null} or income_date between ${range?.from ?? '1900-01-01'}::date
+                                                and ${range?.to ?? '9999-12-31'}::date)
     order by income_date desc, created_at desc
     limit ${limit}`
 }

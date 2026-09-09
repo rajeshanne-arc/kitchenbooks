@@ -1,6 +1,9 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getShortTotals, listShorts } from '@/server/shorts-queries'
+import { readPeriodParam, resolvePeriod } from '@/lib/period'
+import { businessToday } from '@/server/business-day'
+import PeriodControl from '@/components/dashboard/PeriodControl'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import Honesty from '@/components/Honesty'
@@ -28,12 +31,27 @@ export const dynamic = 'force-dynamic'
 // donation — so the unsettled ones lead the page with what they are worth,
 // and the settled ones sit underneath, quiet, as history.
 
-export default async function ShortsPage() {
+export default async function ShortsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>
+}) {
+  const { period: periodParam } = await searchParams
+  const periodToday = await businessToday()
+  const periodReq = readPeriodParam(periodParam, periodToday)
+  const period = resolvePeriod(periodReq.param, periodToday)
   const restaurant = await getRestaurant()
   const [shorts, totals] = await Promise.all([listShorts(restaurant.id), getShortTotals(restaurant.id)])
 
+  // THE PERIOD MUST NOT SWALLOW AN OPEN SHORT. One from six weeks ago is
+  // today's problem — money a vendor still owes — and a month filter would
+  // hide it behind a date nobody chose deliberately. So OPEN sits ABOVE the
+  // control and ignores it entirely; only SETTLED, which is history, is
+  // scoped. Same shape as unclosed days on the owner dashboard.
   const open = shorts.filter((s) => s.settlement === 'open')
-  const settled = shorts.filter((s) => s.settlement !== 'open')
+  const settled = shorts.filter(
+    (s) => s.settlement !== 'open' && s.bill_date >= period.from && s.bill_date <= period.to,
+  )
   const recorded = totals.open_count + totals.settled_count
 
   // listShorts is capped, the totals are not. Counting the rows on screen and
@@ -47,7 +65,8 @@ export default async function ShortsPage() {
       <header className="pb-4">
         <h1 className={pageTitleCls}>Shorts and damages</h1>
         <p className={pageSubCls}>
-          {restaurant.name} — what vendors billed and did not deliver, all time
+          {restaurant.name} — what vendors billed and did not deliver. Anything still open is shown whatever
+          the dates say.
         </p>
       </header>
 
@@ -177,9 +196,21 @@ export default async function ShortsPage() {
             </Honesty>
           )}
 
+          {/* THE CONTROL SITS HERE, not at the top of the page — it scopes
+              the settled history below it and nothing above it, and where it
+              sits is what says so. */}
+          <div className="pb-1">
+            <PeriodControl
+              period={period}
+              today={periodToday}
+              error={periodReq.error}
+              basePath="/store/books/shorts"
+            />
+          </div>
+
           <section className={cardCls}>
             <div className="flex items-baseline justify-between gap-2">
-              <h2 className={sectionHeadCls}>Settled</h2>
+              <h2 className={sectionHeadCls}>Settled · {period.label}</h2>
               <span className="font-mono text-[10px] text-stone-400">
                 {formatMoneyString(totals.settled_value)} over {totals.settled_count}
               </span>
@@ -191,8 +222,8 @@ export default async function ShortsPage() {
               </p>
             ) : settled.length === 0 ? (
               <p className="mt-1.5 text-sm text-stone-700">
-                {totals.settled_count} settled shorts are on record, all of them older than the {shorts.length} most
-                recent rows this page loads. Open the bill to see one.
+                {totals.settled_count} settled shorts are on record, none of them in {period.label}. Widen the
+                dates, or open the bill to see one.
               </p>
             ) : (
               <div className="mt-2 overflow-x-auto">

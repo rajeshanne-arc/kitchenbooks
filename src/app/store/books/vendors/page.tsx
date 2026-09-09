@@ -1,3 +1,4 @@
+import AsItStands from '@/components/books/AsItStands'
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { listVendorPerformance } from '@/server/shorts-queries'
@@ -42,6 +43,8 @@ export default async function VendorPerformancePage() {
         <h1 className={pageTitleCls}>Vendor performance</h1>
         <p className={pageSubCls}>{restaurant.name} — how each vendor delivers, all time</p>
       </header>
+      <AsItStands what="Every bill and every short on record, for the whole time this vendor has supplied us — a reputation, not a month." />
+
 
       {rows.length === 0 ? (
         <section className={cardCls}>

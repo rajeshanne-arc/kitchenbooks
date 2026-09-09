@@ -8994,6 +8994,53 @@ async function run() {
     console.log(`      live vs probe · refused: ${msg}`)
   })
 
+  /* ── every Books tab says what its dates mean ──────────────────────── */
+  console.log('\na books tab either takes a date range or explains why it cannot')
+
+  await check('no Books tab is silently date-less', async () => {
+    // A DATE RANGE ANSWERS "WHAT HAPPENED BETWEEN THESE DATES". Some of these
+    // screens answer "WHAT IS HERE NOW" — stock_on_hand, supplier_costs and
+    // vendor_performance carry NO date column at all, checked against
+    // information_schema rather than assumed — so a picker on them would
+    // promise a figure that moves when the dates do, and it does not.
+    //
+    //   A CONTROL THAT CANNOT CHANGE THE ANSWER IS A LIE BY AFFORDANCE.
+    //
+    // The fault being held shut is the THIRD state: neither a control nor an
+    // explanation, where a reader cannot tell "this ignores dates" from
+    // "somebody forgot the picker".
+    const { readFileSync, existsSync } = await import('node:fs')
+    const { BOOKS } = await import('../src/lib/books')
+
+    const hrefs = Object.values(BOOKS).flat().map((t) => t.href)
+    assert.ok(hrefs.length >= 10, `only ${hrefs.length} books tabs found — the registry moved`)
+
+    const missing: string[] = []
+    let controls = 0
+    let stated = 0
+    for (const href of hrefs) {
+      const file = `src/app${href}/page.tsx`
+      assert.ok(existsSync(file), `${href} has no page file`)
+      let src = readFileSync(file, 'utf8')
+      // A tab may delegate to one shared view — the stock view is mounted in
+      // two groups and carries the line itself, so BOTH mounts inherit it.
+      const mount = src.match(/from '@\/components\/views\/(\w+)'/)
+      if (mount !== null && existsSync(`src/components/views/${mount[1]}.tsx`)) {
+        src += readFileSync(`src/components/views/${mount[1]}.tsx`, 'utf8')
+      }
+      const hasControl = /<PeriodControl[\s/>]/.test(src)
+      const hasLine = /<AsItStands[\s/>]/.test(src)
+      if (hasControl) controls += 1
+      else if (hasLine) stated += 1
+      else missing.push(href)
+    }
+    assert.deepEqual(missing, [], 'these Books tabs offer no date range and never say why')
+    // NEITHER SIDE MAY BE EMPTY, or the sweep is passing by looking at one
+    // shape only — a repo where nothing is state would never exercise the line.
+    assert.ok(controls > 0 && stated > 0, `controls=${controls} stated=${stated} — one side is untested`)
+    console.log(`      ${hrefs.length} tabs · ${controls} take a date range · ${stated} say why they cannot`)
+  })
+
   /* ── comparison baselines ──────────────────────────────────────────── */
   console.log('\nthe baseline window, by value')
 

@@ -8787,3 +8787,73 @@ blurring: the tenant boundary is proved by value and by two perturbations
 against two real tenants; the store's existence, region and privacy are read
 back from the platform; the byte round trip is **unverified on this machine**
 and runs first on a deployment.
+
+## A CONTROL THAT CANNOT CHANGE THE ANSWER IS A LIE BY AFFORDANCE
+
+A date range answers **what happened between these dates**. Some screens answer
+**what is here now**, and a picker on one of those promises a figure that moves
+when the dates do — when it cannot. Making it true would need as-of-date
+costing, which was rejected as a different product.
+
+**The fault this closes is the THIRD state**: neither a control nor an
+explanation, where a reader cannot tell *"this ignores dates"* from *"somebody
+forgot the picker"*. So every Books tab now does one or the other, and
+`<AsItStands>` renders in the place the control would have been.
+
+**STATE WAS DECIDED BY READING information_schema, NOT BY JUDGEMENT.**
+`stock_on_hand`, `supplier_costs` and `vendor_performance` carry **no date
+column at all** — that is the test, and it is checkable rather than arguable.
+
+### The brief's Store list was wrong in three places, and the check is why
+
+| brief said | actually |
+|---|---|
+| **Bills** | gone — merged into Purchases two commits ago |
+| **Stock** | not a Store Books tab; it is the top-level Stock tab, and `/store/books/stock` redirects |
+| — | **Paid out** exists and the brief does not mention it (flow) |
+
+**And "BOTH — Vendors" describes a screen that is not there.**
+`/store/books/vendors` is **Vendor performance** — `bills, short_events,
+short_value, unsettled, returned_value`. There is no `purchased`, no `paid` and
+no dues column to label: dues live on `vendor_dues`, which is the payment queue
+and the vendor master. So it is all-time STATE, and its sentence says
+*"a reputation, not a month"* rather than the dashboard's "as of today", which
+would have been the right words for a screen this is not.
+
+The genuine BOTH turned out to be **Sales › Cash**: the ladder, vouchers and
+other income are flows and are now scoped; `owners_owed` is a balance and
+ignores the control, labelled **"as of today"** in the dashboard's own words.
+
+### Two tabs were scoped by dates the reader could not see
+
+`/store/books/log` and `/store/books/payments` already read `?period=` and
+mounted **no control**. That is the worse half of the fault: the answer moved
+with a window nobody could set, and the store log meant *two different
+questions* depending on whether you arrived from a dashboard drill-down or from
+the tab. Both now always resolve a period and show it.
+
+### An open short is not history and the period must not swallow it
+
+One from six weeks ago is money a vendor still owes **today**. So open shorts
+sit ABOVE the control and ignore it entirely; only settled ones — which are
+history — are scoped, and the control sits directly over that section rather
+than at the top of the page, because where it sits is what says what it scopes.
+Same shape as unclosed days on the owner dashboard.
+
+### The other groups, surveyed before being changed
+
+| tab | relation | verdict |
+|---|---|---|
+| Kitchen › Stock | `stock_on_hand` — no date | **state** |
+| Kitchen › Supplier exposure | `supplier_costs` — no date | **state** — exposure is what the cooking depends on, not what was bought |
+| Kitchen › Food cost, By department | monthly views | flow, already controlled |
+| Sales › Sales, GST, Handovers | dated | flow, already controlled |
+| Sales › Cash | ladder + vouchers + income, and `owners_owed` | **both** |
+| Sales › Fetch a day | Petpooja Get Orders | **neither** — keyed to ONE business date, so a range would offer to widen what the API cannot |
+
+`StockView` is mounted in two groups and carries its own line, so both mounts
+inherit it — one definition, as the duplication rule requires.
+
+**The gate asserts both sides are non-empty.** A sweep that only ever saw
+controls would pass in a repo where nothing is state, having exercised half of
+what it claims to check.

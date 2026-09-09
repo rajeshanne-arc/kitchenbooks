@@ -1,3 +1,4 @@
+import AsItStands from '@/components/books/AsItStands'
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getSalesDays } from '@/server/sales-queries'
@@ -19,6 +20,11 @@ export default async function CashFetchPage() {
         <h1 className={pageTitleCls}>Fetch day</h1>
         <p className={pageSubCls}>pull a day from Petpooja — the latest fetch wins</p>
       </header>
+
+      {/* NOT A RANGE, AND NOT A STATE EITHER — a per-day tool. Petpooja's Get
+          Orders is keyed to ONE business date, so a range control would offer
+          to widen something the API cannot widen. The day is picked below. */}
+      <AsItStands what="One day at a time, picked below. Petpooja's Get Orders answers for a single business date, so there is no range to choose." />
 
       <div className="space-y-4">
         <FetchDay defaultDate={await businessYesterday()} today={await businessToday()} />
