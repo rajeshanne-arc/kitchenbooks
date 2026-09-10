@@ -4,6 +4,7 @@ import { getShortTotals, listShorts } from '@/server/shorts-queries'
 import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import { businessToday } from '@/server/business-day'
 import PeriodControl from '@/components/dashboard/PeriodControl'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import Honesty from '@/components/Honesty'
@@ -41,7 +42,7 @@ export default async function ShortsPage({
   const periodReq = readPeriodParam(periodParam, periodToday)
   const period = resolvePeriod(periodReq.param, periodToday)
   const restaurant = await getRestaurant()
-  const [shorts, totals] = await Promise.all([listShorts(restaurant.id), getShortTotals(restaurant.id)])
+  const [shorts, totals] = await Promise.all([listShorts(restaurant.id), getShortTotals(restaurant.id, period)])
 
   // THE PERIOD MUST NOT SWALLOW AN OPEN SHORT. One from six weeks ago is
   // today's problem — money a vendor still owes — and a month filter would
@@ -212,9 +213,22 @@ export default async function ShortsPage({
             <div className="flex items-baseline justify-between gap-2">
               <h2 className={sectionHeadCls}>Settled · {period.label}</h2>
               <span className="font-mono text-[10px] text-stone-400">
-                {formatMoneyString(totals.settled_value)} over {totals.settled_count}
+                {formatMoneyString(totals.settled_in_period_value)} over {totals.settled_in_period_count}
               </span>
             </div>
+            {/* BOTH FIGURES, ALWAYS — this card is why the rule exists. The
+                heading named the period, the meta figure was all-time, and the
+                rows were period-filtered: three scopes in one card. The
+                correct sentence DID exist, in the empty branch nobody reaches.
+                Now the meta answers the heading and the on-record total sits
+                beside it, in every branch. */}
+            <OutsidePeriod
+              basis="all-time"
+              what={`${formatMoneyString(totals.settled_value)} over ${totals.settled_count} ${
+                totals.settled_count === 1 ? 'short has' : 'shorts have'
+              } been settled since the first bill.`}
+              className="mt-1.5"
+            />
             {totals.settled_count === 0 ? (
               <p className="mt-1.5 text-sm text-stone-700">
                 Nothing has been settled yet. When a credit note arrives, a replacement turns up, or the loss is

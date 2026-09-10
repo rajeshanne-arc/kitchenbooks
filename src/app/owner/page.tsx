@@ -46,6 +46,7 @@ import {
   TwoSeriesLegend,
 } from '@/components/dashboard/Charts'
 import { businessToday } from '@/server/business-day'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 
 export const dynamic = 'force-dynamic'
 
@@ -290,6 +291,11 @@ export default async function DashboardPage({
               </li>
             ))}
           </ul>
+          <OutsidePeriod
+            basis="now"
+            what="stock_on_hand is a running position, so this counts what the book says today regardless of the dates above."
+            className="mt-2"
+          />
         </Card>
       ) : (
         <Card
@@ -297,7 +303,17 @@ export default async function DashboardPage({
           source="stock_on_hand"
           href="/store/stock/on-hand"
           sentence="No item is showing negative stock."
-        />
+        >
+          {/* THE EMPTY BRANCH NEEDS THE SENTENCE MORE THAN THE FULL ONE. "No
+              item is showing negative stock" read as a period claim is a clean
+              bill of health for a month; read correctly it is a clean bill for
+              the book as it stands. The all-clear is exactly where a wrong
+              scope does the most damage. */}
+          <OutsidePeriod
+            basis="now"
+            what="The book as it stands today, not a finding about the dates above."
+          />
+        </Card>
       ),
   })
 
@@ -307,6 +323,12 @@ export default async function DashboardPage({
     // times means no comparison — not agreement — so this card declares that
     // precondition rather than reporting a confident all-clear over nothing.
     const disagreed = dayGaps.reduce((n, r) => n + r.orders, 0)
+    // NAMING THE SPAN is the nearest thing to the statement's both-figures
+    // shape that this card can offer: business_day_disagreements has no period
+    // form, so instead of only excusing itself it says WHICH dates the
+    // disagreement actually covers, which is the question the control raises.
+    const gapFrom = dayGaps.reduce<string | null>((a, r) => (a === null || r.earliest < a ? r.earliest : a), null)
+    const gapTo = dayGaps.reduce<string | null>((a, r) => (a === null || r.latest > a ? r.latest : a), null)
     const check = requires(
       timed.withTime > 0,
       disagreed,
@@ -354,6 +376,15 @@ export default async function DashboardPage({
             The likely cause is business_day_start not matching how the POS was configured. Neither
             side is wrong on its own; they are simply cutting the night in different places.
           </Honesty>
+          <OutsidePeriod
+            basis="all-time"
+            what={
+              gapFrom !== null && gapTo !== null
+                ? `Every order ever fetched is compared, not just this period's — these ones fall between ${fmtDate(gapFrom)} and ${fmtDate(gapTo)}.`
+                : "Every order ever fetched is compared, not just this period's."
+            }
+            className="mt-2"
+          />
         </Card>
       ) : (
         <Card
@@ -361,7 +392,12 @@ export default async function DashboardPage({
           source="business_day_disagreements"
           href="/accounts"
           sentence="Every order sits on the same day here as it does in Petpooja."
-        />
+        >
+          <OutsidePeriod
+            basis="all-time"
+            what="Every order ever fetched, not just this period's — so this all-clear covers the whole book."
+          />
+        </Card>
       ),
     })
   }
@@ -979,6 +1015,16 @@ export default async function DashboardPage({
               {owed.owners.map((o) => `${o.person} ${formatMoneyString(o.balance)}`).join(' · ')}
             </p>
           )}
+          {/* A BALANCE, NOT A FLOW. vendor_dues and owners_owed are what is
+              outstanding NOW; neither has a period form, so the reader gets
+              the roster's shape rather than the statement's — one figure, and
+              a sentence saying which question it answers. The per-vendor
+              statement at Accounts › Parties is where both figures exist. */}
+          <OutsidePeriod
+            basis="now"
+            what="What is outstanding right now — a balance, so the dates above cannot narrow it. A vendor's statement for a chosen period is on their party page."
+            className="mt-2"
+          />
         </Card>
       ),
     })
@@ -1049,14 +1095,22 @@ export default async function DashboardPage({
       {/* THE FRONT DOOR TO THE DAY SHEET. It shipped reachable only by typing
           its URL — a page nothing links to is a page nobody opens, and that
           failure is invisible to a gate that only checks the page renders.
-          Period-independent on purpose: it is a way IN, not a measurement, so
-          it does not move when the period does. */}
+          THE SECOND HALF OF THIS COMMENT USED TO STOP HERE, and that was the
+          whole fault in miniature: "period-independent on purpose, it is a way
+          IN, not a measurement" was reasoned, written down, and never reached
+          the screen. A reader saw seven dates under a date range. It is said
+          below now, where somebody can read it. */}
       {recentDays.length > 0 && (
         <section className={`${cardCls} mb-4`}>
           <div className="flex items-baseline justify-between gap-3">
             <h2 className={sectionHeadCls}>Recent days</h2>
             <span className="font-mono text-[10px] text-stone-400">day_summary</span>
           </div>
+          <OutsidePeriod
+            basis="way-in"
+            what="The last few days that sold anything, so there is always a door into a day sheet. Narrowing it to the dates above would only make it a worse door."
+            className="mt-1"
+          />
           <ul className="mt-2 divide-y divide-rule-soft">
             {recentDays.map((d) => (
               <li key={d.business_date} className="flex items-baseline justify-between gap-3 py-1.5">

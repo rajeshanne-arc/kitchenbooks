@@ -8932,3 +8932,82 @@ time it was avoided in advance rather than found after it had drifted. The tell
 is the same every time: a literal in a checker that duplicates a set something
 else owns. Today: 15 tabs · 11
 take a range · 4 say why they cannot (3 state · 1 not-ours-to-widen).
+
+## A FIGURE THAT DOES NOT MOVE MUST ANSWER THE QUESTION THE CONTROL RAISES
+
+The affordance rule above governs a screen with NO control. This governs a
+screen that HAS one and carries figures the control cannot reach — which is the
+commoner case, and was never surveyed until now.
+
+**A reader looking at a period control above a figure is asking exactly one
+thing: WHAT WOULD THIS BE FOR MY DATES?** "It ignores the dates" does not answer
+that; it only declines to. So there are two forms, and **the answering one is
+the default**:
+
+| | shape | use it |
+|---|---|---|
+| **the statement form** | *"This statement stops at 31 Aug. Their balance today is ₹12,500."* | wherever BOTH figures exist — always |
+| **the roster form** | *"A headcount is a fact about now, not about the period above."* | only where a period counterpart does not exist |
+
+Both were already live and both were arrived at separately — `/accounts/parties/<id>`
+and the `/staff` roster card. Neither was a rule until they were surveyed
+together.
+
+**`<OutsidePeriod>` is the shared vocabulary**, built the way `WhyNoRange` is:
+one component, `basis` REQUIRED with no default, the LEAD fixed in the component
+and only the FACT supplied by the call site. Three bases, which are not
+synonyms — `now` (a balance or a state as it stands), `all-time` (everything on
+record since the first entry), `way-in` (not a measurement at all — the
+recent-days strip is a door, and narrowing it makes it a worse door).
+
+**One sentence per ROW, not per tile.** The store's three alarm tiles share one
+line. Five tiles each carrying their own copy is how a vocabulary fragments into
+near-synonyms, and this project has already watched that end in honesty verdicts
+multiplying into clusters nobody could tell apart.
+
+### THE EMPTY BRANCH IS WHERE THE CORRECT SENTENCE HIDES
+
+The settled-shorts card is the specimen. Its heading said **Settled · This
+month**, its rows were period-filtered, and its meta figure was **all-time** —
+three scopes in one card. And the card already contained its own fix: the EMPTY
+branch said *"N settled shorts are on record, none of them in this month"*,
+which is exactly right. The full branch, the one anybody actually reaches, said
+nothing.
+
+Same shape as a caption describing intent rather than code: **the correct
+sentence exists, in the branch nobody reaches.** So when a card has an empty
+branch, read BOTH — the scope note tends to get written where it was first
+needed and never propagated to where it is read. The other instance found the
+same day was the owner's stock-alarm card, whose ALL-CLEAR branch is where a
+wrong scope does the most damage: "No item is showing negative stock" read as a
+month is a clean bill of health for a month.
+
+**The period leg is summed in SQL, never on the page.** `short_value` is
+`qty_short × rate`, so adding rounded paise per row would hit associativity for
+the fourth time — and `listShorts` is CAPPED, so counting the rows on screen
+would undercount the day the cap bites. `getShortTotals` grew a period leg
+instead: both legs counted over every row, in Postgres numeric.
+
+### WHAT THE GATE'S JOB IS — recorded BEFORE the gate is designed
+
+Written down now deliberately, because a gate designed later will otherwise be
+built to the easy shape:
+
+> **THE GATE'S JOB IS NOT TO FIND THE REASONING. IT IS TO FORCE THE REASONING
+> OUT OF THE COMMENT.**
+
+The owner's recent-days strip carried, in a CODE COMMENT, *"Period-independent
+on purpose: it is a way IN, not a measurement, so it does not move when the
+period does."* The thinking was done, correct, and written down — and a reader
+saw seven dates under a date range with nothing to explain them. A gate built to
+detect ABSENCE of reasoning would have passed that file happily. One built to
+DEMAND PRESENCE on screen fails it.
+
+That is the same distinction as *a check nobody runs is not a check*, one level
+in: reasoning that reaches only the source is reasoning the user never gets.
+
+**And the sequencing was argued rather than assumed.** Gating first would have
+produced fourteen red lines and no vocabulary to clear them with — which is the
+state that teaches people to skip a gate, exactly as the correct, enabled,
+firing `react-hooks/static-components` rule was skipped for months by not being
+in the chain. Build the vocabulary, fix the clusters, then gate what remains.

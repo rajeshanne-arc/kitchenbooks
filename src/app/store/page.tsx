@@ -34,6 +34,7 @@ import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
 import { MagnitudeBars, SalesLine } from '@/components/dashboard/Charts'
 import { businessToday } from '@/server/business-day'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 
 export const dynamic = 'force-dynamic'
 
@@ -201,9 +202,20 @@ export default async function StoreHome({
         </div>
       </div>
 
-      {/* what needs doing right now, above everything measured */}
+      {/* WHAT NEEDS DOING RIGHT NOW, ABOVE EVERYTHING MEASURED — and the row
+          SAYS it stands outside the dates rather than relying on sitting
+          above them. Position is an argument the reader has to reconstruct;
+          three big numbers under a date range read as three numbers for those
+          dates. ONE sentence for the row, not one per tile: five tiles each
+          carrying their own copy is how a vocabulary fragments. */}
       {(openIndents.length > 0 || alarms.length > 0 || reorderCount > 0) && (
-        <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <div className="mb-4">
+          <OutsidePeriod
+            basis="now"
+            what="Everything in this row is what the shelf and the kitchens are asking for right now — none of it moves when the dates above change."
+            className="mb-2"
+          />
+        <div className="grid gap-3 sm:grid-cols-3">
           {alarms.length > 0 && (
             <Link
               href="/store/stock/on-hand"
@@ -238,6 +250,7 @@ export default async function StoreHome({
               <p className="text-xs text-amber-900">kitchens waiting to be issued</p>
             </Link>
           )}
+        </div>
         </div>
       )}
 
@@ -419,15 +432,15 @@ export default async function StoreHome({
             {/* NO PERIOD ON THIS ONE, AND THAT IS THE POINT. vendor_dues is a
                 BALANCE — what is owed now — and it does not move when the date
                 range above it moves. Carrying the period into the link would
-                make it pretend to. "as of today" beside the figure explains
-                something this page has never explained: why one card ignores
-                the control at the top. */}
+                make it pretend to. This card said "as of today" in its own
+                words before OutsidePeriod existed; it now says it in the
+                shared one, so the page speaks with a single vocabulary. */}
             <h2 className={sectionHeadCls}>
               <Link href="/store/books/vendors" className="hover:underline">
                 Outstanding to vendors →
               </Link>
             </h2>
-            <span className="font-mono text-[10px] text-stone-400">vendor_dues · as of today</span>
+            <span className="font-mono text-[10px] text-stone-400">vendor_dues</span>
           </div>
           {!owed.assessable ? (
             <>
@@ -447,8 +460,16 @@ export default async function StoreHome({
               <p className="mt-1.5 text-sm text-stone-700">
                 {owed.data.length === 0
                   ? 'Nothing outstanding to any vendor.'
-                  : `${formatPaise(duesTotal)} owed across ${owed.data.length} ${plural(owed.data.length, 'vendor')}, as of today.`}
+                  : `${formatPaise(duesTotal)} owed across ${owed.data.length} ${plural(owed.data.length, 'vendor')}.`}
               </p>
+              {/* BOTH FIGURES WHERE BOTH EXIST — the vendor-statement shape.
+                  What was PAID in the period is on this page already, so the
+                  balance can be related to it rather than merely excused. */}
+              <OutsidePeriod
+                basis="now"
+                what={`${formatMoneyString(paymentsTotal.total)} was paid to vendors in ${period.label}. What is left owing is a balance as it stands today, so it does not move with the dates.`}
+                className="mt-1"
+              />
               {owed.data.length > 0 && (
                 <>
                   <div className="mt-2">
@@ -521,6 +542,15 @@ export default async function StoreHome({
             <h2 className={sectionHeadCls}>Dates worth checking</h2>
             <span className="font-mono text-[11px] text-stone-400">expiring_stock</span>
           </div>
+          {/* A WINDOW OFF TODAY, NOT OFF THE PERIOD. The question is what is
+              about to go off, which the dates above cannot narrow — asking it
+              of last month would return what expired last month, which is a
+              different and useless question. */}
+          <OutsidePeriod
+            basis="now"
+            what={`Batches expiring within ${EXPIRING_WITHIN_DAYS} days of today, whatever dates are set above.`}
+            className="mt-1.5"
+          />
           <ul className="mt-2 space-y-2">
             {expiring.slice(0, EXPIRING_ROWS).map((e, i) => {
               const state = expiryState(e.expiry_date, today)
@@ -576,11 +606,14 @@ export default async function StoreHome({
           READINESS — things that are empty until somebody does them. An empty
           list here is never evidence that all is well; it is evidence nobody
           has been asked.
-          ORDERED BY WHAT THEY BLOCK, not by the order they were written. 357
-          of 358 items carry no storage location, which blocks the count sheet
-          ENTIRELY — every one of them lands under "Not placed yet", which on a
-          real walk means walked past. A vendor with no phone blocks nothing
-          until somebody raises a purchase order. So placement leads. */}
+          ORDERED BY WHAT THEY BLOCK, not by the order they were written. An
+          item with no storage location blocks the count sheet ENTIRELY — it
+          lands under "Not placed yet", which on a real walk means walked past.
+          A vendor with no phone blocks nothing until somebody raises a
+          purchase order. So placement leads.
+          NO COUNTS IN THIS COMMENT: a comment quoting a live figure has an
+          expiry date and nothing to enforce it. The figures are computed and
+          rendered below. */}
       {/* The books' own diagnostics, routed here because the store is where a
           bill number is typed and where a vendor's tax registration is
           editable. The accountant still sees both on Review; this is the same
@@ -605,6 +638,15 @@ export default async function StoreHome({
       {(placement.unplaced > 0 || phones.without > 0 || (reorderCount === 0 && itemsWithLevel === 0)) && (
         <section className={`${cardCls} mt-3`}>
           <h2 className={sectionHeadCls}>Still to set up</h2>
+          {/* NOTHING HERE IS A MEASUREMENT OF THE PERIOD. These are counts of
+              what has never been filled in, so narrowing the dates cannot
+              change one of them — and a reader who does not know that reads
+              "357 of 358" as this month's problem. */}
+          <OutsidePeriod
+            basis="now"
+            what="What has never been filled in, counted as the master stands today. The dates above do not narrow any of it."
+            className="mt-1"
+          />
           <div className="mt-2 space-y-2">
             {reorderCount === 0 && itemsWithLevel === 0 && (
               <Honesty verdict="no reorder levels" compact>

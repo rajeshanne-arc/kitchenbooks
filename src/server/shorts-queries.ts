@@ -108,20 +108,49 @@ export type ShortTotals = {
   open_value: string
   settled_count: number
   settled_value: string
+  /** SETTLED WITHIN THE PERIOD, so the card can state BOTH figures rather than
+   *  print an all-time total under a heading naming a month. */
+  settled_in_period_count: number
+  settled_in_period_value: string
 }
 
 /** Summed in Postgres numeric rather than by adding rounded paise on the
- *  page — the same product vendor_performance sums, added the same way. */
-export async function getShortTotals(restaurantId: string): Promise<ShortTotals> {
+ *  page — the same product vendor_performance sums, added the same way.
+ *
+ *  THE PERIOD LEG IS SUMMED HERE FOR TWO REASONS, not one. Adding the rows on
+ *  the page would sum `qty_short * rate` AFTER rounding each to paise, and
+ *  rounding is not associative — this file has paid for that three times. And
+ *  `listShorts` is CAPPED, so counting the rows on screen would silently
+ *  undercount the day the cap bites. Both legs are counted over every row. */
+export async function getShortTotals(
+  restaurantId: string,
+  period: { from: string; to: string },
+): Promise<ShortTotals> {
   const rows = await tsql<ShortTotals[]>`
     select count(*) filter (where s.settlement = 'open')::int as open_count,
            coalesce(sum(s.qty_short * pl.rate) filter (where s.settlement = 'open'), 0)::text as open_value,
            count(*) filter (where s.settlement <> 'open')::int as settled_count,
-           coalesce(sum(s.qty_short * pl.rate) filter (where s.settlement <> 'open'), 0)::text as settled_value
+           coalesce(sum(s.qty_short * pl.rate) filter (where s.settlement <> 'open'), 0)::text as settled_value,
+           count(*) filter (
+             where s.settlement <> 'open' and p.bill_date >= ${period.from} and p.bill_date <= ${period.to}
+           )::int as settled_in_period_count,
+           coalesce(sum(s.qty_short * pl.rate) filter (
+             where s.settlement <> 'open' and p.bill_date >= ${period.from} and p.bill_date <= ${period.to}
+           ), 0)::text as settled_in_period_value
     from purchase_line_shorts s
     join purchase_lines pl on pl.id = s.purchase_line_id
+    join purchases p on p.id = pl.purchase_id
     where s.restaurant_id = ${restaurantId}`
-  return rows[0] ?? { open_count: 0, open_value: '0', settled_count: 0, settled_value: '0' }
+  return (
+    rows[0] ?? {
+      open_count: 0,
+      open_value: '0',
+      settled_count: 0,
+      settled_value: '0',
+      settled_in_period_count: 0,
+      settled_in_period_value: '0',
+    }
+  )
 }
 
 /* ── vendor performance ─────────────────────────────────────────────────── */
