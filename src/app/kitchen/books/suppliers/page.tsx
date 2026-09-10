@@ -1,4 +1,4 @@
-import AsItStands from '@/components/books/AsItStands'
+import WhyNoRange from '@/components/books/WhyNoRange'
 import { getRestaurant } from '@/server/queries'
 import { getSupplierExposure } from '@/server/recipes-queries'
 import { formatMoneyString } from '@/lib/money'
@@ -36,7 +36,7 @@ export default async function SupplierExposurePage() {
         <h1 className={pageTitleCls}>Supplier exposure</h1>
         <p className={pageSubCls}>{restaurant.name} — how much of the menu depends on each supplier</p>
       </header>
-      <AsItStands what="What the cooking depends on as it stands now. A supplier who sold nothing this month can still be the reason thirty dishes are possible." />
+      <WhyNoRange why="state" what="What the cooking depends on as it stands now. A supplier who sold nothing this month can still be the reason thirty dishes are possible." />
 
 
       <p className="mb-4 rounded-xl border border-rule bg-stone-50 px-3 py-2 text-sm text-stone-700">

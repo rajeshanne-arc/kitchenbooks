@@ -8998,15 +8998,16 @@ async function run() {
   console.log('\na books tab either takes a date range or explains why it cannot')
 
   await check('no Books tab is silently date-less', async () => {
-    // A DATE RANGE ANSWERS "WHAT HAPPENED BETWEEN THESE DATES". Some of these
-    // screens answer "WHAT IS HERE NOW" — stock_on_hand, supplier_costs and
-    // vendor_performance carry NO date column at all, checked against
-    // information_schema rather than assumed — so a picker on them would
-    // promise a figure that moves when the dates do, and it does not.
+    //   A CONTROL MUST NOT PROMISE WHAT THE DATA SOURCE CANNOT DELIVER.
     //
-    //   A CONTROL THAT CANNOT CHANGE THE ANSWER IS A LIE BY AFFORDANCE.
+    // THREE VERDICTS, not two. FLOW takes the range. STATE has no date to
+    // narrow — stock_on_hand, supplier_costs and vendor_performance carry no
+    // date column at all, checked against information_schema rather than
+    // assumed. SOURCE is dated and somebody else owns the grain: Petpooja's
+    // Get Orders answers for one business date, so a range would offer to
+    // widen what the API cannot.
     //
-    // The fault being held shut is the THIRD state: neither a control nor an
+    // The fault being held shut is the FOURTH state: neither a control nor an
     // explanation, where a reader cannot tell "this ignores dates" from
     // "somebody forgot the picker".
     const { readFileSync, existsSync } = await import('node:fs')
@@ -9014,6 +9015,18 @@ async function run() {
 
     const hrefs = Object.values(BOOKS).flat().map((t) => t.href)
     assert.ok(hrefs.length >= 10, `only ${hrefs.length} books tabs found — the registry moved`)
+
+    // THE VERDICTS ARE DERIVED, NEVER LISTED HERE. A hand-copy of a set the
+    // component owns is a snapshot of an old opinion — the retired-URL list at
+    // 51 against 57, and DOC_TYPES at eight against nine. Add a fourth verdict
+    // and this gate demands a live mount for it on the same run.
+    const comp = readFileSync('src/components/books/WhyNoRange.tsx', 'utf8')
+    const lead = comp.match(/const LEAD = \{([\s\S]*?)\} as const/)
+    assert.ok(lead !== null, 'WhyNoRange no longer declares its verdicts as LEAD')
+    const byWhy = new Map<string, number>(
+      [...lead[1].matchAll(/^\s*(\w+):/gm)].map((m) => [m[1], 0] as [string, number]),
+    )
+    assert.ok(byWhy.size >= 2, `WhyNoRange defines ${byWhy.size} verdict(s) — nothing to tell apart`)
 
     const missing: string[] = []
     let controls = 0
@@ -9029,16 +9042,34 @@ async function run() {
         src += readFileSync(`src/components/views/${mount[1]}.tsx`, 'utf8')
       }
       const hasControl = /<PeriodControl[\s/>]/.test(src)
-      const hasLine = /<AsItStands[\s/>]/.test(src)
+      // A MOUNT IS THE WHOLE TAG, because `why` may wrap onto its own line.
+      // `/>` is a safe boundary here: it is not the thing being hunted, so it
+      // cannot be moved by the fault this is looking for.
+      const mounts = src.match(/<WhyNoRange[\s\S]*?\/>/g) ?? []
       if (hasControl) controls += 1
-      else if (hasLine) stated += 1
-      else missing.push(href)
+      else if (mounts.length > 0) {
+        stated += 1
+        for (const m of mounts) {
+          const why = m.match(/why="(\w+)"/)
+          assert.ok(why !== null, `${href} explains its absent range without saying which limit it is`)
+          assert.ok(byWhy.has(why[1]), `${href} claims verdict "${why[1]}", which WhyNoRange does not define`)
+          byWhy.set(why[1], byWhy.get(why[1])! + 1)
+        }
+      } else missing.push(href)
     }
     assert.deepEqual(missing, [], 'these Books tabs offer no date range and never say why')
-    // NEITHER SIDE MAY BE EMPTY, or the sweep is passing by looking at one
-    // shape only — a repo where nothing is state would never exercise the line.
-    assert.ok(controls > 0 && stated > 0, `controls=${controls} stated=${stated} — one side is untested`)
-    console.log(`      ${hrefs.length} tabs · ${controls} take a date range · ${stated} say why they cannot`)
+    // NO BUCKET MAY BE EMPTY, or the sweep is passing by looking at one shape
+    // only. The two-bucket version of this check counted 4 "stated" and could
+    // not see that ONE of them was the source verdict — so a repo where every
+    // stated tab was source would have reported a clean sweep having never
+    // once exercised the state sentence, and vice versa. Same argument as
+    // controls-vs-stated, one level down.
+    assert.ok(controls > 0, 'no Books tab takes a date range — the flow side is untested')
+    for (const [why, n] of byWhy) {
+      assert.ok(n > 0, `WhyNoRange defines the "${why}" verdict and no Books tab uses it — untested`)
+    }
+    const tally = [...byWhy].map(([w, n]) => `${n} ${w}`).join(' · ')
+    console.log(`      ${hrefs.length} tabs · ${controls} take a date range · ${stated} say why they cannot (${tally})`)
   })
 
   /* ── comparison baselines ──────────────────────────────────────────── */

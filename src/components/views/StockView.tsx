@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Suspense } from 'react'
 import FilterInput from '@/components/books/FilterInput'
-import AsItStands from '@/components/books/AsItStands'
+import WhyNoRange from '@/components/books/WhyNoRange'
 import { getRestaurant } from '@/server/queries'
 import { issueContext, listStock, stockCategoryRollup, stockTotalValue } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
@@ -130,7 +130,7 @@ export default async function StockView({
           need as-of-date costing, which is a different product and was
           rejected as one. Both mounts of this view are state, so the line
           belongs in the component rather than on either route. */}
-      <AsItStands what="What is on the shelf as it stands now. Dates cannot change these figures — the book is a running position, not a window." />
+      <WhyNoRange why="state" what="What is on the shelf as it stands now. Dates cannot change these figures — the book is a running position, not a window." />
 
       {/* THE SEARCH IS THE FIRST THING ON THE PAGE. It was fourth, so the
           storeman scrolled past three blocks to reach the one control that

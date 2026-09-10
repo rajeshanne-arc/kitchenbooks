@@ -6183,6 +6183,34 @@ unchanged, so the hue only ever agrees with them rather than carrying the
 meaning. Under-consumption is GOLD, not green: using less than your own recipes
 say is a recipe that overstates or stock that left unrecorded.
 
+### THE OTHER SIDE OF THE SAME RULE: a component NAMED for one of its cases
+
+`DivergingBars` encoded a case in its BEHAVIOUR, and the wrong colour was on
+screen for anyone to see. The mirror image is worse:
+
+> **A COMPONENT NAMED FOR ONE OF ITS CASES WILL BE REUSED INTO A LIE — AND A
+> GATE THAT READS THE NAME CANNOT SEE IT.**
+
+`<AsItStands>` marked where a period control would have been and said why there
+was none. "As it stands" IS the state verdict — the data carries no date, so
+nothing can narrow it — and it was mounted on Fetch a day, which is not state:
+that data is dated and PETPOOJA owns the grain. **The mount was correct and the
+sentence carried the truth.** Only the name was wrong.
+
+That is exactly the kind of wrong nothing catches. Nothing rendered wrongly, so
+no reader could report it. TypeScript was satisfied, because a name is not a
+type. And the gate — which counted screens carrying `<AsItStands>` — read the
+NAME and therefore agreed with it, reporting four tabs as one verdict when one
+of them was another. **An instrument that identifies a case by the component's
+name inherits whatever that name asserts**, which is the same family as a
+checker that reads source being part of the source it reads.
+
+The fix is the `polarity` fix seen from the other side: name the component for
+its JOB (`WhyNoRange` — explain an absent control) and make the CASE a required
+prop with no default, so the gate reads a value rather than a name. Ask of the
+next shared component: *does its name commit it to one of the answers it is
+supposed to be able to give?*
+
 ### The empty state is the feature, and it names four errands with counts
 
 Live: **0 of 350 POS items mapped · ₹39,78,502 unattributed · 0 of 1 dishes
@@ -8788,21 +8816,52 @@ against two real tenants; the store's existence, region and privacy are read
 back from the platform; the byte round trip is **unverified on this machine**
 and runs first on a deployment.
 
-## A CONTROL THAT CANNOT CHANGE THE ANSWER IS A LIE BY AFFORDANCE
+## A CONTROL MUST NOT PROMISE WHAT THE DATA SOURCE CANNOT DELIVER
 
 A date range answers **what happened between these dates**. Some screens answer
 **what is here now**, and a picker on one of those promises a figure that moves
 when the dates do — when it cannot. Making it true would need as-of-date
 costing, which was rejected as a different product.
 
-**The fault this closes is the THIRD state**: neither a control nor an
+**The fault this closes is the FOURTH state**: neither a control nor an
 explanation, where a reader cannot tell *"this ignores dates"* from *"somebody
 forgot the picker"*. So every Books tab now does one or the other, and
-`<AsItStands>` renders in the place the control would have been.
+`<WhyNoRange>` renders in the place the control would have been.
+
+### THREE VERDICTS — flow, state, and not-ours-to-widen
+
+The first pass drew the line as a control against its absence, which is two
+answers to a three-answer question. **The limit sits in one of two different
+places, and they are different sentences to the reader:**
+
+| verdict | the limit | what the reader is told |
+|---|---|---|
+| **flow** | none | takes the range |
+| **state** | **ours** — the data carries no date at all | *"No date range."* — nothing to narrow, so nothing to widen |
+| **not-ours-to-widen** | **a third party's** — the data IS dated and somebody else owns the grain | *"One day at a time."* — the range exists nowhere to be asked for |
 
 **STATE WAS DECIDED BY READING information_schema, NOT BY JUDGEMENT.**
 `stock_on_hand`, `supplier_costs` and `vendor_performance` carry **no date
 column at all** — that is the test, and it is checkable rather than arguable.
+**Not-ours-to-widen is decided by reading the API**: Petpooja's Get Orders is
+keyed to one business date, so a range control would offer to widen something
+the endpoint cannot widen, and no amount of work on our side changes that.
+
+**The two absences look different from the reader's chair, which is why the
+lead differs and why `why` is not merely a label for the gate.** On a state
+screen there is no date anywhere and the question is *where is the picker*. On
+Fetch a day there is a date input three inches below and the question is *why
+can I not ask for a week*.
+
+**`WhyNoRange.why` IS REQUIRED AND HAS NO DEFAULT**, for the reason
+`DivergingBars.polarity` is. The component was called `AsItStands` — the STATE
+verdict wearing a component name — and it was **already mounted on Fetch a
+day**, which is not state. Nothing looked wrong on screen, because the sentence
+prop carried the truth; the lie was in the name, and in a gate that counted two
+buckets and therefore could not see that one of its four "stated" tabs was a
+different verdict entirely. *A component that ENCODES one answer rather than
+taking one gets reused into a lie* — the `DivergingBars` fault exactly, and the
+second time this file has recorded it.
 
 ### The brief's Store list was wrong in three places, and the check is why
 
@@ -8849,11 +8908,27 @@ Same shape as unclosed days on the owner dashboard.
 | Kitchen › Food cost, By department | monthly views | flow, already controlled |
 | Sales › Sales, GST, Handovers | dated | flow, already controlled |
 | Sales › Cash | ladder + vouchers + income, and `owners_owed` | **both** |
-| Sales › Fetch a day | Petpooja Get Orders | **neither** — keyed to ONE business date, so a range would offer to widen what the API cannot |
+| Sales › Fetch a day | Petpooja Get Orders | **not-ours-to-widen** — keyed to ONE business date, so a range would offer to widen what the API cannot |
 
 `StockView` is mounted in two groups and carries its own line, so both mounts
 inherit it — one definition, as the duplication rule requires.
 
-**The gate asserts both sides are non-empty.** A sweep that only ever saw
-controls would pass in a repo where nothing is state, having exercised half of
-what it claims to check.
+**The gate asserts NO BUCKET IS EMPTY, and the buckets are DERIVED.** A sweep
+that only ever saw controls would pass in a repo where nothing is state, having
+exercised half of what it claims to check — and the two-bucket version had
+exactly that fault one level down: it counted four tabs as "stated" and could
+not see that one of them was the third verdict, so a repo where every stated tab
+was not-ours-to-widen would have reported a clean sweep having never once
+exercised the state sentence. Same shape as the code-sequence gate asserting its
+two rules still disagree.
+
+The verdicts are read out of `WhyNoRange`'s own `LEAD` map rather than listed in
+the gate — a hand-copy of a set the component owns is a snapshot of an old
+opinion. **A fourth verdict therefore demands a live mount on the same run it is
+added.** That pattern has now paid three times — the retired-URL list at 51
+against 57, `DOC_TYPES` at eight against nine, and a gate pinning the literal
+`"Accounts → Money"` after that tab had been relabelled — and this is the FIRST
+time it was avoided in advance rather than found after it had drifted. The tell
+is the same every time: a literal in a checker that duplicates a set something
+else owns. Today: 15 tabs · 11
+take a range · 4 say why they cannot (3 state · 1 not-ours-to-widen).

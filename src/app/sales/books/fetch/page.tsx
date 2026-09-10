@@ -1,4 +1,4 @@
-import AsItStands from '@/components/books/AsItStands'
+import WhyNoRange from '@/components/books/WhyNoRange'
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getSalesDays } from '@/server/sales-queries'
@@ -21,10 +21,17 @@ export default async function CashFetchPage() {
         <p className={pageSubCls}>pull a day from Petpooja — the latest fetch wins</p>
       </header>
 
-      {/* NOT A RANGE, AND NOT A STATE EITHER — a per-day tool. Petpooja's Get
-          Orders is keyed to ONE business date, so a range control would offer
-          to widen something the API cannot widen. The day is picked below. */}
-      <AsItStands what="One day at a time, picked below. Petpooja's Get Orders answers for a single business date, so there is no range to choose." />
+      {/* THE THIRD VERDICT, and the only screen in Books carrying it. Not flow
+          and not state: the data IS dated and SOMEBODY ELSE decides the grain.
+          Petpooja's Get Orders is keyed to ONE business date, so a range here
+          would offer to widen what the API cannot. The limit is not ours, and
+          the lead says "one day at a time" rather than "no date range" because
+          there is a date input three inches below — the reader's question is
+          not where the picker went, it is why a week cannot be asked for. */}
+      <WhyNoRange
+        why="source"
+        what="Petpooja's Get Orders answers for a single business date, so there is no range to ask for — the day is picked below."
+      />
 
       <div className="space-y-4">
         <FetchDay defaultDate={await businessYesterday()} today={await businessToday()} />
