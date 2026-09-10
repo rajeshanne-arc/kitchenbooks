@@ -28,7 +28,7 @@ import type {
  * link; grouped they cost one transaction. Never a `tsql` inside this
  * callback — that opens a second connection while holding the first, which is
  * the max:4 deadlock in a new costume and a gate fails on it.
-  * @scope period
+ * @scope period
  */
 export async function getStaffDashboard(
   restaurantId: string,
@@ -110,7 +110,8 @@ export async function getStaffDashboard(
 }
 
 /** Is today marked at all? One question, one number — the card asks whether
- *  the day's attendance has been taken, not who was there.  * @scope not-a-figure
+ *  the day's attendance has been taken, not who was there.
+ * @scope not-a-figure
  */
 export async function attendanceTakenOn(
   restaurantId: string,

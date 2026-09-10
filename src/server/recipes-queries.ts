@@ -21,7 +21,8 @@ import type {
  *
  *  Uncosted dishes sort LAST under by-food-cost rather than first: a dish
  *  costing zero is a broken link, not a cheap dish, and putting it at the top
- *  of "most expensive" would read as the opposite of what it is.  * @scope now
+ *  of "most expensive" would read as the opposite of what it is.
+ * @scope now
  */
 export async function listDishCosts(
   restaurantId: string,

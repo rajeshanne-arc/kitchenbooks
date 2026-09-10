@@ -118,7 +118,7 @@ export async function getDayLabour(
  * nothing links to is a page nobody opens. The sheet shipped reachable only
  * by typing its URL, which is a failure mode invisible to any gate that only
  * checks the page renders.
-  * @scope way-in
+ * @scope way-in
  */
 export async function listRecentDays(
   restaurantId: string,

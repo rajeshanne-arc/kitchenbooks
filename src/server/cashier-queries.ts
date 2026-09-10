@@ -49,7 +49,8 @@ export async function listSettlements(restaurantId: string, limit = 40): Promise
 
 /** Per-partner totals over every settlement (reversals net out in the
  * sums). outstanding = gross − commission − deductions − received: what
- * the partner still owes for the periods filed.  * @scope period
+ * the partner still owes for the periods filed.
+ * @scope period
  */
 export async function getPartnerSummaries(
   restaurantId: string,
@@ -337,7 +338,7 @@ export async function getSettlementDeductions(settlementId: string): Promise<Set
  * and it is a separate question from the rupee gap: a small gap on a large
  * period can hide a rate that drifted, and a large gap can be one disputed
  * invoice charged at exactly the agreed rate.
-  * @scope period
+ * @scope period
  */
 export async function getPartnerPanel(
   restaurantId: string,

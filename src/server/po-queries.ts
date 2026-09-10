@@ -313,7 +313,7 @@ export async function getLetterhead(restaurantId: string): Promise<Letterhead> {
  * active vendors", which was true of a five-vendor dataset and is now simply
  * false. The callers render what this returns; prose that restates a live
  * figure only has an expiry date.
-  * @scope now
+ * @scope now
  */
 export async function countVendorsWithoutPhone(
   restaurantId: string,

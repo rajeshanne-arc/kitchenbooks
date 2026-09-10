@@ -216,7 +216,8 @@ export async function listStock(
 /** Items nobody has placed on a shelf. Counted for the store dashboard's
  *  readiness block, beside "no item carries a reorder level": a thing that is
  *  empty until somebody does it, and that blocks nothing until the first
- *  count — at which point an unplaced item is one that gets walked past.  * @scope now
+ *  count — at which point an unplaced item is one that gets walked past.
+ * @scope now
  */
 export async function countUnplacedItems(restaurantId: string): Promise<{ unplaced: number; total: number }> {
   const [row] = await tsql<{ unplaced: number; total: number }[]>`
@@ -345,7 +346,7 @@ export async function getWastageVoidedBy(wastageId: string): Promise<{ id: strin
  * drill-down that answers over a different window than the number it was
  * clicked from is a lie that looks perfectly healthy. `from`/`to` omitted means
  * all time, which is what the Books tab shows when nobody has picked a period.
-  * @scope period
+ * @scope period
  */
 export async function listStoreLog(
   restaurantId: string,
@@ -431,7 +432,7 @@ export async function listStoreLog(
  * what the "books did not exist" gate reads, and it is READ PER MEASURE at
  * query time — never a constant. Purchases began 5 Jun, issues 28 Aug, wastage
  * has not begun; they do not start together and never will.
-  * @scope period
+ * @scope period
  */
 export async function getPurchaseSeries(
   restaurantId: string,
@@ -459,7 +460,8 @@ export async function getPurchaseSeries(
 /** Issue value per section across the period — where the stock went. */
 /** Same one-trip shape as getPurchaseSeries: both windows in one statement,
  *  each row saying which it belongs to, and the measure's OWN all-time first
- *  entry — issues began 28 Aug where purchases began 5 Jun.  * @scope period
+ *  entry — issues began 28 Aug where purchases began 5 Jun.
+ * @scope period
  */
 export async function getIssuesBySection(
   restaurantId: string,
@@ -550,7 +552,8 @@ export async function getIssuesBySection(
   }
 }
 
-/** Payments made in the period, and what they totalled.  * @scope period
+/** Payments made in the period, and what they totalled.
+ * @scope period
  */
 export async function getPaymentsTotal(
   restaurantId: string,
@@ -579,7 +582,7 @@ export async function getPaymentsTotal(
  * where it can be named: the page shows the largest few and folds the rest into
  * one labelled row, so the column still adds up to the hero. No silent caps —
  * a top-N that does not say what it dropped reads as "all of it".
-  * @scope period
+ * @scope period
  */
 export async function getPurchasesByVendor(
   restaurantId: string,
@@ -695,7 +698,8 @@ export async function countReorderDue(restaurantId: string): Promise<number> {
 }
 
 /** How many items carry a reorder_level at all — the honesty denominator
- *  behind an empty Reorder tab.  * @scope now
+ *  behind an empty Reorder tab.
+ * @scope now
  */
 export async function countItemsWithReorderLevel(restaurantId: string): Promise<number> {
   const [row] = await tsql<{ n: number }[]>`
@@ -787,7 +791,8 @@ export async function getStockSnaps(restaurantId: string, itemIds: string[]): Pr
  *  their department consumed at month end, so the value belongs here —
  *  after the asking, where it informs rather than distorts.
  *
- *  The view nets returns already; nothing here re-subtracts them.  * @scope period
+ *  The view nets returns already; nothing here re-subtracts them.
+ * @scope period
  */
 export async function getSectionConsumptionDaily(
   restaurantId: string,
@@ -817,7 +822,7 @@ export async function getSectionConsumptionDaily(
  * movement — so it is left out of a report whose entire subject is movement.
  * The count of them is returned so the screen can say how much it is not
  * showing rather than implying the list is everything.
-  * @scope period
+ * @scope period
  */
 export async function getPriceMovements(
   restaurantId: string,
@@ -866,7 +871,7 @@ export async function getPriceMovements(
  * `on_hand_qty` IS THE ITEM'S TOTAL, not the batch's, because stock is a
  * running quantity and there is no lot tracking. Callers must render this as a
  * prompt to go and look, never as a claim about which goods are on the shelf.
-  * @scope now
+ * @scope now
  */
 export async function getExpiringStock(
   restaurantId: string,
@@ -1026,7 +1031,7 @@ export async function issueContext(
  * NO CAP. Seventeen payments today and a few hundred a year; a limit here would
  * be the silent truncation this page has already been caught by once, on a list
  * whose whole job is to add up to the number above it.
-  * @scope period
+ * @scope period
  */
 export async function listPaymentsLog(
   restaurantId: string,

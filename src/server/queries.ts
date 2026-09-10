@@ -28,7 +28,7 @@ import type { Category, ItemHit, ItemHitExisting, ItemHitStarter, Restaurant, Un
  * be the wrong one. The moment a second tenant exists it refuses by name.
  * A guess that cannot be wrong is not a guess; a guess that could be is the
  * bug this replaced.
-  * @scope not-a-figure
+ * @scope not-a-figure
  */
 export async function getRestaurant(): Promise<Restaurant> {
   const { getSessionUser } = await import('@/server/current-user')

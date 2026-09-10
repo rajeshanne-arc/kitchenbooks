@@ -31,7 +31,7 @@ import { tsql } from '@/lib/db'
  * request render, and the smoke gates call this from plain scripts, where it
  * would be a silent no-op at best. One extra single-statement read per page is
  * a price worth paying for a helper that behaves the same everywhere.
-  * @scope not-a-figure
+ * @scope not-a-figure
  */
 export async function businessToday(): Promise<string> {
   const [row] = await tsql<{ d: string }[]>`select business_date(now())::text as d`
@@ -53,7 +53,7 @@ export async function businessMonthStart(): Promise<string> {
 /**
  * The previous business day — the default Fetch Day target, because
  * yesterday is complete and today is still ringing up.
-  * @scope not-a-figure
+ * @scope not-a-figure
  */
 export async function businessYesterday(): Promise<string> {
   const d = new Date(`${await businessToday()}T00:00:00Z`)
@@ -90,7 +90,7 @@ export type BusinessDayDisagreement = {
  * (ours) and can only speak for orders that carried a time. Emptiness is
  * therefore not proof of agreement, which is why the surfaces that show this
  * also say whether any order carried a time at all.
-  * @scope all-time
+ * @scope all-time
  */
 export async function getBusinessDayDisagreements(
   restaurantId: string,
@@ -108,7 +108,7 @@ export async function getBusinessDayDisagreements(
  * How many POS orders we could compare at all. Zero means
  * `business_day_disagreements` is empty because nothing carried a time — not
  * because the two systems agree. A sum over no rows is not a zero.
-  * @scope not-a-figure
+ * @scope not-a-figure
  */
 export async function countOrdersWithTime(restaurantId: string): Promise<{ withTime: number; total: number }> {
   const [row] = await tsql<{ with_time: number; total: number }[]>`

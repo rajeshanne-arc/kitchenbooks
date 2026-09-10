@@ -138,7 +138,8 @@ export async function getRegister(
 /* ── parties ───────────────────────────────────────────────────────────── */
 
 /** One vendor's account, the way a vendor asks for it: opening, then every
- *  bill and payment in date order. Printable because vendors ask for paper.  * @scope period
+ *  bill and payment in date order. Printable because vendors ask for paper.
+ * @scope period
  */
 export async function getVendorStatement(
   restaurantId: string,
@@ -170,7 +171,8 @@ export async function getAggregatorReceivable(restaurantId: string): Promise<Agg
 /* ── tax ───────────────────────────────────────────────────────────────── */
 
 /** Output tax as the POS reported it, day by day. effective_gst_pct is the
- *  view's own arithmetic, not a rate this app believes in.  * @scope period
+ *  view's own arithmetic, not a rate this app believes in.
+ * @scope period
  */
 export async function getGstDays(
   restaurantId: string,
@@ -189,7 +191,8 @@ export async function getGstDays(
 
 /** Input tax: what suppliers charged, from the bills themselves. Whether
  *  it is a CREDIT or a COST is a setting, never an assumption — see the Tax
- *  screen, which states which one is in force.  * @scope period
+ *  screen, which states which one is in force.
+ * @scope period
  */
 export async function getInputTax(
   restaurantId: string,

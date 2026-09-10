@@ -9112,7 +9112,7 @@ async function run() {
     // every exported server function, its params, and the @scope in the block
     // that PRECEDES IT — sliced from the end of the previous export, so a
     // function with no tag cannot borrow its neighbour's.
-    const scope = new Map<string, { params: string; tag: string | null }>()
+    const scope = new Map<string, { params: string; tag: string | null; body: string }>()
     for (const file of walk('src/server')) {
       if (!file.endsWith('.ts')) continue
       const src = readFileSync(file, 'utf8')
@@ -9121,7 +9121,22 @@ async function run() {
         const prevEnd = i === 0 ? 0 : (fns[i - 1].index ?? 0) + fns[i - 1][0].length
         const between = src.slice(prevEnd, m.index ?? 0)
         const tag = [...between.matchAll(/@scope ([\w-]+)/g)].pop()
-        scope.set(m[1], { params: m[2].replace(/\s+/g, ' '), tag: tag ? tag[1] : null })
+        // THE BODY runs to the next top-level export, which is robust where
+        // brace-counting is not: a `sql` template is full of ${…} braces, and
+        // counting them is the delimiter trap this file already records.
+        const end = i + 1 < fns.length ? (fns[i + 1].index ?? src.length) : src.length
+        scope.set(m[1], {
+          params: m[2].replace(/\s+/g, ' '),
+          tag: tag ? tag[1] : null,
+          // FROM THE END OF THE SIGNATURE, NOT ITS START. Slicing from the
+          // start includes `monthStart: string` itself, so a search for the
+          // parameter matched the text DECLARING it and the check was
+          // trivially true — asserted nothing, passed forever. Caught only by
+          // perturbing it: the same "a checker that reads source is part of
+          // the source it reads" fault, inside the check written to catch
+          // what a seeded tag could hide.
+          body: src.slice((m.index ?? 0) + m[0].length, end),
+        })
       })
     }
     assert.ok(scope.size > 100, `only ${scope.size} server functions found — the walk moved`)
@@ -9142,6 +9157,48 @@ async function run() {
 
     const pages = walk('src/app').filter((f) => f.endsWith('.tsx') && readFileSync(f, 'utf8').includes('<PeriodControl'))
     assert.ok(pages.length >= 20, `only ${pages.length} period-control pages found`)
+
+    // ── THE THIRD SIGNAL ──────────────────────────────────────────────
+    // The failure a SEEDED tag can hide: a function that TAKES from/to and
+    // does not USE them. The cross-check cannot see it — the tag and the
+    // signature agree perfectly — so this asks the BODY.
+    //
+    // It reads the JS, not the SQL. `from` is a keyword in every query in this
+    // file, so searching the raw body would match every time and assert
+    // nothing; a parameter is genuinely used to scope a query only when it
+    // reaches an interpolation hole (or a plain JS line handing it onward). So
+    // the scanner keeps ${…} holes and code, and DISCARDS the SQL between them.
+    const jsOnly = (body: string): string => {
+      const out: string[] = []
+      let i = 0
+      let inTpl = false
+      let depth = 0
+      while (i < body.length) {
+        const c = body[i]
+        if (!inTpl) {
+          if (c === '`') { inTpl = true; i++; continue }
+          out.push(c); i++; continue
+        }
+        if (depth === 0 && c === '`') { inTpl = false; i++; continue }
+        // A SEPARATOR AT EVERY HOLE BOUNDARY. Without it `${restaurantId}`
+        // and `${monthStart}` in adjacent holes concatenate to
+        // "restaurantIdmonthStart" and \b never matches either — the check
+        // then reports correct code as broken, which is how a gate gets
+        // ignored. Found by running the scanner against a real body rather
+        // than by reading it.
+        if (c === '$' && body[i + 1] === '{') { out.push(' '); depth++; i += 2; continue }
+        if (depth > 0) {
+          if (c === '{') depth++
+          else if (c === '}') { depth--; out.push(' '); i++; continue }
+          out.push(c); i++; continue
+        }
+        i++
+      }
+      return out.join('')
+    }
+    const PERIOD_NAMES = ['from', 'to', 'months', 'monthStart', 'period', 'reportMonth']
+    const unusedParam: string[] = []
+    let bodiesChecked = 0
 
     const untagged: string[] = []
     const disagreed: string[] = []
@@ -9185,6 +9242,23 @@ async function run() {
         if (BASES.includes(info.tag) && shows) {
           disagreed.push(`${name} claims @scope ${info.tag} and its signature names a period`)
         }
+        if (info.tag === 'period' && shows) {
+          // A body claiming @scope period must REFERENCE the parameter it
+          // scopes by. Weak alone, like the other two — and this design already
+          // rests on weak signals having to agree.
+          const declared = info.params
+            .split(',')
+            .map((x) => x.trim().split(':')[0].trim().replace(/[?{}]/g, ''))
+            .filter((x) => PERIOD_NAMES.includes(x))
+          if (declared.length > 0) {
+            bodiesChecked++
+            const js = jsOnly(info.body)
+            const touched = declared.filter((d) => new RegExp(`\\b${d}\\b`).test(js))
+            if (touched.length === 0) {
+              unusedParam.push(`${name} takes ${declared.join('/')} and its body never uses ${declared.length === 1 ? 'it' : 'any of them'}`)
+            }
+          }
+        }
         if (BASES.includes(info.tag)) need.add(info.tag)
       }
 
@@ -9207,6 +9281,12 @@ async function run() {
     // reaches it, so it is named once. `untagged` is deliberately NOT deduped:
     // there, which page reaches an untagged query is the useful half.
     assert.deepEqual([...new Set(disagreed)], [], 'these @scope tags disagree with their own signatures')
+    assert.deepEqual(
+      [...new Set(unusedParam)],
+      [],
+      'these claim @scope period, take a period parameter, and never reference it',
+    )
+    assert.ok(bodiesChecked > 20, `only ${bodiesChecked} period bodies read — the third signal is looking at nothing`)
     assert.deepEqual(unsaid, [], 'these pages carry a figure the period cannot move and do not say so')
 
     // VACUITY. A basis nothing exercises is a basis this gate never checked.
@@ -9215,7 +9295,7 @@ async function run() {
     }
     const tally = [...exercised].map(([b, n]) => `${n} ${b}`).join(' · ')
     console.log(
-      `      ${pages.length} pages · ${scope.size} server fns scoped · pages needing a sentence: ${tally} · ${exemptions} exempt`,
+      `      ${pages.length} pages · ${scope.size} server fns scoped · ${bodiesChecked} period bodies use their own parameter · pages needing a sentence: ${tally} · ${exemptions} exempt`,
     )
   })
 

@@ -29,7 +29,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
  * for one person.
  *
  * Case-insensitive on the code: nobody types E014 in caps from a phone.
-  * @scope not-a-figure
+ * @scope not-a-figure
  */
 export async function getStaffByRef(restaurantId: string, ref: string): Promise<StaffRow | null> {
   const rows = await tsql<StaffRow[]>`
@@ -50,7 +50,8 @@ export async function getStaffByRef(restaurantId: string, ref: string): Promise<
   return rows[0] ?? null
 }
 
-/** Per month, for the months the period covers.  * @scope period
+/** Per month, for the months the period covers.
+ * @scope period
  */
 export async function getAttendanceSummary(
   restaurantId: string,
@@ -74,7 +75,7 @@ export async function getAttendanceSummary(
  * `filings` counts every row filed for that day, so a correction stays
  * visible exactly as it does on the sheet — history is never hidden, it is
  * badged.
-  * @scope period
+ * @scope period
  */
 export async function getAttendanceDays(
   restaurantId: string,
@@ -98,7 +99,7 @@ export async function getAttendanceDays(
  * Run by run, most recent first. The view already excludes CANCELLED runs;
  * `status` is carried through because draft, approved and paid are three
  * different claims and only the last one is money that moved.
-  * @scope all-time
+ * @scope all-time
  */
 export async function getPayrollHistory(restaurantId: string, staffId: string): Promise<PayrollHistoryRow[]> {
   return tsql<PayrollHistoryRow[]>`
@@ -113,7 +114,8 @@ export async function getPayrollHistory(restaurantId: string, staffId: string): 
     order by period_start desc`
 }
 
-/** Given, recovered, outstanding. Absent entirely when they have never had one.  * @scope all-time
+/** Given, recovered, outstanding. Absent entirely when they have never had one.
+ * @scope all-time
  */
 export async function getAdvancesOutstanding(
   restaurantId: string,
@@ -128,7 +130,8 @@ export async function getAdvancesOutstanding(
 }
 
 /** Every advance ever given them, newest first. Reversals are BADGED rather
- *  than hidden — a correction is a thing somebody filed.  * @scope all-time
+ *  than hidden — a correction is a thing somebody filed.
+ * @scope all-time
  */
 export async function getAdvanceLedger(restaurantId: string, staffId: string): Promise<AdvanceLedgerRow[]> {
   return tsql<AdvanceLedgerRow[]>`

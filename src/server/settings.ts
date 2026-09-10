@@ -22,7 +22,8 @@ export async function tabsFor(restaurantId: string, group: TabGroup, role: Role)
   return resolveTabs(group, raw).filter((t) => canAccess(role, t.href))
 }
 
-/** Active values of one managed list, in sort order — what pickers render.  * @scope not-a-figure
+/** Active values of one managed list, in sort order — what pickers render.
+ * @scope not-a-figure
  */
 export async function getList(restaurantId: string, key: ListKey): Promise<string[]> {
   const rows = await tsql<{ value: string }[]>`

@@ -9106,6 +9106,56 @@ mount per basis renders the sentence or fails. **Demanding presence IS the
 forcing** — a scanner would be detecting absence, which is the weaker thing and
 the fuzzier one, and a fuzzy gate is one people learn to ignore.
 
+### A THIRD SIGNAL, because a SEEDED tag can hide one thing the cross-check cannot
+
+The 45 `@scope period` tags were seeded FROM the signature, so the cross-check is
+vacuous for them on day one. The failure that seeding can hide is exact and
+narrow: **a function that TAKES `from`/`to` and does not USE them.** Tag and
+signature agree perfectly; only the body disagrees.
+
+So a body claiming `@scope period` must REFERENCE the parameter it scopes by.
+Weak alone, like the other two — and this whole design already rests on weak
+signals having to agree. It is mechanical rather than fuzzy, and it catches
+exactly the case seeding cannot.
+
+**It reads the JS, not the SQL.** `from` is a keyword in every query in this
+codebase, so searching the raw body matches every time and asserts nothing. The
+scanner keeps `${…}` holes and plain code and DISCARDS the SQL between them.
+Live: **53 period bodies reference their own parameter** — all of them.
+
+**The hand review it replaced was ONE function.** The intersection that mattered
+— seeded `period` AND never observed by the hand survey — is a set of one:
+`getSectionCosts`, reached only through `SectionsView`. Reviewed: `monthStart`
+filters both joins and arrives from the page's resolved period. Correct. Of the
+11 functions the gate reaches that the survey did not, nine are `not-a-figure`
+and one is `all-time`, all classified by hand with reasons. **The other 44
+seeded tags carry behavioural evidence rather than a signature echo: the hand
+survey walked every figure on every period-controlled page asking DOES THIS
+MOVE, so one tagged `period` that did not move would have surfaced as one of the
+17.**
+
+### THE THIRD SIGNAL WAS ITSELF VACUOUS, TWICE, AND ONLY PERTURBATION SAID SO
+
+Written to catch what a seeded tag could hide, and it needed three versions.
+Worth recording in full, because the first two failures are the two commonest
+ways an instrument that reads source goes wrong:
+
+| version | what it did |
+|---|---|
+| **1 — vacuous** | sliced the body from the START of `export function …`, so it INCLUDED the signature. Searching for `monthStart` matched the text DECLARING `monthStart`. Trivially true, always. Passed with the parameter provably unused. |
+| **2 — cried wolf** | fixed the slice, then flagged six functions that were all correct. `${restaurantId}` and `${monthStart}` in adjacent holes concatenated to `restaurantIdmonthStart`, so `` never matched either. |
+| **3 — correct** | a separator at every hole boundary. With the parameter deliberately unused it names exactly one function and nothing else. |
+
+Version 1 is *a checker that reads source is part of the source it reads*, one
+more time — **inside the check written to catch what seeding could hide.**
+Version 2 is worse in the way that matters: a gate that reports correct code as
+broken is one people learn to skip, which is this project's own reason for
+fixing `both`/`leading`/`trailing` and `at time zone` rather than blunting the
+schema gate.
+
+**Version 2 was found by RUNNING the scanner against a real function body**, not
+by reading it. Reading it is what produced version 1 and version 2.
+
 ### THE HONEST LIMIT, accepted in writing rather than chased
 
 **A tag can be wrong in the one direction the cross-check cannot see: a page
@@ -9143,9 +9193,36 @@ the hand survey: eight server ACTIONS, the queries panel, and
 three dashboards. Its sentence went INSIDE `Diagnostics`, once, so all three
 mounts inherit it — the `StockView` rule.
 
-It also forced `getSalesDays` to be split. It meant two things — a rendered
-strip of recent days on one page, a yes/no precondition on another — and **a
-scope tag has to describe both uses and can only be right about one.** Now
-`anyDayFetched` answers the precondition. *One function, one meaning* is
-ordinarily a style preference; under a per-definition declaration it becomes
-checkable.
+### THE PROPERTY NOBODY DESIGNED IN, and it is worth more than the finding
+
+> **ONE FUNCTION, ONE MEANING IS ORDINARILY A STYLE PREFERENCE. UNDER A
+> PER-DEFINITION DECLARATION IT BECOMES CHECKABLE.**
+
+`getSalesDays` meant two things: a rendered strip of recent days on one page,
+and a yes/no precondition on another (`getSalesDays(id, 1)`, length checked).
+Nothing was wrong with either use. But **a scope tag has to describe both and
+can only be right about one** — `way-in` on the page that renders it, and a
+demand for a sentence on the page that renders nothing. There is no correct
+value.
+
+So the gate did not report a bug; it reported an AMBIGUITY that had always been
+there and had never been expressible. `anyDayFetched` answers the precondition
+now, and the tags are honest for both.
+
+That generalises past scope tags: **any per-definition declaration turns "this
+function means two things" from a matter of taste into a contradiction a machine
+can find.** It is the argument for declaring at the point of definition that has
+nothing to do with the thing being declared.
+
+### PER-BASIS IS COARSER THAN PER-FIGURE, ON PURPOSE
+
+Found by perturbation rather than by design, so it is written down rather than
+left to be rediscovered: removing ONE of `/store`'s three `now` mounts does not
+fail, because two remain and the requirement counts BASES, not figures.
+
+That is correct and must stay. The store's three alarm tiles share ONE sentence
+— five tiles each carrying their own copy is how a vocabulary fragments — so a
+per-figure requirement would fail the very shape this rule prefers. The cost is
+real and is the accepted trade: **the gate cannot tell you that one particular
+figure lacks a sentence, only that a whole basis does.** Deleting the last
+`now` mount on a page fails; deleting the second-to-last does not.

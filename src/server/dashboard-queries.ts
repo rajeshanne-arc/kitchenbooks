@@ -176,7 +176,8 @@ export async function getMissingCloses(
 
 /** Daily revenue across the period — the sales line. Days with no fetch are
  * simply absent: a missing day is not a zero-rupee day, and drawing it as
- * one would invent a collapse that did not happen.  * @scope period
+ * one would invent a collapse that did not happen.
+ * @scope period
  */
 export async function getSalesSeries(
   restaurantId: string,
@@ -199,7 +200,8 @@ export async function getSalesSeries(
  * deducted. Both are stated — the card never picks one and calls it truth.
  *
  * Rows with nothing to compare (billed or claimed still null) are counted
- * separately rather than silently treated as zero.  * @scope period
+ * separately rather than silently treated as zero.
+ * @scope period
  */
 export async function getSettlementGap(
   restaurantId: string,
@@ -235,7 +237,8 @@ export async function getSettlementGap(
 }
 
 /** Store + kitchen waste across the period, by reason. Reversal pairs net
- * themselves out of the sums.  * @scope period
+ * themselves out of the sums.
+ * @scope period
  */
 export async function getWasteRange(restaurantId: string, from: string, to: string): Promise<WasteCard> {
   const [store] = await tsql<{ v: string }[]>`
@@ -262,7 +265,8 @@ export async function getWasteRange(restaurantId: string, from: string, to: stri
 
 /** section_costs summed over every month the period touches. Sales, cost and
  * margin are additive, so summing them is arithmetic on what the view already
- * stated — not a second implementation of its logic.  * @scope period
+ * stated — not a second implementation of its logic.
+ * @scope period
  */
 export async function getSectionCostsRange(
   restaurantId: string,
@@ -287,7 +291,8 @@ export async function getSectionCostsRange(
 
 /** What has actually been entered in the period. This is what makes an empty
  * dashboard honest: with two bills and no sales the page must say so plainly
- * rather than draw nine zeroes and imply a catastrophic month.  * @scope period
+ * rather than draw nine zeroes and imply a catastrophic month.
+ * @scope period
  */
 export async function getEntryPulse(restaurantId: string, from: string, to: string): Promise<EntryPulse> {
   const [row] = await tsql<EntryPulse[]>`

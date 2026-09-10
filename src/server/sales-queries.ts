@@ -45,7 +45,7 @@ const DAY_SELECT = `
  * function mean two things: a rendered strip of recent days on one page and a
  * yes/no on another. One function, one meaning — otherwise a scope tag has to
  * describe both uses and can only be right about one.
-  * @scope not-a-figure
+ * @scope not-a-figure
  */
 export async function anyDayFetched(restaurantId: string): Promise<boolean> {
   const rows = await tsql<{ one: number }[]>`
@@ -70,7 +70,8 @@ export async function getSalesDay(restaurantId: string, businessDate: string): P
   return rows[0] ?? null
 }
 
-/** Unknown-status orders, loud and listed — never silently banked.  * @scope all-time
+/** Unknown-status orders, loud and listed — never silently banked.
+ * @scope all-time
  */
 export async function listUnknownOrders(restaurantId: string, limit = 50): Promise<UnknownOrderRow[]> {
   return tsql<UnknownOrderRow[]>`
@@ -92,7 +93,7 @@ export async function listUnknownOrders(restaurantId: string, limit = 50): Promi
  * `revenue_mapped` comes back NULL rather than 0 when nothing is mapped: it
  * is a sum over no rows, and a sum over no rows is not a zero. The screen
  * keeps that distinction.
-  * @scope all-time
+ * @scope all-time
  */
 export async function getMappingCoverage(restaurantId: string): Promise<MappingCoverage | null> {
   const rows = await tsql<MappingCoverage[]>`
@@ -108,7 +109,8 @@ export async function getMappingCoverage(restaurantId: string): Promise<MappingC
 }
 
 /** Sales by hour of the business day, for the two-service shape. `per_cover`
- *  is NULL where covers is zero — the view already refuses that division.  * @scope period
+ *  is NULL where covers is zero — the view already refuses that division.
+ * @scope period
  */
 export async function getSalesByHour(
   restaurantId: string,
@@ -130,7 +132,8 @@ export async function getSalesByHour(
 
 /** The payment-mode split. Petpooja's own dashboard lumps three quarters of
  *  a day into "Other"; we hold every mode separately, so this is a genuine
- *  advantage over the POS screen and costs nothing to show.  * @scope period
+ *  advantage over the POS screen and costs nothing to show.
+ * @scope period
  */
 export async function getPaymentSplit(
   restaurantId: string,
@@ -260,7 +263,8 @@ export async function listDishOptions(restaurantId: string): Promise<DishOption[
 }
 
 /** Qty sold per recipe for one month, from mapped revenue lines of the
- * latest fetches.  * @scope period
+ * latest fetches.
+ * @scope period
  */
 export async function getQtySold(restaurantId: string, monthStart: string): Promise<QtySoldRow[]> {
   return tsql<QtySoldRow[]>`
@@ -287,7 +291,7 @@ export async function getQtySold(restaurantId: string, monthStart: string): Prom
  *
  * Revenue only: cancelled and complimentary orders are out of the money by the
  * same whitelist every other sales figure uses.
-  * @scope period
+ * @scope period
  */
 export async function getSalesByItem(
   restaurantId: string,
