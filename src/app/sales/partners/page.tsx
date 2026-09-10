@@ -2,6 +2,7 @@ import { getRestaurant } from '@/server/queries'
 import { businessToday } from '@/server/business-day'
 import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import PeriodControl from '@/components/dashboard/PeriodControl'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 import {
   getPartnerPanel,
   getPartnerSummaries,
@@ -67,6 +68,16 @@ export default async function PartnersPage({
 
         <div id="settlements" className="scroll-mt-4">
           <h2 className={`${sectionHeadCls} pb-2`}>Settlements</h2>
+          {/* WAY-IN, not a measurement: the last few filings, so there is
+              always a door into one. The period-scoped answer is the panel
+              ABOVE — gap, commission taken against commission agreed — so the
+              sentence names where that answer lives rather than restating a
+              per-partner figure here. */}
+          <OutsidePeriod
+            basis="way-in"
+            what="The most recent filings, whatever the dates above say. The period scopes the per-partner comparison in the panel above, not this list."
+            className="pb-2"
+          />
           <SettlementsClient
             partners={partners.filter((p) => p.status === 'active')}
             deductionTypes={deductionTypes}

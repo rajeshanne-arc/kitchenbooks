@@ -18,6 +18,7 @@ import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
 import MyQueriesPanel from '@/components/accountant/MyQueriesPanel'
 import { businessToday } from '@/server/business-day'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 
 export const dynamic = 'force-dynamic'
 
@@ -165,6 +166,18 @@ export default async function SalesDashboard({
             department. Sales by department, food cost, margin and the department pages all read this — and all stay
             dark until it is done. Map the biggest rows first →
           </p>
+          {/* THE STATEMENT FORM, AND IT IS FREE HERE: getUnmappedSummary is
+              period-scoped and already on this page, so the card can answer
+              "what would this be for my dates" with a real figure instead of
+              excusing itself. mapping_coverage itself is deliberately all-time
+              — the queue is a backlog, not a month's work. */}
+          <OutsidePeriod
+            basis="all-time"
+            what={`Coverage counts every POS item ever seen. In ${period.label} the unattributed part is ${
+              mapping.assessable ? mapping.data.items : 0
+            } items worth ${formatMoneyString(mapping.assessable ? mapping.data.revenue : '0')}.`}
+            className="mt-1.5"
+          />
         </Link>
       )}
 

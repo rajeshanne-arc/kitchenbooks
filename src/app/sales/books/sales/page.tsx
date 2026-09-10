@@ -7,6 +7,7 @@ import { fmtDate } from '@/lib/format'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 import Honesty from '@/components/Honesty'
 import { businessToday, businessYesterday } from '@/server/business-day'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 import ViewToggle from '@/components/ViewToggle'
 import { readView, VIEW_KEYS } from '@/lib/views'
 import { getSalesByHour, getSalesByItem } from '@/server/sales-queries'
@@ -64,6 +65,14 @@ export default async function SalesPage({
           <span className="text-xs text-stone-400">all mapped</span>
         )}
       </Link>
+      {/* ROSTER FORM, not the statement form: this page holds no period-scoped
+          unmapped figure, and running a query purely to produce a sentence is
+          not worth it. BOTH BRANCHES — "all mapped" read as a month is the
+          all-clear fault, which is where a wrong scope does the most damage. */}
+      <OutsidePeriod
+        basis="all-time"
+        what="The queue is every POS item ever seen, not this period's — a backlog, so the dates above do not narrow it."
+      />
 
       <ViewToggle
         param="view"
@@ -177,6 +186,14 @@ export default async function SalesPage({
           <h2 className={sectionHeadCls}>Days</h2>
           <span className="text-xs text-stone-400">latest fetch per date wins · sales_by_day</span>
         </div>
+        {/* THE SAME LEAD AS /owner's recent days, deliberately. Not because
+            this strip misleads — "Days" is nearly self-describing — but
+            because that one already says it and one vocabulary beats two. */}
+        <OutsidePeriod
+          basis="way-in"
+          what="The last few days fetched, so there is always a door into one. The dates above scope what sold, not this list."
+          className="mt-1"
+        />
         {days.length === 0 ? (
           <p className="mt-3 text-sm text-stone-500">
             Nothing fetched yet. Pick a date above and press Fetch day — yesterday is the usual first pull.
@@ -240,6 +257,15 @@ export default async function SalesPage({
 
       {unknownOrders.length > 0 && (
         <div>
+          {/* ALL-TIME AND IT MUST STAY SO. An order the app cannot bank is in
+              no total until somebody looks it up in Petpooja; letting the
+              period hide one would be the open-short fault in a new costume —
+              a finding from six weeks ago is still money in no column. */}
+          <OutsidePeriod
+            basis="all-time"
+            what="Every order on record that this app could not bank, whatever the dates above say — one from six weeks ago is still in no total."
+            className="mb-2"
+          />
           <Honesty level="alarm" verdict="not banked">
             {unknownOrders.length === 1 ? 'This order carries' : 'These orders carry'} a status this app does not
             know, so {unknownOrders.length === 1 ? 'it is' : 'they are'} in no total — not revenue, not cancelled,

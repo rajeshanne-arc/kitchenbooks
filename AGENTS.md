@@ -8946,12 +8946,35 @@ the default**:
 
 | | shape | use it |
 |---|---|---|
-| **the statement form** | *"This statement stops at 31 Aug. Their balance today is ₹12,500."* | wherever BOTH figures exist — always |
-| **the roster form** | *"A headcount is a fact about now, not about the period above."* | only where a period counterpart does not exist |
+| **the statement form** | *"This statement stops at 31 Aug. Their balance today is ₹12,500."* | where the period figure EXISTS or is CHEAP |
+| **the roster form** | *"A headcount is a fact about now, not about the period above."* | otherwise |
 
 Both were already live and both were arrived at separately — `/accounts/parties/<id>`
 and the `/staff` roster card. Neither was a rule until they were surveyed
 together.
+
+**THE STATEMENT FORM IS NOT FREE, AND THAT NARROWS IT.** It was first written
+here as the unconditional default, and building it proved that wrong: where the
+period figure does not already exist it costs a QUERY, and
+
+> **a sentence is not worth a query that would not otherwise be run.**
+
+The settled-shorts card is the expensive end — it needed a new period leg summed
+Postgres-side, because adding rounded paise per row would have hit associativity
+for the fourth time and `listShorts` is capped at 300, so counting rows on
+screen would have undercounted the day the cap bit. The cheap end is where the
+figure is already in hand: `/sales`' mapping-coverage card sits beside a
+period-scoped `getUnmappedSummary` that the page fetches anyway, and the
+employee profile's Paid table can count its own rows by overlap — an exact
+integer, no query, no rounding. Those get the statement form. The unmapped badge
+on `/sales/books/sales` does not, because nothing period-scoped about mapping is
+on that page and running one for a sentence buys a sentence.
+
+**And a sentence is not worth adding where the copy already carries its scope.**
+The employee Advances card says *"nothing was ever lent"* — all-time, in words a
+reader believes — so it gets nothing. Adding a scope note to a sentence that
+already has one is noise, **and noise is how a good pattern becomes wallpaper**;
+the honesty strip earned its weight by being silent at zero, and this must too.
 
 **`<OutsidePeriod>` is the shared vocabulary**, built the way `WhyNoRange` is:
 one component, `basis` REQUIRED with no default, the LEAD fixed in the component
@@ -8965,22 +8988,29 @@ line. Five tiles each carrying their own copy is how a vocabulary fragments into
 near-synonyms, and this project has already watched that end in honesty verdicts
 multiplying into clusters nobody could tell apart.
 
-### THE EMPTY BRANCH IS WHERE THE CORRECT SENTENCE HIDES
+### A CARD'S EMPTY BRANCH NEEDS ITS SCOPE NOTE MORE THAN ITS POPULATED ONE
 
-The settled-shorts card is the specimen. Its heading said **Settled · This
-month**, its rows were period-filtered, and its meta figure was **all-time** —
-three scopes in one card. And the card already contained its own fix: the EMPTY
-branch said *"N settled shorts are on record, none of them in this month"*,
-which is exactly right. The full branch, the one anybody actually reaches, said
-nothing.
+The sharper of the two instances, and the reason this is a rule rather than a
+tidy-up. The owner's stock-alarm card said, in its ALL-CLEAR branch:
+
+> *"No item is showing negative stock."*
+
+Read as a claim about the dates above it, that is **a clean bill of health for a
+month**. It is the zero-reads-as-good-news fault and the scope fault in one
+sentence — and **good news is what a reader stops reading at**, so the branch
+that most needs its scope stated is the one least likely to have it.
+
+The second instance is where the fix was already written. The settled-shorts
+card's heading said **Settled · This month**, its rows were period-filtered, and
+its meta figure was **all-time** — three scopes in one card. And the card
+contained its own answer: the EMPTY branch said *"N settled shorts are on
+record, none of them in this month"*, which is exactly right. The full branch,
+the one anybody actually reaches, said nothing.
 
 Same shape as a caption describing intent rather than code: **the correct
 sentence exists, in the branch nobody reaches.** So when a card has an empty
-branch, read BOTH — the scope note tends to get written where it was first
-needed and never propagated to where it is read. The other instance found the
-same day was the owner's stock-alarm card, whose ALL-CLEAR branch is where a
-wrong scope does the most damage: "No item is showing negative stock" read as a
-month is a clean bill of health for a month.
+branch, read BOTH — the scope note gets written where it was first needed and
+never propagated to where it is read.
 
 **The period leg is summed in SQL, never on the page.** `short_value` is
 `qty_short × rate`, so adding rounded paise per row would hit associativity for

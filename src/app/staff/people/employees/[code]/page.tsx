@@ -16,6 +16,7 @@ import { getStaffIdentity } from '@/server/payroll-queries'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import PeriodControl from '@/components/dashboard/PeriodControl'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 import Unassessed from '@/components/dashboard/Unassessed'
 import Honesty from '@/components/Honesty'
 import DateLink from '@/components/dashboard/DateLink'
@@ -297,6 +298,8 @@ export default async function StaffProfilePage({
   const mayHoldIdentity = user?.role === 'owner' || user?.role === 'accountant'
   const mayEdit = user?.role === 'manager' || user?.role === 'owner'
 
+  // OVERLAP, not containment: a run spanning the boundary covers part of the
+  // chosen dates and must count. Same test the settlement gap needed.
   const [summary, days, payroll, advances, ledger, identity] = await Promise.all([
     getAttendanceSummary(restaurant.id, staff.id, period.months),
     getAttendanceDays(restaurant.id, staff.id, period.from, period.to),
@@ -305,6 +308,8 @@ export default async function StaffProfilePage({
     getAdvanceLedger(restaurant.id, staff.id),
     mayHoldIdentity ? getStaffIdentity(restaurant.id, staff.id) : Promise.resolve(null),
   ])
+
+  const paidInPeriod = payroll.filter((r) => r.period_start <= period.to && r.period_end >= period.from).length
 
   const isContract = staff.employment_type === 'contract'
   const marked = summary.reduce((n, m) => n + m.days_marked, 0)
@@ -552,6 +557,20 @@ export default async function StaffProfilePage({
             </Unassessed>
           ) : (
             <>
+              {/* THE STATEMENT FORM, AND IT COSTS NOTHING: the rows are
+                  already here and carry their own period, so how many fall in
+                  the chosen dates is an exact COUNT — no query, no money sum,
+                  so no rounding. Every run ever is shown deliberately: a wage
+                  history narrowed to a month is not a wage history. */}
+              <OutsidePeriod
+                basis="all-time"
+                what={`Every run ${staff.name} has been on. ${
+                  paidInPeriod === 0
+                    ? `None of them covers ${period.label}.`
+                    : `${paidInPeriod} of ${payroll.length} ${paidInPeriod === 1 ? 'covers' : 'cover'} ${period.label}.`
+                }`}
+                className="mb-2"
+              />
               <PaidTable rows={payroll} />
               {payroll.some((r) => r.status !== 'paid') && (
                 <div className="mt-3">
