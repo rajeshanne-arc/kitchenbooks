@@ -38,6 +38,7 @@ export async function getSettlement(restaurantId: string, id: string): Promise<S
   return rows[0] ?? null
 }
 
+/** @scope way-in */
 export async function listSettlements(restaurantId: string, limit = 40): Promise<SettlementRow[]> {
   return tsql<SettlementRow[]>`
     ${sql.unsafe(SETTLEMENT_SELECT)}
@@ -48,7 +49,8 @@ export async function listSettlements(restaurantId: string, limit = 40): Promise
 
 /** Per-partner totals over every settlement (reversals net out in the
  * sums). outstanding = gross − commission − deductions − received: what
- * the partner still owes for the periods filed. */
+ * the partner still owes for the periods filed.  * @scope period
+ */
 export async function getPartnerSummaries(
   restaurantId: string,
   from: string,
@@ -297,6 +299,7 @@ export async function getVoucherCategorySummary(
 // settlement-gap card turns on, so the partners table is the master and the
 // settlement form reads from it.
 
+/** @scope not-a-figure */
 export async function listPartners(restaurantId: string, includeRetired = false): Promise<Partner[]> {
   return tsql<Partner[]>`
     select id, name, kind, agreed_commission_pct::text as agreed_commission_pct, status
@@ -334,6 +337,7 @@ export async function getSettlementDeductions(settlementId: string): Promise<Set
  * and it is a separate question from the rupee gap: a small gap on a large
  * period can hide a rate that drifted, and a large gap can be one disputed
  * invoice charged at exactly the agreed rate.
+  * @scope period
  */
 export async function getPartnerPanel(
   restaurantId: string,

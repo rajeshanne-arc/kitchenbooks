@@ -165,7 +165,8 @@ const SettleSchema = z.object({
 })
 
 /** The only UPDATE on this table, and it is granted on exactly these three
- *  columns — what was short, and against which line, can never be rewritten. */
+ *  columns — what was short, and against which line, can never be rewritten.  * @scope not-a-figure
+ */
 export async function settleShort(raw: SettleShortInput): Promise<ShortResult> {
   try {
     const input = SettleSchema.parse(raw)

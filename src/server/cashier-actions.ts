@@ -121,6 +121,7 @@ const SettlementSchema = z.object({
     .max(20),
 })
 
+/** @scope not-a-figure */
 export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSettlementResult> {
   try {
     const input = SettlementSchema.parse(raw)
@@ -198,6 +199,7 @@ export async function saveSettlement(raw: SaveSettlementInput): Promise<SaveSett
   }
 }
 
+/** @scope not-a-figure */
 export async function voidSettlement(id: string): Promise<VoidSettlementResult> {
   try {
     if (!UUID.test(id)) throw new CashierError('Malformed settlement id')
@@ -683,6 +685,7 @@ const PartnerSchema = z.object({
   status: z.enum(['active', 'inactive']),
 })
 
+/** @scope not-a-figure */
 export async function createPartner(raw: SavePartnerInput): Promise<SavePartnerResult> {
   try {
     const input = PartnerSchema.parse(raw)
@@ -715,6 +718,7 @@ export async function createPartner(raw: SavePartnerInput): Promise<SavePartnerR
   }
 }
 
+/** @scope not-a-figure */
 export async function updatePartner(id: string, raw: SavePartnerInput): Promise<SavePartnerResult> {
   try {
     if (!UUID.test(id)) throw new CashierError('Malformed partner id')

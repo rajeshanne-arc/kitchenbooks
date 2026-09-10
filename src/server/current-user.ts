@@ -20,6 +20,7 @@ export type SessionUser = {
   restaurantId: string
 }
 
+/** @scope not-a-figure */
 export async function getSessionUser(): Promise<SessionUser | null> {
   let token: string | undefined
   try {

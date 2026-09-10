@@ -101,7 +101,8 @@ export async function getVendorBills(restaurantId: string, vendorId: string): Pr
     limit 200`
 }
 
-/** Active vendors for the usual-supplier picker on an item. */
+/** Active vendors for the usual-supplier picker on an item.  * @scope not-a-figure
+ */
 export async function listActiveVendors(restaurantId: string): Promise<VendorHit[]> {
   return tsql<VendorHit[]>`
     select v.id, v.code, v.name, v.primary_category, c.name as category_name,
@@ -116,7 +117,8 @@ export async function listActiveVendors(restaurantId: string): Promise<VendorHit
 /** Vendors carrying a balance, worst first — the payment queue.
  *
  * days_since_payment is null when they have never been paid: that is a
- * different fact from "paid a long time ago" and the screen says so. */
+ * different fact from "paid a long time ago" and the screen says so.  * @scope now
+ */
 export async function listVendorsWithDues(
   restaurantId: string,
   filter: 'owed' | 'settled' | 'all' = 'owed',
@@ -175,6 +177,7 @@ export async function listVendors(
     order by v.status asc, v.code asc`
 }
 
+/** @scope now */
 export async function getVendorDetail(restaurantId: string, id: string): Promise<VendorDetail | null> {
   const rows = await tsql<VendorDetail[]>`
     select v.id, v.code, v.name, v.primary_category, c.name as category_name,

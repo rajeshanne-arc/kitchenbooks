@@ -126,6 +126,7 @@ const INDENT_SELECT = `
          (select count(*)::int from indent_lines l where l.indent_id = i.id) as line_count
   from indents i join sections s on s.id = i.section_id`
 
+/** @scope not-a-figure */
 export async function listIndents(restaurantId: string, limit = 30): Promise<IndentRow[]> {
   return tsql<IndentRow[]>`
     ${sql.unsafe(INDENT_SELECT)}
@@ -244,6 +245,7 @@ export async function getTodaysProductions(restaurantId: string, sectionId: stri
  * re-filed to correct it, and a superseded one must not make a gap disappear.
  * A section with no closing at all counts as closed = 0, which is the honest
  * answer: nothing has accounted for it yet.
+  * @scope now
  */
 export async function getUnclosedDishes(restaurantId: string, date: string): Promise<UnclosedDishRow[]> {
   return tsql<UnclosedDishRow[]>`
@@ -374,7 +376,8 @@ export async function getClosingLines(closingId: string): Promise<ClosingLineRow
 
 /** One day of kitchen truth per section: issued vs produced vs wasted vs
  * closed. Sums run over ALL rows (reversals included) so voids net out;
- * closed comes from kitchen_closing_current — null means not closed. */
+ * closed comes from kitchen_closing_current — null means not closed.  * @scope now
+ */
 export async function getKitchenDay(restaurantId: string, date: string): Promise<KitchenDayRow[]> {
   return tsql<KitchenDayRow[]>`
     select s.id as section_id, s.code as section_code, s.name as section_name,
@@ -401,7 +404,8 @@ export async function getKitchenDay(restaurantId: string, date: string): Promise
     order by s.sort_order asc`
 }
 
-/** Kitchen wastage by reason for one month — reversals net out in the sum. */
+/** Kitchen wastage by reason for one month — reversals net out in the sum.  * @scope period
+ */
 export async function getWasteByReason(restaurantId: string, monthStart: string): Promise<WasteByReasonRow[]> {
   return tsql<WasteByReasonRow[]>`
     select reason,
@@ -417,7 +421,8 @@ export async function getWasteByReason(restaurantId: string, monthStart: string)
 
 /** Food cost for one month. Sections with no issues that month have no
  * section_consumption row and therefore no view row — they are listed with
- * nulls so the page can say "no issues this month" instead of hiding them. */
+ * nulls so the page can say "no issues this month" instead of hiding them.  * @scope period
+ */
 export async function getFoodCost(restaurantId: string, monthStart: string): Promise<FoodCostRow[]> {
   return tsql<FoodCostRow[]>`
     select s.code as section_code, s.name as section_name,

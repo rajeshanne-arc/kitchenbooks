@@ -13,6 +13,7 @@
 // "diagnostics: 0" panel is a thing to read and dismiss every morning.
 
 import { getBooksCompleteness } from '@/server/accountant-queries'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 import Honesty, { type HonestyLevel } from '@/components/Honesty'
 import { cardCls, sectionHeadCls } from '@/components/ui'
 
@@ -69,6 +70,17 @@ export default async function GroupDiagnostics({
         <h2 className={sectionHeadCls}>What the books are missing from you</h2>
         <span className="font-mono text-[10px] text-stone-400">books_completeness</span>
       </div>
+      {/* ONE COMPONENT, ONE SENTENCE, THREE MOUNTS. This panel renders on the
+          kitchen, sales and store dashboards, all of which carry a period
+          control — and books_completeness counts the whole book, so "3 days
+          with sales and no cash close" read as the chosen dates is a finding
+          about the wrong month. Putting the line here rather than on each page
+          is the StockView rule: one definition, every mount inherits it. */}
+      <OutsidePeriod
+        basis="all-time"
+        what="Everything still missing from the books, counted over all of them — the dates above do not narrow this list."
+        className="mt-1"
+      />
       <ul className="mt-2 space-y-2">
         {mine.map((r) => {
           const e = extra[r.what]

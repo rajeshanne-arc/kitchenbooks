@@ -27,6 +27,7 @@ import ConsumptionByDept from '@/components/dashboard/ConsumptionByDept'
 import GroupDiagnostics from '@/components/dashboard/Diagnostics'
 import Unassessed, { unassessedToneCls } from '@/components/dashboard/Unassessed'
 import { businessToday } from '@/server/business-day'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 
 export const dynamic = 'force-dynamic'
 
@@ -177,6 +178,18 @@ export default async function KitchenDashboardPage({
             <h2 className={sectionHeadCls}>Today per section</h2>
             <span className="text-xs text-stone-400">issued · produced · wasted · closed</span>
           </div>
+          {/* "Today" IS IN THE HEADING, AND A HEADING IS NOT AN ANSWER. The
+              reader's question under a date range is what this would be for
+              their dates, and the heading only declines to be narrowed. This
+              card, what was made and not closed, and the live dish costs below
+              are all fixed-in-time — one sentence covers all three, because
+              the basis is the same and five copies is how a vocabulary
+              fragments. */}
+          <OutsidePeriod
+            basis="now"
+            what="Today's issues, batches and closings, and dish costs as they stand — the dates above scope the month's figures, not these."
+            className="mt-1"
+          />
           {!closings.assessable ? (
             <>
               <p className="mt-1.5 text-sm text-stone-600">{closings.why}</p>

@@ -47,7 +47,8 @@ export async function getQuery(restaurantId: string, id: string): Promise<QueryR
 
 /** What THIS role is being asked. Managers and owners also see what they
  *  are covering for: a question nobody can answer is a question that never
- *  gets answered, and the loop stalls on the one person who is on leave. */
+ *  gets answered, and the loop stalls on the one person who is on leave.  * @scope not-a-figure
+ */
 export async function listQueriesForRole(restaurantId: string, role: Role): Promise<QueryRow[]> {
   const roles: Role[] = role === 'owner' || role === 'manager' ? [role, 'manager', 'owner'] : [role]
   return tsql<QueryRow[]>`
@@ -68,7 +69,8 @@ export async function countOpenQueriesForRole(restaurantId: string, role: Role):
 }
 
 /** books_completeness, verbatim. The view decides what is worth saying and
- *  how loudly; this page never invents a severity of its own. */
+ *  how loudly; this page never invents a severity of its own.  * @scope all-time
+ */
 export async function getBooksCompleteness(restaurantId: string): Promise<BooksCompletenessRow[]> {
   return tsql<BooksCompletenessRow[]>`
     select severity, what, n::int as n

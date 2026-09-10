@@ -27,6 +27,7 @@ const LADDER_SELECT = `
           where dc.restaurant_id = l.restaurant_id and dc.close_date = l.close_date) as filings
   from day_close_ladder l`
 
+/** @scope period */
 export async function getLadder(
   restaurantId: string,
   limit = 45,
@@ -146,6 +147,7 @@ export async function getClosePrefill(
   }
 }
 
+/** @scope now */
 export async function getOwnersOwed(restaurantId: string): Promise<OwnerOwedRow[]> {
   return tsql<OwnerOwedRow[]>`
     select person,
@@ -193,6 +195,7 @@ export async function getVoucher(restaurantId: string, id: string): Promise<Vouc
   return rows[0] ?? null
 }
 
+/** @scope period */
 export async function listVouchers(
   restaurantId: string,
   limit = 60,
@@ -219,6 +222,7 @@ export async function getOtherIncome(restaurantId: string, id: string): Promise<
   return rows[0] ?? null
 }
 
+/** @scope period */
 export async function listOtherIncome(
   restaurantId: string,
   limit = 60,

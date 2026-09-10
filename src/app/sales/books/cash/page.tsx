@@ -1,6 +1,7 @@
 import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import { businessToday } from '@/server/business-day'
 import PeriodControl from '@/components/dashboard/PeriodControl'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getLadder, getOwnersOwed, listOtherIncome, listVouchers } from '@/server/cash-queries'
@@ -105,12 +106,18 @@ export default async function BooksCashPage({
       <div className={cardCls}>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className={sectionHeadCls}>Owners owed</h2>
-          {/* IT VISIBLY IGNORES THE CONTROL ABOVE IT, and the label is what
-              makes that legible rather than looking like a bug. Same words as
-              the owner dashboard's Outstanding card. */}
-          <span className="font-mono text-[10px] text-stone-400">as of today · owners_owed</span>
           <span className="text-xs text-stone-400">one voucher log, netted · owners_owed</span>
         </div>
+        {/* IT VISIBLY IGNORES THE CONTROL ABOVE IT, and saying so is what makes
+            that legible rather than looking like a bug. This said "as of
+            today" in its own hand-written span, beside a SECOND meta span
+            saying something else — the shared component now carries it, so the
+            page speaks one vocabulary and the duplicate label is gone. */}
+        <OutsidePeriod
+          basis="now"
+          what="What owners are still out of pocket, netted across every voucher — a balance, so the dates above do not narrow it."
+          className="mt-1"
+        />
         {owners.length === 0 ? (
           <p className="mt-3 text-sm text-stone-500">
             No owner has paid from pocket yet. When one does, the debt appears here; reimburse it with a cashier

@@ -236,6 +236,7 @@ const MarksSchema = z.object({
     .max(200),
 })
 
+/** @scope not-a-figure */
 export async function saveAttendance(raw: {
   date: string
   marks: { staffId: string; status: AttendanceStatus; extraHours: string }[]

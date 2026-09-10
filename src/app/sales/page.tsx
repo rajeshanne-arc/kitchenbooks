@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getSalesSeries, getYesterday, getUnmappedSummary, getMissingCloses } from '@/server/dashboard-queries'
-import { getMappingCoverage, getPaymentSplit, getSalesByHour, getSalesDay, getSalesDays } from '@/server/sales-queries'
+import { anyDayFetched, getMappingCoverage, getPaymentSplit, getSalesByHour, getSalesDay } from '@/server/sales-queries'
 import { getGstServiceByDay } from '@/server/reports-queries'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -60,7 +60,7 @@ export default async function SalesDashboard({
     getGstServiceByDay(restaurant.id, period.from, period.to),
     // one row is all this asks: has a POS day EVER been fetched. The mapping
     // queue is all-time, so its precondition has to be too.
-    getSalesDays(restaurant.id, 1),
+    anyDayFetched(restaurant.id),
     getMappingCoverage(restaurant.id),
     getSalesByHour(restaurant.id, period.from, period.to),
     getPaymentSplit(restaurant.id, period.from, period.to),
@@ -114,7 +114,7 @@ export default async function SalesDashboard({
   // empty queue and read as an all-clear on a restaurant that has never
   // fetched a day.
   const mapping = requires(
-    everFetched.length > 0,
+    everFetched,
     unmapped,
     'nothing ever sold',
     // says what was CHECKED, not what was guessed: sales_by_day carries a row
@@ -141,6 +141,13 @@ export default async function SalesDashboard({
           orders={todayRow?.orders ?? 0}
           revenue={todayRow === null ? null : todayRow.revenue}
           lastFetchedAt={todayRow?.last_fetched_at ?? null}
+        />
+        {/* The comment above already said "period-independent"; it said it to
+            the source. This says it to the cashier. */}
+        <OutsidePeriod
+          basis="now"
+          what="Today so far, and yesterday beside it — both fixed days, so the dates above scope everything below this card and nothing in it."
+          className="mt-2"
         />
       </section>
 

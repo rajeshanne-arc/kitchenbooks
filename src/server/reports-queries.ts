@@ -12,7 +12,8 @@ import type {
 
 /** GST and service charge by day. Rajesh reconciles the effective rate
  *  against the expected 5% — his sheet runs ~4.9% — so effective_gst_pct is
- *  the column the report exists for. */
+ *  the column the report exists for.  * @scope period
+ */
 export async function getGstServiceByDay(
   restaurantId: string,
   from: string,
@@ -31,7 +32,8 @@ export async function getGstServiceByDay(
     order by business_date desc`
 }
 
-/** Who took how much out of the drawer, by day. */
+/** Who took how much out of the drawer, by day.  * @scope period
+ */
 export async function getCashHandovers(
   restaurantId: string,
   from: string,
@@ -69,7 +71,8 @@ export async function getSlowMovingStock(restaurantId: string): Promise<SlowMovi
 // OR by vendor, from the register itself, so both grains keep the bills.
 
 /** The owner's activity log. Nothing new is recorded — entered_by and
- *  created_at already sat on every event table; this only reads them. */
+ *  created_at already sat on every event table; this only reads them.  * @scope period
+ */
 export async function getActivityLog(
   restaurantId: string,
   opts: { from: string; to: string; person?: string; what?: string; limit?: number },
@@ -88,7 +91,8 @@ export async function getActivityLog(
 }
 
 /** The distinct people and event types in the log — the filter options,
- *  taken from what actually happened rather than a hardcoded list. */
+ *  taken from what actually happened rather than a hardcoded list.  * @scope not-a-figure
+ */
 export async function getActivityFacets(
   restaurantId: string,
 ): Promise<{ people: string[]; kinds: string[] }> {

@@ -38,6 +38,22 @@ const DAY_SELECT = `
     where pf.restaurant_id = d.restaurant_id and pf.business_date = d.business_date
   ) f on true`
 
+/**
+ * HAS ANYTHING EVER BEEN FETCHED — a PRECONDITION, not a figure.
+ *
+ * This was `getSalesDays(id, 1)` and its length checked, which made one
+ * function mean two things: a rendered strip of recent days on one page and a
+ * yes/no on another. One function, one meaning — otherwise a scope tag has to
+ * describe both uses and can only be right about one.
+  * @scope not-a-figure
+ */
+export async function anyDayFetched(restaurantId: string): Promise<boolean> {
+  const rows = await tsql<{ one: number }[]>`
+    select 1 as one from sales_by_day where restaurant_id = ${restaurantId} limit 1`
+  return rows.length > 0
+}
+
+/** @scope way-in */
 export async function getSalesDays(restaurantId: string, limit = 45): Promise<SalesDayRow[]> {
   return tsql<SalesDayRow[]>`
     ${sql.unsafe(DAY_SELECT)}
@@ -46,6 +62,7 @@ export async function getSalesDays(restaurantId: string, limit = 45): Promise<Sa
     limit ${limit}`
 }
 
+/** @scope now */
 export async function getSalesDay(restaurantId: string, businessDate: string): Promise<SalesDayRow | null> {
   const rows = await tsql<SalesDayRow[]>`
     ${sql.unsafe(DAY_SELECT)}
@@ -53,7 +70,8 @@ export async function getSalesDay(restaurantId: string, businessDate: string): P
   return rows[0] ?? null
 }
 
-/** Unknown-status orders, loud and listed — never silently banked. */
+/** Unknown-status orders, loud and listed — never silently banked.  * @scope all-time
+ */
 export async function listUnknownOrders(restaurantId: string, limit = 50): Promise<UnknownOrderRow[]> {
   return tsql<UnknownOrderRow[]>`
     select business_date::text as business_date, pos_order_id, status_raw, channel,
@@ -74,6 +92,7 @@ export async function listUnknownOrders(restaurantId: string, limit = 50): Promi
  * `revenue_mapped` comes back NULL rather than 0 when nothing is mapped: it
  * is a sum over no rows, and a sum over no rows is not a zero. The screen
  * keeps that distinction.
+  * @scope all-time
  */
 export async function getMappingCoverage(restaurantId: string): Promise<MappingCoverage | null> {
   const rows = await tsql<MappingCoverage[]>`
@@ -89,7 +108,8 @@ export async function getMappingCoverage(restaurantId: string): Promise<MappingC
 }
 
 /** Sales by hour of the business day, for the two-service shape. `per_cover`
- *  is NULL where covers is zero — the view already refuses that division. */
+ *  is NULL where covers is zero — the view already refuses that division.  * @scope period
+ */
 export async function getSalesByHour(
   restaurantId: string,
   from: string,
@@ -110,7 +130,8 @@ export async function getSalesByHour(
 
 /** The payment-mode split. Petpooja's own dashboard lumps three quarters of
  *  a day into "Other"; we hold every mode separately, so this is a genuine
- *  advantage over the POS screen and costs nothing to show. */
+ *  advantage over the POS screen and costs nothing to show.  * @scope period
+ */
 export async function getPaymentSplit(
   restaurantId: string,
   from: string,
@@ -184,6 +205,7 @@ export async function listItemOptions(restaurantId: string): Promise<ItemOption[
     order by (ic.issue_cost is null) asc, i.category asc, i.name asc`
 }
 
+/** @scope all-time */
 export async function countUnmapped(restaurantId: string): Promise<number> {
   const rows = await tsql<{ n: number }[]>`
     select count(*)::int as n from unmapped_pos_items where restaurant_id = ${restaurantId}`
@@ -238,7 +260,8 @@ export async function listDishOptions(restaurantId: string): Promise<DishOption[
 }
 
 /** Qty sold per recipe for one month, from mapped revenue lines of the
- * latest fetches. */
+ * latest fetches.  * @scope period
+ */
 export async function getQtySold(restaurantId: string, monthStart: string): Promise<QtySoldRow[]> {
   return tsql<QtySoldRow[]>`
     select m.recipe_id,
@@ -264,6 +287,7 @@ export async function getQtySold(restaurantId: string, monthStart: string): Prom
  *
  * Revenue only: cancelled and complimentary orders are out of the money by the
  * same whitelist every other sales figure uses.
+  * @scope period
  */
 export async function getSalesByItem(
   restaurantId: string,

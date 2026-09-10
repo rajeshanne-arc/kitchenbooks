@@ -44,6 +44,7 @@ export const DEPT_CODE = /^[A-Za-z]{2,4}$/
  * The one `sections` read the page hangs off — and the only place code → id is
  * resolved. `dishes` and `staff` are the header's counts and come from here so
  * the header needs no second trip.
+  * @scope not-a-figure
  */
 export async function getDepartment(
   restaurantId: string,
@@ -73,6 +74,7 @@ export async function getDepartment(
  * `sales 0, labour 0, margin −(consumption)` — which on a page titled after a
  * department is an accusation about a named team rather than a measurement.
  * The caller checks each leg against its own source before showing any of it.
+  * @scope period
  */
 export async function getDepartmentByCode(
   restaurantId: string,
@@ -159,6 +161,7 @@ export async function getDepartmentByCode(
  * so the parent state to filter on is "is this the winning filing", which is
  * what `kitchen_closing_current` already answers. Joining plain
  * `kitchen_closings` would count every superseded night.
+  * @scope period
  */
 export async function getDepartmentById(
   restaurantId: string,
@@ -262,6 +265,7 @@ export async function getDepartmentById(
  * fetched". Each leg is therefore checked against its OWN source, and the card
  * goes unassessable per leg rather than as a whole — consumption can be real
  * while sales and labour are not, which is exactly the live state today.
+  * @scope period
  */
 export async function getDepartmentEvidence(
   restaurantId: string,

@@ -9072,6 +9072,153 @@ async function run() {
     console.log(`      ${hrefs.length} tabs · ${controls} take a date range · ${stated} say why they cannot (${tally})`)
   })
 
+  /* ── a figure that does not move says so ───────────────────────────── */
+  console.log('\nevery figure under a period control answers for it, or says why it cannot')
+
+  await check('every non-period basis on a period-control page is said on screen', async () => {
+    // THE QUESTION WAS "SHAPE OR REGISTRY", AND THE ANSWER IS NEITHER.
+    //
+    // A pure shape detector — page mounts PeriodControl, calls a query whose
+    // signature takes no period — fires 51 times for 17 real findings, and it
+    // is WRONG rather than merely noisy: getFoodCost(monthStart) IS
+    // period-scoped in a form no signature can show. A registry of exemptions
+    // rots, because nothing forces an entry.
+    //
+    // So: DECLARE AT THE POINT OF DEFINITION AND CROSS-CHECK AGAINST THE
+    // SHAPE. Two weak signals that must agree are stronger than either alone —
+    // the same construction as the code-sequence gate asserting max-over-all
+    // and max-over-active still differ.
+    //
+    // PER BASIS, NOT PER PAGE. A page with eight figures and one sentence no
+    // longer passes on presence-somewhere, which was the AsItStands
+    // two-bucket fault exactly.
+    const { readFileSync, existsSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const q = `${d}/${e.name}`
+        if (e.isDirectory()) walk(q, out)
+        else if (/\.tsx?$/.test(q)) out.push(q)
+      }
+      return out
+    }
+
+    const comp = readFileSync('src/components/dashboard/OutsidePeriod.tsx', 'utf8')
+    const lead = comp.match(/const LEAD = \{([\s\S]*?)\} as const/)
+    assert.ok(lead !== null, 'OutsidePeriod no longer declares its bases as LEAD')
+    const BASES = [...lead[1].matchAll(/^\s*'?([\w-]+)'?:/gm)].map((m) => m[1])
+    assert.ok(BASES.length >= 3, `OutsidePeriod defines ${BASES.length} bases — nothing to tell apart`)
+    const VALID = new Set([...BASES, 'period', 'not-a-figure'])
+
+    // every exported server function, its params, and the @scope in the block
+    // that PRECEDES IT — sliced from the end of the previous export, so a
+    // function with no tag cannot borrow its neighbour's.
+    const scope = new Map<string, { params: string; tag: string | null }>()
+    for (const file of walk('src/server')) {
+      if (!file.endsWith('.ts')) continue
+      const src = readFileSync(file, 'utf8')
+      const fns = [...src.matchAll(/^export (?:async )?function (\w+)\(([\s\S]{0,400}?)\)\s*(?::|\{)/gm)]
+      fns.forEach((m, i) => {
+        const prevEnd = i === 0 ? 0 : (fns[i - 1].index ?? 0) + fns[i - 1][0].length
+        const between = src.slice(prevEnd, m.index ?? 0)
+        const tag = [...between.matchAll(/@scope ([\w-]+)/g)].pop()
+        scope.set(m[1], { params: m[2].replace(/\s+/g, ' '), tag: tag ? tag[1] : null })
+      })
+    }
+    assert.ok(scope.size > 100, `only ${scope.size} server functions found — the walk moved`)
+
+    // A signature "shows a period" when it names one. monthStart counts: it is
+    // period.reportMonth by the time it arrives, which is exactly the case the
+    // shape detector alone could not see.
+    const SHOWS_PERIOD = /\b(from|to|months|monthStart|period|reportMonth)\b/
+
+    // AN EXEMPTION MUST EXPIRE BY ITSELF. Not a name on a list: a name plus the
+    // CONDITION that makes it exempt, re-evaluated every run and printed.
+    const EXEMPT: Record<string, { why: string; stillTrue: (src: string) => boolean }> = {
+      'src/app/accounts/parties/[id]/page.tsx': {
+        why: 'says it in better bespoke prose — the statement form this rule was DERIVED from, whose first clause is about the period, so a "now" lead would misread it',
+        stillTrue: (src) => src.includes('stops at') && src.includes('balance today'),
+      },
+    }
+
+    const pages = walk('src/app').filter((f) => f.endsWith('.tsx') && readFileSync(f, 'utf8').includes('<PeriodControl'))
+    assert.ok(pages.length >= 20, `only ${pages.length} period-control pages found`)
+
+    const untagged: string[] = []
+    const disagreed: string[] = []
+    const unsaid: string[] = []
+    const exercised = new Map<string, number>(BASES.map((b) => [b, 0]))
+    let exemptions = 0
+
+    for (const page of pages) {
+      let bundle = readFileSync(page, 'utf8')
+      // one level of local components, because a page may delegate its whole
+      // body to a shared view (SectionsView) that holds both the queries and
+      // the sentence.
+      for (const m of bundle.matchAll(/from '@\/components\/([\w/[\]-]+)'/g)) {
+        for (const ext of ['.tsx', '.ts']) {
+          const f = `src/components/${m[1]}${ext}`
+          if (existsSync(f)) { bundle += readFileSync(f, 'utf8'); break }
+        }
+      }
+
+      const imported = new Set<string>()
+      for (const m of bundle.matchAll(/import \{([^}]*)\} from '@\/server\/[\w-]+'/g)) {
+        for (const raw of m[1].split(',')) {
+          const name = raw.trim()
+          if (scope.has(name)) imported.add(name)
+        }
+      }
+
+      const need = new Set<string>()
+      for (const name of imported) {
+        const info = scope.get(name)!
+        if (info.tag === null || !VALID.has(info.tag)) {
+          untagged.push(`${name} (${info.tag ?? 'no @scope'}) — reached by ${page}`)
+          continue
+        }
+        // THE CROSS-CHECK. Neither signal is usable alone; disagreement is the
+        // failure, and it is what makes a tag an assertion rather than a label.
+        const shows = SHOWS_PERIOD.test(info.params)
+        if (info.tag === 'period' && !shows) {
+          disagreed.push(`${name} claims @scope period and its signature names none`)
+        }
+        if (BASES.includes(info.tag) && shows) {
+          disagreed.push(`${name} claims @scope ${info.tag} and its signature names a period`)
+        }
+        if (BASES.includes(info.tag)) need.add(info.tag)
+      }
+
+      const ex = EXEMPT[page]
+      if (ex !== undefined && ex.stillTrue(readFileSync(page, 'utf8'))) {
+        exemptions++
+        console.log(`      exempt · ${page} — ${ex.why}`)
+        for (const b of need) exercised.set(b, exercised.get(b)! + 1)
+        continue
+      }
+
+      for (const b of need) {
+        if (bundle.includes(`basis="${b}"`)) exercised.set(b, exercised.get(b)! + 1)
+        else unsaid.push(`${page} renders a "${b}" figure and never says so`)
+      }
+    }
+
+    assert.deepEqual(untagged, [], 'these server functions reach a period-control page with no usable @scope')
+    // A DISAGREEMENT IS A PROPERTY OF THE FUNCTION, not of each page that
+    // reaches it, so it is named once. `untagged` is deliberately NOT deduped:
+    // there, which page reaches an untagged query is the useful half.
+    assert.deepEqual([...new Set(disagreed)], [], 'these @scope tags disagree with their own signatures')
+    assert.deepEqual(unsaid, [], 'these pages carry a figure the period cannot move and do not say so')
+
+    // VACUITY. A basis nothing exercises is a basis this gate never checked.
+    for (const [b, n] of exercised) {
+      assert.ok(n > 0, `no period-control page exercises the "${b}" basis — untested`)
+    }
+    const tally = [...exercised].map(([b, n]) => `${n} ${b}`).join(' · ')
+    console.log(
+      `      ${pages.length} pages · ${scope.size} server fns scoped · pages needing a sentence: ${tally} · ${exemptions} exempt`,
+    )
+  })
+
   /* ── comparison baselines ──────────────────────────────────────────── */
   console.log('\nthe baseline window, by value')
 

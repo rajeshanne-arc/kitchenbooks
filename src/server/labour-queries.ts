@@ -73,6 +73,7 @@ export async function listActiveStaff(restaurantId: string): Promise<Pick<StaffR
  * The day sheet: every active staff member in roster order with their
  * EFFECTIVE mark for the date (attendance_current) and the full history of
  * rows for that date — corrections are visible, never hidden.
+  * @scope not-a-figure
  */
 export async function getDaySheet(restaurantId: string, date: string): Promise<DaySheetRow[]> {
   return tsql<DaySheetRow[]>`
@@ -95,7 +96,8 @@ export async function getDaySheet(restaurantId: string, date: string): Promise<D
 
 /** Per-section costs for one month, honest zeros for quiet sections. Sales
  * and margin come straight from section_costs (fed by mapped POS lines);
- * the '—' row carries both unassigned labour and unmapped sales — loud. */
+ * the '—' row carries both unassigned labour and unmapped sales — loud.  * @scope period
+ */
 export async function getSectionCosts(restaurantId: string, monthStart: string): Promise<SectionCostRow[]> {
   const rows = await tsql<SectionCostRow[]>`
     select s.code as section_code, s.name as section_name, s.dept_group,
@@ -138,6 +140,7 @@ export async function getSectionCosts(restaurantId: string, monthStart: string):
  * `absent_pct` is recomputed over the period's own totals rather than averaged
  * across months — averaging monthly percentages weights a three-day month like
  * a thirty-day one.
+  * @scope period
  */
 export async function getAttendanceOverPeriod(
   restaurantId: string,

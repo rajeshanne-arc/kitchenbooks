@@ -22,6 +22,7 @@ import { fmtDate } from '@/lib/format'
 import { requires } from '@/lib/precondition'
 import { assessVariance, COVERAGE_FLOOR } from '@/lib/variance'
 import PeriodControl from '@/components/dashboard/PeriodControl'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 import PartialMonths from '@/components/dashboard/PartialMonths'
 import Unassessed from '@/components/dashboard/Unassessed'
 import VariancePreconditions from '@/components/dashboard/VariancePreconditions'
@@ -815,6 +816,15 @@ export default async function DepartmentPage({
 
       {/* ── 7 ───────────────────────────────────────────────────────────── */}
       <Card title="Dishes" source="dish_costs">
+        {/* COSTS ARE LIVE, NEVER STORED — that has been the rule since phase 4,
+            and its consequence for this page is that no date range can move
+            them. Said here rather than only in the phase-4 note, because the
+            reader is looking at a period control. */}
+        <OutsidePeriod
+          basis="now"
+          what="Dish costs are worked out live from today's rates, so the dates above cannot move them. The month's figures are in the cards higher up."
+          className="mb-2"
+        />
         {!dept.codes_dishes ? (
           // STRUCTURAL, NOT MISSING. codes_dishes is false for every operational
           // unit and for Staff Food and KST too — no dish can EVER carry this

@@ -9041,3 +9041,111 @@ produced fourteen red lines and no vocabulary to clear them with — which is th
 state that teaches people to skip a gate, exactly as the correct, enabled,
 firing `react-hooks/static-components` rule was skipped for months by not being
 in the chain. Build the vocabulary, fix the clusters, then gate what remains.
+
+## SHAPE OR REGISTRY WAS THE WRONG QUESTION — the third option, and it generalises
+
+The gate for the rule above was specified as a choice: detect the SHAPE (a page
+mounting the period control while calling a query whose signature takes no
+period), or read a REGISTRY of exemptions. **Neither works, and the reasons are
+different in a way worth keeping.**
+
+**The shape detector is WRONG, not merely noisy.** Measured before designing
+anything: it fires **51 times across the 24 period-control screens against 17
+real findings**, and the false positives come in three kinds —
+
+| | examples | |
+|---|---|---|
+| not figures at all | `getRestaurant`, `getList`, `listMoneyAccounts`, `getActivityFacets` | ~19 |
+| **period-scoped in a form no signature can show** | `getFoodCost(monthStart)`, `getQtySold`, `getWasteByReason` | 5 |
+| genuine | | 17 |
+
+The middle row is what kills it. **`monthStart` IS the period** — it is
+`period.reportMonth` by the time it arrives — so the detector is wrong about
+figures that DO move, not just noisy about ones that don't. No smarter regex
+fixes that, because the information is not in the signature.
+
+**A registry rots because nothing forces an entry.** This file has paid for that
+three times: the retired-URL list at 51 against 57, `DOC_TYPES` at eight against
+nine, a gate pinning `"Accounts → Money"` after the relabel.
+
+### THE THIRD OPTION: declare at the point of definition, cross-check against the shape
+
+`@scope period | now | all-time | way-in | not-a-figure` sits on the query, in
+the doc block, beside the SQL whose truth it asserts. Then:
+
+- **an untagged query reaching a period-control page FAILS.** That is demanding
+  presence, not listing exemptions — a registry rots because nothing forces an
+  entry; this forces one at the point of definition, and a new query cannot
+  reach such a page without choosing.
+- **the tag and the signature must AGREE.** `@scope period` requires a period
+  parameter; a basis forbids one. Neither signal is usable alone —
+
+> **TWO WEAK SIGNALS THAT MUST AGREE ARE STRONGER THAN EITHER ALONE.**
+
+Same construction as the code-sequence gate asserting that max-over-all-rows and
+max-over-active-rows still DISAGREE: one number proves nothing, two that must
+stand in a fixed relation prove the rule. The declaration carries the intent,
+the signature carries the mechanism, and **disagreement is the failure.**
+
+**PER BASIS, NOT PER PAGE**, and this is the half that matters most: for each
+distinct non-period basis a page's queries carry, that page must mount an
+`<OutsidePeriod>` with that basis. A page with eight figures and one sentence no
+longer passes on presence-somewhere — **which was the `AsItStands` two-bucket
+fault exactly**, one level out. One sentence still covers three `now` tiles,
+because the basis is what is counted, not the tile.
+
+Live: **24 pages · 468 server functions scoped · 7 pages owe a `now` sentence, 7
+an `all-time`, 3 a `way-in` · 1 exempt.**
+
+### The requirement is met BY THE MOUNT — there is no second half to build
+
+"Force the reasoning out of the comment" was never a comment scanner, and
+nobody should come back looking for the missing assertion. The recent-days strip
+failed because its reasoning sat in a comment **and not on screen**; a required
+mount per basis renders the sentence or fails. **Demanding presence IS the
+forcing** — a scanner would be detecting absence, which is the weaker thing and
+the fuzzier one, and a fuzzy gate is one people learn to ignore.
+
+### THE HONEST LIMIT, accepted in writing rather than chased
+
+**A tag can be wrong in the one direction the cross-check cannot see: a page
+deriving an ALL-TIME figure from period-scoped rows.** The query is honestly
+tagged `period`, the signature agrees, and the figure on screen does not move.
+Nothing here catches it.
+
+That is a REVIEW risk, not a gate risk, and the right response is to say so
+rather than build something fuzzy to chase it. The inverse — a page deriving a
+period figure from all-time rows — is caught by accident and correctly: the
+employee profile counts its own payroll rows by overlap, the query stays
+`all-time`, and the page carries an `all-time` sentence, which is the true
+thing to say.
+
+**Two seeded values, stated so nobody reads them as judgements.** The 45
+`@scope period` tags were seeded FROM the signature, so on day one the
+cross-check is vacuous for them and becomes live the moment a signature changes.
+The judgement is in the other 46, which were classified by hand.
+
+### One exemption, and it expires by itself
+
+`/accounts/parties/<id>` says it in better bespoke prose — it is the statement
+form this whole rule was DERIVED from, and its first clause is about the period,
+so a `now` lead would misread it. **The exemption is a name PLUS the condition
+that makes it exempt**, re-evaluated every run and printed: the page must still
+contain "stops at" and "balance today". Delete that prose and the exemption
+evaporates on the next run. A name on a list is forever; a condition is checked.
+
+### What building it changed, which a survey by hand had missed
+
+The gate bundles one level of imported components, so it sees queries a
+page-only sweep does not — and it found **18 on its first run**, none of them in
+the hand survey: eight server ACTIONS, the queries panel, and
+`getBooksCompleteness`, which is a genuine all-time finding list rendered on
+three dashboards. Its sentence went INSIDE `Diagnostics`, once, so all three
+mounts inherit it — the `StockView` rule.
+
+It also forced `getSalesDays` to be split. It meant two things — a rendered
+strip of recent days on one page, a yes/no precondition on another — and **a
+scope tag has to describe both uses and can only be right about one.** Now
+`anyDayFetched` answers the precondition. *One function, one meaning* is
+ordinarily a style preference; under a per-definition declaration it becomes
+checkable.

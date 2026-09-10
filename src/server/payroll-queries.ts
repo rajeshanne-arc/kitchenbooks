@@ -200,7 +200,8 @@ export async function getOutstandingAdvances(restaurantId: string): Promise<Adva
 /** ONE person's identifiers, for the owner's half of the staff form. Read
  *  separately from getStaffDetail on purpose: StaffRow crosses the wire to a
  *  MANAGER on the same screen, and a field they must not hold must not be in
- *  the payload at all — not merely unrendered. */
+ *  the payload at all — not merely unrendered.  * @scope not-a-figure
+ */
 export async function getStaffIdentity(restaurantId: string, staffId: string): Promise<StaffIdentity | null> {
   const rows = await tsql<StaffIdentity[]>`
     select s.id, s.code, s.name, s.designation, sec.name as section_name,

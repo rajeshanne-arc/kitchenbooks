@@ -19,6 +19,7 @@ export type YesterdayCard = {
   difference: string | null // day_close_ladder; null = not closed
 }
 
+/** @scope now */
 export async function getYesterday(restaurantId: string): Promise<YesterdayCard> {
   const date = await businessYesterday()
   const sales = await getSalesDay(restaurantId, date)
@@ -34,6 +35,7 @@ export type OwedCard = {
   owners: { person: string; balance: string }[]
 }
 
+/** @scope now */
 export async function getOwed(restaurantId: string): Promise<OwedCard> {
   const vendors = await tsql<{ name: string; balance: string }[]>`
     select v.name, d.balance::text as balance
@@ -62,6 +64,7 @@ export type UnmappedCard = { items: number; revenue: string }
 // reassure about a month it had no fetch for and still ALARM about rows from
 // outside it. Viewing "last month" listed July's unclosed days. Shrugging
 // about the wrong period is defensible; alarming about it is not.
+/** @scope period */
 export async function getUnmappedSummary(
   restaurantId: string,
   from: string,
@@ -128,6 +131,7 @@ export async function getWasteMonth(restaurantId: string, monthStart: string): P
 
 export type StockAlarmRow = { code: string; name: string; on_hand_qty: string; purchase_unit: string }
 
+/** @scope now */
 export async function getStockAlarms(restaurantId: string): Promise<StockAlarmRow[]> {
   return tsql<StockAlarmRow[]>`
     select code, name, on_hand_qty::text as on_hand_qty, purchase_unit
@@ -136,6 +140,7 @@ export async function getStockAlarms(restaurantId: string): Promise<StockAlarmRo
     order by on_hand_qty asc`
 }
 
+/** @scope period */
 export async function getUnknownStatusCount(
   restaurantId: string,
   from: string,
@@ -148,6 +153,7 @@ export async function getUnknownStatusCount(
   return row?.n ?? 0
 }
 
+/** @scope period */
 export async function getMissingCloses(
   restaurantId: string,
   from: string,
@@ -170,7 +176,8 @@ export async function getMissingCloses(
 
 /** Daily revenue across the period — the sales line. Days with no fetch are
  * simply absent: a missing day is not a zero-rupee day, and drawing it as
- * one would invent a collapse that did not happen. */
+ * one would invent a collapse that did not happen.  * @scope period
+ */
 export async function getSalesSeries(
   restaurantId: string,
   from: string,
@@ -192,7 +199,8 @@ export async function getSalesSeries(
  * deducted. Both are stated — the card never picks one and calls it truth.
  *
  * Rows with nothing to compare (billed or claimed still null) are counted
- * separately rather than silently treated as zero. */
+ * separately rather than silently treated as zero.  * @scope period
+ */
 export async function getSettlementGap(
   restaurantId: string,
   from: string,
@@ -227,7 +235,8 @@ export async function getSettlementGap(
 }
 
 /** Store + kitchen waste across the period, by reason. Reversal pairs net
- * themselves out of the sums. */
+ * themselves out of the sums.  * @scope period
+ */
 export async function getWasteRange(restaurantId: string, from: string, to: string): Promise<WasteCard> {
   const [store] = await tsql<{ v: string }[]>`
     select coalesce(sum(value), 0)::text as v from wastage
@@ -253,7 +262,8 @@ export async function getWasteRange(restaurantId: string, from: string, to: stri
 
 /** section_costs summed over every month the period touches. Sales, cost and
  * margin are additive, so summing them is arithmetic on what the view already
- * stated — not a second implementation of its logic. */
+ * stated — not a second implementation of its logic.  * @scope period
+ */
 export async function getSectionCostsRange(
   restaurantId: string,
   months: string[],
@@ -277,7 +287,8 @@ export async function getSectionCostsRange(
 
 /** What has actually been entered in the period. This is what makes an empty
  * dashboard honest: with two bills and no sales the page must say so plainly
- * rather than draw nine zeroes and imply a catastrophic month. */
+ * rather than draw nine zeroes and imply a catastrophic month.  * @scope period
+ */
 export async function getEntryPulse(restaurantId: string, from: string, to: string): Promise<EntryPulse> {
   const [row] = await tsql<EntryPulse[]>`
     select
@@ -306,6 +317,7 @@ export type StaffCard = {
   markable: number
 }
 
+/** @scope now */
 export async function getStaffCard(restaurantId: string, today: string): Promise<StaffCard> {
   const [row] = await tsql<StaffCard[]>`
     select

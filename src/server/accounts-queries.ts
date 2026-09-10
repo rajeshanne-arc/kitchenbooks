@@ -10,6 +10,7 @@ import type { AccountBalanceRow, MoneyAccount } from '@/lib/types'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** @scope not-a-figure */
 export async function listMoneyAccounts(
   restaurantId: string,
   includeRetired = false,

@@ -46,7 +46,8 @@ export function isShortSettlement(v: string): v is ShortSettlement {
 /* ── shorts ─────────────────────────────────────────────────────────────── */
 
 /** OPEN FIRST, always. A short nobody chased is a different fact from one
- *  that was credited, and it is the only one still worth money. */
+ *  that was credited, and it is the only one still worth money.  * @scope all-time
+ */
 export async function listShorts(restaurantId: string, limit = 300): Promise<ValuedShort[]> {
   return tsql<ValuedShort[]>`
     select s.id, s.purchase_line_id, pl.purchase_id, p.bill_date::text as bill_date, p.doc_no,
@@ -121,7 +122,8 @@ export type ShortTotals = {
  *  the page would sum `qty_short * rate` AFTER rounding each to paise, and
  *  rounding is not associative — this file has paid for that three times. And
  *  `listShorts` is CAPPED, so counting the rows on screen would silently
- *  undercount the day the cap bites. Both legs are counted over every row. */
+ *  undercount the day the cap bites. Both legs are counted over every row.  * @scope period
+ */
 export async function getShortTotals(
   restaurantId: string,
   period: { from: string; to: string },

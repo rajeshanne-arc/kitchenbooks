@@ -440,6 +440,7 @@ export async function saveStaffFundMovement(raw: StaffFundInput): Promise<StaffF
  *
  * Default: NOT creditable. That is the conservative reading — it treats the
  * tax as spent, which is true until someone confirms it can be reclaimed.
+  * @scope not-a-figure
  */
 export async function setInputTaxCreditable(creditable: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
   try {

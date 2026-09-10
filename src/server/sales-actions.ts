@@ -42,6 +42,7 @@ function assertRealDate(s: string, label: string) {
 
 const FetchSchema = z.object({ date: z.string().regex(DATE_RE) })
 
+/** @scope not-a-figure */
 export async function fetchDay(raw: { date: string }): Promise<FetchDayResult> {
   try {
     const input = FetchSchema.parse(raw)

@@ -30,6 +30,7 @@ import type { VariancePreconditions, VarianceRow, ZeroCostDish } from '@/lib/var
  * The '—' / Unmapped bucket is EXCLUDED here and reported by the preconditions
  * instead: it is not a department, it is the revenue that reached none, and
  * ranking it beside real sections would put a data gap in the league table.
+  * @scope period
  */
 export async function getFoodCostVariance(
   restaurantId: string,
@@ -71,6 +72,7 @@ export async function getFoodCostVariance(
  * Measured on the probe tenant rather than reasoned from the definition: one
  * portion-less dish moved costable_revenue 2000 → 3000 with coverage still
  * 100.0% and theoretical_cost still 300.
+  * @scope period
  */
 export async function getZeroCostDishes(
   restaurantId: string,
@@ -114,6 +116,7 @@ export async function getZeroCostDishes(
  * a mapping is a standing decision, not a monthly one. The other three are
  * scoped to the month being reported, because that is the month whose
  * variance is missing.
+  * @scope period
  */
 export async function getVariancePreconditions(
   restaurantId: string,

@@ -8,6 +8,7 @@ import { resolveTabs, type TabDef, type TabGroup } from '@/lib/tabs'
 import { canAccess, type Role } from '@/lib/roles'
 import type { ListKey, ListOptionRow, ListSuggestionRow } from '@/lib/lists'
 
+/** @scope not-a-figure */
 export async function getSettingValue(restaurantId: string, key: string): Promise<string | null> {
   const rows = await tsql<{ value: string | null }[]>`
     select value from settings where restaurant_id = ${restaurantId} and key = ${key}`
@@ -21,7 +22,8 @@ export async function tabsFor(restaurantId: string, group: TabGroup, role: Role)
   return resolveTabs(group, raw).filter((t) => canAccess(role, t.href))
 }
 
-/** Active values of one managed list, in sort order — what pickers render. */
+/** Active values of one managed list, in sort order — what pickers render.  * @scope not-a-figure
+ */
 export async function getList(restaurantId: string, key: ListKey): Promise<string[]> {
   const rows = await tsql<{ value: string }[]>`
     select value from list_options
