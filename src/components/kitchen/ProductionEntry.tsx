@@ -221,6 +221,22 @@ export default function ProductionEntry({
         <BackdatedCost date={date} what="today's recipe cost" />
       </section>
 
+
+      {/* AN EMPTY CONTROL MUST NAME ITS PRECONDITION. The refill block above
+          renders only when there IS a last, which is correct — and silently,
+          which is not. Built-and-invisible has now cost four rounds of "it is
+          missing" on work that shipped: the accountant role absent from the
+          Users dropdown, extra hours with no write path, the day sheet nothing
+          linked to, and this. A control with nothing to offer should say why
+          it has nothing, to the same standard the cards already meet.
+          Only once a DEPARTMENT is chosen — before that we do not yet know
+          whether there is a last, and guessing would be the same fault. */}
+      {sectionId !== '' && (last === null || last.lines.length === 0) && (
+        <p className="text-sm text-stone-500">
+          <span className="font-medium text-stone-600">Nothing produced here yet.</span> Once a batch is saved for this department, this is where it comes back — the next one opens filled from the last, editable, and saves nothing until you press Save.
+        </p>
+      )}
+
       {last !== null && last.lines.length > 0 && (
         <section className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4">
           <h3 className="text-xs font-medium uppercase tracking-wide text-sky-800">

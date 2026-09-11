@@ -66,6 +66,18 @@ const cleanQty = (raw: string) => {
   return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '')
 }
 
+/**
+ * NO REFILL FROM LAST ON A LOSS FORM, DELIBERATELY.
+ *
+ * Production and closing both offer the previous set for the department,
+ * because a kitchen makes broadly the same batches and holds broadly the same
+ * stock. A loss list is the opposite: refilling it suggests last night's
+ * losses are tonight's EXPECTATION, which is the wrong prompt entirely — it
+ * invites somebody to accept a figure rather than count a bin.
+ *
+ * So the absence here is a decision, not an omission, and it is written down
+ * so the next person reading the three forms side by side does not "fix" it.
+ */
 export default function KitchenWastageForm({
   sections,
   wasteReasons,

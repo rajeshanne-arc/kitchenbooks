@@ -244,6 +244,22 @@ export default function ClosingEntry({
         <BackdatedCost date={date} what="today's cost for each item or batch" />
       </section>
 
+
+      {/* AN EMPTY CONTROL MUST NAME ITS PRECONDITION. The refill block above
+          renders only when there IS a last, which is correct — and silently,
+          which is not. Built-and-invisible has now cost four rounds of "it is
+          missing" on work that shipped: the accountant role absent from the
+          Users dropdown, extra hours with no write path, the day sheet nothing
+          linked to, and this. A control with nothing to offer should say why
+          it has nothing, to the same standard the cards already meet.
+          Only once a DEPARTMENT is chosen — before that we do not yet know
+          whether there is a last, and guessing would be the same fault. */}
+      {sectionId !== '' && (last === null || last.lines.length === 0) && (
+        <p className="text-sm text-stone-500">
+          <span className="font-medium text-stone-600">Nothing closed here yet.</span> Once a closing is filed for this department, this is where last night comes back — as a starting point to check line by line, never as a count.
+        </p>
+      )}
+
       {last !== null && last.lines.length > 0 && (
         <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
           <h3 className="text-xs font-medium uppercase tracking-wide text-amber-900">

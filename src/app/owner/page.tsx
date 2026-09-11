@@ -714,7 +714,21 @@ export default async function DashboardPage({
 
   /* ── food cost against target, for the period's reporting month ──────── */
   {
-    const withPct = foodCost.filter((f) => f.food_cost_pct !== null)
+    // RANKED, WORST FIRST — the card existed and was in ROSTER ORDER, which is
+    // the order a chef knows his kitchens by and the wrong order for a
+    // comparison. This page sorts its CARDS by what is most wrong; a card that
+    // does not sort its own rows is inconsistent with the page it sits on, and
+    // the whole value here is comparative: "Chinese is at 43% against a 35%
+    // target, South Indian is at 31%" is a conversation with a CDP, where the
+    // same four bars in roster order are four facts to scan.
+    //
+    // Sorted HERE and not in the query: getFoodCost has three readers, and the
+    // per-department page and the chef's own books legitimately want the
+    // roster order they navigate by. The ranking is this card's argument.
+    const withPct = foodCost
+      .filter((f) => f.food_cost_pct !== null)
+      .slice()
+      .sort((a, b) => Number(b.food_cost_pct) - Number(a.food_cost_pct))
     const pending = foodCost.filter((f) => f.has_activity && f.consumed_total === null)
     const over = withPct.filter((f) => Number(f.food_cost_pct) > FOOD_COST_TARGET)
     // the view already withholds a percentage until the month has a closing
@@ -902,7 +916,14 @@ export default async function DashboardPage({
     // assessable, and every section beside it with no revenue would still be
     // named as losing money. A section is comparable only where both halves of
     // the subtraction arrived, so the others are named as unmeasured instead.
-    const earning = sections.filter((s) => decimalStringToPaise(s.sales) !== 0)
+    // WORST FIRST, same argument as the food-cost card above: this was roster
+    // order, and the point of a margin comparison is which department is
+    // furthest under. Sorted here rather than in getSectionCostsRange so the
+    // ranking stays the card's argument.
+    const earning = sections
+      .filter((s) => decimalStringToPaise(s.sales) !== 0)
+      .slice()
+      .sort((a, b) => decimalStringToPaise(a.margin) - decimalStringToPaise(b.margin))
     const unearning = sections.filter((s) => decimalStringToPaise(s.sales) === 0)
     const losing = earning.filter((s) => decimalStringToPaise(s.margin) < 0)
     const sentence =

@@ -9226,3 +9226,74 @@ per-figure requirement would fail the very shape this rule prefers. The cost is
 real and is the accepted trade: **the gate cannot tell you that one particular
 figure lacks a sentence, only that a whole basis does.** Deleting the last
 `now` mount on a page fails; deleting the second-to-last does not.
+
+## AN EMPTY CONTROL MUST NAME ITS PRECONDITION
+
+Refill-from-last shipped with the batch forms and Rajesh asked for it twice as
+a missing feature. It was not missing. There is no LAST — zero productions and
+zero closings in the live tenant, verified — so `lastSets` is empty, `last` is
+null, and the block correctly renders nothing.
+
+**Rendering nothing when there is nothing is right. Saying nothing about why is
+not.** This is the FOURTH time built-and-invisible has been reported as absent:
+
+| | what was actually true |
+|---|---|
+| the accountant role "missing" from the Users dropdown | the role existed; the dropdown did not offer it |
+| extra hours | the migration and the read side shipped; there was no write path |
+| the owner day sheet | the page worked; nothing linked to it |
+| refill from last | the control works; it has never had a last to offer |
+
+Three different failures — a surface that was never built, a write path that was
+never built, a door that was never built — and one, this, that is CORRECT and
+merely silent. The rule that covers all four:
+
+> **A control with nothing to offer must say what would give it something.**
+
+It is the standard the honesty cards already meet — a card declares its
+precondition before it reports its finding — applied one level down, to
+controls. The wording says what would fill it: *"Nothing produced here yet. Once
+a batch is saved for this department, this is where it comes back."*
+
+**And only once the department is chosen.** Before that the app does not yet
+know whether there is a last, and asserting there is none would be the same
+fault pointing the other way.
+
+**NOT ON THE LOSS FORMS, and the reason is in the code.** Refilling a loss list
+suggests last night's losses are tonight's expectation, which invites somebody
+to accept a figure instead of counting a bin. The absence there is a decision;
+it is written into `KitchenWastageForm` so the next person reading the three
+forms side by side does not "fix" it.
+
+## THE OWNER'S DEPARTMENT COMPARISON EXISTED — what was missing was the RANKING
+
+The brief asked for a by-department food-cost comparison on the owner dashboard
+as a new hero feature, on the premise that "the owner cannot see the comparison
+anywhere today". **Checked in the source before building: it is already there.**
+`/owner` carries a food-cost card reading `section_food_cost`, drawing
+`TargetBars` against a 35% reference line, naming every department over it —
+and a margin card beside it reading `section_costs`.
+
+What both did was render in **ROSTER ORDER**: `getFoodCost` is `order by
+s.sort_order`, `getSectionCostsRange` orders by dept_group then sort_order. That
+is the order a chef knows his kitchens by, and it is the wrong order for a
+comparison — the worst department does not rise.
+
+> **A page that sorts its CARDS by what is most wrong and does not sort its own
+> ROWS is inconsistent with itself.**
+
+The owner dashboard has ranked by urgency since A-2; `count_variances` is worst
+shortage first; Reorder is most urgent first. These two cards were the exception
+and nobody had noticed, because with four bars in roster order the eye does the
+sorting and the cost is invisible.
+
+So the change is a `sort`, not a feature: worst first on both, **at the card and
+not in the query**. `getFoodCost` has three readers, and the per-department page
+and the chef's own books legitimately want the roster order they navigate by.
+The ranking is the owner card's argument, so it lives with the card.
+
+Fifth instance of **a brief stating a premise being a brief asking whether it
+holds** — after kitchen analytics, `kitchen_wastage.qty`, `saveProduction`, and
+every master list. Every one of the five was a correct rule applied to code that
+already handled it, and three of the five ended with nothing built and something
+learned. This one ended with one line changed instead of a pillar.

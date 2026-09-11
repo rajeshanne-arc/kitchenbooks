@@ -200,57 +200,65 @@ export default async function SalesPage({
           </p>
         ) : (
           <>
-            <div className="mt-2 grid grid-cols-[5.4rem_minmax(0,1fr)_4.4rem_5.6rem] gap-2 border-b border-stone-200 pb-1.5 sm:grid-cols-[6rem_minmax(0,1fr)_4.4rem_5.2rem_5.6rem]">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Date</span>
-              <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Orders · covers</span>
-              <span className="hidden text-right text-[11px] font-medium uppercase tracking-wide text-stone-400 sm:block">
-                Cash
-              </span>
-              <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Flags</span>
-              <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Revenue</span>
+            {/* FIXED TRACKS ARE WHAT BROKE THE SECTIONS TABLE, and Revenue
+                here was the next one due: 5.6rem is about 90px and the biggest
+                day on record, ₹4,63,055.00, needs about 92. A festival day
+                doubles it. A table sizes its columns to content ACROSS rows,
+                which fixed tracks cannot and per-row `max-content` grids
+                cannot either — they would size independently and stop lining
+                up. The number never gives way; the table scrolls instead. */}
+            <div className="mt-2 -mx-1 overflow-x-auto px-1">
+              <table className={dataTableCls}>
+                <thead>
+                  <tr>
+                    <th className={thCls}>Date</th>
+                    <th className={thCls}>Orders · covers</th>
+                    <th className={`${thNumCls} hidden sm:table-cell`}>Cash</th>
+                    <th className={thNumCls}>Flags</th>
+                    <th className={thNumCls}>Revenue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {days.map((d) => (
+                    <tr key={d.business_date}>
+                      <td className={`${tdCls} whitespace-nowrap text-stone-700`}>{fmtDate(d.business_date)}</td>
+                      <td className={`${tdCls} whitespace-nowrap text-stone-600`}>
+                        {d.orders} · {d.covers}
+                        {d.fetch_count > 1 && (
+                          <span className="ml-1.5 text-[11px] text-stone-400">fetched ×{d.fetch_count}</span>
+                        )}
+                      </td>
+                      <td className={`${tdNumCls} hidden text-stone-500 sm:table-cell`}>
+                        {formatMoneyString(d.cash_revenue)}
+                      </td>
+                      <td className={tdCls}>
+                        <span className="flex flex-wrap justify-end gap-1">
+                          {d.comps > 0 && (
+                            <span
+                              title={`${d.comps} comped orders worth ${formatMoneyString(d.comp_value)} — out of money, in orders and covers`}
+                              className="rounded-full border border-sky-300 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-800"
+                            >
+                              {d.comps} comp
+                            </span>
+                          )}
+                          {d.cancelled > 0 && (
+                            <span className="rounded-full border border-stone-300 bg-stone-100 px-1.5 py-0.5 text-[11px] font-medium text-stone-600">
+                              {d.cancelled} canc
+                            </span>
+                          )}
+                          {d.unknown_status > 0 && (
+                            <span className="rounded-full border border-red-300 bg-red-50 px-1.5 py-0.5 text-[11px] font-bold text-red-700">
+                              {d.unknown_status} unknown
+                            </span>
+                          )}
+                        </span>
+                      </td>
+                      <td className={`${tdNumCls} font-semibold text-stone-900`}>{formatMoneyString(d.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <ul className="divide-y divide-rule-soft">
-              {days.map((d) => (
-                <li
-                  key={d.business_date}
-                  className="grid grid-cols-[5.4rem_minmax(0,1fr)_4.4rem_5.6rem] items-center gap-2 py-2.5 sm:grid-cols-[6rem_minmax(0,1fr)_4.4rem_5.2rem_5.6rem]"
-                >
-                  <span className="text-sm text-stone-700">{fmtDate(d.business_date)}</span>
-                  <span className="text-sm text-stone-600">
-                    {d.orders} · {d.covers}
-                    {d.fetch_count > 1 && (
-                      <span className="ml-1.5 text-[11px] text-stone-400">fetched ×{d.fetch_count}</span>
-                    )}
-                  </span>
-                  <span className="hidden text-right text-sm tabular-nums text-stone-500 sm:block">
-                    {formatMoneyString(d.cash_revenue)}
-                  </span>
-                  <span className="flex flex-wrap justify-end gap-1">
-                    {d.comps > 0 && (
-                      <span
-                        title={`${d.comps} comped orders worth ${formatMoneyString(d.comp_value)} — out of money, in orders and covers`}
-                        className="rounded-full border border-sky-300 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-800"
-                      >
-                        {d.comps} comp
-                      </span>
-                    )}
-                    {d.cancelled > 0 && (
-                      <span className="rounded-full border border-stone-300 bg-stone-100 px-1.5 py-0.5 text-[11px] font-medium text-stone-600">
-                        {d.cancelled} canc
-                      </span>
-                    )}
-                    {d.unknown_status > 0 && (
-                      <span className="rounded-full border border-red-300 bg-red-50 px-1.5 py-0.5 text-[11px] font-bold text-red-700">
-                        {d.unknown_status} unknown
-                      </span>
-                    )}
-                  </span>
-                  <span className="text-right text-sm font-semibold tabular-nums text-stone-900">
-                    {formatMoneyString(d.revenue)}
-                  </span>
-                </li>
-              ))}
-            </ul>
           </>
         )}
       </div>

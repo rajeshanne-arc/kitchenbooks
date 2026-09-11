@@ -2,29 +2,50 @@ import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getSectionCosts } from '@/server/labour-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
-import { cardCls, sectionHeadCls } from '@/components/ui'
+import { cardCls, dataTableCls, sectionHeadCls, tdCls, tdNumCls, thCls, thNumCls } from '@/components/ui'
 import { HonestyPill } from '@/components/Honesty'
 import type { SectionCostRow } from '@/lib/types'
 
 const monthLabel = (monthStart: string) =>
   new Date(`${monthStart}T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
 
-const GRID = 'grid-cols-[minmax(0,1fr)_repeat(3,4.9rem)] sm:grid-cols-[minmax(0,1fr)_repeat(5,5rem)]'
-
+/**
+ * A NUMBER MUST NEVER BE THE THING THAT GIVES WAY.
+ *
+ * This was a grid of fixed tracks — `repeat(3,4.9rem)` / `repeat(5,5rem)`, so
+ * 78-80px — laid out when the biggest figure here was ₹12,500.00. Ten
+ * characters fit. The books now carry ₹25,92,512.00, which is thirteen, and
+ * `-₹25,92,512.00` is fourteen: about 105px at 14px tabular digits. The figure
+ * overflowed its track and spilled LEFT across the label beside it.
+ *
+ * INDIAN GROUPING IS WIDER THAN WESTERN AT THE SAME VALUE — ₹1,53,329.89 takes
+ * more separators than $153,329.89 — so a layout sized by eye against Western
+ * figures runs out sooner here than its author expects.
+ *
+ * Widening the tracks would only move the threshold, which is the same bug
+ * one value later. `max-content` cannot be used either: the header, each row
+ * and the totals were SEPARATE grid containers, so content-sized tracks would
+ * size independently and stop lining up. A real table sizes columns to content
+ * ACROSS rows, which is the property actually wanted — and it is this repo's
+ * stated vocabulary for exactly this (`dataTableCls` and friends), inside the
+ * one `overflow-x-auto` the layout rules allow a table.
+ */
 function Money({ v, cls = '' }: { v: string; cls?: string }) {
   const paise = decimalStringToPaise(v)
-  return (
-    <span className={`text-right text-sm tabular-nums ${paise === 0 ? 'text-stone-300' : ''} ${cls}`}>
-      {formatMoneyString(v)}
-    </span>
-  )
+  return <span className={paise === 0 ? `text-stone-300 ${cls}` : cls}>{formatMoneyString(v)}</span>
 }
 
 function Row({ r, loud }: { r: SectionCostRow; loud?: boolean }) {
   const marginNeg = decimalStringToPaise(r.margin) < 0 && decimalStringToPaise(r.sales) !== 0
+  const pills = r.unassigned_marks > 0 || r.unsalaried_marks > 0
+  const tone = loud ? 'bg-red-50' : ''
+  // The honesty pills are a SECOND row spanning every column, so they can be
+  // as long as they need to be without widening a numeric column to fit them.
+  const cell = pills ? `${tdCls} border-b-0` : tdCls
+  const num = pills ? `${tdNumCls} border-b-0` : tdNumCls
   return (
-    <li className={`py-2.5 ${loud ? 'rounded-lg border border-red-200 bg-red-50 px-2.5' : ''}`}>
-      <div className={`grid items-center gap-2 ${GRID}`}>
+    <>
+      <tr className={tone}>
         {/* THE INDEX LINKS TO ITS DETAIL. This screen compares sixteen
             departments; the per-department page answers about one, and the four
             figures here are the only overlap — read from the SAME section_costs
@@ -33,45 +54,60 @@ function Row({ r, loud }: { r: SectionCostRow; loud?: boolean }) {
             The '—' row is skipped deliberately: it is a synthetic bucket for
             staff posted nowhere, has no `sections` row behind it, and routing to
             /kitchen/departments/— would 404 for a reason nobody could guess. */}
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="font-mono text-[11px] text-stone-400">{r.section_code}</span>
-          {r.section_code === '—' ? (
-            <span className={`truncate text-[15px] ${loud ? 'font-medium text-red-800' : 'text-stone-900'}`}>
-              {r.section_name}
-            </span>
-          ) : (
-            <Link
-              href={`/kitchen/departments/${r.section_code}`}
-              className={`truncate text-[15px] hover:underline ${
-                loud ? 'font-medium text-red-800' : 'text-stone-900'
-              }`}
-            >
-              {r.section_name}
-            </Link>
-          )}
-        </span>
-        <Money v={r.consumption} cls="hidden text-stone-600 sm:block" />
-        <Money v={r.labour} cls="hidden text-stone-600 sm:block" />
-        <Money v={r.total_cost} cls="font-semibold text-stone-900" />
-        <Money v={r.sales} cls="text-stone-900" />
-        <Money v={r.margin} cls={marginNeg ? 'font-semibold text-red-700' : 'font-semibold text-stone-900'} />
-      </div>
-      {(r.unassigned_marks > 0 || r.unsalaried_marks > 0) && (
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {r.unassigned_marks > 0 && (
-            <HonestyPill level="alarm">
-              {r.unassigned_marks} {r.unassigned_marks === 1 ? 'mark' : 'marks'} from staff with no section
-            </HonestyPill>
-          )}
-          {r.unsalaried_marks > 0 && (
-            <HonestyPill>
-              {r.unsalaried_marks} paid {r.unsalaried_marks === 1 ? 'mark' : 'marks'} without a salary — labour
-              understates
-            </HonestyPill>
-          )}
-        </div>
+        <td className={cell}>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="font-mono text-[11px] text-stone-400">{r.section_code}</span>
+            {r.section_code === '—' ? (
+              <span className={`truncate ${loud ? 'font-medium text-red-800' : 'text-stone-900'}`}>
+                {r.section_name}
+              </span>
+            ) : (
+              <Link
+                href={`/kitchen/departments/${r.section_code}`}
+                className={`truncate hover:underline ${loud ? 'font-medium text-red-800' : 'text-stone-900'}`}
+                title={r.section_name}
+              >
+                {r.section_name}
+              </Link>
+            )}
+          </span>
+        </td>
+        <td className={`${num} hidden sm:table-cell`}>
+          <Money v={r.consumption} cls="text-stone-600" />
+        </td>
+        <td className={`${num} hidden sm:table-cell`}>
+          <Money v={r.labour} cls="text-stone-600" />
+        </td>
+        <td className={num}>
+          <Money v={r.total_cost} cls="font-semibold text-stone-900" />
+        </td>
+        <td className={num}>
+          <Money v={r.sales} cls="text-stone-900" />
+        </td>
+        <td className={num}>
+          <Money v={r.margin} cls={marginNeg ? 'font-semibold text-red-700' : 'font-semibold text-stone-900'} />
+        </td>
+      </tr>
+      {pills && (
+        <tr className={tone}>
+          <td className={`${tdCls} pt-0`} colSpan={6}>
+            <div className="flex flex-wrap gap-1.5">
+              {r.unassigned_marks > 0 && (
+                <HonestyPill level="alarm">
+                  {r.unassigned_marks} {r.unassigned_marks === 1 ? 'mark' : 'marks'} from staff with no section
+                </HonestyPill>
+              )}
+              {r.unsalaried_marks > 0 && (
+                <HonestyPill>
+                  {r.unsalaried_marks} paid {r.unsalaried_marks === 1 ? 'mark' : 'marks'} without a salary — labour
+                  understates
+                </HonestyPill>
+              )}
+            </div>
+          </td>
+        </tr>
       )}
-    </li>
+    </>
   )
 }
 
@@ -101,41 +137,57 @@ export default async function SectionsView({ monthStart }: { monthStart: string 
         <h2 className={sectionHeadCls}>{monthLabel(monthStart)}</h2>
         <span className="text-xs text-stone-400">earns, eats, pays · section_costs</span>
       </div>
-      <div className={`mt-2 grid gap-2 border-b border-stone-200 pb-1.5 ${GRID}`}>
-        <span className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Section</span>
-        <span className="hidden text-right text-[11px] font-medium uppercase tracking-wide text-stone-400 sm:block">
-          Consum.
-        </span>
-        <span className="hidden text-right text-[11px] font-medium uppercase tracking-wide text-stone-400 sm:block">
-          Labour
-        </span>
-        <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Cost</span>
-        <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Sales</span>
-        <span className="text-right text-[11px] font-medium uppercase tracking-wide text-stone-400">Margin</span>
-      </div>
-      <ul className="divide-y divide-rule-soft">
-        {regular.map((r) => (
-          <Row key={r.section_code} r={r} />
-        ))}
-        {unassigned.map((r) => (
-          <Row key="unassigned" r={r} loud />
-        ))}
-      </ul>
-      <div className={`grid gap-2 border-t border-stone-200 pt-2.5 ${GRID}`}>
-        <span className="text-sm font-medium text-stone-500">Total</span>
-        <span className="hidden text-right text-sm font-semibold tabular-nums sm:block">
-          {formatMoneyString(paise(totals.consumption))}
-        </span>
-        <span className="hidden text-right text-sm font-semibold tabular-nums sm:block">
-          {formatMoneyString(paise(totals.labour))}
-        </span>
-        <span className="text-right text-sm font-bold tabular-nums">{formatMoneyString(paise(totals.total))}</span>
-        <span className="text-right text-sm font-bold tabular-nums">{formatMoneyString(paise(totals.sales))}</span>
-        <span
-          className={`text-right text-sm font-bold tabular-nums ${totals.margin < 0 && totals.sales !== 0 ? 'text-red-700' : ''}`}
-        >
-          {formatMoneyString(paise(totals.margin))}
-        </span>
+      {/* THE ONE overflow-x-auto THE LAYOUT RULES ALLOW A TABLE. On a phone
+          six columns of Indian-grouped rupees cannot fit, and the choice is
+          between scrolling the table and truncating a figure. A truncated
+          figure is a WRONG figure; a truncated label is still findable, and
+          the full name is on the link's title. So the table scrolls and the
+          page body does not. */}
+      <div className="mt-2 -mx-1 overflow-x-auto px-1">
+        <table className={dataTableCls}>
+          <thead>
+            <tr>
+              <th className={thCls}>Section</th>
+              <th className={`${thNumCls} hidden sm:table-cell`}>Consum.</th>
+              <th className={`${thNumCls} hidden sm:table-cell`}>Labour</th>
+              <th className={thNumCls}>Cost</th>
+              <th className={thNumCls}>Sales</th>
+              <th className={thNumCls}>Margin</th>
+            </tr>
+          </thead>
+          <tbody>
+            {regular.map((r) => (
+              <Row key={r.section_code} r={r} />
+            ))}
+            {unassigned.map((r) => (
+              <Row key="unassigned" r={r} loud />
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className={`${tdCls} border-b-0 border-t border-stone-200 font-medium text-stone-500`}>Total</td>
+              <td className={`${tdNumCls} hidden border-b-0 border-t border-stone-200 font-semibold sm:table-cell`}>
+                {formatMoneyString(paise(totals.consumption))}
+              </td>
+              <td className={`${tdNumCls} hidden border-b-0 border-t border-stone-200 font-semibold sm:table-cell`}>
+                {formatMoneyString(paise(totals.labour))}
+              </td>
+              <td className={`${tdNumCls} border-b-0 border-t border-stone-200 font-bold`}>
+                {formatMoneyString(paise(totals.total))}
+              </td>
+              <td className={`${tdNumCls} border-b-0 border-t border-stone-200 font-bold`}>
+                {formatMoneyString(paise(totals.sales))}
+              </td>
+              <td
+                className={`${tdNumCls} border-b-0 border-t border-stone-200 font-bold ${
+                  totals.margin < 0 && totals.sales !== 0 ? 'text-red-700' : ''
+                }`}
+              >
+                {formatMoneyString(paise(totals.margin))}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
       <p className="mt-3 text-xs text-stone-400">
         Sales arrive from mapped Petpooja lines (latest fetch per day wins); a loud “— / Unmapped” row means money is
