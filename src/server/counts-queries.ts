@@ -111,7 +111,10 @@ export async function getCountVariances(restaurantId: string, countId: string): 
 
 export async function listSnapshots(restaurantId: string): Promise<SnapshotGroup[]> {
   return tsql<SnapshotGroup[]>`
-    select snap_date::text as snap_date, count(*)::int as dishes, max(created_at)::text as created_at
+    select snap_date::text as snap_date,
+           count(*) filter (where kind = 'dish')::int as dishes,
+           count(*) filter (where kind = 'sub')::int as subs,
+           max(created_at)::text as created_at
     from dish_cost_snapshots
     where restaurant_id = ${restaurantId}
     group by snap_date
@@ -119,13 +122,33 @@ export async function listSnapshots(restaurantId: string): Promise<SnapshotGroup
     limit 36`
 }
 
+/**
+ * WHEN THE MENU WAS LAST PHOTOGRAPHED — one scalar for the dashboard card.
+ *
+ * Costs are LIVE: item_costs is a weighted average over every purchase ever,
+ * so a dish's cost moves the day anything in it is bought. Nothing records
+ * where it was. A photograph is the only comparison point that exists, and
+ * this is the question the owner card turns on.
+ *
+ * @scope all-time
+ */
+export async function lastPhotographDate(restaurantId: string): Promise<string | null> {
+  const [row] = await tsql<{ snap_date: string | null }[]>`
+    select max(snap_date)::text as snap_date
+    from dish_cost_snapshots where restaurant_id = ${restaurantId}`
+  return row?.snap_date ?? null
+}
+
 export async function getSnapshot(restaurantId: string, snapDate: string): Promise<SnapshotRow[]> {
   return tsql<SnapshotRow[]>`
     select code, name, section_code, dish_cost::text as dish_cost,
-           selling_price::text as selling_price, food_cost_pct::text as food_cost_pct
+           selling_price::text as selling_price, food_cost_pct::text as food_cost_pct,
+           kind, unit_cost::text as unit_cost, basis_qty::text as basis_qty, basis_unit
     from dish_cost_snapshots
     where restaurant_id = ${restaurantId} and snap_date = ${snapDate}
-    order by section_code asc, code asc`
+    -- dishes first, then subs: the menu is what somebody opened this for, and
+    -- the subs underneath are the reason its numbers moved.
+    order by kind desc, section_code asc, code asc`
 }
 
 /**

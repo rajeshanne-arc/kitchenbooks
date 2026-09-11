@@ -264,7 +264,8 @@ export default async function RecipesPage({
                 >
                   <span className="text-[15px] font-medium text-stone-900">{fmtDate(s.snap_date)}</span>
                   <span className="text-xs text-stone-500">
-                    {s.dishes} {s.dishes === 1 ? 'dish' : 'dishes'} →
+                    {s.dishes} {s.dishes === 1 ? 'dish' : 'dishes'}
+                    {s.subs > 0 && ` · ${s.subs} ${s.subs === 1 ? 'sub' : 'subs'}`} →
                   </span>
                 </Link>
               </li>

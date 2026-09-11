@@ -11,7 +11,7 @@
 import { z } from 'zod'
 import { txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
-import { enteredBy } from '@/server/current-user'
+import { enteredBy, getSessionUser } from '@/server/current-user'
 import { getCount, getCountVariances, getIssueHistoryDays } from '@/server/counts-queries'
 import { parseQty } from '@/lib/money'
 import type { PhotographResult, SaveCountInput, SaveCountResult } from '@/lib/types'
@@ -74,6 +74,14 @@ export async function saveCount(raw: SaveCountInput): Promise<SaveCountResult> {
     const by = await enteredBy()
 
     const saved = await txn(async (tx) => {
+      // TWO GUARDS, AND THEY ARE NOT DUPLICATES — do not remove either
+      // thinking it covers the other.
+      //   THE LOCK + the date check below is the OPERATIONAL guard: it refuses
+      //   a second photograph for the whole DATE, which is stronger than
+      //   per-recipe and is what a person double-clicking actually meets.
+      //   THE UNIQUE INDEX on (restaurant_id, snap_date, recipe_id) is the
+      //   INVARIANT: it is the backstop for the day a SECOND write path
+      //   exists, which no lock taken in this function can see.
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
 
       // TWO PEOPLE COUNTING TWO ROOMS ARE DOING ONE COUNT. Joining an existing
@@ -155,8 +163,20 @@ export async function saveCount(raw: SaveCountInput): Promise<SaveCountResult> {
 
 // ---------------------------------------------------- photograph the menu
 
+/** It WRITES; it renders no figure. @scope not-a-figure */
 export async function photographMenu(): Promise<PhotographResult> {
   try {
+    // A SERVER ACTION IS A PUBLIC ENDPOINT, AND THE ROUTE GATE IS NOT THE
+    // CHECK. This had none at all: the only thing standing between any
+    // signed-in chef or cashier and a photograph was that the button is not
+    // rendered for them. /owner/snapshots is owner-only, so the action is too,
+    // and it is checked HERE — the card that now offers it sits on /owner,
+    // which managers can open.
+    const user = await getSessionUser()
+    if (!user) throw new CountsError('Sign in again — the session has expired')
+    if (user.role !== 'owner') {
+      throw new CountsError('Photographing the menu is the owner’s — ask them')
+    }
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const snapDate = await businessToday()
@@ -169,21 +189,47 @@ export async function photographMenu(): Promise<PhotographResult> {
       if (already[0]) {
         throw new CountsError('Today is already photographed — the photograph stands; take the next one next month-end')
       }
-      const rows = await tx<{ n: number }[]>`
+      // BOTH KINDS, AND EACH CARRIES ITS OWN BASIS. A sub's cost moving is
+      // WHY three dishes moved at once; photographing only dishes records the
+      // symptom and loses the cause.
+      //
+      // The four self-describing columns are not decoration. `kind` says
+      // whether unit_cost is per PORTION or per OUTPUT UNIT — a per-litre
+      // gravy and a per-portion biryani are not comparable, and reading one as
+      // the other is silently wrong. basis_qty/basis_unit say what divided
+      // dish_cost to get there.
+      const rows = await tx<{ dishes: number; subs: number }[]>`
         with ins as (
           insert into dish_cost_snapshots
-            (restaurant_id, snap_date, recipe_id, code, name, section_code, dish_cost, selling_price, food_cost_pct)
+            (restaurant_id, snap_date, recipe_id, code, name, section_code, dish_cost, selling_price,
+             food_cost_pct, kind, unit_cost, basis_qty, basis_unit)
           select restaurant_id, ${snapDate}::date, recipe_id, code, name, section_code,
-                 dish_cost, selling_price, food_cost_pct
+                 dish_cost, selling_price, food_cost_pct,
+                 'dish', cost_per_portion, portions, 'portion'
           from dish_costs
           where restaurant_id = ${rid}
-          returning 1
-        ) select count(*)::int as n from ins`
-      return rows[0].n
+          union all
+          -- A SUB HAS NO SECTION, NO PRICE AND NO FOOD COST PERCENTAGE, and
+          -- those stay NULL rather than being filled with a zero that would
+          -- read as "sells for nothing". Its dish_cost is the BATCH total and
+          -- its unit_cost is per output unit, which is what the comment on the
+          -- column says and what a reader needs when the join is gone.
+          select restaurant_id, ${snapDate}::date, recipe_id, code, name, null,
+                 total_cost, null, null,
+                 'sub', cost_per_output_unit, output_qty, output_unit
+          from recipe_costs
+          where restaurant_id = ${rid} and kind = 'sub'
+          returning kind
+        ) select count(*) filter (where kind = 'dish')::int as dishes,
+                 count(*) filter (where kind = 'sub')::int as subs
+          from ins`
+      return rows[0]
     })
 
-    if (inserted === 0) throw new CountsError('No dishes to photograph — build recipes first')
-    return { ok: true, snapDate, dishes: inserted }
+    if (inserted.dishes + inserted.subs === 0) {
+      throw new CountsError('Nothing to photograph — build recipes first')
+    }
+    return { ok: true, snapDate, dishes: inserted.dishes, subs: inserted.subs }
   } catch (e) {
     return fail(e)
   }

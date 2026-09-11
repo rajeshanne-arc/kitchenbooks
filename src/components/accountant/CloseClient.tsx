@@ -39,7 +39,7 @@ import {
 } from '@/components/ui'
 import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
-import SaveAck from '@/components/SaveAck'
+import SaveAck, { type Missing } from '@/components/SaveAck'
 
 /** derived, so the toggle cannot drift from what the action accepts */
 type Direction = StaffFundInput['direction']
@@ -66,7 +66,12 @@ export default function CloseClient({
 }) {
   const router = useRouter()
   const [periodStart, setPeriodStart] = useState(defaultStart)
-  const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
+  const [ack, setAck] = useState<{
+    headline: string
+    sub?: string
+    missing?: Missing[]
+    actions?: { href: string; label: string }[]
+  } | null>(null)
   const [periodEnd, setPeriodEnd] = useState(defaultEnd)
   const [note, setNote] = useState('')
   const [reopening, setReopening] = useState<string | null>(null)
@@ -113,7 +118,25 @@ export default function CloseClient({
         toast(res.error, 'error')
         return
       }
-setAck({ headline: `${fmtDate(periodStart)} – ${fmtDate(periodEnd)} closed`, sub: 'No query was left open — a period cannot close while one is, which is what makes the deadline mean anything.' })
+      // THE PROMPT, NOT A BLOCKER. The close succeeded; this says what the
+      // month is missing at the one moment somebody is still thinking about
+      // it. Costs are live and nothing records where they were, so a month
+      // that closes unphotographed loses its comparison point for good — and
+      // it CANNOT be recovered afterwards, because a photograph taken later
+      // carries later costs whatever date is written on it.
+      setAck({
+        headline: `${fmtDate(periodStart)} – ${fmtDate(periodEnd)} closed`,
+        sub: 'No query was left open — a period cannot close while one is, which is what makes the deadline mean anything.',
+        missing: res.photographed
+          ? undefined
+          : [
+              {
+                verdict: 'no menu photograph',
+                text: 'Nothing in this period recorded what the menu cost. Dish costs are worked out live from every purchase ever made, so they have already moved — and a photograph taken now carries today\u2019s costs, not this period\u2019s. There is no comparison point for this month and there cannot be one later.',
+              },
+            ],
+        actions: res.photographed ? undefined : [{ href: '/kitchen/recipes', label: 'Photographs' }],
+      })
       toast(`${fmtDate(periodStart)} – ${fmtDate(periodEnd)} closed`, 'ok')
       setNote('')
       router.refresh()
@@ -202,7 +225,13 @@ setAck({ headline: direction === 'collected' ? 'Collection recorded' : 'Payout r
     <div className="space-y-4">
       {ack !== null && (
         <div className="mb-3">
-          <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />
+          <SaveAck
+            headline={ack.headline}
+            sub={ack.sub}
+            missing={ack.missing}
+            actions={ack.actions}
+            onDismiss={() => setAck(null)}
+          />
         </div>
       )}
       {blocked && (

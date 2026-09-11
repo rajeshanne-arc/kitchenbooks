@@ -1738,6 +1738,7 @@ export type SaveCountResult =
 export type SnapshotGroup = {
   snap_date: string
   dishes: number
+  subs: number
   created_at: string
 }
 
@@ -1748,10 +1749,18 @@ export type SnapshotRow = {
   dish_cost: string | null
   selling_price: string | null
   food_cost_pct: string | null
+  /** A PHOTOGRAPH THAT NEEDS A JOIN IS NOT A PHOTOGRAPH — these four are
+   *  denormalised onto the snapshot for that reason, and `kind` is the one
+   *  that was missed. unit_cost is per portion for a dish and per output unit
+   *  for a sub; without kind on the row, the two are indistinguishable. */
+  kind: string | null
+  unit_cost: string | null
+  basis_qty: string | null
+  basis_unit: string | null
 }
 
 export type PhotographResult =
-  | { ok: true; snapDate: string; dishes: number }
+  | { ok: true; snapDate: string; dishes: number; subs: number }
   | { ok: false; error: string }
 
 // ---------- Kitchen (phase 9) ----------
@@ -2708,7 +2717,20 @@ export type RaiseQueryInput = {
 export type SaveQueryResult = { ok: true; query: QueryRow } | { ok: false; error: string }
 
 export type ClosePeriodInput = { periodStart: string; periodEnd: string; note: string }
-export type ClosePeriodResult = { ok: true } | { ok: false; error: string }
+export type ClosePeriodResult =
+  /** `photographed` is a PROMPT, never a blocker. A close and a photograph
+   *  have different reasons to happen — making one a side effect of the other
+   *  would hide a dependency — but the moment somebody is closing a month is
+   *  the moment they are already thinking about it, so the reveal says whether
+   *  the menu was photographed inside it. */
+  | { ok: true; photographed: boolean; periodStart: string; periodEnd: string }
+  | { ok: false; error: string }
+
+/** A REOPEN HAS NO PHOTOGRAPH QUESTION, so it does not inherit one. Sharing
+ *  ClosePeriodResult would have made `photographed` a field a reopen must
+ *  invent a value for, and an invented value is the thing this file spends its
+ *  length refusing. */
+export type ReopenPeriodResult = { ok: true } | { ok: false; error: string }
 
 /** books_completeness, verbatim — the view owns both the severity and the
  *  wording, so a screen can never soften what it says. */

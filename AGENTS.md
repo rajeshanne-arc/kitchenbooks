@@ -9297,3 +9297,76 @@ holds** — after kitchen analytics, `kitchen_wastage.qty`, `saveProduction`, an
 every master list. Every one of the five was a correct rule applied to code that
 already handled it, and three of the five ended with nothing built and something
 learned. This one ended with one line changed instead of a pillar.
+
+## A PHOTOGRAPH THAT NEEDS A JOIN TO BE READ IS NOT A PHOTOGRAPH
+
+`dish_cost_snapshots` denormalises `code`, `name` and `section_code` off the
+recipe, and everybody understood why. `kind` was the one that was missed, and it
+is the one that decides what the numbers MEAN: `unit_cost` is per PORTION for a
+dish and per OUTPUT UNIT for a sub. A per-litre gravy read as a per-portion
+biryani is not a rounding error, it is a different number.
+
+The join that would tell them apart is `recipes`, and **the join breaks exactly
+when the photograph matters**:
+
+- a MERGED recipe points at its survivor, so the row would describe a different
+  recipe than the one photographed;
+- a DISCARDED one is hidden from browsing;
+- both happen precisely when somebody is asking what a thing used to cost.
+
+> **The moment you most want the record is the moment the join is least
+> trustworthy. So a snapshot carries everything needed to read it, and needs
+> nothing else alive.**
+
+Migration `dish_cost_snapshots_self_describing` adds `kind`, `unit_cost`,
+`basis_qty`, `basis_unit`, with the basis stated in COLUMN COMMENTS so it is
+readable from the schema without this file. `photographMenu` writes all four for
+both kinds, and the snapshot page renders the basis on the row rather than
+implying it.
+
+**This generalises past this table.** Ask it of any frozen value: if the row
+needs a live join to be understood, it is not frozen — it is a pointer wearing a
+timestamp.
+
+### TWO GUARDS ON ONE TABLE, AND THEY ARE NOT DUPLICATES
+
+`photographMenu` takes an advisory lock and refuses a second photograph for the
+whole DATE. The unique index is on `(restaurant_id, snap_date, recipe_id)`.
+Neither replaces the other and **neither should be removed as redundant**:
+
+- **the lock + date check is the OPERATIONAL guard** — stronger than the index
+  (whole date, not one recipe), and it is what a person double-clicking meets,
+  with a sentence instead of a constraint violation;
+- **the unique index is the INVARIANT** — the backstop for the day a SECOND
+  write path exists, which no lock taken inside this one function can see.
+
+The index formalises what the lock already achieves today. That is worth saying
+out loud, because "the lock already does this" is exactly the argument somebody
+will make for dropping it.
+
+## A FEATURE IS NOT SHIPPED UNTIL SOMETHING LEADS TO IT
+
+Five findings now, and they are one shape:
+
+| | genuinely built | and unreachable because |
+|---|---|---|
+| the accountant role | in `ALL_ROLES`, in the matrix | the Users dropdown never offered it |
+| extra hours | migration, view, read side, profile | there was no write path at all |
+| the owner day sheet | the page rendered correctly | nothing linked to it |
+| refill from last | both controls, both pages wired | it has never had a last, and said nothing |
+| `photographMenu` | action, guard, reader, button | the button is owner-only at the bottom of Recipes |
+
+**Every one passed every gate. Every one was found by Rajesh trying to do
+something.** That is the gap stated precisely:
+
+> **The gates check that a thing EXISTS. Nothing checks that a person can
+> ARRIVE at it.**
+
+`audit:matrix` is the closest thing and it answers the opposite question — it
+proves no role is shown a link it cannot open. Nothing proves a role CAN reach
+what it is allowed to. Strict invisibility has a mirror image and only one half
+is enforced.
+
+**The fix for the instance is never the fix for the class.** Each of the five
+was closed by adding the missing door, which is right and insufficient — a sixth
+will happen the same way. See the reachability proposal below; it is not built.

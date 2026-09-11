@@ -24,6 +24,7 @@ import { assertAccount } from '@/server/accounts-queries'
 import type {
   ClosePeriodInput,
   ClosePeriodResult,
+  ReopenPeriodResult,
   QueryRow,
   RaiseQueryInput,
   SaveQueryResult,
@@ -225,15 +226,32 @@ export async function closePeriod(raw: ClosePeriodInput): Promise<ClosePeriodRes
         limit 1`
       if (overlap) throw new QueryError(`That overlaps the period already closed from ${overlap.period_start}`)
 
+      // A PROMPT, NOT A DEPENDENCY. Costs are live and nothing records where
+      // they were, so a month that closes unphotographed loses its comparison
+      // point permanently. But a close and a photograph happen for different
+      // reasons, and making the close TRIGGER one would turn a photograph into
+      // a side effect of an accounting act. So the close asks, reports, and
+      // proceeds — the prompt lands where somebody is already thinking about
+      // that month.
+      const [{ n: snaps }] = await tx<{ n: number }[]>`
+        select count(*)::int as n from dish_cost_snapshots
+        where restaurant_id = ${rid}
+          and snap_date between ${input.periodStart}::date and ${input.periodEnd}::date`
+
       const [row] = await tx<{ id: string }[]>`
         insert into period_closes (restaurant_id, period_start, period_end, closed_by, note)
         values (${rid}, ${input.periodStart}, ${input.periodEnd}, ${who.username},
                 ${input.note === '' ? null : input.note})
         returning id`
-      return row
+      return row ? { ...row, snaps } : null
     })
     if (!closed) throw new QueryError('The close could not be verified')
-    return { ok: true }
+    return {
+      ok: true,
+      photographed: closed.snaps > 0,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+    }
   } catch (e) {
     return fail(e)
   }
@@ -244,7 +262,7 @@ export async function closePeriod(raw: ClosePeriodInput): Promise<ClosePeriodRes
  * on exactly three columns. It states a REASON, because reopening a closed
  * month is the kind of thing someone will ask about later.
  */
-export async function reopenPeriod(periodStart: string, reason: string): Promise<ClosePeriodResult> {
+export async function reopenPeriod(periodStart: string, reason: string): Promise<ReopenPeriodResult> {
   try {
     if (!DATE_RE.test(periodStart)) throw new QueryError('Malformed period')
     const clean = reason.trim()

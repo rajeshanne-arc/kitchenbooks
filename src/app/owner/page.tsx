@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
+import { lastPhotographDate } from '@/server/counts-queries'
 import { getSessionUser } from '@/server/current-user'
 import { canAccess } from '@/lib/roles'
 import { getFoodCost } from '@/server/kitchen-queries'
@@ -47,6 +48,7 @@ import {
 } from '@/components/dashboard/Charts'
 import { businessToday } from '@/server/business-day'
 import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
+import SnapshotButton from '@/components/counts/SnapshotButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -95,6 +97,10 @@ const URGENCY = {
   waste: 200,
   owed: 150,
   people: 100,
+  // A MISSED PHOTOGRAPH IS NOT WRONG TODAY — it is a comparison that can never
+  // be made later, so it sits low but above a healthy card. Nothing is broken;
+  // something is being lost.
+  unphotographed: 80,
   // UNASSESSABLE_URGENCY (60) sits below every weight here and above a healthy
   // card's 0: worse than knowing it is well, better than a real finding.
 } as const
@@ -237,6 +243,7 @@ export default async function DashboardPage({
     variance,
     zeroCost,
     varianceNeeds,
+    lastPhotograph,
   ] = await Promise.all([
     getEntryPulse(restaurant.id, period.from, period.to),
     getSalesSeries(restaurant.id, period.from, period.to),
@@ -257,6 +264,7 @@ export default async function DashboardPage({
     getFoodCostVariance(restaurant.id, period.reportMonth),
     getZeroCostDishes(restaurant.id, period.reportMonth),
     getVariancePreconditions(restaurant.id, period.reportMonth),
+    lastPhotographDate(restaurant.id),
   ])
 
   // What the sales-dependent cards rest on, stated ONCE so five of them ask
@@ -1047,6 +1055,71 @@ export default async function DashboardPage({
             className="mt-2"
           />
         </Card>
+      ),
+    })
+  }
+
+  /* ── the month that closed unphotographed ────────────────────────────── */
+  {
+    // COSTS ARE LIVE AND NOTHING RECORDS WHERE THEY WERE. item_costs is a
+    // weighted average over every purchase ever, so a dish's cost moves the
+    // day anything in it is bought. dish_cost_snapshots is the only comparison
+    // point that exists — and the button that writes one sits at the bottom of
+    // /kitchen/recipes, owner-only, where nobody opens it. Five features have
+    // now been reported missing while being built and unreachable; this card
+    // is the door for one of them.
+    //
+    // THE PHOTOGRAPH IS STAMPED TODAY, NEVER BACKDATED, and the card says so.
+    // A snapshot taken now carries TODAY'S costs whatever date is written on
+    // it, so stamping it 31 August would claim the menu cost that on the 31st
+    // when it did not — the rule this file already records as "a date on a
+    // document does not date the state it was computed from". August cannot be
+    // reconstructed; it can only be stopped from happening again.
+    const t = new Date(`${today}T00:00:00Z`)
+    const startOfThisMonth = `${today.slice(0, 7)}-01`
+    const prevStart = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() - 1, 1)).toISOString().slice(0, 10)
+    // FIRES when a whole month has gone by unphotographed: no snapshot on or
+    // after the start of the month just ended. A photograph taken on the 2nd
+    // for the month that ended on the 31st therefore counts — the ritual is
+    // "at month end", not "on the last calendar day".
+    const missed = lastPhotograph === null || lastPhotograph < prevStart
+    const closedMonth = monthLabel(prevStart)
+    // LAW 1: /owner is manager+owner, /owner/snapshots is OWNER ONLY. A manager
+    // must not be shown a button they cannot press — the same gate
+    // /kitchen/recipes already applies to the Photographs block, asked of the
+    // matrix rather than compared by hand.
+    const mayPhotograph = user !== null && canAccess(user.role, '/owner/snapshots')
+    if (mayPhotograph) questions.push({
+      key: 'photograph',
+      urgency: missed ? URGENCY.unphotographed : 0,
+      node: missed ? (
+        <Card
+          title="Menu photograph"
+          source="dish_cost_snapshots"
+          href="/kitchen/recipes"
+          level="doubt"
+          sentence={
+            lastPhotograph === null
+              ? `${closedMonth} has closed and the menu has never been photographed. Costs move with every purchase, so without one there is nothing to compare ${monthLabel(startOfThisMonth)} against.`
+              : `${closedMonth} has closed and the last menu photograph was ${fmtDate(lastPhotograph)}. Costs move with every purchase, so the gap since then cannot be measured.`
+          }
+          footer={
+            <>
+              <SnapshotButton />
+              <p className="mt-1.5 text-xs text-stone-500">
+                Taken now, dated today — not a reconstruction of the 31st. A photograph carries the costs that
+                stand when it is taken, whatever date is written on it.
+              </p>
+            </>
+          }
+        />
+      ) : (
+        <Card
+          title="Menu photograph"
+          source="dish_cost_snapshots"
+          href="/kitchen/recipes"
+          sentence={`The menu was last photographed ${fmtDate(lastPhotograph as string)}, so there is a point to compare today's costs against.`}
+        />
       ),
     })
   }

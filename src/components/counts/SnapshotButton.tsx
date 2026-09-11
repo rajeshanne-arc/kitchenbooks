@@ -1,8 +1,10 @@
 'use client'
 
-// “Photograph the menu”: copy today's live dish costs into
-// dish_cost_snapshots. Live costs rewrite history — photographs don't.
-// One photograph per day; month-end is the ritual.
+// “Photograph the menu”: copy today's live costs into dish_cost_snapshots.
+// Live costs rewrite history — photographs don't. One per day; month-end is
+// the ritual. DISHES AND SUBS BOTH: a sub's cost moving is why three dishes
+// moved at once, so a photograph of dishes alone records the symptom and
+// loses the cause.
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -21,7 +23,11 @@ export default function SnapshotButton() {
     try {
       const res = await photographMenu()
       if (res.ok) {
-        setMsg({ ok: true, text: `Photographed ${res.dishes} ${res.dishes === 1 ? 'dish' : 'dishes'} at today's costs.` })
+        // SAY NUMBERS, and say BOTH — the sub count is the half that explains
+        // a dish moving, so hiding it inside one total loses the point.
+        const d = `${res.dishes} ${res.dishes === 1 ? 'dish' : 'dishes'}`
+        const b = `${res.subs} ${res.subs === 1 ? 'sub-recipe' : 'sub-recipes'}`
+        setMsg({ ok: true, text: `Photographed ${d} and ${b} at today's costs.` })
         router.refresh()
       } else {
         setMsg({ ok: false, text: res.error })

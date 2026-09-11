@@ -9072,6 +9072,48 @@ async function run() {
     console.log(`      ${hrefs.length} tabs · ${controls} take a date range · ${stated} say why they cannot (${tally})`)
   })
 
+  /* ── one photograph per recipe per day ─────────────────────────────── */
+  console.log('\na menu photograph is never written twice for the same recipe and date')
+
+  await check('the invariant is a UNIQUE INDEX, not a habit', async () => {
+    // TWO GUARDS, AND THIS ASSERTS THE ONE THAT SURVIVES A SECOND WRITE PATH.
+    // photographMenu's advisory lock refuses a second photograph for the whole
+    // DATE, which is stronger — and it is reachable only from inside that one
+    // function. The index is what holds when somebody adds another writer.
+    const [idx] = await tsql<{ def: string }[]>`
+      select indexdef as def from pg_indexes
+      where tablename = 'dish_cost_snapshots' and indexdef like '%UNIQUE%'
+        and indexdef like '%snap_date%' and indexdef like '%recipe_id%'`
+    assert.ok(idx !== undefined, 'dish_cost_snapshots has no unique index on (restaurant, date, recipe)')
+    for (const col of ['restaurant_id', 'snap_date', 'recipe_id']) {
+      assert.ok(idx.def.includes(col), `the unique index does not key on ${col}: ${idx.def}`)
+    }
+
+    // AND THE PHOTOGRAPH IS SELF-DESCRIBING. A snapshot that needs a join to
+    // `recipes` to say whether unit_cost is per portion or per litre is not a
+    // photograph — and that join is broken by exactly the merge or discard
+    // that makes somebody open it.
+    const cols = await tsql<{ column_name: string }[]>`
+      select column_name from information_schema.columns
+      where table_name = 'dish_cost_snapshots'`
+    const have = new Set(cols.map((c) => c.column_name))
+    for (const col of ['kind', 'unit_cost', 'basis_qty', 'basis_unit']) {
+      assert.ok(have.has(col), `dish_cost_snapshots has no ${col} — the basis needs a join to be read`)
+    }
+
+    // BOTH KINDS ARE WRITTEN, read from the source rather than from memory: a
+    // photograph of dishes alone records the symptom and loses the cause.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/counts-actions.ts', 'utf8')
+    const body = src.slice(src.indexOf('export async function photographMenu'))
+    assert.ok(body.includes('from dish_costs'), 'photographMenu no longer photographs dishes')
+    assert.ok(body.includes("kind = 'sub'"), 'photographMenu no longer photographs sub-recipes')
+    // A SERVER ACTION IS A PUBLIC ENDPOINT. This one had no role check at all
+    // until the owner card started offering it on a manager-visible page.
+    assert.ok(body.includes("user.role !== 'owner'"), 'photographMenu no longer checks the role itself')
+    console.log(`      unique index + kind/unit_cost/basis_qty/basis_unit present · both kinds written · role checked`)
+  })
+
   /* ── a figure that does not move says so ───────────────────────────── */
   console.log('\nevery figure under a period control answers for it, or says why it cannot')
 
