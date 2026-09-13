@@ -18,6 +18,9 @@ import Honesty from '@/components/Honesty'
 import SaveAck from '@/components/SaveAck'
 import { decideApproval } from '@/server/approvals-actions'
 import type { ApprovalRow, Preview, RefCount } from '@/server/approvals-queries'
+import type { AccountBalanceRow } from '@/lib/types'
+import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
+import { fmtDate } from '@/lib/format'
 import { btnCls, btnGhostCls, cardCls, codeCls, fieldLabelCls, inputCls } from '@/components/ui'
 import { fmtDateTime } from '@/lib/format'
 
@@ -29,7 +32,13 @@ export type QueueItem = {
   freshError: string | null
 }
 
-export default function ApprovalsClient({ items }: { items: QueueItem[] }) {
+export default function ApprovalsClient({
+  items,
+  balances,
+}: {
+  items: QueueItem[]
+  balances: AccountBalanceRow[]
+}) {
   const [ack, setAck] = useState<string | null>(null)
   const pending = items.filter((i) => i.row.status === 'pending')
   const decided = items.filter((i) => i.row.status !== 'pending')
@@ -46,7 +55,7 @@ export default function ApprovalsClient({ items }: { items: QueueItem[] }) {
           </p>
         </section>
       ) : (
-        pending.map((i) => <Request key={i.row.id} item={i} onDone={setAck} />)
+        pending.map((i) => <Request key={i.row.id} item={i} balances={balances} onDone={setAck} />)
       )}
 
       {decided.length > 0 && (
@@ -58,9 +67,11 @@ export default function ApprovalsClient({ items }: { items: QueueItem[] }) {
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <StatusChip status={i.row.status} />
                   <span className="font-medium text-stone-800">
-                    {i.row.kind === 'discard'
-                      ? `Discard ${i.row.from_code ?? '—'}`
-                      : `Merge ${i.row.from_code ?? '—'} → ${i.row.to_code ?? '—'}`}
+                    {i.row.kind === 'payment'
+                      ? `Pay ${i.row.from_name ?? 'a vendor'}`
+                      : i.row.kind === 'discard'
+                        ? `Discard ${i.row.from_code ?? '—'}`
+                        : `Merge ${i.row.from_code ?? '—'} → ${i.row.to_code ?? '—'}`}
                   </span>
                   <span className="text-stone-500">“{i.row.reason}”</span>
                   {i.row.decided_by !== null && (
@@ -118,7 +129,15 @@ function AppliedLine({ result }: { result: unknown }) {
   )
 }
 
-function Request({ item, onDone }: { item: QueueItem; onDone: (m: string) => void }) {
+function Request({
+  item,
+  balances,
+  onDone,
+}: {
+  item: QueueItem
+  balances: AccountBalanceRow[]
+  onDone: (m: string) => void
+}) {
   const router = useRouter()
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -149,7 +168,11 @@ function Request({ item, onDone }: { item: QueueItem; onDone: (m: string) => voi
       <div className="flex flex-wrap items-baseline gap-2">
         <StatusChip status={row.status} />
         <h3 className="text-base font-semibold text-stone-900">
-          {row.kind === 'discard' ? (
+          {row.kind === 'payment' ? (
+            <>
+              Pay <span className={codeCls}>{row.from_code}</span> {row.from_name}
+            </>
+          ) : row.kind === 'discard' ? (
             <>
               Discard <span className={codeCls}>{row.from_code}</span> {row.from_name}
             </>
@@ -170,6 +193,8 @@ function Request({ item, onDone }: { item: QueueItem; onDone: (m: string) => voi
       <p className="mt-2 rounded-lg border border-rule bg-field px-3 py-2 text-sm text-stone-800">
         “{row.reason}”
       </p>
+
+      {row.kind === 'payment' && <PaymentAsk row={row} balances={balances} />}
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-rule bg-white p-3">
@@ -260,5 +285,114 @@ function Request({ item, onDone }: { item: QueueItem; onDone: (m: string) => voi
         </button>
       </div>
     </section>
+  )
+}
+
+
+/**
+ * THE QUESTION THE OWNER IS ACTUALLY ANSWERING IS "PAY FROM WHERE".
+ *
+ * "Approve yes or no" is the shape of a discard. A payment is different: the
+ * amount was argued for by whoever asked, and what the owner brings to it is
+ * the one fact the store manager could not see — which account has the money.
+ * A large request against a small till needs a transfer, and the screen says
+ * so rather than leaving him to remember it.
+ *
+ * THE REQUEST CARRIES NO ACCOUNT and this does not pick one either. It shows
+ * what each could cover; the account is named at the moment the payment is
+ * made and recorded, by the person making it.
+ *
+ * The snapshot is the ageing AS IT STOOD AT ASKING — shown so the two can be
+ * compared, not so it can be trusted, the same reason a discard preview shows
+ * both the asked and the fresh figure.
+ */
+function PaymentAsk({ row, balances }: { row: ApprovalRow; balances: AccountBalanceRow[] }) {
+  const snap = (row.snapshot ?? {}) as {
+    amount?: string
+    mode?: string
+    urgency?: string
+    advanceIntent?: boolean
+    askedOutstanding?: string
+    askedOpenBills?: number
+    askedOldestDue?: string | null
+  }
+  const askPaise = snap.amount === undefined ? 0 : decimalStringToPaise(snap.amount)
+  const covering = balances.filter((b) => decimalStringToPaise(b.balance) >= askPaise)
+
+  return (
+    <div className="mt-3 space-y-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="font-display text-2xl font-bold tabular-nums text-stone-900">
+          {snap.amount === undefined ? '\u2014' : formatMoneyString(snap.amount)}
+        </span>
+        {snap.mode !== undefined && <span className="text-sm text-stone-500">by {snap.mode}</span>}
+        {snap.urgency !== undefined && snap.urgency !== 'normal' && (
+          <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
+            {snap.urgency}
+          </span>
+        )}
+        {snap.advanceIntent === true && (
+          <span className="rounded-full border border-stone-300 bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700">
+            advance
+          </span>
+        )}
+      </div>
+
+      {snap.askedOutstanding !== undefined && (
+        <p className="text-xs text-stone-500">
+          When this was asked: {formatMoneyString(snap.askedOutstanding)} outstanding
+          {snap.askedOpenBills !== undefined && <> across {snap.askedOpenBills} bills</>}
+          {snap.askedOldestDue !== undefined && snap.askedOldestDue !== null && (
+            <>, oldest due {fmtDate(snap.askedOldestDue)}</>
+          )}
+          .
+        </p>
+      )}
+
+      <div className="rounded-xl border border-rule bg-white p-3">
+        <h4 className="text-xs font-medium uppercase tracking-wide text-stone-400">What each account can cover</h4>
+        {balances.length === 0 ? (
+          <p className="mt-1.5 text-sm text-stone-600">
+            No money accounts exist yet, so nothing can say where this would be paid from.
+          </p>
+        ) : (
+          <ul className="mt-1.5 space-y-1">
+            {balances.map((b) => {
+              const enough = decimalStringToPaise(b.balance) >= askPaise
+              return (
+                <li key={b.account_id} className="flex items-baseline justify-between gap-2 text-sm">
+                  <span className="truncate text-stone-700">
+                    {b.name}
+                    <span className="ml-1.5 text-xs text-stone-400">{b.kind}</span>
+                    {/* A TILL\u2019S BALANCE IS COUNTED, NOT COMPUTED, and the
+                        two are different claims \u2014 one you can check against
+                        a hand of notes, one derived from arithmetic. */}
+                    {b.basis === 'counted' && b.counted_on !== null && (
+                      <span className="ml-1.5 text-xs text-stone-400">counted {fmtDate(b.counted_on)}</span>
+                    )}
+                  </span>
+                  <span
+                    className={`shrink-0 tabular-nums ${enough ? 'font-semibold text-emerald-800' : 'text-stone-400'}`}
+                  >
+                    {formatMoneyString(b.balance)}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+        {balances.length > 0 && covering.length === 0 && askPaise > 0 && (
+          <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+            No single account holds {formatMoneyString(snap.amount ?? '0')}. This needs a transfer between
+            accounts first, or paying in parts \u2014 worth knowing before approving rather than after.
+          </p>
+        )}
+      </div>
+
+      <p className="text-xs text-stone-500">
+        Approving does not move money and does not touch an account. Whoever makes the transfer records the
+        payment and names the account at that moment \u2014 the only point at which anybody knows it.
+      </p>
+    </div>
   )
 }

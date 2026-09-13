@@ -9072,6 +9072,59 @@ async function run() {
     console.log(`      ${hrefs.length} tabs · ${controls} take a date range · ${stated} say why they cannot (${tally})`)
   })
 
+  /* ── the mode decides the act, so the mode must be recognisable ────── */
+  console.log('\nexactly one payment mode means "I handed over the money"')
+
+  await check('the cash branch is not a rename away from broken', async () => {
+    // A MANAGED LIST VALUE DECIDES WHETHER MONEY IS RECORDED OR REQUESTED,
+    // which is close to the line this project draws at "settings configure
+    // vocabulary, never integrity". It stays on the right side of that line
+    // ONLY because of this assertion: rename "Cash" to something isCashMode
+    // cannot recognise and every payment silently routes into the approvals
+    // queue, with nothing on screen looking wrong.
+    const { isCashMode } = await import('../src/lib/payment-mode')
+    const modes = await tsql<{ value: string }[]>`
+      select value from list_options
+      where restaurant_id = ${rid} and list_key = 'payment_mode' and status = 'active'`
+    assert.ok(modes.length > 0, 'the payment_mode list is empty — no payment can be classified at all')
+    const cash = modes.filter((m) => isCashMode(m.value))
+    assert.equal(
+      cash.length,
+      1,
+      `${cash.length} of ${modes.length} payment modes read as cash (${modes.map((m) => m.value).join(', ')}) — the store screen branches on exactly one`,
+    )
+    // AND THE OTHERS MUST NOT BE CASH. A list where everything matched would
+    // satisfy "at least one" and route nothing to approvals.
+    const transfers = modes.filter((m) => !isCashMode(m.value))
+    assert.ok(transfers.length > 0, 'every payment mode reads as cash — nothing would ever be requested')
+    console.log(`      cash: ${cash[0].value} · request: ${transfers.map((m) => m.value).join(', ')}`)
+  })
+
+  await check('the ageing reconciles to vendor_dues, vendor by vendor', async () => {
+    // TWO INDEPENDENT CALCULATIONS THAT MUST AGREE. vendor_dues is opening +
+    // purchased − paid; vendor_aging is the FIFO remainder summed over unpaid
+    // bills. Compared in SQL at full precision — summing rounded paise would
+    // disagree by a paise on a large book and read as a missing bill.
+    const rows = await tsql<{ name: string; aging: string; dues: string }[]>`
+      select va.vendor_name as name, va.outstanding::text as aging, vd.balance::text as dues
+      from vendor_aging va
+      join vendor_dues vd on vd.restaurant_id = va.restaurant_id and vd.vendor_id = va.vendor_id
+      where va.restaurant_id = ${rid} and va.outstanding <> vd.balance`
+    // SPREAD FIRST. postgres.js returns a Result, not a plain array, so
+    // deepEqual against [] fails on the prototype while the row count is
+    // correctly zero — a gate crying wolf about data that is fine.
+    assert.deepEqual(
+      [...rows].map((r) => `${r.name}: aging ${r.aging} vs dues ${r.dues}`),
+      [],
+      'these vendors disagree between vendor_aging and vendor_dues',
+    )
+    // NOT VACUOUS: a comparison over no vendors proves nothing about either.
+    const [{ n }] = await tsql<{ n: number }[]>`
+      select count(*)::int as n from vendor_aging where restaurant_id = ${rid}`
+    assert.ok(n > 0, 'no vendor has anything outstanding — the reconciliation compared nothing')
+    console.log(`      ${n} vendors, all reconciling`)
+  })
+
   /* ── one photograph per recipe per day ─────────────────────────────── */
   console.log('\na menu photograph is never written twice for the same recipe and date')
 

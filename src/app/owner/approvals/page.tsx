@@ -10,6 +10,7 @@ import { getListSuggestions } from '@/server/settings'
 import ApprovalsClient, { type QueueItem } from '@/components/settings/ApprovalsClient'
 import SuggestionsQueue from '@/components/settings/SuggestionsQueue'
 import { cardCls, codeCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
+import { getAccountBalances } from '@/server/accounts-queries'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 
@@ -17,9 +18,13 @@ export const dynamic = 'force-dynamic'
 
 export default async function ApprovalsPage() {
   const restaurant = await getRestaurant()
-  const [waiting, suggestions] = await Promise.all([
+  const [waiting, suggestions, balances] = await Promise.all([
     getWaiting(restaurant.id),
     getListSuggestions(restaurant.id),
+    // THE QUESTION IS NOT "APPROVE YES OR NO", IT IS "PAY FROM WHERE". A
+    // ₹50,000 request against a till holding ₹8,000 needs a transfer, and the
+    // owner should not have to remember that — account_balances already knows.
+    getAccountBalances(restaurant.id),
   ])
 
   // The fresh check, run now, for everything still pending. Not the authority
@@ -28,6 +33,13 @@ export default async function ApprovalsPage() {
   // two is itself the finding.
   const items: QueueItem[] = await Promise.all(
     waiting.approvals.map(async (row): Promise<QueueItem> => {
+      // A PAYMENT REQUEST HAS NO PREVIEW TO RE-RUN. getPreview answers "what
+      // points at this row and can it be closed", which is the discard/merge
+      // question. A payment asks something else entirely — what is owed now,
+      // and which account can cover it — so it is skipped here and answered
+      // by the coverage panel instead. Running it anyway would put a
+      // "could not be re-checked" error on every payment in the queue.
+      if (row.kind === 'payment') return { row, fresh: null, freshError: null }
       try {
         const fresh = await getPreview(
           restaurant.id,
@@ -72,7 +84,7 @@ export default async function ApprovalsPage() {
         </section>
       ) : (
         <>
-          {items.length > 0 && <ApprovalsClient items={items} />}
+          {items.length > 0 && <ApprovalsClient items={items} balances={balances} />}
 
           {/* A POINTER, NEVER A COPY. Approving payroll means seeing the whole
               run — the people, the days, the withholdings, the account each

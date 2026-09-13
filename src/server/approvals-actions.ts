@@ -27,6 +27,9 @@ import {
   type ApprovalKind,
 } from '@/server/approvals-queries'
 
+import { getVendorAging } from '@/server/aging-queries'
+import { decimalStringToPaise, formatPaise, parseMoney } from '@/lib/money'
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export type ApprovalResult =
@@ -352,6 +355,125 @@ export async function requestReopen(raw: { periodCloseId: string; reason: string
       reason,
     })
   } catch (e) {
+    return fail(e)
+  }
+}
+
+// ─────────────────────────────────── a vendor payment by transfer ─────────
+
+const PaymentRequestSchema = z.object({
+  vendorId: z.string().regex(UUID),
+  amount: z.string().trim().min(1),
+  mode: z.string().trim().min(1).max(40),
+  urgency: z.enum(['normal', 'overdue', 'urgent']),
+  reason: z.string().trim().min(1).max(300),
+  /** A DELIBERATE ACT, not a guessed default. Paying more than is outstanding
+   *  is legitimate — an advance — and is also what a typo looks like. The
+   *  difference is whether somebody meant it, so it is asked as a plain
+   *  question rather than inferred, the `is_stock_purchase` precedent. */
+  advanceIntent: z.boolean().optional(),
+})
+
+export type PaymentRequestInput = z.infer<typeof PaymentRequestSchema>
+
+/**
+ * THE STORE MANAGER ASKS; HE DOES NOT PAY.
+ *
+ * He observes what is owed. He does not make the transfer, so he records no
+ * payment and — this is the point — NAMES NO ACCOUNT. Which account the money
+ * leaves is a fact about a payment that does not exist yet, and picking one
+ * here would be him guessing at a balance he cannot see.
+ *
+ *   REQUEST: vendor · amount · reason · how urgent.
+ *   PAYMENT: all of that PLUS the account, chosen by whoever makes the
+ *            transfer, at the moment they make it.
+ *
+ * The snapshot freezes the ageing AS IT STOOD AT ASKING, so the approver can
+ * compare it with the live figure rather than trust it: "₹1,53,330 was
+ * outstanding when this was asked and ₹1,41,000 is now" is a fact neither
+ * number states alone.
+ */
+export async function requestVendorPayment(raw: PaymentRequestInput): Promise<ApprovalResult> {
+  try {
+    const input = PaymentRequestSchema.parse(raw)
+    const by = await assertRequester()
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    const paise = parseMoney(input.amount)
+    if (paise === null || paise <= 0) throw new ApprovalRefusal('Enter an amount greater than zero')
+
+    const aging = await getVendorAging(rid, input.vendorId)
+    const [vendor] = await tsql<{ name: string }[]>`
+      select name from vendors where restaurant_id = ${rid} and id = ${input.vendorId}`
+    if (!vendor) throw new ApprovalRefusal('That vendor is not on this restaurant’s list')
+
+    // REFUSED BY NAME. A request against a vendor who is owed nothing is
+    // either a mistake or an advance nobody has said out loud.
+    if (aging === null || decimalStringToPaise(aging.outstanding) <= 0) {
+      throw new ApprovalRefusal(
+        `${vendor.name} has nothing outstanding — there is no bill to settle. If this is an advance, record it as one rather than as a payment against bills.`,
+      )
+    }
+
+    const owed = decimalStringToPaise(aging.outstanding)
+    if (paise > owed && input.advanceIntent !== true) {
+      throw new ApprovalRefusal(
+        `That is ${formatPaise(paise - owed)} more than ${vendor.name} is owed (${formatPaise(owed)}). An advance is legitimate and a typo is not — tick the advance box to say you meant it.`,
+      )
+    }
+
+    const saved = await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      // ONE OPEN REQUEST PER VENDOR, re-read inside the lock. Two pending asks
+      // for the same vendor would both look approvable and the second would
+      // pay a balance the first had already cleared.
+      const [open] = await tx<{ id: string; kind: string }[]>`
+        select id, kind from approval_requests
+        where restaurant_id = ${rid} and entity_id = ${input.vendorId}
+          and status in ('pending', 'approved')
+        limit 1`
+      if (open) {
+        throw new ApprovalRefusal(
+          `There is already a ${open.kind} request open on ${vendor.name} — the owner has it`,
+        )
+      }
+      const [row] = await tx<{ id: string }[]>`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, target_entity_id, reason, snapshot, status, requested_by)
+        values (${rid}, 'payment', 'vendor', ${input.vendorId}, null, ${input.reason},
+                ${JSON.stringify({
+                  amount: input.amount,
+                  mode: input.mode,
+                  urgency: input.urgency,
+                  advanceIntent: input.advanceIntent === true,
+                  vendorName: vendor.name,
+                  askedOutstanding: aging.outstanding,
+                  askedOpenBills: aging.open_bills,
+                  askedOldestDue: aging.oldest_due,
+                  askedTerms: aging.payment_terms,
+                })}::jsonb, 'pending', ${by})
+        returning id`
+      return row.id
+    })
+
+    return {
+      ok: true,
+      id: saved,
+      message: `${formatPaise(paise)} to ${vendor.name} — sent to the owner to pay and record`,
+    }
+  } catch (e) {
+    // THE MIGRATION IS NAMED RATHER THAN THE CONSTRAINT. Until
+    // approval_requests_payment_kind is applied the CHECK refuses this row,
+    // and "violates check constraint approval_requests_kind_check" tells the
+    // store manager nothing he can act on.
+    if (e instanceof Error && e.message.includes('approval_requests_kind_check')) {
+      return {
+        ok: false,
+        error:
+          'Transfer requests are not switched on yet — migration approval_requests_payment_kind has not been applied. Cash payments still record normally.',
+      }
+    }
     return fail(e)
   }
 }

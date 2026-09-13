@@ -3744,3 +3744,33 @@ export type PaymentLogRow = {
   vendor_name: string
   account_name: string | null
 }
+
+// ---------- Vendor ageing (bills_outstanding / vendor_aging) ----------
+
+export type VendorAgingRow = {
+  vendor_id: string
+  vendor_code: string
+  vendor_name: string
+  payment_terms: string | null
+  outstanding: string
+  /** THE RUPEE AMOUNT on bills whose due date could not be derived — NOT a
+   *  boolean and NOT a vendor count. A vendor with terms set reads '0'. */
+  terms_not_set: string
+  oldest_due: string | null
+  latest_unpaid_bill: string | null
+  open_bills: number
+}
+
+export type BillOutstandingRow = {
+  purchase_id: string
+  bill_no: string | null
+  bill_date: string
+  bill_total: string
+  /** the FIFO remainder on this bill after payments on account are applied */
+  unpaid: string
+  due_date: string | null
+  net_days: number | null
+}
+
+/** vendor_aging summed against vendor_dues — two routes to one number. */
+export type AgingCheck = { aging: string; dues: string; agrees: boolean; disagreeing: number }

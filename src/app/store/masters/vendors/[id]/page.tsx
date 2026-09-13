@@ -6,6 +6,7 @@ import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getList } from '@/server/settings'
 import { getVendorReturnReasons } from '@/server/vendor-return-queries'
 import { getPoReadiness } from '@/server/po-queries'
+import { getVendorAging, listBillsOutstanding } from '@/server/aging-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { StatusBadge } from '@/components/books/Badges'
@@ -46,16 +47,21 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
   const vendor = await getVendorDetail(restaurant.id, id)
   if (!vendor) notFound()
 
-  const [bills, payments, modes, accounts, returnReasons, open, user, poReady] = await Promise.all([
-    getVendorBills(restaurant.id, id),
-    getVendorPayments(id),
-    getList(restaurant.id, 'payment_mode'),
-    listMoneyAccounts(restaurant.id),
-    getVendorReturnReasons(restaurant.id, id),
-    pendingFor(restaurant.id, id),
-    getSessionUser(),
-    getPoReadiness(restaurant.id),
-  ])
+  const [bills, payments, modes, accounts, returnReasons, open, user, poReady, aging, unpaidBills] =
+    await Promise.all([
+      getVendorBills(restaurant.id, id),
+      getVendorPayments(id),
+      getList(restaurant.id, 'payment_mode'),
+      listMoneyAccounts(restaurant.id),
+      getVendorReturnReasons(restaurant.id, id),
+      pendingFor(restaurant.id, id),
+      getSessionUser(),
+      getPoReadiness(restaurant.id),
+      // The same ageing the pay screen uses, so the form on this page prefills
+      // the balance and states its composition rather than opening blank.
+      getVendorAging(restaurant.id, id),
+      listBillsOutstanding(restaurant.id, id),
+    ])
   const balP = decimalStringToPaise(vendor.balance)
   const hasBank =
     vendor.bank_name !== null || vendor.account_no !== null || vendor.ifsc !== null || vendor.upi_id !== null
@@ -243,7 +249,14 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
         </section>
       </div>
 
-      <PaymentForm vendorId={vendor.id} vendorName={vendor.name} modes={modes} accounts={accounts} />
+      <PaymentForm
+        vendorId={vendor.id}
+        vendorName={vendor.name}
+        modes={modes}
+        accounts={accounts}
+        aging={aging}
+        bills={unpaidBills}
+      />
 
       {/* payment history */}
       <section className={cardCls}>
