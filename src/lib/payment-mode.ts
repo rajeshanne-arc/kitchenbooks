@@ -1,23 +1,38 @@
 /**
- * WHICH MODES MEAN "I HANDED OVER THE MONEY MYSELF".
+ * WHICH PAYMENTS THE PERSON AT THE SCREEN CAN ACTUALLY MAKE.
  *
- * The store manager records what he OBSERVED. He watched cash leave his hand,
- * so he records a payment. He did not make the bank transfer, so he raises a
- * request instead — recording a transfer he did not make is writing down
- * hearsay, and on live data it is also the common case: 94% of payment value
- * has gone by transfer, 6% in cash.
+ * THIS IS A TEMPORARY RULE AND HERE IS WHAT REPLACES IT. The string match asks
+ * "is this mode cash". The question that actually matters is CAN THIS PERSON
+ * PERFORM THIS PAYMENT, and the two coincide today only because cash is the
+ * one thing a store manager can hand over.
  *
- * THE TENSION, STATED RATHER THAN HIDDEN. `payment_mode` is a managed list, and
- * this file makes one of its VALUES decide whether money is recorded or
- * requested — which is close to the line this project draws at "settings
- * configure vocabulary, never integrity". It stays on the right side of that
- * line only because it is CHECKED: `smoke:a2` asserts the live list contains
- * exactly one cash mode, so renaming it to something this cannot recognise
- * fails a gate instead of silently routing every payment into the approvals
- * queue. Without that assertion this would be a rename away from broken.
+ *   THE SUCCESSOR — key on ACCOUNT ACCESS, not on the mode string:
+ *     the actor has an account that could settle this  -> he RECORDS it
+ *     he has none                                      -> he REQUESTS it
  *
- * The screen also never leaves the branch implicit — it says which act is
- * about to happen, in the words of the act, before the button is pressed.
+ * That is a PERMISSION rather than a list value. It cannot be broken by
+ * renaming a dropdown option, and it generalises: give the store manager a UPI
+ * wallet he controls and he can pay from it with no code change, which the
+ * string match can never express.
+ *
+ * WHY IT IS NOT BUILT YET — a DATA gap, not a design one. There are four money
+ * accounts (two bank, one owner, one wallet) and ZERO tills: `is_till` is false
+ * on every one. Under account-access there would be nothing a store manager
+ * could pay from, so every payment he entered would become a request —
+ * INCLUDING the cash he physically hands over, which is the one case the whole
+ * split exists to keep as a record. If cash leaves the restaurant, some account
+ * is where it leaves from, and that account has to exist first.
+ *
+ * So: the match stays until a till exists, and then this file is deleted rather
+ * than extended. A temporary rule that does not name its successor becomes
+ * permanent.
+ *
+ * WHAT THE GATE PROTECTS, PRECISELY. `smoke:a2` asserts the live payment_mode
+ * list holds exactly one cash mode and at least one that is not. While this
+ * rule stands, that is an INTEGRITY check — rename Cash and every payment
+ * silently routes into the approvals queue. After the successor lands it
+ * protects only a LABEL, and should be re-read in that light rather than kept
+ * out of habit.
  */
 export const isCashMode = (mode: string): boolean => /\bcash\b/i.test(mode)
 

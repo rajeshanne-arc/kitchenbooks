@@ -9370,3 +9370,72 @@ is enforced.
 **The fix for the instance is never the fix for the class.** Each of the five
 was closed by adding the missing door, which is right and insufficient — a sixth
 will happen the same way. See the reachability proposal below; it is not built.
+
+## A GATE CRYING WOLF ABOUT DATA THAT IS FINE COSTS MORE THAN A MISSING GATE
+
+The ageing reconciliation gate failed on its first run against data that was
+correct. `assert.deepEqual(rows, [])` — where `rows` is what postgres.js
+returns, a **`Result`, not a plain array**. The row count was zero, the books
+agreed on all 28 vendors, and the assertion failed on the PROTOTYPE:
+
+    + Result(0) []
+    - []
+
+Spread it first (`[...rows]`), and map to a readable string while you are there
+so a real failure names the vendors rather than dumping objects.
+
+> **A false alarm is worse than no alarm, because the next REAL failure is read
+> as another false one.**
+
+That is the same cost this file already records for the cross-vendor price chip
+firing on correct bills, and for the schema gate reporting `both` and `at time
+zone` as missing columns — and both times the remedy was to sharpen the
+instrument rather than blunt it or work around it. A gate people have learned to
+scroll past is indistinguishable from a gate nobody wrote.
+
+## KEY ON WHAT THE PERSON CAN DO, NOT ON WHAT THE THING IS CALLED
+
+The vendor payment screen branches: cash is RECORDED by the store manager,
+transfers are REQUESTED. The first implementation asked `/\bcash\b/i` — *is this
+mode cash* — and that is the wrong question wearing the right answer.
+
+> **The question is CAN THIS PERSON PERFORM THIS PAYMENT. It coincides with
+> "is it cash" only because cash is the one thing a store manager can hand
+> over.**
+
+**THE SUCCESSOR, named so the temporary rule cannot become permanent:** key on
+ACCOUNT ACCESS. The actor has an account that could settle this, so he records
+it; he has none, so he requests it. That is a PERMISSION rather than a list
+value — unbreakable by renaming a dropdown option, and it generalises the day
+somebody hands the store manager a UPI wallet he controls.
+
+**WHY IT IS NOT BUILT: a DATA gap, not a design one.** Four money accounts exist
+— two bank, one owner, one wallet — and `is_till` is false on every one. Under
+account-access there would be nothing a store manager could pay from, so every
+payment he entered would become a request INCLUDING the cash he physically hands
+over, which is the one case the split exists to preserve as a record. **If cash
+leaves the restaurant, some account is where it leaves from**, and that account
+has to exist first.
+
+**And the gate changes meaning when the successor lands.** `smoke:a2` asserts
+the live list holds exactly one cash mode and at least one that is not. While
+the string match stands that is an INTEGRITY check — rename Cash and every
+payment routes silently into the approvals queue. Afterwards it protects only a
+LABEL, and should be re-read in that light rather than kept out of habit.
+
+## THE COLUMN'S CHECK CANNOT KNOW WHICH KINDS NEED IT
+
+`approval_requests.amount` is `CHECK (amount IS NULL OR amount > 0)`. It has to
+permit a null, because discard, merge and reopen requests carry no amount — so
+it **permits a payment request with no amount**, which is not a request anybody
+can act on.
+
+The constraint is doing all it can: one column serves five kinds, and a
+constraint cannot see which kind a row is without a clause per kind. Requiring
+the amount for THIS kind is the app's job, and it is refused by name before the
+insert.
+
+The general form, and it is the reverse of the usual advice to push rules into
+the database: **where one column serves several kinds, the database can enforce
+the SHAPE and only the app can enforce the KIND.** Do not read a permissive
+CHECK as permission.

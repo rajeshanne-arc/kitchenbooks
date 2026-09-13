@@ -400,6 +400,10 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
+    // A PAYMENT REQUEST WITH NO AMOUNT IS NOT A REQUEST ANYBODY CAN ACT ON.
+    // The column's CHECK is (amount IS NULL OR amount > 0) — it permits a null
+    // because the other request kinds have no amount, so requiring one for
+    // THIS kind is the app's job.
     const paise = parseMoney(input.amount)
     if (paise === null || paise <= 0) throw new ApprovalRefusal('Enter an amount greater than zero')
 
@@ -440,8 +444,18 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
       }
       const [row] = await tx<{ id: string }[]>`
         insert into approval_requests
-          (restaurant_id, kind, entity_type, entity_id, target_entity_id, reason, snapshot, status, requested_by)
+          (restaurant_id, kind, entity_type, entity_id, target_entity_id, reason, amount,
+           snapshot, status, requested_by)
+        -- THE AMOUNT IS A COLUMN, not only a snapshot field. The snapshot is
+        -- the ageing AS IT STOOD AT ASKING, kept to be COMPARED with the live
+        -- figure; the amount is what is being asked for, which anything
+        -- reading this queue needs without parsing jsonb.
+        --
+        -- The CHECK is (amount IS NULL OR amount > 0), so it permits a payment
+        -- request with NO amount. It cannot know which kinds need one, so the
+        -- refusal above is the app's job, not the constraint's.
         values (${rid}, 'payment', 'vendor', ${input.vendorId}, null, ${input.reason},
+                ${(paise / 100).toFixed(2)},
                 ${JSON.stringify({
                   amount: input.amount,
                   mode: input.mode,

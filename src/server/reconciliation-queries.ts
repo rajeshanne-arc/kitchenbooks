@@ -13,7 +13,7 @@
 // count moves with it, in one place.
 import 'server-only'
 import { tsql } from '@/lib/db'
-import type { StatementLineRow, StatementRow, UnmatchedMovementRow } from '@/lib/types'
+import type { StaleUnmatchedRow, StatementLineRow, StatementRow, UnmatchedMovementRow } from '@/lib/types'
 
 /** A line someone has already decided about, with what they decided it was.
  *  Local to this file — a match is a record, not an input, so it has no
@@ -211,4 +211,47 @@ export async function findUnmatchedMovement(
       and m.entity_type = ${entityType}
       and m.entity_id = ${entityId}`
   return rows[0] ?? null
+}
+
+/**
+ * EVERY PAYMENT IS A CLAIM UNTIL IT MATCHES A BANK STATEMENT LINE.
+ *
+ * Cash or bank, recorded by the store or approved by the owner — a payment is
+ * something we SAY happened until a statement line agrees. That is the control
+ * that makes the mode split safe rather than ceremonial: without it, deciding
+ * who may record what is manners, because nothing afterwards checks that the
+ * money actually left.
+ *
+ * OLDER THAN A WEEK, because a payment made yesterday has not had time to
+ * appear on a statement and listing it would train the reader to dismiss the
+ * list. The age is measured against the app's own business day, passed in —
+ * this file never asks the database what day it is.
+ *
+ * ACROSS EVERY ACCOUNT. `listUnmatchedMovements` answers for ONE account,
+ * during a reconciliation somebody is already doing. This answers the
+ * different question the Review exists for: what has been sitting unmatched
+ * anywhere, which nobody is looking at.
+ *
+ * @scope now
+ */
+export async function listStaleUnmatchedPayments(
+  restaurantId: string,
+  asOf: string,
+  days = 7,
+  limit = 50,
+): Promise<StaleUnmatchedRow[]> {
+  return tsql<StaleUnmatchedRow[]>`
+    select m.entity_type, m.entity_id, m.kind, m.doc_no,
+           m.move_date::text as move_date,
+           m.amount::text as amount,
+           m.party, m.narration,
+           a.name as account_name,
+           (${asOf}::date - m.move_date)::int as age_days
+    from unmatched_movements m
+    left join money_accounts a
+      on a.restaurant_id = m.restaurant_id and a.id = m.account_id
+    where m.restaurant_id = ${restaurantId}
+      and m.move_date <= (${asOf}::date - ${days}::int)
+    order by m.move_date asc, m.amount desc
+    limit ${limit}`
 }

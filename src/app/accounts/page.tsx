@@ -13,6 +13,8 @@ import {
 import { countUnaccountedMovements } from '@/server/accounts-queries'
 import { countOrdersWithTime, getBusinessDayDisagreements } from '@/server/business-day'
 import { getAggregatorReceivable } from '@/server/register-queries'
+import { listStaleUnmatchedPayments } from '@/server/reconciliation-queries'
+import { businessToday } from '@/server/business-day'
 import QueueClient from '@/components/accountant/QueueClient'
 import Honesty from '@/components/Honesty'
 import { formatMoneyString } from '@/lib/money'
@@ -29,7 +31,8 @@ const TONE: Record<string, 'alarm' | 'pending'> = {
 
 export default async function AccountsReviewPage() {
   const restaurant = await getRestaurant()
-  const [completeness, open, all, unaccounted, receivable, dayGaps, timed] = await Promise.all([
+  const asOf = await businessToday()
+  const [completeness, open, all, unaccounted, receivable, dayGaps, timed, stale] = await Promise.all([
     getBooksCompleteness(restaurant.id),
     listOpenQueries(restaurant.id),
     listQueries(restaurant.id, 40),
@@ -37,6 +40,10 @@ export default async function AccountsReviewPage() {
     getAggregatorReceivable(restaurant.id),
     getBusinessDayDisagreements(restaurant.id),
     countOrdersWithTime(restaurant.id),
+    // EVERY PAYMENT IS A CLAIM UNTIL A STATEMENT LINE AGREES WITH IT. Older
+    // than a week, because one made yesterday has not had time to appear and
+    // listing it would train the reader to dismiss the list.
+    listStaleUnmatchedPayments(restaurant.id, asOf),
   ])
 
   // Only partners who actually owe something. A row at zero is settled, and
@@ -88,6 +95,51 @@ export default async function AccountsReviewPage() {
             </p>
           )}
         </section>
+
+        {/* EVERY PAYMENT IS A CLAIM UNTIL IT IS MATCHED.
+            Cash handed over by the store or a transfer approved by the owner —
+            both are things we SAY happened until a statement line agrees. This
+            is the control that makes deciding WHO may record WHAT safe rather
+            than ceremonial: without it, the split is manners, because nothing
+            afterwards checks the money actually left.
+            SILENT AT ZERO, like every other finding on this page. */}
+        {stale.length > 0 && (
+          <section className={cardCls}>
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className={sectionHeadCls}>Paid on our books, not yet on a statement</h2>
+              <span className="text-xs text-stone-400">unmatched_movements</span>
+            </div>
+            <p className="mt-1 text-sm text-stone-600">
+              {stale.length} {stale.length === 1 ? 'movement has' : 'movements have'} been sitting more than a week
+              without a statement line agreeing. A payment is a claim until it is matched.
+            </p>
+            <ul className="mt-2 divide-y divide-rule-soft">
+              {stale.slice(0, 10).map((m) => (
+                <li key={`${m.entity_type}:${m.entity_id}`} className="flex items-baseline justify-between gap-3 py-2">
+                  <span className="min-w-0 text-sm">
+                    <span className="text-stone-900">{m.party ?? m.narration ?? m.kind}</span>
+                    <span className="ml-1.5 text-xs text-stone-400">
+                      {m.doc_no !== null && <>{m.doc_no} · </>}
+                      {fmtDate(m.move_date)} · {m.age_days}d
+                      {/* A TAX DEPOSIT NAMES NO ACCOUNT BY THE VIEW'S DESIGN,
+                          so it can never be reconciled against a statement.
+                          Saying so beats leaving a permanent blank. */}
+                      {m.account_name === null ? ' · no account' : ` · ${m.account_name}`}
+                    </span>
+                  </span>
+                  <span className={`${moneyCls} shrink-0 text-sm`}>{formatMoneyString(m.amount)}</span>
+                </li>
+              ))}
+            </ul>
+            {stale.length > 10 && (
+              <p className="mt-1.5 text-xs text-stone-400">and {stale.length - 10} older</p>
+            )}
+            <p className="mt-2 text-xs text-stone-500">
+              Import a statement under Cash &amp; bank and match them. A match cannot be undone, so it is a
+              judgement worth making deliberately.
+            </p>
+          </section>
+        )}
 
         {/* WHICH DAY AN ORDER BELONGS TO. A restaurant serving past midnight
             has a day that does not end at midnight, and if our cutover and

@@ -3774,3 +3774,18 @@ export type BillOutstandingRow = {
 
 /** vendor_aging summed against vendor_dues — two routes to one number. */
 export type AgingCheck = { aging: string; dues: string; agrees: boolean; disagreeing: number }
+
+/** A movement the books hold that no statement line has agreed with yet. */
+export type StaleUnmatchedRow = {
+  entity_type: string
+  entity_id: string
+  kind: string
+  doc_no: string | null
+  move_date: string
+  amount: string
+  party: string | null
+  narration: string | null
+  /** null where the movement names no account — a tax deposit, by design */
+  account_name: string | null
+  age_days: number
+}
