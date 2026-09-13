@@ -10320,7 +10320,7 @@ rather than only in a commit message:
 
 So the store's queue holds exactly one thing: refusals waiting to be read.
 
-### THE VIEW COULD NOT SEE IT, AND THAT IS THE SECOND TIME ITS STATUS LIST HAS BEEN WRONG
+### A WHERE CLAUSE CAN BE A HAND-MAINTAINED COPY TOO — the fourth earning
 
 `awaiting_me` filters `status IN ('pending','approved','returned','challenged')`
 — a SECOND expression of "is this waiting" beside the column that already says
@@ -10331,15 +10331,62 @@ so. The two have now disagreed twice, in both directions:
 - **`refused` is not on the list and now must be.** A refusal routed home is
   real work, waiting on a named role, and the badge cannot count it.
 
-`migrations/awaiting_me_keys_on_assignment.sql` keys the view on
+`awaiting_me_keys_on_assignment` (applied) keys the view on
 `assigned_to IS NOT NULL` alone. That removes both faults at once and cannot
-drift again, because it stops being a copy of anything. **Written, NOT applied
-— the store badge reads zero until it is**, and the gate says so on every run.
+drift again, because it stops being a copy of anything: **the assignment is not
+a copy of the rule, it IS the rule.**
+
+> **A WHERE CLAUSE CAN BE A HAND-MAINTAINED COPY.** The family is recorded
+> three times over lists in files — the retired-URL list at 51 against 57,
+> `DOC_TYPES` at eight against nine, a gate pinning `"Accounts → Money"` after
+> the relabel. This is the fourth, and the first where the copy was a
+> PREDICATE rather than a list: a status list beside `assigned_to` is a second
+> statement of what "waiting" means, and it drifted in BOTH directions inside
+> two commits.
+
+The tell is the same wherever it lives: something that can grow, restated
+somewhere that cannot see it grow. It is easier to miss in SQL because a
+`WHERE` looks like logic rather than like data.
 
 It also admits one thing nobody asked for, said rather than discovered: a
 `failed` request carries `assigned_to = 'owner'` and starts being counted. That
 is correct — a yes that did nothing is waiting on the owner — and it was
 invisible before.
+
+### THE DIVISION IS NOW LOAD-BEARING, SO IT IS ASSERTED
+
+Keying the view on the assignment moved the whole responsibility for ENDING a
+queue into the app:
+
+> **The view asks who holds it. The app decides when nobody does.** A request
+> left assigned after its last act sits in somebody's badge forever, and
+> nothing in the database will object.
+
+Two halves, both derived rather than listed, because the first version of each
+was a membership list that could shrink silently:
+
+- **the data.** Terminal statuses are the COMPLEMENT of `ASSIGNABLE_STATUSES`,
+  read from the status CHECK — so a status added to the schema later is covered
+  the day it exists. No request in one may carry an assignment. Proved by
+  writing the fault on purpose: a fixture left `applied` and assigned is found,
+  AND is shown to be counted by the badge, which is why it matters rather than
+  being untidy.
+- **the source.** `alwaysClears` — every action whose every `recordAct` call
+  passes `assignTo: null` — is derived from the source and must EQUAL
+  `TERMINAL_ACTS` exactly. Not "does each declared act clear?", which is
+  satisfied by declaring fewer.
+
+**Both were caught by perturbation and both were the shrinking-denominator
+fault, in a gate written by somebody who had recorded it twice that week.**
+Dropping `acknowledged` from the declared acts left the first version green;
+so did declaring `applied` assignable. The equality and the complement are what
+fixed them: a set that must MATCH something derived cannot shrink, and a set
+stated as the exception grows by itself.
+
+`refused` is the interesting member of neither: a refusal is the outcome and
+the obligation at once, so it stays assigned until it is acknowledged — and the
+gate asserts it does NOT clear, because a refusal that cleared its own
+assignment would mean nobody is ever told.
 
 ### THE EXEMPTION EXPIRES BY ITSELF, AND ITS FIRST VERSION DID NOT FAIL
 
@@ -10349,13 +10396,34 @@ a written migration must name it, key on the assignment, and set
 one — a refusal counted, and "Noted" taking the count back down — with nobody
 editing the gate.
 
-**And proving it could fail found the flaw immediately.** Deleting the
-`alter view … set (security_invoker = on)` statement left the gate GREEN,
-because the migration's own comment block explains *why* security_invoker has
-to be set again — so `/security_invoker/` matched the EXPLANATION. A checker
-that reads source is part of the source it reads, and here the source was
-arguing the checker's case back at it. Comments are stripped first now, and the
-match is on the STATEMENT.
+### A JUSTIFICATION STANDING IN FOR THE THING IT JUSTIFIES
 
-That is the third instance of this shape in the file, and the first where the
-prose that defeated the check was written to support it.
+Proving that gate could fail found the flaw immediately. Deleting the
+`alter view … set (security_invoker = on)` statement left it **GREEN**, because
+the migration's own comment block explains *why* security_invoker has to be set
+again — so `/security_invoker/` matched the EXPLANATION.
+
+Third instance of a checker being part of the source it reads, and **the first
+where the prose that defeated the check had been written to support it.** The
+comment arguing for the rule is what satisfied the search for the rule's
+implementation.
+
+> **STRIP COMMENTS BEFORE MATCHING, ALWAYS.** And the general form, which is
+> the uncomfortable half: **the better documented a rule is, the more likely
+> its documentation will satisfy a naive search for its implementation.** Good
+> prose about a rule is indistinguishable, to a regex, from the rule being
+> obeyed — so the more carefully a file explains itself, the more certainly a
+> substring check over it is measuring the explanation.
+
+**The same family caught Rajesh in the same hour, verifying the fix for it.**
+Checking whether the migration had landed, the query asked whether the view
+definition still matched `status.*in` — and it returned true, from the SELECT
+LIST and the GROUP BY, not from a filter. `awaiting_me` projects `status` under
+both implementations, so the test could not tell them apart in either
+direction.
+
+The fix is the same shape as stripping comments: **slice the region the rule
+lives in before searching it.** The gate cuts the `WHERE` out of
+`pg_get_viewdef` and asks only that. Two instruments, one hour, both defeated
+by text that was legitimately there — which is what makes "anchor on structure,
+never on a substring" a rule about REGIONS and not only about names.

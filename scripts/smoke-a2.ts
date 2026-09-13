@@ -9175,7 +9175,18 @@ async function run() {
     const { tsql } = await import('../src/lib/db')
     const { readFileSync, existsSync } = await import('node:fs')
     const [v] = await tsql<{ def: string }[]>`select pg_get_viewdef('awaiting_me'::regclass, true) as def`
-    const keysOnAssignment = !/status\s*=\s*ANY/i.test(v.def)
+    // SLICE THE WHERE, DO NOT SEARCH THE DEFINITION. `status` is in the
+    // SELECT list and in the GROUP BY of this very view, so asking whether
+    // the definition mentions it answers about the PROJECTION and not the
+    // FILTER — and answers "yes" under both implementations. Rajesh made
+    // exactly that mistake while checking this migration had landed, which is
+    // the same family as the comment that satisfied the search for the
+    // statement it was explaining.
+    const noComments = v.def.replace(/--[^\n]*/g, '')
+    const wi = noComments.toUpperCase().indexOf('WHERE')
+    const gi = noComments.toUpperCase().indexOf('GROUP BY')
+    const whereClause = wi === -1 ? '' : noComments.slice(wi, gi === -1 ? undefined : gi)
+    const keysOnAssignment = !/\bstatus\b/i.test(whereClause)
 
     if (!keysOnAssignment) {
       const f = 'migrations/awaiting_me_keys_on_assignment.sql'
@@ -9255,6 +9266,124 @@ async function run() {
       'challengeRequest routes to the raiser — the argument is not theirs to hold',
     )
     console.log('      returned → owner · challenged → owner · only a refusal goes back to the raiser')
+  })
+
+  await check('a finished request is in nobody’s queue', async () => {
+    // THE VIEW ASKS WHO HOLDS IT; THE APP DECIDES WHEN NOBODY DOES. Keying
+    // awaiting_me on `assigned_to` alone removed a copy of the waiting rule —
+    // and moved the whole responsibility for ending a queue into the app. A
+    // request left assigned after its last act sits in somebody's badge
+    // forever and nothing in the database will object.
+    const { tsql, txn } = await import('../src/lib/db')
+    const { TERMINAL_ACTS, ASSIGNABLE_STATUSES, countAwaiting } = await import(
+      '../src/server/approvals-queries'
+    )
+    // TERMINAL IS THE COMPLEMENT, READ FROM THE CHECK CONSTRAINT. Listing the
+    // terminal statuses meant a shrinking list checked less and stayed green;
+    // deriving them means a status added to the schema later is covered the
+    // day it exists rather than the day somebody remembers it.
+    const [ck] = await tsql<{ def: string }[]>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_status_check'`
+    const all = [...ck.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1])
+    assert.ok(all.length >= 6, `only ${all.length} statuses read from the CHECK — the derivation is looking at nothing`)
+    const terminal = all.filter((x) => !(ASSIGNABLE_STATUSES as readonly string[]).includes(x))
+    assert.ok(terminal.length > 0, 'every status is assignable — nothing is terminal, so this checks nothing')
+
+    const stuck = async (q: typeof tsql) =>
+      q<{ id: string; status: string; assigned_to: string }[]>`
+        select id, status, assigned_to from approval_requests
+        where restaurant_id = ${liveTenant}
+          and status = any(${terminal})
+          and assigned_to is not null`
+
+    assert.deepEqual(
+      [...(await stuck(tsql))].map((r) => `${r.status} still with the ${r.assigned_to}`),
+      [],
+      'a finished request is still sitting in somebody’s badge',
+    )
+
+    // PROVED BY LEAVING ONE SET. A clean live table says nothing about whether
+    // the query could see a dirty one, and every restaurant is clean until it
+    // is not — the vacuity family, avoided by writing the fault on purpose.
+    await txn(async (tx) => {
+      const [vendor] = await tx<{ id: string }[]>`
+        select id from vendors where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+      const before = await countAwaiting(liveTenant, 'store', tx)
+      await tx`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, reason, status, assigned_to, requested_by)
+        values (${liveTenant}, 'payment', 'vendor', ${vendor.id}, 'stuck probe', 'applied', 'store', 'store')`
+      const found = [...(await stuck(tx as unknown as typeof tsql))]
+      assert.equal(found.length, 1, 'the invariant cannot see a finished request left assigned')
+      assert.equal(found[0].status, 'applied')
+      // AND IT REALLY WOULD BE BADGED, which is why it matters rather than
+      // being untidy: the view keys on the assignment and nothing else.
+      assert.equal(
+        await countAwaiting(liveTenant, 'store', tx),
+        before + 1,
+        'a finished-but-assigned request is not counted — then leaving it assigned would be harmless, and it is not',
+      )
+      throw new Error('ROLLBACK-STUCK-PROBE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-STUCK-PROBE') throw e
+    })
+
+    // THE SOURCE HALF: every terminal act clears the assignment at the point
+    // it is written, so a new one cannot be added without choosing.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/approvals-actions.ts', 'utf8')
+    const calls: string[] = []
+    let k = 0
+    while ((k = src.indexOf('recordAct(', k)) !== -1) {
+      const open = src.indexOf('{', k)
+      let depth = 0
+      for (let m = open; m < src.length; m++) {
+        if (src[m] === '{') depth++
+        else if (src[m] === '}') {
+          depth--
+          if (depth === 0) {
+            calls.push(src.slice(open, m + 1))
+            k = m
+            break
+          }
+        }
+      }
+      k++
+    }
+    assert.ok(calls.length >= 8, `only ${calls.length} recordAct calls found — the sweep is looking at nothing`)
+
+    // DERIVED, THEN COMPARED — not "does each declared act clear?", which is
+    // satisfied by declaring fewer. `alwaysClears` is every action for which
+    // EVERY call passes assignTo: null, read out of the source; it must equal
+    // the declaration exactly, so the set can neither shrink nor miss a new
+    // act that quietly ends a queue.
+    const byAction = new Map<string, string[]>()
+    for (const c of calls) {
+      const m = /action: '([a-z_]+)'/.exec(c)
+      if (m === null) continue
+      byAction.set(m[1], [...(byAction.get(m[1]) ?? []), c])
+    }
+    const alwaysClears = [...byAction.entries()]
+      .filter(([, cs]) => cs.every((c) => /assignTo:\s*null/.test(c)))
+      .map(([a]) => a)
+      .sort()
+    assert.deepEqual(
+      alwaysClears,
+      [...TERMINAL_ACTS].sort(),
+      `the acts that always clear the assignment are ${alwaysClears.join(', ')} and TERMINAL_ACTS says ${[...TERMINAL_ACTS].join(', ')}`,
+    )
+    // AND THE ONE THAT DELIBERATELY DOES NOT. A refusal is the outcome and the
+    // obligation at once; it stays with whoever raised it until they note it.
+    const refusals = calls.filter((c) => /action: 'refused'/.test(c))
+    assert.ok(refusals.length > 0, 'no refusal call found')
+    assert.ok(
+      refusals.every((c) => !/assignTo:\s*null/.test(c)),
+      'a refusal clears the assignment — then nobody is ever told it was refused',
+    )
+    console.log(
+      `      ${calls.length} acts · terminal statuses derived: ${terminal.join(', ')} · always clear: ${alwaysClears.join(', ')} · refused deliberately does not`,
+    )
   })
 
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */

@@ -1189,6 +1189,50 @@ export type Act = {
  * It is also what makes the badge honest, because clearing `assigned_to` — and
  * nothing else — is how work leaves a queue.
  */
+/**
+ * THE DIVISION IS LOAD-BEARING, SO IT IS DECLARED RATHER THAN REMEMBERED.
+ *
+ * `awaiting_me` asks ONE question — who is holding this — and keys on
+ * `assigned_to` alone. It no longer carries a list of statuses, because a list
+ * is a COPY of the rule deciding what "waiting" means, and that copy drifted
+ * in both directions within two commits: `returned` was on it and is never
+ * written, `refused` was absent and is now required.
+ *
+ * The consequence is that the APP is now solely responsible for saying when
+ * nobody is holding a request. **A request left assigned after its last act
+ * sits in somebody's badge forever**, and nothing in the database will object.
+ *
+ * BOTH SETS ARE STATED AS THE EXCEPTION, NEVER AS THE MEMBERSHIP, because a
+ * list of members shrinks silently and takes the gate down with it — which is
+ * exactly what happened when this was first written as
+ * `TERMINAL_STATUSES = ['applied','cancelled']`: dropping a member made the
+ * check examine less and stay green.
+ *
+ *   ASSIGNABLE_STATUSES  the ones where somebody may legitimately still be
+ *                        holding it. EVERY OTHER STATUS in the CHECK is
+ *                        terminal by construction, so a status added later is
+ *                        covered the day it exists rather than the day
+ *                        somebody remembers.
+ *   TERMINAL_ACTS        after one of these nobody is holding it. Asserted
+ *                        against the acts DERIVED from the source — the set
+ *                        that always passes `assignTo: null` — so it can
+ *                        neither shrink nor miss a new one.
+ *
+ * `refused` is assignable on purpose, and it is the interesting member: a
+ * refusal is the outcome and the obligation at once, and stays with whoever
+ * raised it until they acknowledge it. `failed` too — an approval that could
+ * not be applied genuinely is waiting on the owner.
+ */
+export const ASSIGNABLE_STATUSES = [
+  'pending',
+  'approved',
+  'returned',
+  'challenged',
+  'refused',
+  'failed',
+] as const
+export const TERMINAL_ACTS = ['paid', 'cancelled', 'acknowledged'] as const
+
 export const SEND_BACK = {
   returned: { status: 'approved', clearRouting: true, assignTo: 'owner' },
   challenged: { status: 'challenged', clearRouting: true, assignTo: 'owner' },
