@@ -9555,3 +9555,53 @@ elsewhere. The moment the rule is "required when `kind` is X", a single CHECK
 can still express it (`kind <> 'payment' OR amount IS NOT NULL`) — but only if
 somebody writes that clause per kind, and the one that exists here does not.
 **Read what the constraint actually says before trusting it to hold a rule.**
+
+## A COLUMN THAT RECORDS WHO DID SOMETHING CANNOT BE REUSED BY THE NEXT PERSON WHO DOES SOMETHING
+
+`approval_requests.decided_by` is the CURRENT POSITION. `approval_events` is who
+acted. Overwriting the column to record a second act **deletes one person's act
+with another's** — the owner approved it on Tuesday, the accountant returned it
+on Thursday, and after the return there is no row anywhere saying the owner ever
+approved anything.
+
+That is the reason, and it is worth separating from the consequence it is
+usually stated as. The history becoming unreadable is what you NOTICE; somebody
+losing their act is what is WRONG. **Overwriting would still be wrong in a
+system whose history nobody ever read**, because the fault is not that the
+record is confusing — it is that one person's name was removed from something
+they did, by somebody who did something else.
+
+So: the columns are derivable from the last event and are kept only because
+queries filter on them. Every act APPENDS. `decideApproval` keeps writing
+`decided_by`/`decided_at` — that is the current position and queries need it —
+and gains an event beside it. **Never the only record.**
+
+This generalises past approvals. Ask it of any `*_by` / `*_at` pair: can a
+second act of a different kind arrive for this row? If it can, that pair is a
+position and needs a trail beside it.
+
+### AN EVENT TRAIL ADDED AFTER THE FEATURE HAS A HOLE AT ITS OWN START
+
+Nothing but the `raised` event records who raised a request or what mode they
+expected. Both are unrecoverable: `requested_by` survives, but the suggestion
+and the act of suggesting do not, and no later event implies them.
+
+So every request created before the trail existed carries a **permanent hole at
+the beginning of its own history** — and it is the beginning, which is the part
+that says why the thing exists at all. Nothing can backfill it, because the
+information was never anywhere else.
+
+> **Add the trail WITH the feature, not behind it.** A trail is the one kind of
+> record that cannot be reconstructed later: everything else can be recomputed
+> from state, and an event is precisely the thing state has forgotten.
+
+The `raised` event is therefore written in the SAME transaction as the request
+row, so a request can never exist without the event that created it.
+
+### suggested_mode AND routed_mode ARE ALLOWED TO DIFFER
+
+`suggested_mode` is what the store manager expected; `routed_mode` is what the
+person who actually paid chose. **Two people knowing different things is not a
+discrepancy** — the store manager knows the vendor wants paying, the owner knows
+which account is liquid. Neither is correcting the other, and the difference is
+a fact worth keeping rather than one to reconcile away silently.

@@ -445,7 +445,7 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
       const [row] = await tx<{ id: string }[]>`
         insert into approval_requests
           (restaurant_id, kind, entity_type, entity_id, target_entity_id, reason, amount,
-           snapshot, status, requested_by)
+           suggested_mode, snapshot, status, requested_by)
         -- THE AMOUNT IS A COLUMN, not only a snapshot field. The snapshot is
         -- the ageing AS IT STOOD AT ASKING, kept to be COMPARED with the live
         -- figure; the amount is what is being asked for, which anything
@@ -455,9 +455,13 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
         -- request with NO amount. It cannot know which kinds need one, so the
         -- refusal above is the app's job, not the constraint's.
         values (${rid}, 'payment', 'vendor', ${input.vendorId}, null, ${input.reason},
-                ${(paise / 100).toFixed(2)},
+                ${(paise / 100).toFixed(2)}, ${input.mode},
                 ${JSON.stringify({
                   amount: input.amount,
+                  // SUGGESTED, NOT DECIDED. He says how he expected it to go;
+                  // routed_mode is what the person who actually pays chose,
+                  // and the two are allowed to differ — that difference is a
+                  // fact worth keeping, not a correction to make silently.
                   mode: input.mode,
                   urgency: input.urgency,
                   advanceIntent: input.advanceIntent === true,
@@ -468,6 +472,19 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
                   askedTerms: aging.payment_terms,
                 })}::jsonb, 'pending', ${by})
         returning id`
+
+      // THE TRAIL IS THE HISTORY; THE COLUMNS ARE ONLY THE CURRENT POSITION.
+      // status, decided_by and the rest are derivable from the last event and
+      // are kept because queries filter on them — so an act is recorded by
+      // APPENDING here, never by overwriting a column that already holds an
+      // earlier act. A trail with a hole at the start cannot be backfilled:
+      // nothing else records who raised this or what they suggested.
+      //
+      // Written in the SAME transaction as the request, so a row can never
+      // exist without the event that created it.
+      await tx`
+        insert into approval_events (restaurant_id, request_id, action, note, mode, acted_by)
+        values (${rid}, ${row.id}, 'raised', ${input.reason}, ${input.mode}, ${by})`
       return row.id
     })
 
