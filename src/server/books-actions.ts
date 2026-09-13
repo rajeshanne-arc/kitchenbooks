@@ -18,8 +18,9 @@ import { getRestaurant } from '@/server/queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
+import { insertPayment } from '@/server/payment-write'
 import { getBill, getDues, getItemDetail, getVendorDetail } from '@/server/books-queries'
-import { parseMoney, paiseToString } from '@/lib/money'
+import { parseMoney } from '@/lib/money'
 import type {
   CreateItemInput,
   CreateItemResult,
@@ -163,19 +164,21 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
     const by = await enteredBy()
 
     // A transaction only so the number and the row it numbers commit together —
-    // a failed insert must not burn a number out of the series.
-    const payment = await txn(async (tx) => {
-      const docNo = await nextDocNo(tx, rid, 'PAY', input.paidDate)
-      const [row] = await tx<
-        { id: string; doc_no: string | null; paid_date: string; amount: string; mode: string | null; note: string | null; created_at: string }[]
-      >`
-        insert into payments (restaurant_id, paid_date, vendor_id, doc_no, amount, mode, note, entered_by, account_id)
-        values (${rid}, ${input.paidDate}, ${input.vendorId}, ${docNo}, ${paiseToString(amountPaise)}::numeric,
-                ${input.mode === '' ? null : input.mode}, ${input.note === '' ? null : input.note}, ${by}, ${accountId})
-        returning id, doc_no, paid_date::text as paid_date, amount::text as amount, mode, note, created_at::text as created_at`
-      return row
-    })
-    if (!payment) throw new BooksError('Payment insert could not be verified')
+    // a failed insert must not burn a number out of the series. The insert
+    // itself lives in payment-write.ts, because the approval path writes the
+    // same row beside its own `paid` event and two statements for one table is
+    // how they drift.
+    const payment = await txn((tx) =>
+      insertPayment(tx, rid, {
+        vendorId: input.vendorId,
+        paidDate: input.paidDate,
+        amountPaise,
+        mode: input.mode,
+        note: input.note,
+        accountId,
+        enteredBy: by,
+      }),
+    )
 
     const dues = await getDues(input.vendorId)
     return { ok: true, payment, dues, duesBefore }

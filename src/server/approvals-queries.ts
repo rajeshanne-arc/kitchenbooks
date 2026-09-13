@@ -88,10 +88,28 @@ async function actor(allowed: Role[], what: string): Promise<string> {
   return user.username
 }
 
+/**
+ * The roles a payment can be handed to. NOT every role in the matrix: the chef
+ * and the cashier have no reason to make a vendor transfer, and a queue
+ * somebody cannot act on is a badge they learn to dismiss.
+ */
+export const PAYERS = ['owner', 'accountant', 'store'] as const
+
 export const assertRequester = () =>
   actor(REQUESTERS, 'Raising this is the store’s job — ask them or a manager')
 export const assertApprover = () =>
   actor(DECIDERS, 'Only an owner can approve this — it changes what the books already say')
+
+/**
+ * THE ROLE IS CHECKED BEFORE THE ROW IS READ.
+ *
+ * `assertAssignee` needs `assigned_to`, which needs the row — so on its own it
+ * would have every one of these public endpoints answer "that request is
+ * applied" to anybody signed in who guessed an id. This is the cheap gate that
+ * runs first; the precise one runs after the read.
+ */
+export const assertPayer = () =>
+  actor([...PAYERS] as Role[], 'Acting on a payment is the owner’s, the accountant’s or the store’s')
 
 // ───────────────────────────────────────────────────── what points at a row
 
@@ -615,6 +633,15 @@ export type ApprovalRow = {
   decision_note: string | null
   applied_at: string | null
   applied_result: unknown
+  /** payment requests only — null on every other kind, because the CHECK on
+   *  the column has to permit a null for them. */
+  amount: string | null
+  suggested_mode: string | null
+  routed_mode: string | null
+  routed_account_id: string | null
+  /** the role this is waiting on. `awaiting_me` keys on it, so a request that
+   *  never sets it is a request no badge can ever see. */
+  assigned_to: string | null
   from_code: string | null
   from_name: string | null
   to_code: string | null
@@ -634,6 +661,8 @@ export async function listApprovals(restaurantId: string, pendingOnly: boolean):
            a.snapshot, a.status, a.requested_by, a.requested_at::text as requested_at,
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
            a.applied_at::text as applied_at, a.applied_result,
+           a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.routed_account_id::text as routed_account_id, a.assigned_to,
            coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name
     from approval_requests a
@@ -655,6 +684,8 @@ export async function pendingFor(restaurantId: string, entityId: string): Promis
            a.snapshot, a.status, a.requested_by, a.requested_at::text as requested_at,
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
            a.applied_at::text as applied_at, a.applied_result,
+           a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.routed_account_id::text as routed_account_id, a.assigned_to,
            null as from_code, null as from_name, null as to_code, null as to_name
     from approval_requests a
     where a.restaurant_id = ${restaurantId}
@@ -676,6 +707,8 @@ export async function getApproval(restaurantId: string, id: string): Promise<App
            a.snapshot, a.status, a.requested_by, a.requested_at::text as requested_at,
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
            a.applied_at::text as applied_at, a.applied_result,
+           a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.routed_account_id::text as routed_account_id, a.assigned_to,
            coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name
     from approval_requests a
@@ -737,6 +770,21 @@ export async function applyRequest(
   by = 'owner',
   reason = '',
 ): Promise<ApplyResult> {
+  // A PAYMENT IS NOT APPLIED HERE, AND THE REFUSAL IS STRUCTURAL RATHER THAN
+  // A COMMENT. Without it a payment request falls past the reopen and merge
+  // branches into the DISCARD one, where `entity_type` is 'vendor' — so
+  // approving a request to pay somebody would try to close their code. Today
+  // that is caught by the reference guard, because every vendor carrying an
+  // outstanding balance has at least one bill pointing at it. That is a rule
+  // holding by accident: the guard is about data, not about kind, and one
+  // bill-less balance would make approving a payment discard a live vendor.
+  //
+  // A payment is applied by `payApproval`, which writes the payments row and
+  // the `paid` event in one transaction. Nothing here can do that.
+  if (req.kind === 'payment') {
+    throw new Error('a payment request is settled by recording the payment, not by applying it')
+  }
+
   if (req.kind === 'reopen_period') {
     // The ONLY update period_closes takes, granted on exactly three columns.
     const [row] = await tx<{ code: string }[]>`
@@ -814,6 +862,153 @@ export async function applyRequest(
                       and status in ('active', 'inactive') returning value as code`
   if (!row) throw new Error('it was already closed')
   return { discarded: row.code }
+}
+
+
+
+// ═══════════════════════════════════════════════ an act, and its one record
+
+/**
+ * The ten things that can happen to a request — the CHECK on
+ * `approval_events.action`, mirrored so a typo is a type error rather than a
+ * constraint violation the user reads.
+ */
+export const APPROVAL_ACTIONS = [
+  'raised',
+  'approved',
+  'routed',
+  'forwarded',
+  'returned',
+  'challenged',
+  'refused',
+  'paid',
+  'cancelled',
+  'reopened',
+] as const
+export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number]
+
+export type Act = {
+  id: string
+  action: ApprovalAction
+  /** The statuses this act may act on, re-read INSIDE the transaction. A
+   *  decision taken while another tab had the form open must not land twice. */
+  from: readonly string[]
+  /** What the status becomes. Often the same status it was in: a return
+   *  cancels the ROUTING, not the approval. */
+  status: string
+  by: string
+  /** REQUIRED by the caller on returned / challenged / refused. After one of
+   *  those there is nothing else to explain why the route changed. */
+  note?: string | null
+  mode?: string | null
+  accountId?: string | null
+  /** Whose queue it lands in next. `null` CLEARS it — nobody is waiting.
+   *  Omit to leave it where it is. */
+  assignTo?: string | null
+  /** True only where this act CHOOSES the route — the owner saying how it
+   *  will be paid. `mode` and `accountId` always land on the EVENT; they move
+   *  `routed_mode` / `routed_account_id` only when this is set.
+   *
+   *  The `paid` act names an account and must NOT set it: those columns hold
+   *  the owner's routing decision, and overwriting them with the payer's
+   *  choice would delete one person's act with another's, exactly as reusing
+   *  `decided_by` would. */
+  route?: boolean
+  /** A return cancels the routing and keeps the approval, so the mode and the
+   *  account chosen for the old route must go with it. */
+  clearRouting?: boolean
+  /** Only `approved` and `refused` are decisions.
+   *
+   *  A COLUMN THAT RECORDS WHO DID SOMETHING CANNOT BE REUSED BY THE NEXT
+   *  PERSON WHO DOES SOMETHING. `decided_by` is the current position — who
+   *  said yes — and a later act overwriting it would delete one person's act
+   *  with another's: the owner approved on Tuesday, the accountant returned it
+   *  on Thursday, and afterwards nothing anywhere says the owner ever
+   *  approved anything. So routing, returning, challenging and paying leave it
+   *  alone and APPEND instead. */
+  decision?: boolean
+}
+
+/**
+ * ONE ACT, ONE TRANSACTION: the state change and the event that describes it.
+ *
+ * THE EVENT AND THE STATE CHANGE ARE ONE WRITE OR THEY ARE A LIE WAITING FOR A
+ * CRASH. Two statements outside a transaction leave, on a failure between
+ * them, a request that is approved with nothing saying who approved it — the
+ * exact hole the trail exists to close, arriving by another door, and worse
+ * than the overwriting fault it replaced because an overwrite at least leaves
+ * somebody's name.
+ *
+ * Both writes go on the LENT handle and this function never opens one of its
+ * own. A `tsql` for either half would commit independently of the caller and
+ * survive a rollback, which is the failure mode rather than a style point —
+ * and this very file already writes a failure record in a second transaction
+ * on purpose, so the shape is in the neighbourhood.
+ *
+ * It lives here rather than in the action file for the `applyRequest` reason:
+ * it moves a request's state while taking the actor as a parameter, so
+ * exported from a 'use server' file it would be a way to approve, route or pay
+ * without being anybody in particular. Living here is also what lets a gate
+ * call it on a rolled-back transaction and force a failure between its two
+ * writes, which is the only way to observe that they are one.
+ */
+export async function recordAct(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+  act: Act,
+): Promise<void> {
+  const note = act.note === undefined || act.note === '' ? null : act.note
+  const mode = act.mode === undefined || act.mode === '' ? null : act.mode
+  const accountId = act.accountId === undefined || act.accountId === '' ? null : act.accountId
+  const decision = act.decision === true
+  const assignTouched = act.assignTo !== undefined
+  const routeTouched = act.route === true
+  const clearRouting = act.clearRouting === true
+
+  // ONE SET LIST, every branch visible in it. Two acts writing this row
+  // through two hand-written SET lists is exactly how they drift — the staff
+  // identity lesson — and the CASE form keeps the whole grant in one
+  // statement audit:schema and audit:tenancy can both read.
+  const [row] = await tx<{ id: string }[]>`
+    update approval_requests
+    set status = ${act.status},
+        decided_by    = case when ${decision}::boolean then ${act.by}::text else decided_by end,
+        decided_at    = case when ${decision}::boolean then now() else decided_at end,
+        decision_note = case when ${decision}::boolean then ${note}::text else decision_note end,
+        assigned_to   = case when ${assignTouched}::boolean then ${act.assignTo ?? null}::text else assigned_to end,
+        routed_mode   = case when ${clearRouting}::boolean then null
+                             when ${routeTouched}::boolean then ${mode}::text
+                             else routed_mode end,
+        routed_account_id = case when ${clearRouting}::boolean then null
+                                 when ${routeTouched}::boolean then ${accountId}::uuid
+                                 else routed_account_id end
+    where id = ${act.id} and restaurant_id = ${restaurantId}
+      and status = any(${[...act.from]})
+    returning id`
+  if (!row) {
+    throw new ApprovalRefusal(
+      `That request is no longer ${act.from.join(' or ')} — somebody has moved it since this screen loaded`,
+    )
+  }
+
+  await tx`
+    insert into approval_events (restaurant_id, request_id, action, note, mode, account_id, acted_by)
+    values (${restaurantId}, ${act.id}, ${act.action}, ${note}, ${mode}, ${accountId}, ${act.by})`
+}
+
+/**
+ * The person this request is currently waiting on.
+ *
+ * The assigned ROLE, or an owner — who may act on anything, because a loop
+ * that stalls on one person's day off is a loop nobody uses. That is the query
+ * loop's rule; the manager is deliberately NOT on it here, because this one
+ * moves money and the escape hatch for money is the owner.
+ */
+export async function assertAssignee(assignedTo: string | null, what: string): Promise<string> {
+  const user = await getSessionUser()
+  if (!user) throw new ApprovalRefusal('Sign in again — the session has expired')
+  if (user.role !== 'owner' && user.role !== assignedTo) throw new ApprovalRefusal(what)
+  return user.username
 }
 
 

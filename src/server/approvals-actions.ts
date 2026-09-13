@@ -23,10 +23,16 @@ import {
   applyRequest,
   getApproval,
   getPreview,
+  recordAct,
+  assertAssignee,
+  assertPayer,
+  PAYERS,
   type ApprovalEntity,
   type ApprovalKind,
 } from '@/server/approvals-queries'
 
+import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
+import { insertPayment } from '@/server/payment-write'
 import { getVendorAging } from '@/server/aging-queries'
 import { decimalStringToPaise, formatPaise, parseMoney } from '@/lib/money'
 
@@ -38,6 +44,11 @@ export type ApprovalResult =
 
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof ApprovalRefusal) return { ok: false, error: e.message }
+  // The fifth fail() handler to recognise it. An account refusal names what is
+  // missing and where to create it; wearing the generic apology instead would
+  // leave somebody with no next step, which is the state that reads as the app
+  // being broken.
+  if (e instanceof AccountRefusal) return { ok: false, error: e.message }
   if (e instanceof z.ZodError) return { ok: false, error: 'Invalid input — nothing was saved' }
   console.error('approval action failed', e)
   const detail = e instanceof Error ? e.message.slice(0, 200) : 'unknown error'
@@ -100,9 +111,14 @@ export async function requestApproval(raw: RequestInput): Promise<ApprovalResult
           `There is already a ${open.kind} request open on ${preview.from.code} — the owner has it`,
         )
       }
+      // 10 columns, 10 values. `assigned_to` is the one that is easy to leave
+      // off and impossible to notice: `awaiting_me` filters it NOT NULL, so a
+      // request that never names a role is a request no badge can ever see —
+      // the view was live with nothing writing the column it keys on.
       const [row] = await tx<{ id: string }[]>`
         insert into approval_requests
-          (restaurant_id, kind, entity_type, entity_id, target_entity_id, reason, snapshot, status, requested_by)
+          (restaurant_id, kind, entity_type, entity_id, target_entity_id, reason, snapshot, status,
+           assigned_to, requested_by)
         values (${rid}, ${input.kind}, ${input.entity}, ${input.fromId}, ${toId},
                 ${input.reason}, ${JSON.stringify({
                   refs: preview.refs,
@@ -111,8 +127,17 @@ export async function requestApproval(raw: RequestInput): Promise<ApprovalResult
                   checks: preview.checks,
                   fromCode: preview.from.code,
                   toCode: preview.to?.code ?? null,
-                })}::jsonb, 'pending', ${by})
+                })}::jsonb, 'pending',
+                'owner', ${by})
         returning id`
+
+      // THE TRAIL HAS NO HOLE AT ITS OWN START. Nothing but this event records
+      // who raised it; `requested_by` survives but the ACT of raising does
+      // not, and no later event implies it. Written on the same handle as the
+      // row, so a request can never exist without it.
+      await tx`
+        insert into approval_events (restaurant_id, request_id, action, note, acted_by)
+        values (${rid}, ${row.id}, 'raised', ${input.reason}, ${by})`
       return row.id
     })
 
@@ -157,42 +182,94 @@ export async function decideApproval(raw: {
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
+    const req = await getApproval(rid, input.id)
+    if (!req) throw new ApprovalRefusal('That request no longer exists')
+    // A CHALLENGE COMES BACK FOR A DECISION, a return does not. Somebody who
+    // objected to the payment itself has put the question back to the owner,
+    // so `challenged` is decidable exactly as `pending` is.
+    if (req.status !== 'pending' && req.status !== 'challenged') {
+      throw new ApprovalRefusal(`That request is already ${req.status}`)
+    }
+
     if (input.decision === 'refused') {
-      const done = await txn(async (tx) => {
-        const [row] = await tx<{ id: string }[]>`
-          update approval_requests
-          set status = 'refused', decided_by = ${by}, decided_at = now(),
-              decision_note = ${input.note === '' ? null : input.note}
-          where id = ${input.id} and restaurant_id = ${rid} and status = 'pending'
-          returning id`
-        return row?.id ?? null
-      })
-      if (done === null) throw new ApprovalRefusal('That request is no longer pending')
+      // THE REASON IS REQUIRED ON A NO. An approval leaves behind the thing it
+      // approved, which explains itself; a refusal leaves nothing at all, and
+      // the person who asked is owed a sentence rather than a status.
+      if (input.note === '') {
+        throw new ApprovalRefusal(
+          'Say why it is refused — that sentence is the only answer the person who asked will ever get',
+        )
+      }
+      await txn((tx) =>
+        recordAct(tx, rid, {
+          id: input.id,
+          action: 'refused',
+          from: ['pending', 'challenged'],
+          status: 'refused',
+          by,
+          note: input.note,
+          decision: true,
+          // Nobody is waiting on a refusal. Leaving the role set would keep it
+          // in somebody's queue forever, which is how a badge stops meaning
+          // anything.
+          assignTo: null,
+        }),
+      )
       return { ok: true, id: input.id, message: 'Refused. Nothing was changed.' }
     }
 
-    const req = await getApproval(rid, input.id)
-    if (!req) throw new ApprovalRefusal('That request no longer exists')
-    if (req.status !== 'pending') throw new ApprovalRefusal(`That request is already ${req.status}`)
+    // ─── a payment is APPROVED, never applied ───────────────────────────
+    //
+    // There is nothing here to apply. The money moves when a person makes the
+    // transfer, from an account this screen has not chosen, and that is a
+    // separate act recorded by whoever performs it. So the yes lands and the
+    // request stays with the owner to ROUTE — pay it themselves, or forward
+    // it to whoever will.
+    //
+    // applyRequest refuses this kind outright, which is the structural half of
+    // the same rule: without it a payment falls into the DISCARD branch and
+    // tries to close the vendor's code.
+    if (req.kind === 'payment') {
+      await txn((tx) =>
+        recordAct(tx, rid, {
+          id: input.id,
+          action: 'approved',
+          from: ['pending', 'challenged'],
+          status: 'approved',
+          by,
+          note: input.note,
+          decision: true,
+          assignTo: 'owner',
+        }),
+      )
+      return {
+        ok: true,
+        id: input.id,
+        message: 'Approved. Nothing has moved yet — say how it will be paid.',
+      }
+    }
 
     // ─── the act ────────────────────────────────────────────────────────
-    // One transaction: stamp the decision, run the function, record what it
-    // returned. If the function raises, everything here rolls back and the
-    // FAILURE is written in a second transaction below — because a failure
-    // that rolled back with the attempt would leave no record that the owner
-    // ever said yes.
+    // One transaction: stamp the decision, write the event, run the function,
+    // record what it returned. If the function raises, every one of those
+    // rolls back and the FAILURE is written in a second transaction below —
+    // because a failure that rolled back with the attempt would leave no
+    // record that the owner ever said yes.
     let applied: unknown = null
     let failure: string | null = null
     try {
       applied = await txn(async (tx) => {
         await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
-        const [claimed] = await tx<{ id: string }[]>`
-          update approval_requests
-          set status = 'approved', decided_by = ${by}, decided_at = now(),
-              decision_note = ${input.note === '' ? null : input.note}
-          where id = ${input.id} and restaurant_id = ${rid} and status = 'pending'
-          returning id`
-        if (!claimed) throw new ApprovalRefusal('That request is no longer pending')
+        await recordAct(tx, rid, {
+          id: input.id,
+          action: 'approved',
+          from: ['pending', 'challenged'],
+          status: 'approved',
+          by,
+          note: input.note,
+          decision: true,
+          assignTo: null,
+        })
 
         // The destructive half lives in approvals-queries so a gate can call
         // it on a rolled-back transaction. Not exported from here: a function
@@ -200,6 +277,10 @@ export async function decideApproval(raw: {
         // not be a public endpoint.
         const result = await applyRequest(tx, rid, req, by, req.reason)
 
+        // A POSITION STAMP, NOT AN ACT — which is why it is not another
+        // recordAct. Applying is the consequence of the `approved` event a
+        // few lines up, not a second thing that happened, and the event
+        // vocabulary has no word for it. Same transaction either way.
         await tx`
           update approval_requests
           set status = 'applied', applied_at = now(), applied_result = ${JSON.stringify(result)}::jsonb
@@ -213,14 +294,24 @@ export async function decideApproval(raw: {
 
     if (failure !== null) {
       // THE OWNER SEES WHY. A yes that did nothing, with no record of the yes
-      // and no reason, is the worst of the three outcomes — so the decision
-      // and the database's own words are written in their own transaction.
+      // and no reason, is the worst of the three outcomes — so the decision,
+      // its event and the database's own words are written together in their
+      // own transaction. The `from` list still holds: the first attempt rolled
+      // back, so the row is exactly where it was.
       await txn(async (tx) => {
+        await recordAct(tx, rid, {
+          id: input.id,
+          action: 'approved',
+          from: ['pending', 'challenged'],
+          status: 'failed',
+          by,
+          note: input.note,
+          decision: true,
+          assignTo: 'owner',
+        })
         await tx`
           update approval_requests
-          set status = 'failed', decided_by = ${by}, decided_at = now(),
-              decision_note = ${input.note === '' ? null : input.note},
-              applied_result = ${JSON.stringify({ error: failure })}::jsonb
+          set applied_result = ${JSON.stringify({ error: failure })}::jsonb
           where id = ${input.id} and restaurant_id = ${rid}`
       })
       return { ok: false, error: `Approved, but it could not be applied: ${failure}` }
@@ -251,19 +342,26 @@ export async function cancelApproval(id: string): Promise<ApprovalResult> {
     if (!UUID.test(id)) throw new ApprovalRefusal('Malformed request id')
     const by = await assertRequester()
     const restaurant = await getRestaurant()
-    const done = await txn(async (tx) => {
-      const [row] = await tx<{ id: string }[]>`
-        update approval_requests set status = 'cancelled', decided_by = ${by}, decided_at = now()
-        where id = ${id} and restaurant_id = ${restaurant.id} and status = 'pending'
-        returning id`
-      return row?.id ?? null
-    })
-    if (done === null) throw new ApprovalRefusal('That request is no longer pending')
+    // `decided_by` is written here and nothing is overwritten by it: a cancel
+    // can only happen from `pending`, so there is no decision to displace. The
+    // event says what actually happened.
+    await txn((tx) =>
+      recordAct(tx, restaurant.id, {
+        id,
+        action: 'cancelled',
+        from: ['pending'],
+        status: 'cancelled',
+        by,
+        decision: true,
+        assignTo: null,
+      }),
+    )
     return { ok: true, id, message: 'Withdrawn. Nothing was changed.' }
   } catch (e) {
     return fail(e)
   }
 }
+
 
 /** Read-only, for the request form. Role-checked like every other export from
  *  a 'use server' file — this one is a public endpoint too. */
@@ -445,7 +543,7 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
       const [row] = await tx<{ id: string }[]>`
         insert into approval_requests
           (restaurant_id, kind, entity_type, entity_id, target_entity_id, reason, amount,
-           suggested_mode, snapshot, status, requested_by)
+           suggested_mode, snapshot, status, assigned_to, requested_by)
         -- THE AMOUNT IS A COLUMN, not only a snapshot field. The snapshot is
         -- the ageing AS IT STOOD AT ASKING, kept to be COMPARED with the live
         -- figure; the amount is what is being asked for, which anything
@@ -470,7 +568,7 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
                   askedOpenBills: aging.open_bills,
                   askedOldestDue: aging.oldest_due,
                   askedTerms: aging.payment_terms,
-                })}::jsonb, 'pending', ${by})
+                })}::jsonb, 'pending', 'owner', ${by})
         returning id`
 
       // THE TRAIL IS THE HISTORY; THE COLUMNS ARE ONLY THE CURRENT POSITION.
@@ -505,6 +603,322 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
           'Transfer requests are not switched on yet — migration approval_requests_payment_kind has not been applied. Cash payments still record normally.',
       }
     }
+    return fail(e)
+  }
+}
+
+// ══════════════════════════════════════ what happens to a payment after yes
+
+const RouteSchema = z.object({
+  id: z.string().regex(UUID),
+  /** The mode the owner is choosing, which is allowed to differ from the one
+   *  the store manager suggested. Two people knowing different things is not
+   *  a discrepancy — he knows the vendor wants paying, the owner knows which
+   *  account is liquid. */
+  mode: z.string().trim().min(1).max(40),
+  /** Optional: the owner may say which account they intend it to leave, or
+   *  leave it to whoever pays. payApproval demands one either way. */
+  accountId: z.union([z.literal(''), z.string().regex(UUID)]),
+  assignTo: z.enum(PAYERS),
+  note: z.string().trim().max(300),
+})
+
+/**
+ * THE OWNER ROUTES IT — how it will be paid, and by whom.
+ *
+ * Routing is not deciding, and it is a separate act for a reason that only
+ * shows up on a return: §3 says a return cancels the ROUTING and not the
+ * APPROVAL, so the two have to be separable things or a return would be an
+ * un-approval. The status stays `approved` throughout; what moves is the
+ * mode, the account and whose queue it sits in.
+ *
+ * TWO EVENTS WHERE TWO THINGS HAPPENED. Choosing the mode is `routed`; handing
+ * it to somebody else is `forwarded`. An owner paying it themselves does only
+ * the first. Collapsing them would make the trail unable to say whether the
+ * accountant was ever asked.
+ */
+export async function routePayment(raw: {
+  id: string
+  mode: string
+  accountId: string
+  assignTo: (typeof PAYERS)[number]
+  note: string
+}): Promise<ApprovalResult> {
+  try {
+    const input = RouteSchema.parse(raw)
+    const by = await assertApprover()
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    const req = await getApproval(rid, input.id)
+    if (!req) throw new ApprovalRefusal('That request no longer exists')
+    if (req.kind !== 'payment') throw new ApprovalRefusal('Only a payment request is routed')
+    if (req.status !== 'approved') {
+      throw new ApprovalRefusal(`That request is ${req.status} — only an approved one can be routed`)
+    }
+
+    // THE ACCOUNT IS CHECKED EVEN THOUGH IT IS OPTIONAL. An id that is not on
+    // the active list would sit in routed_account_id until somebody tried to
+    // pay from it, and the refusal would arrive at the worst moment.
+    const accountId = input.accountId === '' ? null : await assertAccount(rid, input.accountId, 'the account this would leave')
+
+    await txn(async (tx) => {
+      await recordAct(tx, rid, {
+        id: input.id,
+        action: 'routed',
+        from: ['approved'],
+        status: 'approved',
+        by,
+        note: input.note,
+        mode: input.mode,
+        accountId,
+        route: true,
+        assignTo: 'owner',
+      })
+      if (input.assignTo !== 'owner') {
+        await recordAct(tx, rid, {
+          id: input.id,
+          action: 'forwarded',
+          from: ['approved'],
+          status: 'approved',
+          by,
+          note: input.note,
+          assignTo: input.assignTo,
+        })
+      }
+    })
+
+    return {
+      ok: true,
+      id: input.id,
+      message:
+        input.assignTo === 'owner'
+          ? `${input.mode} — yours to pay and record.`
+          : `${input.mode} — with the ${input.assignTo} to pay and record.`,
+    }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+const SendBackSchema = z.object({
+  id: z.string().regex(UUID),
+  reason: z.string().trim().min(1).max(300),
+})
+
+/**
+ * A RETURN CANCELS THE ROUTING, NOT THE APPROVAL.
+ *
+ * The accountant cannot make this transfer — the account is short, the
+ * beneficiary is not registered, the bank is down. None of that is an
+ * objection to PAYING the vendor, so the yes stands and only the route comes
+ * off: the status stays `approved`, the mode and the account are cleared, and
+ * it goes back to the owner to be routed again rather than decided again.
+ *
+ * Sending it back to `pending` would erase the approval before it ever left,
+ * and afterwards nobody could explain why the route changed. That is the
+ * whole reason the trail exists.
+ */
+export async function returnRequest(raw: { id: string; reason: string }): Promise<ApprovalResult> {
+  try {
+    const input = SendBackSchema.parse(raw)
+    // The cheap role gate FIRST, before a row is read: without it these
+    // endpoints answer "that request is applied" to anybody signed in who
+    // guessed an id. assertAssignee narrows it once the row is in hand.
+    await assertPayer()
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const req = await getApproval(rid, input.id)
+    if (!req) throw new ApprovalRefusal('That request no longer exists')
+    if (req.status !== 'approved') {
+      throw new ApprovalRefusal(`That request is ${req.status} — only an approved one can be sent back`)
+    }
+    if (req.assigned_to === 'owner' || req.assigned_to === null) {
+      throw new ApprovalRefusal(
+        'This is already with the owner — there is nobody to send it back to. Route it somewhere else instead.',
+      )
+    }
+    const by = await assertAssignee(
+      req.assigned_to,
+      `This was routed to the ${req.assigned_to} — only they or an owner can send it back`,
+    )
+
+    await txn((tx) =>
+      recordAct(tx, rid, {
+        id: input.id,
+        action: 'returned',
+        from: ['approved'],
+        status: 'approved',
+        by,
+        note: input.reason,
+        clearRouting: true,
+        assignTo: 'owner',
+      }),
+    )
+    return { ok: true, id: input.id, message: 'Sent back to the owner. It is still approved — the route is not.' }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/**
+ * CHALLENGED IS THE OTHER SENTENCE, and it is a different one.
+ *
+ * A return says "I cannot pay it this way". A challenge says "I do not think
+ * we should pay this at all" — the vendor was already paid, the amount is
+ * wrong, the bill is disputed. That is an objection to the PAYMENT, so unlike
+ * a return it puts the question back for a DECISION: the status becomes
+ * `challenged`, which `decideApproval` treats exactly as `pending`.
+ *
+ * The routing comes off with it. Whatever the owner decides next, the old
+ * route is not still live.
+ */
+export async function challengeRequest(raw: { id: string; reason: string }): Promise<ApprovalResult> {
+  try {
+    const input = SendBackSchema.parse(raw)
+    // The cheap role gate FIRST, before a row is read: without it these
+    // endpoints answer "that request is applied" to anybody signed in who
+    // guessed an id. assertAssignee narrows it once the row is in hand.
+    await assertPayer()
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const req = await getApproval(rid, input.id)
+    if (!req) throw new ApprovalRefusal('That request no longer exists')
+    if (req.status !== 'approved') {
+      throw new ApprovalRefusal(`That request is ${req.status} — only an approved one can be challenged`)
+    }
+    if (req.assigned_to === 'owner' || req.assigned_to === null) {
+      throw new ApprovalRefusal('This is already with the owner — refuse it rather than challenging it')
+    }
+    const by = await assertAssignee(
+      req.assigned_to,
+      `This was routed to the ${req.assigned_to} — only they or an owner can challenge it`,
+    )
+
+    await txn((tx) =>
+      recordAct(tx, rid, {
+        id: input.id,
+        action: 'challenged',
+        from: ['approved'],
+        status: 'challenged',
+        by,
+        note: input.reason,
+        clearRouting: true,
+        assignTo: 'owner',
+      }),
+    )
+    return {
+      ok: true,
+      id: input.id,
+      message: 'Challenged. The owner decides again — nothing will be paid until they do.',
+    }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+const PaySchema = z.object({
+  id: z.string().regex(UUID),
+  accountId: z.string().regex(UUID),
+  paidDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  mode: z.string().trim().min(1).max(40),
+  note: z.string().trim().max(300),
+})
+
+/**
+ * THE MONEY MOVED — the payments row and the `paid` event, in ONE transaction.
+ *
+ * A payment recorded with no event is money that moved with no account of who
+ * moved it. An event with no payment is a trail asserting a payment that does
+ * not exist. Both are worse than neither, and neither is repairable
+ * afterwards: nothing else in the system knows which of the two you are
+ * looking at. So the insert, the event and the status change share a handle,
+ * and a failure anywhere in the three leaves nothing at all.
+ *
+ * THE AMOUNT IS THE APPROVED AMOUNT AND IS NOT TYPED AGAIN. What was approved
+ * is what may be paid; paying a different figure is a different request, not
+ * an edit of this one. A short payment is a return with a reason, which the
+ * owner re-approves for the amount they mean.
+ */
+export async function payApproval(raw: {
+  id: string
+  accountId: string
+  paidDate: string
+  mode: string
+  note: string
+}): Promise<ApprovalResult> {
+  try {
+    const input = PaySchema.parse(raw)
+    // The cheap role gate FIRST, before a row is read: without it these
+    // endpoints answer "that request is applied" to anybody signed in who
+    // guessed an id. assertAssignee narrows it once the row is in hand.
+    await assertPayer()
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    const req = await getApproval(rid, input.id)
+    if (!req) throw new ApprovalRefusal('That request no longer exists')
+    if (req.kind !== 'payment') throw new ApprovalRefusal('Only a payment request is settled by paying it')
+    if (req.status !== 'approved') {
+      throw new ApprovalRefusal(`That request is ${req.status} — only an approved one can be paid`)
+    }
+    const by = await assertAssignee(
+      req.assigned_to,
+      req.assigned_to === null
+        ? 'Nobody has been asked to pay this yet — the owner routes it first'
+        : `This is with the ${req.assigned_to} — only they or an owner can record the payment`,
+    )
+
+    const paise = req.amount === null ? null : decimalStringToPaise(req.amount)
+    if (paise === null || paise <= 0) {
+      throw new ApprovalRefusal(
+        'That request carries no amount, so there is nothing to pay against it — raise a new one',
+      )
+    }
+    // The account is refused by name here, outside the transaction, because
+    // the refusal reaches the user in its own words rather than as a
+    // foreign-key violation nobody can read.
+    const accountId = await assertAccount(rid, input.accountId, 'the account this payment left')
+
+    const paid = await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const payment = await insertPayment(tx, rid, {
+        vendorId: req.entity_id,
+        paidDate: input.paidDate,
+        amountPaise: paise,
+        mode: input.mode,
+        note: input.note,
+        accountId,
+        enteredBy: by,
+      })
+      await recordAct(tx, rid, {
+        id: input.id,
+        action: 'paid',
+        from: ['approved'],
+        status: 'applied',
+        by,
+        note: input.note,
+        mode: input.mode,
+        accountId,
+        // NOT `route: true`. The account named here is the one the money
+        // actually left; routed_account_id is the one the owner chose, and
+        // they are allowed to differ.
+        assignTo: null,
+      })
+      await tx`
+        update approval_requests
+        set applied_at = now(),
+            applied_result = ${JSON.stringify({ paid: payment.doc_no, payment_id: payment.id, amount: payment.amount })}::jsonb
+        where id = ${input.id} and restaurant_id = ${rid}`
+      return payment
+    })
+
+    return {
+      ok: true,
+      id: input.id,
+      message: `${formatPaise(paise)} to ${req.from_name ?? 'the vendor'} — recorded as ${paid.doc_no ?? 'a payment'}.`,
+    }
+  } catch (e) {
     return fail(e)
   }
 }

@@ -263,8 +263,13 @@ function Request({
         </div>
       )}
 
+      {/* OPTIONAL ON A YES, REQUIRED ON A NO. An approval leaves behind the
+          thing it approved, which explains itself; a refusal leaves nothing at
+          all, and the person who asked is owed a sentence rather than a
+          status. The server refuses a blank one by name — this only stops the
+          form saying "optional" about a field the save will insist on. */}
       <label className="mt-3 block">
-        <span className={fieldLabelCls}>Note (optional)</span>
+        <span className={fieldLabelCls}>Note — required to refuse</span>
         <input value={note} onChange={(e) => setNote(e.target.value)} className={inputCls} maxLength={300} />
       </label>
 
@@ -280,7 +285,12 @@ function Request({
         <button type="button" onClick={() => decide('approved')} disabled={busy} className={btnCls}>
           {busy ? 'Working…' : 'Approve and apply'}
         </button>
-        <button type="button" onClick={() => decide('refused')} disabled={busy} className={btnGhostCls}>
+        <button
+          type="button"
+          onClick={() => decide('refused')}
+          disabled={busy || note.trim() === ''}
+          className={btnGhostCls}
+        >
           Refuse
         </button>
       </div>

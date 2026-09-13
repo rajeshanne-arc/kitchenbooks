@@ -9680,3 +9680,197 @@ the event insert — and assert that **NOTHING landed**: the status is unchanged
 AND no event row exists. Run it inside a transaction that rolls back, the way
 the money probes already do. The assertion is about the absence of a partial
 write, and the only way to observe that is to cause one.
+
+## WIRING THE TRAIL — and the probe that could actually say so
+
+Step 1 of the payment routing work: `raised`, `approved`, `routed`,
+`forwarded`, `returned`, `challenged`, `refused`, `paid` and `cancelled`, every
+one of them through a single `recordAct(tx, …)`. What building it found matters
+more than the wiring.
+
+### A VIEW THAT FILTERS ON A COLUMN IS A CLAIM THAT SOMETHING WRITES IT
+
+`awaiting_me` — the single badge source the next step is built on — ends
+`WHERE … AND assigned_to IS NOT NULL`. **Nothing in the app had ever written
+`assigned_to`**, and both live requests carry null, so the view was
+structurally empty and always would have been.
+
+That is a new costume of *a feature reported live whose surface was never
+built*, and the sharpest one yet: extra hours had a migration that worked and
+no write path; the day sheet had a page that worked and no door. Here the VIEW
+works and BOTH ends were missing — no writer and no reader — and every gate was
+green, because **a view returning no rows is indistinguishable from a view over
+no work.**
+
+The raise sets it now and every act moves it: a refusal, a cancel and a
+completed payment CLEAR it, because a request nobody is waiting on has to leave
+the queue or the badge stops meaning anything.
+
+### A GUARD ABOUT DATA IS NOT A GUARD ABOUT KIND
+
+`applyRequest` branches on `reopen_period`, then `merge`, then falls through to
+DISCARD. A payment request carries `entity_type = 'vendor'`, so approving a
+request to PAY somebody ran the discard path against their vendor row.
+
+It has never discarded a vendor, and the reason is the tell: the discard branch
+re-reads `reference_counts` and refuses anything with history, and every vendor
+in `vendor_aging` has at least one bill pointing at it — the lowest is ASHFAQUE
+at 1. **That guard is about DATA, not about KIND.** One bill-less outstanding
+balance and approving a payment would close a live vendor's code.
+
+Refused by kind now, at the top of the function. The same shape as every other
+*rule holding by accident* in this file: the cases it had met were all one
+shape, and the first case of a new shape is where it breaks.
+
+### AN UNCOMMITTED FIXTURE IS WHAT MAKES THE HAPPY PATH AN ASSERTION
+
+The rule being proved is that a state change and its event are ONE write. The
+obvious probe — call the act, see both rows — passes identically whether they
+share a transaction or not, which is the vacuous-assertion family this file
+records five times over.
+
+Two constructions make it real, and the second is the transferable one:
+
+1. **FORCE THE FAILURE AT THE SEAM, WITH A REAL CONSTRAINT.** The CHECK on
+   `approval_events.action` refuses anything outside the ten, so an action
+   outside it lets the status UPDATE succeed and makes the event INSERT raise —
+   exactly between the two, with no test hook in production code. A SAVEPOINT
+   is what lets the probe survive its own forced error to observe the absence
+   afterwards.
+
+2. **THE FIXTURE IS NEVER COMMITTED, AND THAT IS THE DISCRIMINATOR.** A request
+   row inside an uncommitted transaction is invisible to every other
+   connection. So if either half of the act ran on `tsql`, or opened a `txn()`
+   of its own, the status update would match ZERO ROWS and the event insert
+   would violate its foreign key — **both would raise.** Succeeding is
+   therefore proof that both writes are on the handle the caller lent, and it
+   costs nothing.
+
+   Stated for reuse: *where a helper must write on a lent handle, an
+   uncommitted fixture turns "it worked" into evidence.* A committed fixture
+   proves nothing there, because a helper opening its own transaction would
+   succeed against one just as happily.
+
+**Proved by perturbation, four ways, each naming the right fault:**
+
+| perturbation | what the gate said |
+|---|---|
+| the event insert wrapped in a swallowing `try/catch` | *an action outside the CHECK was accepted — the seam cannot be forced* |
+| the event insert moved to `tsql` | *violates foreign key constraint approval_events_restaurant_id_request_id_fkey*, **and** the source half: *recordAct writes through tsql* |
+| the `paid` act given `route: true` | *the paid act overwrote the owner's routing decision* |
+| a new action changing status with no event | *quietlyShelve moves a request's state and writes no event beside it* |
+| `forwarded` given no writer | *these actions are in the CHECK and nothing writes them: forwarded* |
+| the reopen stamp removed | the exemption expired: *…nothing writes them: reopened* |
+
+The second row is the design working exactly as reasoned: two independent
+signals, and neither alone would have been enough.
+
+### NO DEAD VOCABULARY — an action in the CHECK with nothing writing it
+
+`approval_events.action` admits ten words. A word the trail never speaks reads,
+to anybody browsing the constraint, as a thing the app records — so the gate
+requires every one of the ten to appear as a literal in the actions file.
+
+Nine do. **`reopened` is exempt, and the exemption states the condition that
+makes it exempt** rather than naming itself: it is allowed to be unwritten
+*while* `applyRequest` stamps `reopened_at` / `reopened_by` / `reopen_reason`
+on the period row in the same transaction as the `approved` event. Take that
+stamp away and the exemption evaporates on the next run — proved by taking it
+away and watching the gate name `reopened`. A name on a list is forever; a
+condition is checked every run.
+
+### A FILTER, BECAUSE THE DISCIPLINE IS PAID FOR IN WALL CLOCK
+
+`npx tsx scripts/smoke-a2.ts "state change"` runs only the checks whose name
+matches. Four perturbations against the whole suite is roughly half an hour of
+compiling, and *this file's own rule* — run every gate once against data that
+ought to break it — is the one people quietly stop keeping when it costs that.
+It went from six minutes a perturbation to seconds.
+
+Two things keep it honest, because a filter is a way to make a suite vacuous:
+it applies ONLY when an argument is given, so `npm run gates` is untouched; and
+a filtered run says **THIS IS NOT THE SUITE** at the end with the counts, and
+**exits 1 if it matched nothing** — a tick over zero checks being the exact
+failure it would otherwise introduce.
+
+### A GUARD MUST COUNT SOMETHING THAT SURVIVES THE FIX — again
+
+The source half of this gate went red on its first run against correct code:
+*only 4 state-moving actions found — the sweep is looking at nothing.*
+
+Its denominator was "functions containing a literal `update approval_requests`"
+— which SHRINKS as each act moves onto `recordAct`, and would reach zero
+exactly when the file was perfect. That is the PersonLink sweep's third
+failure, repeated in a gate written by somebody who had read the entry. It
+counts every function that moves a request's state by ANY route now (8, and
+growing), and asserts separately that the 4 still writing raw SQL each carry an
+event in the same function.
+
+### THE EVENT'S ACCOUNT IS NOT THE ROW'S ROUTED ACCOUNT
+
+`recordAct` takes `route: boolean` separately from `mode` and `accountId`, and
+the separation is the `decided_by` rule one column over. Every act's mode and
+account land on the EVENT. They move `routed_mode` / `routed_account_id` only
+when the act is the owner CHOOSING the route.
+
+The `paid` act names an account — the one the money actually left — and must
+not touch those columns, because they hold the owner's routing decision.
+Overwriting them would delete one person's act with another's, exactly as
+reusing `decided_by` would. And two events where two things happened: `routed`
+is choosing the mode, `forwarded` is handing it to somebody else, and an owner
+paying it themselves does only the first.
+
+### A RETURN CANCELS THE ROUTING; A CHALLENGE REOPENS THE DECISION
+
+Two sentences, deliberately not one status:
+
+- **returned** — *"I cannot pay it this way."* The account is short, the
+  beneficiary is not registered, the bank is down. None of that is an objection
+  to paying the vendor, so the status stays `approved`, the mode and account
+  are cleared, and it goes back to the owner to be ROUTED again rather than
+  DECIDED again. Sending it to `pending` would erase the approval before it
+  ever left, and afterwards nobody could explain why the route changed.
+- **challenged** — *"I do not think we should pay this at all."* The vendor was
+  already paid, the amount is wrong, the bill is disputed. That is an objection
+  to the PAYMENT, so it goes back for a decision: `decideApproval` treats
+  `challenged` exactly as `pending`.
+
+Both refuse when the request is already with the owner, and name the act that
+is wanted instead — re-route it, or refuse it.
+
+**The reason is REQUIRED on returned, challenged and refused.** An approval
+leaves behind the thing it approved, which explains itself; a refusal leaves
+nothing at all. The refuse form had said *Note (optional)* — the server insists
+now and the label says so, because a form looser than its server is a refusal
+that arrives after the work.
+
+### ONE INSERT INTO `payments`, ON A LENT HANDLE
+
+`insertPayment` in `payment-write.ts`, called by `recordPayment` and by
+`payApproval`. Two statements for one table is how they drift — the reason
+`saveShort` was DELETED rather than left beside `saveShorts` — and the two
+callers need different things committed beside the row: the document number for
+one, the `paid` event for the other. Gated: `payments` has exactly one insert
+site in `src`.
+
+### THE ROLE IS CHECKED BEFORE THE ROW IS READ
+
+`assertAssignee` needs `assigned_to`, which needs the row — so on its own it
+would have `returnRequest`, `challengeRequest` and `payApproval` read a request
+and only then decide who was asking. Every export from a `'use server'` file is
+a public endpoint, so that shape answers *"that request is applied"* to anybody
+signed in who guesses a uuid.
+
+`assertPayer()` runs FIRST, before the read, and narrows to the three roles a
+payment can be handed to; the precise assignee check runs after, once the row
+is in hand. **Where a guard needs data to be precise, put a cheap one in front
+of the read** rather than letting the read happen for everybody.
+
+### WHAT HAS NO CALLER YET, SAID RATHER THAN REPORTED AS SHIPPED
+
+`routePayment`, `returnRequest`, `challengeRequest` and `payApproval` are
+server actions with no screen. That is the order Rajesh set — badges next, the
+store's inline expansion after, the owner's routing screen last — and it is
+exactly the state this file calls *a feature is not shipped until something
+leads to it*. They are wired, gated and unreachable, and saying so is the
+difference between a report and a claim.

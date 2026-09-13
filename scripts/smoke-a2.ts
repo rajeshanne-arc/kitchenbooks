@@ -29,7 +29,30 @@ import { fyLabel, fyRange, parseFyStartMonth } from '../src/lib/fy'
 process.loadEnvFile('.env.local')
 
 let failures = 0
+
+/**
+ * A FILTER, SO PROVING A GATE CAN FAIL COSTS SECONDS RATHER THAN MINUTES.
+ *
+ * `npx tsx scripts/smoke-a2.ts "approval trail"` runs only the checks whose
+ * name contains that text. The perturbation discipline this file records — run
+ * every gate once against data that ought to break it — is paid for in wall
+ * clock, and at a full-suite run per perturbation it is the discipline people
+ * quietly stop keeping.
+ *
+ * It applies ONLY when an argument is given, so `npm run smoke:a2` and the
+ * gates chain are untouched, and a filtered run says so loudly at both ends —
+ * a green tick on two checks out of two hundred must never read as the suite.
+ */
+const only = process.argv[2]?.toLowerCase() ?? null
+let ran = 0
+let skipped = 0
+
 const check = (name: string, fn: () => void | Promise<void>) => {
+  if (only !== null && !name.toLowerCase().includes(only)) {
+    skipped++
+    return Promise.resolve()
+  }
+  ran++
   const done = (e?: unknown) => {
     if (e === undefined) console.log(`  ✓ ${name}`)
     else {
@@ -8377,6 +8400,289 @@ async function run() {
     for (const l of out) console.log(`      ${l}`)
   })
 
+  /* ── the approval trail: an act is ONE write ───────────────────────── */
+  console.log('\nthe approval trail')
+
+  await check('the event and the state change are one transaction', async () => {
+    // A TEST THAT ONLY RUNS THE HAPPY PATH PROVES THEY BOTH WRITE, NOT THAT
+    // THEY WRITE TOGETHER. It passes identically whether the two statements
+    // share a transaction or not. So this forces a failure BETWEEN them and
+    // asserts nothing landed — the property is the absence of a partial write,
+    // and the only way to observe an absence is to cause the thing that would
+    // produce it.
+    //
+    // THE FIXTURE IS UNCOMMITTED ON PURPOSE, and that is what makes the happy
+    // path an assertion rather than a formality. A request row that has not
+    // committed is invisible to every other connection — so if either half of
+    // recordAct ran on `tsql` or opened a `txn()` of its own, the status
+    // update would match zero rows and the event insert would violate its
+    // foreign key. Both would RAISE. Succeeding here is therefore proof that
+    // both writes are on the handle the caller lent.
+    const { txn } = await import('../src/lib/db')
+    const { recordAct } = await import('../src/server/approvals-queries')
+    const { insertPayment } = await import('../src/server/payment-write')
+    const out: string[] = []
+
+    await txn(async (tx) => {
+      const [vendor] = await tx<{ id: string; name: string }[]>`
+        select id, name from vendors
+        where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+      assert.ok(vendor !== undefined, 'no active vendor to hang the fixture on')
+      const [account] = await tx<{ id: string; name: string }[]>`
+        select id, name from money_accounts
+        where restaurant_id = ${liveTenant} and status = 'active' order by name limit 1`
+      assert.ok(account !== undefined, 'no active money account to pay from')
+
+      const [req] = await tx<{ id: string }[]>`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, reason, amount, suggested_mode,
+           status, assigned_to, requested_by)
+        values (${liveTenant}, 'payment', 'vendor', ${vendor.id}, 'atomicity probe',
+                100.00, 'Bank Transfer', 'pending', 'owner', 'gate')
+        returning id`
+
+      const state = async () => {
+        const [r] = await tx<{ status: string; decided_by: string | null; assigned_to: string | null }[]>`
+          select status, decided_by, assigned_to from approval_requests where id = ${req.id}`
+        const [e] = await tx<{ n: number }[]>`
+          select count(*)::int as n from approval_events where request_id = ${req.id}`
+        const [p] = await tx<{ n: number }[]>`
+          select count(*)::int as n from payments
+          where restaurant_id = ${liveTenant} and vendor_id = ${vendor.id} and note = 'atomicity probe'`
+        return { status: r.status, decided: r.decided_by, assigned: r.assigned_to, events: e.n, payments: p.n }
+      }
+      const clean = { status: 'pending', decided: null, assigned: 'owner', events: 0, payments: 0 }
+      assert.deepEqual(await state(), clean, 'the fixture did not start where it says it does')
+
+      // ── 1. FORCED AT THE SEAM ────────────────────────────────────────
+      // A real constraint rather than a test hook: the CHECK on
+      // approval_events.action refuses anything outside the ten, so the status
+      // UPDATE succeeds and the event INSERT raises — exactly between the two.
+      // What this catches is a recordAct that swallows the event error to keep
+      // a "best effort" trail: the status would move, no event would land, and
+      // the request would be approved with nothing saying who approved it.
+      await tx`savepoint seam`
+      let raised: string | null = null
+      try {
+        await recordAct(tx, liveTenant, {
+          id: req.id,
+          action: 'nothing-of-the-sort' as never,
+          from: ['pending'],
+          status: 'approved',
+          by: 'gate',
+          decision: true,
+        })
+      } catch (e) {
+        raised = (e as Error).message
+      }
+      await tx`rollback to savepoint seam`
+      assert.ok(raised !== null, 'an action outside the CHECK was accepted — the seam cannot be forced')
+      assert.deepEqual(
+        await state(),
+        clean,
+        'a failure between the status change and its event left something behind',
+      )
+      out.push(`forced at the seam: ${raised.replace(/\s+/g, ' ').slice(0, 64)} — nothing landed`)
+
+      // ── 2. BOTH, OR NEITHER ──────────────────────────────────────────
+      await tx`savepoint act`
+      await recordAct(tx, liveTenant, {
+        id: req.id,
+        action: 'approved',
+        from: ['pending'],
+        status: 'approved',
+        by: 'gate',
+        decision: true,
+        assignTo: 'owner',
+      })
+      assert.deepEqual(
+        await state(),
+        { status: 'approved', decided: 'gate', assigned: 'owner', events: 1, payments: 0 },
+        'the act did not write both halves',
+      )
+
+      // ── 3. THE MONEY HALF ────────────────────────────────────────────
+      // A payment recorded with no event is money that moved with no account
+      // of who moved it; an event with no payment is a trail asserting a
+      // payment that does not exist. Both are worse than neither, so the same
+      // two assertions run over the pair.
+      const payment = await insertPayment(tx, liveTenant, {
+        vendorId: vendor.id,
+        paidDate: '2026-09-13',
+        amountPaise: 10000,
+        mode: 'Bank Transfer',
+        note: 'atomicity probe',
+        accountId: account.id,
+        enteredBy: 'gate',
+      })
+      await tx`savepoint paidseam`
+      let payRaised: string | null = null
+      try {
+        await recordAct(tx, liveTenant, {
+          id: req.id,
+          action: 'nothing-of-the-sort' as never,
+          from: ['approved'],
+          status: 'applied',
+          by: 'gate',
+          accountId: account.id,
+        })
+      } catch (e) {
+        payRaised = (e as Error).message
+      }
+      assert.ok(payRaised !== null, 'the paid seam could not be forced')
+      await tx`rollback to savepoint paidseam`
+
+      await recordAct(tx, liveTenant, {
+        id: req.id,
+        action: 'paid',
+        from: ['approved'],
+        status: 'applied',
+        by: 'gate',
+        mode: 'Bank Transfer',
+        accountId: account.id,
+        assignTo: null,
+      })
+      const paidState = await state()
+      assert.deepEqual(
+        paidState,
+        { status: 'applied', decided: 'gate', assigned: null, events: 2, payments: 1 },
+        'the payment and its event did not land together',
+      )
+      // THE ROUTING COLUMNS ARE NOT THE EVENT'S. `paid` names the account the
+      // money actually left; routed_account_id holds the one the owner chose,
+      // and overwriting it would delete one person's act with another's.
+      const [routed] = await tx<{ routed_mode: string | null; routed_account_id: string | null }[]>`
+        select routed_mode, routed_account_id::text as routed_account_id
+        from approval_requests where id = ${req.id}`
+      assert.equal(routed.routed_mode, null, 'the paid act overwrote the owner’s routing decision')
+      assert.equal(routed.routed_account_id, null, 'the paid act overwrote the routed account')
+      out.push(`payment ${payment.doc_no ?? '(no number)'} and its event landed together; forced between them: nothing`)
+
+      // Everything back, in one step, on the handle that carried all of it.
+      await tx`rollback to savepoint act`
+      assert.deepEqual(await state(), clean, 'the act survived the rollback of the transaction that made it')
+      out.push('rolled back as one: status, event and payment all gone')
+
+      throw new Error('ROLLBACK-ATOMICITY-PROBE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-ATOMICITY-PROBE') throw e
+    })
+    for (const l of out) console.log(`      ${l}`)
+  })
+
+  await check('no act writes its state change without an event beside it', async () => {
+    // THE SOURCE HALF, because the probe above can only exercise what it
+    // calls. Two rules, both mechanical:
+    //
+    //   recordAct and insertPayment write on the LENT handle only — a `tsql`
+    //   or a `txn(` inside either would commit independently of the caller and
+    //   survive a rollback, which is the failure the probe cannot reach once
+    //   it is written that way.
+    //
+    //   every function in the actions file that moves a request's state also
+    //   calls recordAct. The two `applied` stamps are position columns rather
+    //   than acts and have no word in the event vocabulary — but they sit in
+    //   the same transaction as the `approved` or `paid` event that caused
+    //   them, and this is what holds that true.
+    const { readFileSync } = await import('node:fs')
+
+    const body = (src: string, decl: string): string => {
+      const i = src.indexOf(decl)
+      assert.ok(i >= 0, `${decl} is gone — this check is pointed at nothing`)
+      let depth = 0
+      let started = false
+      for (let k = i; k < src.length; k++) {
+        if (src[k] === '{') {
+          depth++
+          started = true
+        } else if (src[k] === '}') {
+          depth--
+          if (started && depth === 0) return src.slice(i, k + 1)
+        }
+      }
+      return src.slice(i)
+    }
+
+    const q = readFileSync('src/server/approvals-queries.ts', 'utf8')
+    const w = readFileSync('src/server/payment-write.ts', 'utf8')
+    for (const [label, src, decl] of [
+      ['recordAct', q, 'export async function recordAct('],
+      ['insertPayment', w, 'export async function insertPayment('],
+    ] as [string, string, string][]) {
+      const b = body(src, decl)
+      assert.ok(!/\btsql\s*[<`]/.test(b), `${label} writes through tsql — that commits on its own connection`)
+      assert.ok(!/\btxn\s*\(/.test(b), `${label} opens a transaction of its own`)
+    }
+
+    const a = readFileSync('src/server/approvals-actions.ts', 'utf8')
+    const fns = a.split(/\nexport async function /).slice(1)
+    // A GUARD MUST COUNT SOMETHING THAT SURVIVES THE FIX. The first version of
+    // this counted functions holding a literal `update approval_requests` —
+    // a denominator that SHRINKS to nothing as each act moves onto recordAct,
+    // so it went red at four for being correct. The count is now every
+    // function that moves a request's state by any route, which grows.
+    const movers: string[] = []
+    const raw: string[] = []
+    for (const fn of fns) {
+      const name = fn.slice(0, fn.indexOf('('))
+      const usesHelper = /recordAct\(/.test(fn)
+      const writesRaw = /update approval_requests|insert into approval_requests/.test(fn)
+      if (!usesHelper && !writesRaw) continue
+      movers.push(name)
+      if (writesRaw) {
+        raw.push(name)
+        // A raw statement is allowed only beside an event in the same
+        // function — the two `applied` stamps are position columns with no
+        // word in the event vocabulary, and they sit in the transaction that
+        // wrote the `approved` or `paid` event that caused them.
+        assert.ok(
+          usesHelper || /insert into approval_events/.test(fn),
+          `${name} moves a request's state and writes no event beside it`,
+        )
+      }
+    }
+    assert.ok(movers.length >= 8, `only ${movers.length} state-moving actions found — the sweep is looking at nothing`)
+
+    // ONE INSERT INTO payments IN THE APP. Two statements for one table is how
+    // they drift; the importer writes its own and is not app code.
+    const { readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = `${d}/${e.name}`
+        if (e.isDirectory()) walk(p, out)
+        else if (/\.tsx?$/.test(e.name)) out.push(p)
+      }
+      return out
+    }
+    const sites = walk('src').filter((f) => /insert into payments\b/.test(readFileSync(f, 'utf8')))
+    assert.deepEqual(sites, ['src/server/payment-write.ts'], `payments is inserted from ${sites.join(', ')}`)
+    // NO DEAD VOCABULARY. An action the CHECK admits with nothing writing it
+    // is a word in the trail's language that the trail never speaks — and it
+    // reads, to anybody browsing the constraint, as a thing the app records.
+    const { APPROVAL_ACTIONS } = await import('../src/server/approvals-queries')
+    // Matched as a quoted literal rather than as `action:` — the two raise
+    // sites write theirs inside the SQL, where there is no property name.
+    const unwritten = APPROVAL_ACTIONS.filter((act) => !new RegExp(`'${act}'`).test(a))
+    // The exemption states the condition that makes it exempt, so it expires
+    // by itself: `reopened` is not written because applyRequest stamps
+    // reopened_by / reopened_at / reopen_reason on the period row itself, in
+    // the same transaction as the `approved` event. Take that stamp away and
+    // this stops being exempt on the next run.
+    const reopenStamped = /reopened_by = |reopened_at = now\(\)/.test(q)
+    const allowed = reopenStamped ? ['reopened'] : []
+    assert.deepEqual(
+      unwritten.filter((x) => !allowed.includes(x)),
+      [],
+      `these actions are in the CHECK and nothing writes them: ${unwritten.join(', ')}`,
+    )
+    for (const x of unwritten) {
+      console.log(`      not written: ${x} — the period row carries reopened_by / reopened_at / reopen_reason itself`)
+    }
+    console.log(`      ${movers.length} state-moving actions, each with an event: ${movers.join(' · ')}`)
+    console.log(`      ${raw.length} write approval_requests directly: ${raw.join(' · ')}`)
+    console.log('      recordAct and insertPayment write on the lent handle only; payments has one insert site')
+  })
+
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */
   console.log('\nthe letterhead')
 
@@ -9772,8 +10078,19 @@ async function run() {
     console.log(`      ${closed.length} closed code(s) still found by search: ${closed.map((c) => `${c.code} (${c.status})`).join(', ')}`)
   })
 
+  if (only !== null) {
+    console.log(`\nFILTERED RUN — ${ran} check(s) matching "${only}", ${skipped} skipped. THIS IS NOT THE SUITE.`)
+    if (ran === 0) {
+      console.log('and it matched NOTHING, so it asserted nothing')
+      process.exit(1)
+    }
+  }
   console.log(
-    failures === 0 ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED' : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
+    failures === 0
+      ? only === null
+        ? '\nALL PHASE A-2 SMOKE ASSERTIONS PASSED'
+        : `\n${ran} FILTERED ASSERTION(S) PASSED — run the whole suite before believing it`
+      : `\n${failures} PHASE A-2 ASSERTION(S) FAILED`,
   )
   process.exit(failures === 0 ? 0 : 1)
 }
