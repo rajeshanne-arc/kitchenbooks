@@ -1,38 +1,37 @@
 /**
- * WHICH PAYMENTS THE PERSON AT THE SCREEN CAN ACTUALLY MAKE.
+ * RECORD WHAT HAS HAPPENED; REQUEST WHAT HAS NOT.
  *
- * THIS IS A TEMPORARY RULE AND HERE IS WHAT REPLACES IT. The string match asks
- * "is this mode cash". The question that actually matters is CAN THIS PERSON
- * PERFORM THIS PAYMENT, and the two coincide today only because cash is the
- * one thing a store manager can hand over.
+ * That is the rule. The mode match below is a PROXY for it, and a good one —
+ * cash is the only mode a store manager can complete on the spot, so "is this
+ * cash" and "has this already happened" pick out the same payments.
  *
- *   THE SUCCESSOR — key on ACCOUNT ACCESS, not on the mode string:
- *     the actor has an account that could settle this  -> he RECORDS it
- *     he has none                                      -> he REQUESTS it
+ * THE ACCOUNT-ACCESS DESIGN WAS CONSIDERED AND REJECTED ON EVIDENCE, and this
+ * is worth keeping because it looks like the better rule until you price it.
+ * The proposal was: the actor has an account that could settle this, so he
+ * records it; he has none, so he requests it. A permission rather than a list
+ * value, unbreakable by renaming a dropdown.
  *
- * That is a PERMISSION rather than a list value. It cannot be broken by
- * renaming a dropdown option, and it generalises: give the store manager a UPI
- * wallet he controls and he can pay from it with no code change, which the
- * string match can never express.
+ * It fails here, and not for want of a till. Rajesh confirmed the store manager
+ * holds NO float and is not expected to — he rarely pays cash at all (2 of 17
+ * payments, 6% of value), and when he does the money is the drawer's or the
+ * owner's, never his. So under account-access he would own no account, and
+ * EVERY payment he entered would become a request — INCLUDING cash he has
+ * already handed over. Requesting permission for money that has already left
+ * the building is not a control, it is a lost record.
  *
- * WHY IT IS NOT BUILT YET — a DATA gap, not a design one. There are four money
- * accounts (two bank, one owner, one wallet) and ZERO tills: `is_till` is false
- * on every one. Under account-access there would be nothing a store manager
- * could pay from, so every payment he entered would become a request —
- * INCLUDING the cash he physically hands over, which is the one case the whole
- * split exists to keep as a record. If cash leaves the restaurant, some account
- * is where it leaves from, and that account has to exist first.
+ * The deeper reason the proposal missed: it asks WHOSE MONEY IS THIS, and the
+ * question that decides the branch is WHEN DID IT MOVE. Those come apart
+ * exactly when somebody spends money that is not his, which is the normal case
+ * for a store manager and the whole reason he needs approval for transfers.
  *
- * So: the match stays until a till exists, and then this file is deleted rather
- * than extended. A temporary rule that does not name its successor becomes
- * permanent.
+ * SO THIS IS NOT TEMPORARY SCAFFOLDING and should not be replaced on sight. If
+ * it is ever changed, change it toward the rule at the top — "has this already
+ * happened" — and not toward account ownership.
  *
- * WHAT THE GATE PROTECTS, PRECISELY. `smoke:a2` asserts the live payment_mode
- * list holds exactly one cash mode and at least one that is not. While this
- * rule stands, that is an INTEGRITY check — rename Cash and every payment
- * silently routes into the approvals queue. After the successor lands it
- * protects only a LABEL, and should be re-read in that light rather than kept
- * out of habit.
+ * WHAT THE GATE PROTECTS. `smoke:a2` asserts the live payment_mode list holds
+ * exactly one cash mode and at least one that is not. That is an INTEGRITY
+ * check, not a label check: rename Cash and every payment silently routes into
+ * the approvals queue, with nothing on screen looking wrong.
  */
 export const isCashMode = (mode: string): boolean => /\bcash\b/i.test(mode)
 

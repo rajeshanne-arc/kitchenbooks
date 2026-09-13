@@ -9393,6 +9393,52 @@ zone` as missing columns — and both times the remedy was to sharpen the
 instrument rather than blunt it or work around it. A gate people have learned to
 scroll past is indistinguishable from a gate nobody wrote.
 
+## RECORD WHAT HAS HAPPENED; REQUEST WHAT HAS NOT — and the design that lost
+
+**SUPERSEDES the account-access successor named below.** That section is kept
+because the reasoning in it is right about the string match and wrong about what
+replaces it, and the difference is the useful part.
+
+The vendor payment screen branches: cash is RECORDED, transfers are REQUESTED.
+Three candidate rules, in the order they were argued:
+
+1. **Is this mode cash?** — a list value deciding an integrity question. Weak,
+   and correctly challenged.
+2. **Can this person perform this payment?** — key on ACCOUNT ACCESS. Looks
+   strictly better: a permission, not a label, unbreakable by a rename.
+3. **Has the money already moved?** — what both of the above are proxies for.
+
+**(2) FAILS ON THIS RESTAURANT'S EVIDENCE, and not for want of a till.** Rajesh
+confirmed the store manager holds no float and is not expected to: he rarely
+pays cash at all — 2 of 17 payments, 6% of value — and when he does, the money
+is the drawer's or the owner's, never his. Under account-access he owns no
+account, so **every payment he entered would become a request, including cash he
+has already handed over.** Requesting permission for money that has already left
+the building is not a control; it is a lost record.
+
+> **The proposal asked WHOSE MONEY IS THIS. The question that decides the
+> branch is WHEN DID IT MOVE. They come apart exactly when somebody spends
+> money that is not his — which is the normal case for a store manager, and
+> the whole reason he needs approval for transfers.**
+
+So the mode match STAYS, reframed: it is a proxy for (3), and a good one,
+because cash is the only mode a store manager can complete on the spot. It is
+not temporary scaffolding and should not be replaced on sight. **If it is ever
+changed, change it toward "has this already happened", not toward account
+ownership.**
+
+**Two consequences worth keeping.** The gate asserting one cash mode and one
+non-cash is an INTEGRITY check permanently, not a label check awaiting a
+successor — rename Cash and every payment routes silently into the queue. And
+the store float described in the section above is **not being created**: with no
+float there is no second cash account, so the computed-balance gap named there
+does not arise.
+
+**The lesson about the arguing, not the answer:** (2) was a better rule than (1)
+on every axis except whether it fits the restaurant, and that axis was only
+visible by asking what the store manager actually does. A design defended on
+structure alone will lose to one checked against a person's week.
+
 ## KEY ON WHAT THE PERSON CAN DO, NOT ON WHAT THE THING IS CALLED
 
 The vendor payment screen branches: cash is RECORDED by the store manager,
