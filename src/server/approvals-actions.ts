@@ -28,6 +28,7 @@ import {
   assertPayer,
   PAYERS,
   SEND_BACK,
+  roleOfRequester,
   type ApprovalEntity,
   type ApprovalKind,
 } from '@/server/approvals-queries'
@@ -201,6 +202,16 @@ export async function decideApproval(raw: {
           'Say why it is refused — that sentence is the only answer the person who asked will ever get',
         )
       }
+      // HE RAISED IT, HE LEARNS WHAT HAPPENED. A refusal changes what the
+      // person who asked has to say to a vendor — usually the vendor they had
+      // already promised something to, which is why they raised it at all. So
+      // it goes back to them and STAYS in their queue until they acknowledge
+      // it; the sentence above is what they will read.
+      //
+      // Not told to themselves: an owner refusing their own request has
+      // nothing to learn from it.
+      const raiser = await roleOfRequester(rid, req.requested_by)
+      const tell = req.requested_by === by ? null : raiser
       await txn((tx) =>
         recordAct(tx, rid, {
           id: input.id,
@@ -210,13 +221,17 @@ export async function decideApproval(raw: {
           by,
           note: input.note,
           decision: true,
-          // Nobody is waiting on a refusal. Leaving the role set would keep it
-          // in somebody's queue forever, which is how a badge stops meaning
-          // anything.
-          assignTo: null,
+          assignTo: tell,
         }),
       )
-      return { ok: true, id: input.id, message: 'Refused. Nothing was changed.' }
+      return {
+        ok: true,
+        id: input.id,
+        message:
+          tell === null
+            ? 'Refused. Nothing was changed.'
+            : `Refused. The ${tell} sees it and the reason until they note it.`,
+      }
     }
 
     // ─── a payment is APPROVED, never applied ───────────────────────────
@@ -604,6 +619,57 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
           'Transfer requests are not switched on yet — migration approval_requests_payment_kind has not been applied. Cash payments still record normally.',
       }
     }
+    return fail(e)
+  }
+}
+
+/**
+ * "NOTED." — one tap, and the only thing it changes is who is holding this.
+ *
+ * THE STATUS DOES NOT MOVE. It is still refused, and it always will be; what
+ * clears is the OBLIGATION. That is the whole reason `status` and
+ * `assigned_to` are two columns rather than one — see the note on SEND_BACK —
+ * and collapsing them here would mean either losing the outcome or losing the
+ * fact that somebody was told.
+ *
+ * `decision` is deliberately false: acknowledging is not deciding, and
+ * `decided_by` holds the owner who refused it. A column that records who did
+ * something cannot be reused by the next person who does something.
+ *
+ * GOOD NEWS NEEDS NO ACT. A payment that went through appears on the raiser's
+ * list and carries no badge and no button: it is news he needs so he stops
+ * chasing, not news that demands anything. Badging it would train him to clear
+ * badges rather than read them.
+ */
+export async function acknowledgeRequest(id: string): Promise<ApprovalResult> {
+  try {
+    if (!UUID.test(id)) throw new ApprovalRefusal('Malformed request id')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const req = await getApproval(rid, id)
+    if (!req) throw new ApprovalRefusal('That request no longer exists')
+    if (req.assigned_to === null) {
+      throw new ApprovalRefusal('Nothing is waiting on anybody for this one')
+    }
+    const by = await assertAssignee(
+      req.assigned_to,
+      `This is with the ${req.assigned_to} — only they or an owner can note it`,
+    )
+
+    await txn((tx) =>
+      recordAct(tx, rid, {
+        id,
+        action: 'acknowledged',
+        // Whatever it is, it stays that. Passing the status it already has is
+        // the honest way to say "this act changes no outcome".
+        from: [req.status],
+        status: req.status,
+        by,
+        assignTo: null,
+      }),
+    )
+    return { ok: true, id, message: 'Noted. It is off your list; the record and the reason stay.' }
+  } catch (e) {
     return fail(e)
   }
 }

@@ -21,7 +21,13 @@
 // would put three queries on every render of two screens to render nothing.
 import { getSessionUser } from '@/server/current-user'
 import { getRestaurant } from '@/server/queries'
-import { getVendorRouting, listAwaiting, type VendorRouting } from '@/server/approvals-queries'
+import {
+  getVendorRouting,
+  listAwaiting,
+  listMyOutcomes,
+  type VendorRouting,
+} from '@/server/approvals-queries'
+import MyOutcomes from '@/components/approvals/MyOutcomes'
 import { getAccountBalances } from '@/server/accounts-queries'
 import { businessToday } from '@/server/business-day'
 import AwaitingActions from '@/components/approvals/AwaitingActions'
@@ -44,4 +50,25 @@ export default async function AwaitingPanel() {
   const vendors: Record<string, VendorRouting> = Object.fromEntries(vendorRows)
 
   return <AwaitingActions rows={rows} vendors={vendors} balances={balances} today={today} />
+}
+
+/**
+ * WHAT CAME BACK TO THE PERSON READING THIS SCREEN.
+ *
+ * Mounted beside AwaitingPanel and answering the other half of the question:
+ * that one is "what is waiting on me", this one is "what happened to what I
+ * asked for". They are different queries because they are different questions
+ * — one is an obligation, the other is news — and the badge counts only the
+ * first.
+ *
+ * Silent when he has raised nothing that has been decided. A permanent empty
+ * card is a thing to read and dismiss every morning.
+ */
+export async function MyOutcomesPanel() {
+  const user = await getSessionUser()
+  if (!user) return null
+  const restaurant = await getRestaurant()
+  const rows = await listMyOutcomes(restaurant.id, user.username)
+  if (rows.length === 0) return null
+  return <MyOutcomes rows={rows} />
 }

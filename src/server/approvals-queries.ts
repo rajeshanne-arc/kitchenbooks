@@ -1079,6 +1079,9 @@ export const APPROVAL_ACTIONS = [
   'paid',
   'cancelled',
   'reopened',
+  // "NOTED." The raiser has been told. It moves no status and decides
+  // nothing — it clears the obligation and leaves the outcome where it is.
+  'acknowledged',
 ] as const
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number]
 
@@ -1166,10 +1169,56 @@ export type Act = {
  * Both clear the route. Whatever the owner decides next, the old one is not
  * still live.
  */
+/**
+ * WHY `status` AND `assigned_to` BOTH EXIST — asked here because a later
+ * reader will ask it, and the answer is only obvious once one case forces it.
+ *
+ *   status       WHAT HAPPENED TO THE REQUEST. It is refused, or applied, or
+ *                still waiting to be decided.
+ *   assigned_to  WHO MUST ACT NEXT. Null means nobody: the thing is finished
+ *                as far as any person is concerned.
+ *
+ * For most of this machine's life they moved together and either could have
+ * been derived from the other. Acknowledgement is what pulls them apart: a
+ * refused request is `refused` whether or not the person who raised it has
+ * been told, and being told is an ACT with a name, a time and a person on it.
+ * One column carries the outcome, the other carries the obligation, and
+ * collapsing them would mean either losing the outcome when he acknowledges
+ * or losing the obligation the moment it was decided.
+ *
+ * It is also what makes the badge honest, because clearing `assigned_to` — and
+ * nothing else — is how work leaves a queue.
+ */
 export const SEND_BACK = {
   returned: { status: 'approved', clearRouting: true, assignTo: 'owner' },
   challenged: { status: 'challenged', clearRouting: true, assignTo: 'owner' },
 } as const
+
+/**
+ * WHO RAISED IT, AS A ROLE.
+ *
+ * `requested_by` is a USERNAME and `assigned_to` is a ROLE, so a refusal
+ * cannot find its way home without this one lookup. Deliberately not a column
+ * frozen at raise time: a person's role can change between asking and being
+ * answered, and the queue belongs to whoever holds that job now — the same
+ * reasoning that makes `getSessionUser` re-read the row on every action rather
+ * than trusting the cookie's claim.
+ *
+ * Null where the username no longer resolves. A refusal nobody can be told
+ * about is still a refusal; it simply has nobody waiting on it.
+ */
+export async function roleOfRequester(
+  restaurantId: string,
+  username: string | null,
+  tx?: postgres.TransactionSql,
+): Promise<Role | null> {
+  if (username === null || username === '') return null
+  const q = (tx ?? tsql) as typeof tsql
+  const [row] = await q<{ role: Role }[]>`
+    select role from app_users
+    where restaurant_id = ${restaurantId} and username = ${username} and status = 'active'`
+  return row?.role ?? null
+}
 
 export async function recordAct(
   tx: postgres.TransactionSql,
@@ -1230,6 +1279,66 @@ export async function assertAssignee(assignedTo: string | null, what: string): P
   return user.username
 }
 
+
+
+/**
+ * WHAT HAPPENED TO THE ONES HE RAISED — a different question from "what is
+ * waiting on me", and deliberately a different query.
+ *
+ * TWO OUTCOMES, ONE OF WHICH ASKS SOMETHING OF HIM:
+ *
+ *   REFUSED    changes what he has to say to a vendor he had already promised
+ *              something to. It sits in his queue — `assigned_to` still set —
+ *              until he notes it, and the badge counts exactly these.
+ *   PAID       is news he needs so he stops chasing, and nothing more. It
+ *              appears here with no badge and no button: badging good news
+ *              trains somebody to clear badges rather than read them.
+ *
+ * A CHALLENGE IS NOT HIS AND NEVER REACHES THIS LIST. That argument runs
+ * accountant → owner; he sees the eventual refusal or payment, not the
+ * disagreement on the way to it.
+ */
+export type OutcomeRow = AwaitingRow & { needs_noting: boolean }
+
+export async function listMyOutcomes(
+  restaurantId: string,
+  username: string,
+  tx?: postgres.TransactionSql,
+): Promise<OutcomeRow[]> {
+  const q = (tx ?? tsql) as typeof tsql
+  return q<OutcomeRow[]>`
+    select a.id, a.kind, a.entity_type, a.entity_id, a.target_entity_id, a.reason,
+           a.snapshot, a.status, a.requested_by, a.requested_at::text as requested_at,
+           a.decided_by, a.decided_at::text as decided_at, a.decision_note,
+           a.applied_at::text as applied_at, a.applied_result,
+           a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.routed_account_id::text as routed_account_id, a.assigned_to,
+           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
+           ev.action as last_action, ev.note as last_note,
+           ev.acted_by as last_by, ev.acted_at::text as last_at,
+           -- THE OBLIGATION, NOT THE OUTCOME. A refusal he has noted is still
+           -- refused; what changes is that nobody is holding it any more.
+           (a.assigned_to is not null) as needs_noting
+    from approval_requests a
+    left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
+    left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
+    left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
+    left join lateral (
+      select e.action, e.note, e.acted_by, e.acted_at
+      from approval_events e
+      where e.restaurant_id = a.restaurant_id and e.request_id = a.id
+      order by e.acted_at desc, e.seq desc
+      limit 1
+    ) ev on true
+    where a.restaurant_id = ${restaurantId}
+      and a.requested_by = ${username}
+      and a.status in ('refused', 'applied')
+    order by (a.assigned_to is not null) desc,
+             coalesce(a.applied_at, a.decided_at, a.requested_at) desc
+    limit 20`
+}
 
 
 // ══════════════════════════════════════ what the owner needs to route by

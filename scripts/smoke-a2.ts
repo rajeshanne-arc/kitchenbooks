@@ -9079,6 +9079,184 @@ async function run() {
     for (const w of where) console.log(`      ${w}`)
   })
 
+  await check('a refusal goes home, and "Noted" clears the obligation not the outcome', async () => {
+    // HE RAISED IT, HE LEARNS WHAT HAPPENED. Until now a request left his
+    // hands and he never heard again — so he chased a payment that had gone,
+    // or kept promising against one that had been refused.
+    const { txn } = await import('../src/lib/db')
+    const { recordAct, roleOfRequester, listMyOutcomes } = await import('../src/server/approvals-queries')
+    const out: string[] = []
+
+    await txn(async (tx) => {
+      const [vendor] = await tx<{ id: string }[]>`
+        select id from vendors where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+      const [raiser] = await tx<{ username: string; role: string }[]>`
+        select username, role from app_users
+        where restaurant_id = ${liveTenant} and role = 'store' and status = 'active' limit 1`
+      assert.ok(vendor !== undefined, 'no active vendor')
+      assert.ok(raiser !== undefined, 'no active store user — the fixture cannot be raised by one')
+
+      // A USERNAME IS NOT A ROLE, and the refusal cannot find its way home
+      // without resolving one to the other.
+      assert.equal(await roleOfRequester(liveTenant, raiser.username, tx), 'store')
+      assert.equal(await roleOfRequester(liveTenant, 'nobody-by-that-name', tx), null)
+
+      const [req] = await tx<{ id: string }[]>`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, reason, amount, suggested_mode,
+           status, assigned_to, requested_by)
+        values (${liveTenant}, 'payment', 'vendor', ${vendor.id}, 'acknowledgement probe',
+                750.00, 'Bank transfer', 'pending', 'owner', ${raiser.username})
+        returning id`
+      const state = async () => {
+        const [r] = await tx<{ status: string; assigned_to: string | null; decided_by: string | null; decision_note: string | null }[]>`
+          select status, assigned_to, decided_by, decision_note
+          from approval_requests where id = ${req.id}`
+        return r
+      }
+
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'refused', from: ['pending', 'challenged'], status: 'refused',
+        by: 'rajeshanne', decision: true, note: 'we paid them last week',
+        assignTo: 'store',
+      })
+      const refused = await state()
+      assert.equal(refused.status, 'refused')
+      assert.equal(refused.assigned_to, 'store', 'the refusal did not go back to whoever raised it')
+      assert.equal(refused.decision_note, 'we paid them last week', 'the reason he is owed was not kept')
+
+      // IT IS ON HIS LIST, AND IT IS ASKING SOMETHING OF HIM.
+      const mine = (await listMyOutcomes(liveTenant, raiser.username, tx)).filter((r) => r.id === req.id)
+      assert.equal(mine.length, 1, 'a refusal he raised is not on his own list')
+      assert.equal(mine[0].needs_noting, true, 'a refusal nobody has told him about reads as already noted')
+      out.push(`refused → assigned ${refused.assigned_to}, on his list, needs noting`)
+
+      // ── "NOTED" ───────────────────────────────────────────────────────
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'acknowledged', from: ['refused'], status: 'refused',
+        by: raiser.username, assignTo: null,
+      })
+      const noted = await state()
+      // THE STATUS DOES NOT MOVE. It is still refused and always will be;
+      // what clears is the OBLIGATION. That is why the two columns exist.
+      assert.equal(noted.status, 'refused', 'acknowledging changed the OUTCOME — it may only clear the obligation')
+      assert.equal(noted.assigned_to, null, 'acknowledging left it in his queue')
+      assert.equal(noted.decision_note, 'we paid them last week', 'the reason was lost when he noted it')
+      // ACKNOWLEDGING IS NOT DECIDING. decided_by holds the owner who refused
+      // it, and a column that records who did something cannot be reused.
+      assert.equal(noted.decided_by, 'rajeshanne', 'the raiser’s acknowledgement overwrote who refused it')
+
+      const after = (await listMyOutcomes(liveTenant, raiser.username, tx)).filter((r) => r.id === req.id)
+      assert.equal(after.length, 1, 'noting it took the record off his list entirely — only the badge should clear')
+      assert.equal(after[0].needs_noting, false, 'it still reads as unnoted')
+
+      const [trail] = await tx<{ trail: string }[]>`
+        select string_agg(action, ' → ' order by acted_at, seq) as trail
+        from approval_events where request_id = ${req.id}`
+      assert.equal(trail.trail, 'refused → acknowledged')
+      out.push(`noted → assigned null, still refused, reason kept, decided_by ${noted.decided_by} · ${trail.trail}`)
+
+      throw new Error('ROLLBACK-ACK-PROBE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-ACK-PROBE') throw e
+    })
+    for (const l of out) console.log(`      ${l}`)
+  })
+
+  await check('the badge can see a refusal that is waiting to be read', async () => {
+    // THE VIEW STILL FILTERS ON A LIST OF STATUSES, and 'refused' is not on
+    // it — so a refusal routed back to the store is real work that the single
+    // badge source cannot count.
+    //
+    // THE EXEMPTION STATES THE CONDITION THAT EXPIRES IT rather than naming
+    // itself: while the view still carries a status list, a written migration
+    // must name it; the moment the migration is applied, the assertion becomes
+    // the real one and the exemption evaporates with nobody editing this.
+    const { tsql } = await import('../src/lib/db')
+    const { readFileSync, existsSync } = await import('node:fs')
+    const [v] = await tsql<{ def: string }[]>`select pg_get_viewdef('awaiting_me'::regclass, true) as def`
+    const keysOnAssignment = !/status\s*=\s*ANY/i.test(v.def)
+
+    if (!keysOnAssignment) {
+      const f = 'migrations/awaiting_me_keys_on_assignment.sql'
+      assert.ok(existsSync(f), `awaiting_me cannot see a refused row and no migration says so — write ${f}`)
+      // COMMENTS STRIPPED FIRST. The migration's own prose explains why
+      // security_invoker has to be set again — so matching the raw file
+      // matched the EXPLANATION and passed with the statement deleted. A
+      // checker that reads source is part of the source it reads, and here
+      // the source was arguing the checker's own case back at it.
+      const sql = readFileSync(f, 'utf8').replace(/--[^\n]*/g, '')
+      assert.ok(/awaiting_me/.test(sql), 'the migration does not name the view it is for')
+      assert.ok(
+        /assigned_to is not null/i.test(sql),
+        'the migration does not key the view on the assignment',
+      )
+      // CREATE OR REPLACE VIEW SILENTLY DROPS reloptions. The rule has bitten
+      // twice in this schema, both times the day it was written down.
+      assert.ok(
+        /set\s*\(\s*security_invoker\s*=\s*on\s*\)/i.test(sql),
+        'the migration replaces a view and does not set security_invoker again — it would start running as its owner',
+      )
+      console.log(
+        '      NOT YET: awaiting_me still filters on a status list, so a refusal waiting to be read is uncounted.',
+      )
+      console.log(`      ${f} is written and NOT applied — the store badge reads zero until it is.`)
+      return
+    }
+
+    // Applied. The assertion is now the real one: a refusal routed home is
+    // counted, and noting it takes the count back down.
+    const { txn } = await import('../src/lib/db')
+    const { recordAct, countAwaiting } = await import('../src/server/approvals-queries')
+    await txn(async (tx) => {
+      const [vendor] = await tx<{ id: string }[]>`
+        select id from vendors where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+      const before = await countAwaiting(liveTenant, 'store', tx)
+      const [req] = await tx<{ id: string }[]>`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, reason, status, assigned_to, requested_by)
+        values (${liveTenant}, 'payment', 'vendor', ${vendor.id}, 'badge probe', 'refused', 'store', 'store')
+        returning id`
+      assert.equal(
+        await countAwaiting(liveTenant, 'store', tx),
+        before + 1,
+        'a refusal waiting to be read is not counted by the store badge',
+      )
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'acknowledged', from: ['refused'], status: 'refused',
+        by: 'store', assignTo: null,
+      })
+      assert.equal(
+        await countAwaiting(liveTenant, 'store', tx),
+        before,
+        'noting it did not take the badge back down',
+      )
+      throw new Error('ROLLBACK-STORE-BADGE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-STORE-BADGE') throw e
+    })
+    console.log('      applied: a refused-and-unacknowledged request counts, and Noted clears it')
+  })
+
+  await check('a challenge is never routed to whoever raised it', async () => {
+    // THE ARGUMENT RUNS ACCOUNTANT → OWNER. The person who raised the request
+    // sees the eventual refusal or payment, not the disagreement on the way to
+    // it — being told "the accountant thinks we already paid this" is being
+    // handed somebody else's half-finished argument.
+    const { SEND_BACK } = await import('../src/server/approvals-queries')
+    assert.equal(SEND_BACK.challenged.assignTo, 'owner', 'a challenge is routed somewhere other than the owner')
+    assert.equal(SEND_BACK.returned.assignTo, 'owner', 'a return is routed somewhere other than the owner')
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/server/approvals-actions.ts', 'utf8')
+    const fn = src.slice(src.indexOf('export async function challengeRequest'))
+    const body = fn.slice(0, fn.indexOf('\nexport async function '))
+    assert.ok(
+      !/roleOfRequester|assignTo: 'store'/.test(body),
+      'challengeRequest routes to the raiser — the argument is not theirs to hold',
+    )
+    console.log('      returned → owner · challenged → owner · only a refusal goes back to the raiser')
+  })
+
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */
   console.log('\nthe letterhead')
 

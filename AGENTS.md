@@ -10249,3 +10249,113 @@ a ROUTE back to him (nothing offers it, for the reason above), or an
 ACKNOWLEDGEMENT that his request was refused or challenged (which needs an act
 to clear it, or it sits in his queue forever). Guessing would build the wrong
 one.
+
+## ACKNOWLEDGEMENT — he raised it, he learns what happened
+
+Until this, a request left the store manager's hands and he never heard again.
+So he chased a payment that had already gone, or kept promising a vendor
+against one that had been refused — and the vendor he had promised is usually
+the reason he raised it at all.
+
+### THE DISTINCTION IS NARROWER THAN "TELL HIM WHAT HAPPENED"
+
+| | | |
+|---|---|---|
+| **refused** | routed back to the raiser, BADGED, needs an act | it changes what he has to say to somebody |
+| **paid** | on his list, no badge, no act | news he needs so he stops chasing, nothing more |
+| **challenged** | never reaches him | the argument runs accountant → owner |
+
+**Badging good news trains somebody to clear badges rather than read them.**
+That is the whole reason the second row has no button: a list he reads and a
+queue he clears are different things, and one badge that means both is a badge
+that means neither.
+
+**A challenge is not his.** Being handed *"the accountant thinks we already
+paid this"* is being handed somebody else's half-finished argument. He sees the
+refusal or the payment it ends in. `SEND_BACK.challenged` routes to the owner
+and a gate asserts `challengeRequest` never reaches for the raiser's role.
+
+### THIS IS WHY `status` AND `assigned_to` BOTH EARN THEIR PLACE
+
+For most of this machine's life they moved together and either could have been
+derived from the other. Acknowledgement is the case that pulls them apart:
+
+> **A refused request is `refused` whether or not the person who raised it has
+> been told. One column carries the OUTCOME, the other carries the
+> OBLIGATION.**
+
+"Noted" writes an `acknowledged` event and sets `assigned_to` to null. The
+status does not move and never will. Collapsing the two would mean either
+losing the outcome when he acknowledges, or losing the obligation the moment it
+was decided — and it is also what makes the badge honest, because clearing
+`assigned_to` and nothing else is how work leaves a queue.
+
+`decision` is false on the act: acknowledging is not deciding, and `decided_by`
+holds the owner who refused it. A column that records who did something cannot
+be reused by the next person who does something — asserted on the row, not
+trusted to the call site.
+
+### A USERNAME IS NOT A ROLE
+
+`requested_by` is a username and `assigned_to` is a role, so a refusal cannot
+find its way home without resolving one to the other. `roleOfRequester` is that
+one lookup, and it is deliberately NOT a column frozen at raise time: a
+person's role can change between asking and being answered, and the queue
+belongs to whoever holds that job now. The same reasoning that makes
+`getSessionUser` re-read the row rather than trust the cookie's claim.
+
+Null where the username no longer resolves — a refusal nobody can be told about
+is still a refusal, it simply has nobody waiting on it. And an owner refusing
+their own request is told nothing, because there is nothing to learn.
+
+### NOTHING ELSE ROUTES TO THE STORE, AND THE REASON IS THE OBVIOUS ONE'S OPPOSITE
+
+Somebody will reach for routing a payment back to him, so the argument is here
+rather than only in a commit message:
+
+> **A request exists only because the money has not moved and the person who
+> raised it could not move it.** A cash payment is RECORDED at the door and
+> never becomes a request at all. Routing one back to him routes it to somebody
+> who has already said they cannot.
+
+So the store's queue holds exactly one thing: refusals waiting to be read.
+
+### THE VIEW COULD NOT SEE IT, AND THAT IS THE SECOND TIME ITS STATUS LIST HAS BEEN WRONG
+
+`awaiting_me` filters `status IN ('pending','approved','returned','challenged')`
+— a SECOND expression of "is this waiting" beside the column that already says
+so. The two have now disagreed twice, in both directions:
+
+- **`returned` is on the list and is never written.** §3 leaves a return at
+  `approved`. A branch that cannot match.
+- **`refused` is not on the list and now must be.** A refusal routed home is
+  real work, waiting on a named role, and the badge cannot count it.
+
+`migrations/awaiting_me_keys_on_assignment.sql` keys the view on
+`assigned_to IS NOT NULL` alone. That removes both faults at once and cannot
+drift again, because it stops being a copy of anything. **Written, NOT applied
+— the store badge reads zero until it is**, and the gate says so on every run.
+
+It also admits one thing nobody asked for, said rather than discovered: a
+`failed` request carries `assigned_to = 'owner'` and starts being counted. That
+is correct — a yes that did nothing is waiting on the owner — and it was
+invisible before.
+
+### THE EXEMPTION EXPIRES BY ITSELF, AND ITS FIRST VERSION DID NOT FAIL
+
+The gate reads the LIVE view definition. While it still carries a status list,
+a written migration must name it, key on the assignment, and set
+`security_invoker` again. The moment it is applied the check becomes the real
+one — a refusal counted, and "Noted" taking the count back down — with nobody
+editing the gate.
+
+**And proving it could fail found the flaw immediately.** Deleting the
+`alter view … set (security_invoker = on)` statement left the gate GREEN,
+because the migration's own comment block explains *why* security_invoker has
+to be set again — so `/security_invoker/` matched the EXPLANATION. A checker
+that reads source is part of the source it reads, and here the source was
+arguing the checker's case back at it. Comments are stripped first now, and the
+match is on the STATEMENT.
+
+That is the third instance of this shape in the file, and the first where the
+prose that defeated the check was written to support it.
