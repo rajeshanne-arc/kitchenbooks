@@ -9100,29 +9100,37 @@ async function run() {
     console.log(`      cash: ${cash[0].value} · request: ${transfers.map((m) => m.value).join(', ')}`)
   })
 
-  await check('the ageing reconciles to vendor_dues, vendor by vendor', async () => {
-    // TWO INDEPENDENT CALCULATIONS THAT MUST AGREE. vendor_dues is opening +
-    // purchased − paid; vendor_aging is the FIFO remainder summed over unpaid
-    // bills. Compared in SQL at full precision — summing rounded paise would
-    // disagree by a paise on a large book and read as a missing bill.
-    const rows = await tsql<{ name: string; aging: string; dues: string }[]>`
-      select va.vendor_name as name, va.outstanding::text as aging, vd.balance::text as dues
-      from vendor_aging va
-      join vendor_dues vd on vd.restaurant_id = va.restaurant_id and vd.vendor_id = va.vendor_id
-      where va.restaurant_id = ${rid} and va.outstanding <> vd.balance`
-    // SPREAD FIRST. postgres.js returns a Result, not a plain array, so
-    // deepEqual against [] fails on the prototype while the row count is
-    // correctly zero — a gate crying wolf about data that is fine.
-    assert.deepEqual(
-      [...rows].map((r) => `${r.name}: aging ${r.aging} vs dues ${r.dues}`),
-      [],
-      'these vendors disagree between vendor_aging and vendor_dues',
-    )
+  await check('the ageing reconciles, and an overpayment is not an alarm', async () => {
+    // THROUGH THE APP'S OWN QUERY, not a hand-written copy. The first version
+    // of this gate wrote its own INNER JOIN and had the exact blind spot the
+    // screen had: it reported "0 disagreeing" while the totals differed by 61
+    // paise, because the one vendor that differed was overpaid and vendor_aging
+    // drops them. A probe that writes its own SQL cannot test the app's.
+    const { getAgingCheck } = await import('../src/server/aging-queries')
+    const check = await getAgingCheck(rid)
+
+    assert.equal(check.disagreeing, 0, 'vendors appear in both views with different figures')
+    assert.equal(check.missing, 0, 'a debt appears in one view and not the other')
+
     // NOT VACUOUS: a comparison over no vendors proves nothing about either.
     const [{ n }] = await tsql<{ n: number }[]>`
       select count(*)::int as n from vendor_aging where restaurant_id = ${rid}`
     assert.ok(n > 0, 'no vendor has anything outstanding — the reconciliation compared nothing')
-    console.log(`      ${n} vendors, all reconciling`)
+
+    // AND THE BLIND SPOT ITSELF. An overpaid vendor is invisible to an inner
+    // join, so its presence is what proves the full outer join is doing work.
+    // Where one exists the totals MUST differ by exactly the credit — that is
+    // the arithmetic an alarm would otherwise have been raised over.
+    const credit = check.overpaid.reduce((t, o) => t + Math.round(Number(o.balance) * 100), 0)
+    const gap = Math.round(Number(check.aging) * 100) - Math.round(Number(check.dues) * 100)
+    assert.equal(
+      gap,
+      -credit,
+      `the totals differ by ${gap} paise and the overpaid credits total ${credit} — they must be the same amount`,
+    )
+    console.log(
+      `      ${n} vendors reconcile · ${check.overpaid.length} overpaid (${check.overpaid.map((o) => `${o.code} ${o.balance}`).join(', ') || 'none'})`,
+    )
   })
 
   /* ── one photograph per recipe per day ─────────────────────────────── */

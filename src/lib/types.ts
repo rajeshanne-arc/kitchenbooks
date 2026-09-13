@@ -3773,7 +3773,16 @@ export type BillOutstandingRow = {
 }
 
 /** vendor_aging summed against vendor_dues — two routes to one number. */
-export type AgingCheck = { aging: string; dues: string; agrees: boolean; disagreeing: number }
+export type AgingCheck = {
+  aging: string
+  dues: string
+  /** present in BOTH views with different figures — the only real alarm */
+  disagreeing: number
+  /** a real debt one view has lost entirely — also an alarm */
+  missing: number
+  /** overpaid vendors: a CREDIT, not a fault, and never a reason to block */
+  overpaid: { code: string; name: string; balance: string }[]
+}
 
 /** A movement the books hold that no statement line has agreed with yet. */
 export type StaleUnmatchedRow = {

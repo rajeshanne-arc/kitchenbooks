@@ -9605,3 +9605,38 @@ person who actually paid chose. **Two people knowing different things is not a
 discrepancy** — the store manager knows the vendor wants paying, the owner knows
 which account is liquid. Neither is correcting the other, and the difference is
 a fact worth keeping rather than one to reconcile away silently.
+
+## A CHECK THAT ONLY EXAMINES ROWS BOTH SIDES HAVE CANNOT SEE A ROW ONE SIDE LACKS
+
+The ageing reconciliation reported **"the totals differ by ₹0.61" and
+"disagreeing on 0 vendors"** in the same breath, and blocked the payment screen.
+Both halves were true.
+
+AK TRADERS (V-DRY-03) is **overpaid by 61 paise** — `vendor_dues` shows −0.61 —
+and `vendor_aging` drops them entirely because it filters `unpaid > 0`. The
+comparison INNER JOINED, so it examined only vendors present in both views. **The
+one vendor that differed was the one it could not see.**
+
+Full outer join. The rule generalises to every reconciliation in this file: two
+sources agreeing on their intersection says nothing about their difference, and
+the difference is where a missing row lives by definition.
+
+### AN OVERPAYMENT IS A CREDIT, NOT A FAULT — do not block on it
+
+The alarm now fires only for a vendor present in BOTH views whose figures
+differ, plus a real debt one view has lost. An overpaid vendor legitimately
+appears in one and not the other, and **stopping all paying because of a vendor
+who owes US would be the check refusing the work it exists to protect.**
+
+It gets its own line instead — and it needed one, because **nothing else in the
+app says a vendor holds our money.** `vendor_aging` drops them by construction
+and the payment queue is a list of who we owe. Today it is 61 paise; a mis-keyed
+payment makes it ₹50,000 and it would surface nowhere.
+
+**The gate now runs through `getAgingCheck` rather than its own SQL**, because
+the first version wrote its own inner join and reproduced the screen's blind
+spot exactly — a probe that writes its own query cannot test the app's. And it
+asserts the arithmetic that ties the two findings together: where an overpayment
+exists, the totals MUST differ by exactly the credit. That is the sum an alarm
+would otherwise have been raised over, so proving it is the credit is what
+proves the difference is not a fault.

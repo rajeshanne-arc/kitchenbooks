@@ -115,17 +115,49 @@ export default function PaymentClient({
             vendor_aging is the FIFO remainder summed over unpaid bills. They
             reach the same number by different routes, which is the whole
             reason the ageing is worth trusting. */}
-        {check.agrees ? (
+        {/* AN OVERPAYMENT IS NOT A FAULT AND MUST NOT BLOCK. The alarm is
+            reserved for a vendor both views hold that they describe
+            differently — the only case where the two calculations actually
+            disagree. A vendor who is overpaid legitimately appears in one view
+            and not the other, and stopping all paying because of one would be
+            the check refusing the work it exists to protect. */}
+        {check.disagreeing === 0 && check.missing === 0 ? (
           <p className="mt-1 text-xs text-stone-400">
-            Reconciles to vendor_dues · {formatMoneyString(check.aging)} both ways ✓
+            Reconciles to vendor_dues · {formatMoneyString(check.aging)} owed across {aging.length} vendors ✓
           </p>
         ) : (
           <div className="mt-2">
             <Honesty level="alarm" verdict="does not reconcile">
-              The ageing totals {formatMoneyString(check.aging)} and vendor_dues totals{' '}
-              {formatMoneyString(check.dues)}, disagreeing on {check.disagreeing}{' '}
-              {check.disagreeing === 1 ? 'vendor' : 'vendors'}. These are two routes to one number and they must
-              match — until they do, do not pay from this screen.
+              {check.disagreeing > 0 && (
+                <>
+                  {check.disagreeing} {check.disagreeing === 1 ? 'vendor is' : 'vendors are'} in both the ageing and
+                  vendor_dues with different figures.{' '}
+                </>
+              )}
+              {check.missing > 0 && (
+                <>
+                  {check.missing} {check.missing === 1 ? 'debt appears' : 'debts appear'} in one view and not the
+                  other.{' '}
+                </>
+              )}
+              These are two routes to one number and they must match — until they do, do not pay from this screen.
+            </Honesty>
+          </div>
+        )}
+
+        {/* THE VENDOR HOLDS OUR MONEY, and nothing else in the app says so.
+            Today it is 61 paise; a mis-keyed payment makes it ₹50,000 and it
+            would surface nowhere — vendor_aging drops an overpaid vendor
+            because it filters unpaid > 0, and the payment queue is a list of
+            who we owe. */}
+        {check.overpaid.length > 0 && (
+          <div className="mt-2">
+            <Honesty verdict="overpaid">
+              {check.overpaid
+                .map((o) => `${o.name} by ${formatMoneyString(String(Math.abs(Number(o.balance))))}`)
+                .join(' · ')}{' '}
+              — a credit, not a debt. They hold our money until the next bill absorbs it, and they are not on the
+              queue below because nothing is owed to them.
             </Honesty>
           </div>
         )}
