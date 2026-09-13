@@ -1147,6 +1147,30 @@ export type Act = {
  * call it on a rolled-back transaction and force a failure between its two
  * writes, which is the only way to observe that they are one.
  */
+/**
+ * §3 IN ONE PLACE — what each send-back does to the row.
+ *
+ * The two look alike and mean opposite things, and the whole difference is
+ * what the owner has to do next. Declared here rather than spelled out inside
+ * the two actions, so the RULING is a value a gate can assert rather than a
+ * pair of literals somebody could change in one place and not the other.
+ *
+ *   returned   "I cannot pay it this way." The approval STANDS — status stays
+ *              `approved` — and only the route comes off. Sending it to
+ *              `pending` would erase the approval before it ever left, and
+ *              afterwards nobody could explain why the route changed.
+ *   challenged "I do not think this should be paid." An objection to the
+ *              PAYMENT, so the decision reopens: `decideApproval` treats
+ *              `challenged` exactly as `pending`.
+ *
+ * Both clear the route. Whatever the owner decides next, the old one is not
+ * still live.
+ */
+export const SEND_BACK = {
+  returned: { status: 'approved', clearRouting: true, assignTo: 'owner' },
+  challenged: { status: 'challenged', clearRouting: true, assignTo: 'owner' },
+} as const
+
 export async function recordAct(
   tx: postgres.TransactionSql,
   restaurantId: string,
@@ -1204,6 +1228,81 @@ export async function assertAssignee(assignedTo: string | null, what: string): P
   if (!user) throw new ApprovalRefusal('Sign in again — the session has expired')
   if (user.role !== 'owner' && user.role !== assignedTo) throw new ApprovalRefusal(what)
   return user.username
+}
+
+
+
+// ══════════════════════════════════════ what the owner needs to route by
+
+/**
+ * THE VENDOR'S SIDE OF A PAYMENT: where the money would actually go, and what
+ * is owed right now.
+ *
+ * BOTH HALVES ARE READ AT ROUTING TIME, not taken from the snapshot. The
+ * snapshot is the ageing AS IT STOOD AT ASKING and exists to be COMPARED — a
+ * bill can land, or a payment can clear, between the ask and the decision. The
+ * bank details were never in the snapshot at all, and must not be: an account
+ * number copied into a jsonb blob in June is what somebody would transfer
+ * money to in September.
+ *
+ * A LEFT JOIN TO vendor_aging, deliberately. That view filters `unpaid > 0`,
+ * so a vendor who has been paid in the meantime has NO ROW — and an inner join
+ * would drop the request from the owner's screen entirely rather than telling
+ * him the debt is gone. Absent is a finding; missing is a bug.
+ */
+export type VendorRouting = {
+  vendor_id: string
+  code: string
+  name: string
+  phone: string | null
+  bank_name: string | null
+  account_no: string | null
+  ifsc: string | null
+  upi_id: string | null
+  /** null where nothing is outstanding today — the view drops a settled vendor */
+  outstanding: string | null
+  open_bills: number | null
+  oldest_due: string | null
+}
+
+export async function getVendorRouting(
+  restaurantId: string,
+  vendorIds: string[],
+): Promise<Map<string, VendorRouting>> {
+  if (vendorIds.length === 0) return new Map()
+  const rows = await tsql<VendorRouting[]>`
+    select v.id as vendor_id, v.code, v.name, v.phone,
+           v.bank_name, v.account_no, v.ifsc, v.upi_id,
+           va.outstanding::text as outstanding,
+           va.open_bills::int as open_bills,
+           va.oldest_due::text as oldest_due
+    from vendors v
+    left join vendor_aging va
+      on va.restaurant_id = v.restaurant_id and va.vendor_id = v.id
+    where v.restaurant_id = ${restaurantId} and v.id = any(${vendorIds})`
+  return new Map(rows.map((r) => [r.vendor_id, r]))
+}
+
+/**
+ * Vendors nobody can pay by any route — no account number AND no UPI id.
+ *
+ * Surfaced on the vendor list, the same shape as the phone-number blocker
+ * already there: a purchase order with nowhere to send it is a PDF, and a
+ * vendor with no bank details is a payment somebody has to chase by phone.
+ * Computed, never asserted, so it clears itself as the details arrive.
+ */
+export async function countVendorsUnpayable(
+  restaurantId: string,
+): Promise<{ total: number; unpayable: number; withUpi: number }> {
+  const [row] = await tsql<{ total: number; unpayable: number; with_upi: number }[]>`
+    select count(*)::int as total,
+           count(*) filter (
+             where coalesce(account_no, '') = '' and coalesce(upi_id, '') = ''
+           )::int as unpayable,
+           count(*) filter (where coalesce(upi_id, '') <> '')::int as with_upi
+    from vendors
+    where restaurant_id = ${restaurantId} and status = 'active'`
+  return { total: row?.total ?? 0, unpayable: row?.unpayable ?? 0, withUpi: row?.with_upi ?? 0 }
 }
 
 

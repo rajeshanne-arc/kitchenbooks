@@ -5680,6 +5680,27 @@ Fourth of its family, and the family is now clear enough to state as one rule:
 | the prune's invisibility check | both generations carried IDENTICAL figures |
 | the walking-order gate | every item was unplaced, so it examined ZERO rows |
 | **`awaiting_me`** | it filtered `assigned_to IS NOT NULL` and **nothing had ever written that column** |
+| **the badge probe** | it walked the whole path and **never observed at the point where the two implementations diverge** |
+
+**The sixth is its own shape and must not be folded into the others.** That
+probe was not empty, did not converge, and its two sides were genuinely
+different: it put a request through every state and asserted the count at each
+one. It passed anyway with the badge reverted to counting `status = 'pending'`
+by hand — because **every step it checked agreed under both implementations.**
+A raised request IS pending. A paid one is NOT. The one moment the two answers
+differ is immediately after the APPROVAL, where the hand-rolled count drops to
+zero while the page still lists the row, and that is the step the probe walked
+straight past.
+
+> **A PROBE CAN WALK THE WHOLE PATH AND NEVER OBSERVE AT THE POINT WHERE TWO
+> IMPLEMENTATIONS DIVERGE.** Coverage is not the property. Ask where the two
+> answers would DISAGREE, and assert THERE.
+
+It is the harder one to notice, because the probe looks thorough: more steps,
+more assertions, a fixture that moves. Thoroughness is what disguised it. The
+others announce themselves once you ask "what would this look like when it
+fails"; this one answers that question convincingly at every step except the
+one that mattered.
 
 **The fifth is a different costume and belongs here rather than beside the
 gates**, because it is not a test at all — it is a VIEW, and a view is an
@@ -6662,6 +6683,10 @@ while the view was wrong, went red on the first run after the migration, and
 named the caption to delete. Both are gone now and the permanent invariant
 stands in their place — **a boolean left behind to remember a fixed bug is dead
 scaffolding**, the same conclusion as the vendor-return refusal flag.
+
+*This is the FIRST of two. The second is `listApprovals` — see* **"A SECTION
+THAT COULD NEVER RENDER, AND A COMMENT THAT SAID IT DID"** *— and it is worse,
+because this caption at least described a query that ran.*
 
 ### Receiving: the shorts mechanism finally has something to compare against
 
@@ -10054,10 +10079,17 @@ Correct, argued, and **false of the code it sat on.** Its only caller passed
 client then split that list into pending and decided, and the decided half was
 empty by construction. The "Already decided" section could not render, ever.
 
-A caption describing the INTENT rather than the code, for the second time in
-this file — and the first one at least described a query that ran. This one
-described a branch that could not. It is `listDecided` now, with a caller, and
-the section renders.
+**THE SECOND INSTANCE OF A CAPTION DESCRIBING THE INTENT RATHER THAN THE CODE**,
+and worse than the first. The purchase-order caption said *"voided ones
+excluded"* of a query that ran and excluded one half of a reversed pair — wrong
+about what it did. This one argued, at length and correctly, for a behaviour
+its only caller had **disabled with a parameter**: the branch could not run at
+all. A reader checking the claim would have read the docblock, agreed with it,
+and never looked at the call site — which is exactly where the truth was.
+
+The two together give the shape: the first was falsified by the query's body,
+the second by its ARGUMENTS. It is `listDecided` now, with a caller, and the
+section renders.
 
 **The tell is a doc comment asserting a behaviour rather than explaining one.**
 "Decided rows stay" is a claim about output; "this returns X because Y" is an
@@ -10075,3 +10107,145 @@ the same shape as the column nothing wrote, one level down, and it should go
 the next time that view is replaced. Recorded rather than fixed, because
 replacing a view to delete a dead OR arm cascades to its dependents for no
 change in behaviour.
+
+## §4 — THE OWNER ROUTES IT, AND THE ROUTE HAS AN OTHER END
+
+The act that turns a decision into a payment. Approving one changes nothing
+about money; this is where the money moves or changes hands.
+
+### TWO ACTS, BECAUSE THEY ARE TWO DIFFERENT THINGS
+
+**Pay and record** writes the payments row, the `paid` event and the status in
+one transaction, and the request is finished. **Send to the accountant** sets
+the mode and hands it over: the approval stands, the route is set, and it lands
+in their queue.
+
+Forwarding is **the only thing in the app that sets `assigned_to` to another
+role**, which is why the accountant's badge could not be built before this and
+why step 2 shipped it inert and said so. It fires now.
+
+### THE SUGGESTED MODE IS READ AS A SUGGESTION, NEVER AS AN OVERRIDE
+
+The store manager knows the vendor wants paying. The owner knows which account
+is liquid. `suggested_mode` and `routed_mode` differing is a **fact worth
+keeping, not a discrepancy to reconcile away** — so the control prefills the
+suggestion, labels it as one, keeps both columns, and says nothing accusatory
+when they differ. Asserted: routing to Bank transfer leaves `suggested_mode`
+reading Cash.
+
+### AN OPTION THAT CANNOT BE TAKEN IS WORSE THAN A MISSING ONE
+
+Measured before building: **39 active vendors, 32 with bank details, ZERO with
+a UPI id, 7 with neither.** `UPI` is nonetheless an active row in the
+payment_mode list — so it was being offered on every payment in the app and
+could be used on not one vendor.
+
+Somebody picks it and finds out afterwards, which is the same cost as the
+cross-vendor price chip firing on correct bills: the reader learns the control
+is noise. So `modesForVendor` withholds a mode whose detail is missing and
+**says which detail**, per vendor rather than globally — the day one vendor
+supplies a UPI id, that vendor's control offers it and the rest still say why
+they do not. A global switch needs somebody to remember to flip it.
+
+The 7 with neither are a finding on the **vendor list**, computed and
+self-clearing, the same shape as the purchase-order phone blocker: a vendor
+with no account number and no UPI id can be paid in cash or by cheque and by
+nothing else, and today that is discovered at the moment somebody is trying to
+send them money.
+
+**Gated as an IMPLICATION, not as today's figures.** "0 vendors have a UPI id"
+is a hand-copy of live data that goes red the day Rajesh adds one — a gate
+crying wolf about a fact that is fine. The rule asserted is that a mode is
+offered exactly when the detail it needs is present, over every active vendor,
+with a vacuity guard requiring that the withholding path actually fired.
+
+### BANK DETAILS ARE READ AT ROUTING TIME, NEVER FROM THE SNAPSHOT
+
+The snapshot freezes the ageing AS IT STOOD AT ASKING and exists to be
+compared. The bank details were never in it and must not be: **an account
+number copied into a jsonb blob in June is what somebody would transfer money
+to in September.** Both screens read them live, through `CopyField`, because
+this is the screen where an account number is retyped into a bank app under
+time pressure.
+
+The live ageing sits beside the asked figure for the same reason — a bill
+landing or a payment clearing in between is exactly what the owner needs to see
+before sending money. `vendor_aging` filters `unpaid > 0`, so the join is a
+LEFT one: a vendor settled in the meantime has no row, and an inner join would
+drop the request from the screen rather than saying the debt is gone. **Absent
+is a finding; missing is a bug.**
+
+### §3 IS A RULING, SO IT IS A VALUE RATHER THAN A PAIR OF LITERALS
+
+`SEND_BACK.returned` and `SEND_BACK.challenged` are declared in one place and
+spread into both the action and the probe. The first version of the probe
+restated the ruling in its own literals — which asserts only that `recordAct`
+does what it is told, and would have passed with `returnRequest` sending things
+back to `pending`. Driving the probe from the declaration is what makes it
+test the RULE.
+
+> **A probe that restates the rule it is testing is testing the mechanism, not
+> the rule.** Where a ruling is a set of values, declare it once and let both
+> the code and the gate read it.
+
+Proved by perturbation: `returned.status = 'pending'` fails with *a return
+un-approved the request*, and dropping `clearRouting` fails with *a return left
+the old route standing*.
+
+### THE TRAIL IS ASSERTED AS A SEQUENCE, NOT AS A SET
+
+`approved → routed → forwarded → returned → challenged → refused`, read back
+with `string_agg(... order by acted_at, seq)`. A set assertion would pass
+against events written in the wrong order, and `routed` and `forwarded` are
+written in ONE transaction so their `acted_at` ties — the ordering is only
+decidable because `seq` exists.
+
+And the return does **not** touch `decided_by`: the accountant sending it back
+must not displace the owner who approved it. Asserted on the row.
+
+### AN ACT THAT REMOVES ITS OWN CARD CANNOT ACKNOWLEDGE INSIDE IT
+
+Both new controls hit the same thing, one level apart, and neither was
+designed for — the census found them.
+
+Paying or forwarding a request REMOVES IT from the queue it is rendered in. So
+the server returns nothing where that card was, React unmounts the subtree, and
+any acknowledgement held in its state goes with the row: it flashes and
+vanishes. The first version of both components held the sentence locally and
+would have done exactly that.
+
+> **Before choosing where an acknowledgement lives, ask whether the act
+> destroys the thing rendering it.** A form that stays put can hold its own;
+> one that removes itself must hand the sentence to something that survives —
+> or to the toast, which is mounted in the root layout and survives anything.
+
+They resolve differently because their parents do:
+
+- `RouteControl` hands it UP to the approvals queue, which survives — a paid
+  request lands in "Already decided", a forwarded one in "Out with somebody
+  else", so the page is never empty after the act.
+- `AwaitingActions` has no surviving parent: paying the last routed payment
+  empties the whole panel, and `AwaitingPanel` returns null. So the ROW LEAVING
+  is the change on screen and the bottom-anchored toast carries the numbers —
+  the same answer the three inline row controls already give, for the same
+  reason.
+
+Both are exemptions in the SaveAck census **with those reasons printed on every
+run**, which is what stops either quietly becoming a silent button.
+
+### WHAT IS STILL NOT ROUTABLE, SAID PLAINLY
+
+The routing control offers the owner and the accountant. **It does not offer
+the store**, and that is an argument rather than an omission: a request exists
+only because the money has not moved and the person who raised it could not
+move it — a cash payment is RECORDED at the door and never becomes a request at
+all. Routing one back to the store is routing it to somebody who has already
+said they cannot.
+
+So the store's badge, wired in step 2, counts a state nothing produces. That is
+reported rather than quietly left, because the brief's phrase — *his own
+requests that came back* — has two readings and they need different mechanics:
+a ROUTE back to him (nothing offers it, for the reason above), or an
+ACKNOWLEDGEMENT that his request was refused or challenged (which needs an act
+to clear it, or it sits in his queue forever). Guessing would build the wrong
+one.

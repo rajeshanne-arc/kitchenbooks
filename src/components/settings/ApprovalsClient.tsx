@@ -17,7 +17,8 @@ import { useRouter } from 'next/navigation'
 import Honesty from '@/components/Honesty'
 import SaveAck from '@/components/SaveAck'
 import { decideApproval } from '@/server/approvals-actions'
-import type { ApprovalRow, AwaitingRow, Preview, RefCount } from '@/server/approvals-queries'
+import type { ApprovalRow, AwaitingRow, Preview, RefCount, VendorRouting } from '@/server/approvals-queries'
+import RouteControl from '@/components/approvals/RouteControl'
 import type { AccountBalanceRow } from '@/lib/types'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -48,12 +49,21 @@ export default function ApprovalsClient({
   balances,
   elsewhere,
   decided,
+  vendors,
+  modes,
+  today,
 }: {
   items: QueueItem[]
   balances: AccountBalanceRow[]
   /** open, and with somebody else. Context, never work — see listElsewhere. */
   elsewhere: AwaitingRow[]
   decided: AwaitingRow[]
+  /** keyed by vendor id, for the payments only — where the money would go */
+  vendors: Record<string, VendorRouting>
+  modes: string[]
+  /** the BUSINESS day, resolved on the server. A `new Date()` here says
+   *  tomorrow at 00:30, which is the fault the business day exists to stop. */
+  today: string
 }) {
   const [ack, setAck] = useState<string | null>(null)
 
@@ -74,7 +84,17 @@ export default function ApprovalsClient({
           </p>
         </section>
       ) : (
-        items.map((i) => <Request key={i.row.id} item={i} balances={balances} onDone={setAck} />)
+        items.map((i) => (
+          <Request
+            key={i.row.id}
+            item={i}
+            balances={balances}
+            vendor={vendors[i.row.entity_id]}
+            modes={modes}
+            today={today}
+            onDone={setAck}
+          />
+        ))
       )}
 
       {/* WHERE IT WENT. The instant a payment is forwarded it leaves this
@@ -170,10 +190,16 @@ function AppliedLine({ result }: { result: unknown }) {
 function Request({
   item,
   balances,
+  vendor,
+  modes,
+  today,
   onDone,
 }: {
   item: QueueItem
   balances: AccountBalanceRow[]
+  vendor: VendorRouting | undefined
+  modes: string[]
+  today: string
   onDone: (m: string) => void
 }) {
   const router = useRouter()
@@ -253,9 +279,7 @@ function Request({
             </Honesty>
           ) : (
             <Honesty verdict="approved, not paid">
-              Nothing has moved. Which account it leaves, and whether you make the transfer or the
-              accountant does, is chosen on the routing screen — and that screen is not built yet. Until it
-              is, an approved payment waits here.
+              Nothing has moved. Approving said yes; how it goes and who does it is the block below.
             </Honesty>
           )}
         </div>
@@ -272,6 +296,20 @@ function Request({
       )}
 
       {row.kind === 'payment' && <PaymentAsk row={row} balances={balances} />}
+
+      {/* THE ACT THAT TURNS A DECISION INTO A PAYMENT. Only once it is
+          approved: routing something nobody has said yes to would be choosing
+          an account for a payment that may never happen. */}
+      {row.kind === 'payment' && row.status === 'approved' && (
+        <RouteControl
+          row={row}
+          vendor={vendor}
+          balances={balances}
+          modes={modes}
+          today={today}
+          onDone={onDone}
+        />
+      )}
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-rule bg-white p-3">

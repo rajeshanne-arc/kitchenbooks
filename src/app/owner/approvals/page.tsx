@@ -2,10 +2,14 @@ import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import {
   getPreview,
+  getVendorRouting,
   getWaiting,
   type ApprovalEntity,
   type ApprovalKind,
+  type VendorRouting,
 } from '@/server/approvals-queries'
+import { getList } from '@/server/settings'
+import { businessToday } from '@/server/business-day'
 import { getListSuggestions } from '@/server/settings'
 import ApprovalsClient, { type QueueItem } from '@/components/settings/ApprovalsClient'
 import SuggestionsQueue from '@/components/settings/SuggestionsQueue'
@@ -18,14 +22,25 @@ export const dynamic = 'force-dynamic'
 
 export default async function ApprovalsPage() {
   const restaurant = await getRestaurant()
-  const [waiting, suggestions, balances] = await Promise.all([
+  const [waiting, suggestions, balances, modes, today] = await Promise.all([
     getWaiting(restaurant.id),
     getListSuggestions(restaurant.id),
     // THE QUESTION IS NOT "APPROVE YES OR NO", IT IS "PAY FROM WHERE". A
     // ₹50,000 request against a till holding ₹8,000 needs a transfer, and the
     // owner should not have to remember that — account_balances already knows.
     getAccountBalances(restaurant.id),
+    getList(restaurant.id, 'payment_mode'),
+    businessToday(),
   ])
+
+  // WHERE THE MONEY WOULD ACTUALLY GO, read now rather than taken from the
+  // snapshot — an account number frozen at asking is what somebody would
+  // transfer to months later. One query for every payment on the page.
+  const vendorRows = await getVendorRouting(
+    restaurant.id,
+    waiting.approvals.filter((r) => r.kind === 'payment').map((r) => r.entity_id),
+  )
+  const vendors: Record<string, VendorRouting> = Object.fromEntries(vendorRows)
 
   // The fresh check, run now, for everything still pending. Not the authority
   // — merge_items re-runs every guard under a row lock — but the owner must
@@ -91,6 +106,9 @@ export default async function ApprovalsPage() {
               balances={balances}
               elsewhere={waiting.elsewhere}
               decided={waiting.decided}
+              vendors={vendors}
+              modes={modes}
+              today={today}
             />
           )}
 

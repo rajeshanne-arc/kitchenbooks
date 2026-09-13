@@ -5596,6 +5596,16 @@ async function run() {
       'components/accountant/UnmatchButton.tsx': 'inline row control — the line moves back to the unmatched list, which IS the change',
       'components/kitchen/CancelIndent.tsx': 'inline row control — the indent flips to cancelled and its gap column stops reading as a shortage',
       'components/store/SettleShort.tsx': 'inline row control — the short leaves the open list, which is the whole finding it was on',
+      // THE ROW LEAVES, SO THE ACKNOWLEDGEMENT CANNOT LIVE IN IT. Paying or
+      // forwarding a request removes it from the queue it is rendered in, so
+      // state held inside unmounts with the card. RouteControl hands its
+      // sentence UP to the approvals queue, which survives (a paid request
+      // lands in "Already decided", a forwarded one in "Out with somebody
+      // else"); AwaitingActions has no surviving parent — the last payment
+      // empties the whole panel — so it carries the bottom-anchored toast,
+      // the same answer as the three inline row controls above.
+      'components/approvals/RouteControl.tsx': 'the card is removed by its own act — the acknowledgement is handed up to the approvals queue, which survives it',
+      'components/approvals/AwaitingActions.tsx': 'the panel empties itself when the last routed payment is paid — the row leaving is the change, and the toast carries the numbers',
       // THE PAGE IS THE ACKNOWLEDGEMENT, literally. A photograph that uploads
       // appears in the list as "Page 2 · 210 KB · rajeshanne · <time>", which
       // is the row-is-the-acknowledgement case the masters already use — and
@@ -8868,6 +8878,205 @@ async function run() {
         ? 'UNTESTED on live data — nothing is waiting, so the equality holds under any implementation'
         : `tab ${n} = page ${w.total}`
     console.log(`      awaiting_me read in one file · ${live} (${w.approvals.length} approvals · ${w.suggestions.length} suggestions · ${w.payrollRuns.length} runs)`)
+  })
+
+  await check('a return cancels the routing; a challenge reopens the decision', async () => {
+    // §3 IS A RULING, AND NOTHING ASSERTED IT UNTIL NOW. The two send-backs
+    // look alike and mean opposite things, and the whole difference is what
+    // the owner has to do next — so it is asserted on the ROW rather than
+    // trusted to the copy on the buttons.
+    const { txn } = await import('../src/lib/db')
+    const { recordAct, SEND_BACK } = await import('../src/server/approvals-queries')
+    const out: string[] = []
+
+    await txn(async (tx) => {
+      const [vendor] = await tx<{ id: string }[]>`
+        select id from vendors where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+      const [account] = await tx<{ id: string }[]>`
+        select id from money_accounts where restaurant_id = ${liveTenant} and status = 'active' order by name limit 1`
+      assert.ok(vendor !== undefined && account !== undefined, 'no vendor or account to route to')
+
+      const [req] = await tx<{ id: string }[]>`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, reason, amount, suggested_mode,
+           status, assigned_to, requested_by)
+        values (${liveTenant}, 'payment', 'vendor', ${vendor.id}, 'return probe',
+                500.00, 'Cash', 'pending', 'owner', 'gate')
+        returning id`
+      const state = async () => {
+        const [r] = await tx<{
+          status: string; assigned_to: string | null; routed_mode: string | null
+          routed_account_id: string | null; decided_by: string | null
+        }[]>`
+          select status, assigned_to, routed_mode, routed_account_id::text as routed_account_id, decided_by
+          from approval_requests where id = ${req.id}`
+        return r
+      }
+
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'approved', from: ['pending'], status: 'approved',
+        by: 'owner1', decision: true, assignTo: 'owner',
+      })
+      // THE OWNER'S CHOICE, and it is allowed to differ from the suggestion:
+      // he knows which account is liquid and the person who asked does not.
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'routed', from: ['approved'], status: 'approved',
+        by: 'owner1', mode: 'Bank transfer', accountId: account.id, route: true, assignTo: 'owner',
+      })
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'forwarded', from: ['approved'], status: 'approved',
+        by: 'owner1', assignTo: 'accountant',
+      })
+      const routed = await state()
+      assert.equal(routed.routed_mode, 'Bank transfer')
+      assert.equal(routed.assigned_to, 'accountant')
+      const [sugg] = await tx<{ suggested_mode: string | null }[]>`
+        select suggested_mode from approval_requests where id = ${req.id}`
+      assert.equal(sugg.suggested_mode, 'Cash', 'the owner’s route overwrote what the asker suggested')
+      out.push(`routed: suggested Cash, routed Bank transfer — both kept, assigned ${routed.assigned_to}`)
+
+      // ── A RETURN KEEPS THE APPROVAL AND DROPS THE ROUTE ────────────────
+      // DRIVEN BY THE DECLARATION, not by literals repeated here. A probe
+      // that restates the ruling it is testing asserts only that recordAct
+      // does what it is told.
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'returned', from: ['approved'],
+        by: 'acct1', note: 'the beneficiary is not registered', ...SEND_BACK.returned,
+      })
+      const returned = await state()
+      assert.equal(returned.status, 'approved', 'a return un-approved the request — it must only cancel the route')
+      assert.equal(returned.routed_mode, null, 'a return left the old route standing')
+      assert.equal(returned.routed_account_id, null, 'a return left the old account standing')
+      assert.equal(returned.assigned_to, 'owner', 'a return did not go back to the owner')
+      // AND IT DID NOT TOUCH WHO APPROVED IT. A column that records who did
+      // something cannot be reused by the next person who does something.
+      assert.equal(returned.decided_by, 'owner1', 'the accountant’s return overwrote who approved it')
+      out.push('returned: still approved, route cleared, back with the owner, decided_by untouched')
+
+      // ── A CHALLENGE REOPENS THE DECISION ──────────────────────────────
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'challenged', from: ['approved'],
+        by: 'acct1', note: 'we already paid this one', ...SEND_BACK.challenged,
+      })
+      assert.equal((await state()).status, 'challenged', 'a challenge did not reopen the decision')
+
+      // and `challenged` is decidable exactly as `pending` is — which is what
+      // makes the two send-backs genuinely different acts rather than one.
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'refused', from: ['pending', 'challenged'], status: 'refused',
+        by: 'owner1', decision: true, note: 'they are right, it was paid', assignTo: null,
+      })
+      const done = await state()
+      assert.equal(done.status, 'refused')
+      assert.equal(done.assigned_to, null, 'a refused request is still sitting in somebody’s queue')
+      const [events] = await tx<{ trail: string }[]>`
+        select string_agg(action, ' → ' order by acted_at, seq) as trail
+        from approval_events where request_id = ${req.id}`
+      assert.equal(
+        events.trail,
+        'approved → routed → forwarded → returned → challenged → refused',
+        'the trail is not the sequence that happened',
+      )
+      out.push(`challenged then decided again · trail: ${events.trail}`)
+
+      throw new Error('ROLLBACK-RETURN-PROBE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-RETURN-PROBE') throw e
+    })
+    for (const l of out) console.log(`      ${l}`)
+  })
+
+  await check('no payment mode is offered that this vendor cannot be paid by', async () => {
+    // AN OPTION THAT CANNOT BE TAKEN IS WORSE THAN A MISSING ONE. UPI is an
+    // active row in the payment_mode list and not one vendor carries a UPI id,
+    // so it was being offered on every payment and could be used on none.
+    //
+    // ASSERTED AS AN IMPLICATION, NOT AS TODAY'S FIGURES. "0 vendors have a
+    // UPI id" is a hand-copy of live data that goes red the day Rajesh adds
+    // one, which is a gate crying wolf about a fact that is fine. The rule is
+    // that a mode is withheld exactly when the detail it needs is missing.
+    const { modesForVendor } = await import('../src/lib/payment-routing')
+    const { tsql } = await import('../src/lib/db')
+    const { countVendorsUnpayable } = await import('../src/server/approvals-queries')
+
+    const modes = await tsql<{ value: string }[]>`
+      select value from list_options
+      where restaurant_id = ${liveTenant} and list_key = 'payment_mode' and status = 'active'
+      order by sort_order`
+    const names = modes.map((m) => m.value)
+    assert.ok(names.length > 0, 'no payment modes at all — this check is looking at nothing')
+
+    const vendors = await tsql<{ code: string; upi_id: string | null; account_no: string | null }[]>`
+      select code, upi_id, account_no from vendors
+      where restaurant_id = ${liveTenant} and status = 'active'`
+    assert.ok(vendors.length > 0, 'no active vendors — this check is looking at nothing')
+
+    let upiWithheld = 0
+    let transferWithheld = 0
+    for (const v of vendors) {
+      const { allowed, withheld } = modesForVendor(names, v)
+      for (const m of names) {
+        const isUpi = /\bupi\b/i.test(m)
+        const isTransfer = /transfer|neft|imps|rtgs/i.test(m)
+        const needsUpi = isUpi && (v.upi_id ?? '') === ''
+        const needsBank = isTransfer && (v.account_no ?? '') === ''
+        assert.equal(
+          allowed.includes(m),
+          !(needsUpi || needsBank),
+          `${v.code}: ${m} is ${allowed.includes(m) ? 'offered' : 'withheld'} and should not be`,
+        )
+      }
+      if (withheld.some((w) => /\bupi\b/i.test(w.mode))) upiWithheld++
+      if (withheld.some((w) => /transfer/i.test(w.mode))) transferWithheld++
+      // A MODE IS NEVER WITHELD WITHOUT A REASON the reader can act on.
+      for (const w of withheld) assert.ok(w.why.length > 10, `${w.mode} is withheld with no reason`)
+    }
+    // NOT VACUOUS: the withholding path must actually fire on this data, or
+    // the loop above proved only that nothing is ever withheld.
+    assert.ok(
+      upiWithheld + transferWithheld > 0,
+      'no mode was withheld for any vendor — every vendor carries every detail, so the rule was not exercised',
+    )
+    const pay = await countVendorsUnpayable(liveTenant)
+    console.log(
+      `      ${names.length} modes · ${vendors.length} vendors · UPI withheld on ${upiWithheld}, transfer on ${transferWithheld} · ${pay.unpayable} payable by neither, ${pay.withUpi} with a UPI id`,
+    )
+  })
+
+  await check('every act on a payment request has a caller', async () => {
+    // THE STATE THIS CLOSES, recorded one commit ago: routePayment,
+    // returnRequest, challengeRequest and payApproval were wired, gated and
+    // UNREACHABLE — the exact shape of five earlier findings in this project,
+    // named deliberately so it would not become a sixth. Both ends have
+    // screens now, and this is what stops one quietly losing its door again.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = `${d}/${e.name}`
+        if (e.isDirectory()) walk(p, out)
+        else if (/\.tsx?$/.test(e.name)) out.push(p)
+      }
+      return out
+    }
+    const ui = walk('src/components').concat(walk('src/app'))
+    const srcOf = new Map(ui.map((f) => [f, readFileSync(f, 'utf8')]))
+    const acts = ['routePayment', 'returnRequest', 'challengeRequest', 'payApproval', 'decideApproval']
+    const where: string[] = []
+    for (const a of acts) {
+      const sites = ui.filter((f) => new RegExp(`\\b${a}\\s*\\(`).test(srcOf.get(f) as string))
+      assert.ok(sites.length > 0, `${a} has no caller — it is wired, gated and unreachable`)
+      where.push(`${a} → ${sites.map((s) => s.split('/').pop()).join(', ')}`)
+    }
+    // AND BOTH ENDS ARE MOUNTED. A real JSX boundary, not a prefix.
+    const mounted = (name: string) =>
+      ui.filter((f) => new RegExp(`<${name}[\\s/>]`).test(srcOf.get(f) as string))
+    assert.ok(mounted('RouteControl').length > 0, 'the owner has no routing control')
+    assert.deepEqual(
+      mounted('AwaitingPanel').sort(),
+      ['src/app/accounts/payments/pay/page.tsx', 'src/app/store/purchasing/pay/page.tsx'],
+      'the other end of the route is not on both payment screens',
+    )
+    for (const w of where) console.log(`      ${w}`)
   })
 
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */

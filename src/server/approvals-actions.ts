@@ -27,6 +27,7 @@ import {
   assertAssignee,
   assertPayer,
   PAYERS,
+  SEND_BACK,
   type ApprovalEntity,
   type ApprovalKind,
 } from '@/server/approvals-queries'
@@ -748,11 +749,10 @@ export async function returnRequest(raw: { id: string; reason: string }): Promis
         id: input.id,
         action: 'returned',
         from: ['approved'],
-        status: 'approved',
         by,
         note: input.reason,
-        clearRouting: true,
-        assignTo: 'owner',
+        // §3, read from the one place it is declared.
+        ...SEND_BACK.returned,
       }),
     )
     return { ok: true, id: input.id, message: 'Sent back to the owner. It is still approved — the route is not.' }
@@ -800,11 +800,9 @@ export async function challengeRequest(raw: { id: string; reason: string }): Pro
         id: input.id,
         action: 'challenged',
         from: ['approved'],
-        status: 'challenged',
         by,
         note: input.reason,
-        clearRouting: true,
-        assignTo: 'owner',
+        ...SEND_BACK.challenged,
       }),
     )
     return {
@@ -868,6 +866,14 @@ export async function payApproval(raw: {
         ? 'Nobody has been asked to pay this yet — the owner routes it first'
         : `This is with the ${req.assigned_to} — only they or an owner can record the payment`,
     )
+
+    // A REGEX IS NOT A CALENDAR. `2026-02-31` matches the shape and rolls
+    // silently to 3 March in JS, or reaches Postgres and raises on a page
+    // somebody is mid-save on. The same check the bill and payment forms run.
+    const d = new Date(`${input.paidDate}T00:00:00Z`)
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== input.paidDate) {
+      throw new ApprovalRefusal('That is not a real calendar date')
+    }
 
     const paise = req.amount === null ? null : decimalStringToPaise(req.amount)
     if (paise === null || paise <= 0) {
