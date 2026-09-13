@@ -9594,6 +9594,86 @@ async function run() {
     console.log(`      one branch · mounted on ${mounts.map((m) => m.split('/').pop()).join(', ')}`)
   })
 
+  await check('the six group layouts share one width, and it fits a table', async () => {
+    // MARKUP CANNOT TELL YOU WHAT IS VISIBLE, and this is the fault that
+    // taught it: `max-w-2xl` is 672px on EVERY viewport, so the pay queue's
+    // 7-column table needed 651px inside 582px of usable width and its ACTION
+    // COLUMN was scrolled out of its own overflow-x-auto — on a 1384px desktop
+    // included. The markup was complete and the button was simply not on
+    // screen, so counting it in fetched HTML answered the wrong question.
+    //
+    // A layout check cannot measure pixels without a browser. What it CAN do
+    // is hold the six in step, so the next person to widen one widens all six
+    // rather than leaving five groups clipped.
+    const { readFileSync } = await import('node:fs')
+    const groups = ['kitchen', 'store', 'sales', 'staff', 'owner', 'accounts']
+    const widths = new Map<string, string>()
+    for (const g of groups) {
+      const src = readFileSync(`src/app/${g}/layout.tsx`, 'utf8')
+      const m = /<main className="[^"]*?\b(max-w-[a-z0-9]+)\b/.exec(src)
+      assert.ok(m !== null, `${g}/layout.tsx has no max-width on its <main> — it would run edge to edge`)
+      widths.set(g, m[1])
+    }
+    const distinct = [...new Set(widths.values())]
+    assert.equal(
+      distinct.length,
+      1,
+      `the groups have drifted apart: ${[...widths].map(([g, w]) => `${g}=${w}`).join(' · ')}`,
+    )
+    // AND IT MUST BE WIDE ENOUGH TO HOLD A TABLE. 2xl is a reading measure;
+    // a table is not prose. Tailwind's scale: 2xl=672, 3xl=768, 4xl=896.
+    const REM = { 'max-w-2xl': 672, 'max-w-3xl': 768, 'max-w-4xl': 896, 'max-w-5xl': 1024, 'max-w-6xl': 1152 }
+    const px = REM[distinct[0] as keyof typeof REM]
+    assert.ok(px !== undefined, `unknown width class ${distinct[0]} — add it to the table above`)
+    assert.ok(
+      px >= 896,
+      `${distinct[0]} is ${px}px; the pay queue's table needs 651px inside it and the card and page padding take ~90px`,
+    )
+    console.log(`      all six on ${distinct[0]} (${px}px) · ~${px - 90}px usable, the widest queue needs 651`)
+  })
+
+  await check('an outcome is described in its own kind’s words', async () => {
+    // `status = 'applied'` was rendered as PAID for every kind, so a discard
+    // read "PAID · TRIGGER SPRAY BOTTLE — Paid, nothing for you to do, stop
+    // chasing it" when what happened was that a duplicate code was closed.
+    // Borrowed vocabulary is not vague, it is wrong.
+    const { tsql } = await import('../src/lib/db')
+    const { readFileSync } = await import('node:fs')
+    const [ck] = await tsql<{ def: string }[]>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_kind_check'`
+    const kinds = [...ck.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1])
+    assert.ok(kinds.length >= 4, `only ${kinds.length} kinds read from the CHECK — the derivation sees nothing`)
+
+    const src = readFileSync('src/components/approvals/MyOutcomes.tsx', 'utf8')
+    const missing = kinds.filter((k) => !new RegExp(`case '${k}':`).test(src))
+    // 'other' is the CHECK's catch-all and has no mechanic anywhere in the
+    // app; the default arm is what covers it, and the next assertion is what
+    // makes that arm safe.
+    assert.deepEqual(
+      missing.filter((k) => k !== 'other'),
+      [],
+      `these kinds have no sentence of their own and fall to the default: ${missing.join(', ')}`,
+    )
+
+    // THE DEFAULT ARM MUST NOT BORROW. A kind with no words of its own says
+    // something dull and true — a wrong sentence reads as a fact, a dull one
+    // reads as a gap somebody can fill.
+    const def = src.slice(src.indexOf('default:'))
+    assert.ok(
+      !/paid|chasing|discarded|merged/i.test(def.slice(0, 400)),
+      'the default arm borrows another kind’s vocabulary',
+    )
+    // AND IT BRANCHES ON WHO DECIDED. "Stop chasing it" addresses somebody
+    // waiting on another person; the owner raises a discard, approves it and
+    // applies it, and is downstream of nothing.
+    assert.ok(
+      /decided_it_himself/.test(src),
+      'the panel does not know whether the reader decided it, so it tells him to stop chasing his own act',
+    )
+    console.log(`      ${kinds.length} kinds in the CHECK · ${kinds.length - missing.length} with their own sentence · default borrows nothing`)
+  })
+
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */
   console.log('\nthe letterhead')
 

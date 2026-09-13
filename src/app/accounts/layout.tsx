@@ -8,8 +8,16 @@ export default async function AccountsGroupLayout({ children }: { children: Reac
   // Resolved ONCE per request here, and handed to every form beneath. A form
   // working the date out from the browser clock is the bug this phase fixes.
   const businessDay = await businessDayContext()
+  // 4xl, NOT 2xl, AND THE REASON IS TABLES. 672px is a reading measure and a
+  // table is not prose: at 2xl the pay queue's 7 columns needed 651px inside
+  // 582px of usable width, so the ACTION COLUMN was scrolled out of its own
+  // overflow-x-auto — on every viewport, a 1384px desktop included, because a
+  // max-width does not care how much room there is. Nothing warns about that:
+  // the markup is complete and the button is simply not on screen. 59 tables
+  // sit under these six identical layouts, so the fix is here rather than in
+  // any of them. Phone behaviour is unchanged — a max-width only caps.
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-10 pt-6 sm:px-6">
+    <main className="mx-auto max-w-4xl px-4 pb-10 pt-6 sm:px-6">
       <GroupTabs group="accounts" />
       <BusinessDayProvider value={businessDay}>
         {/* Said once per group rather than per form: past midnight EVERY date on

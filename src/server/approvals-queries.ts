@@ -1342,7 +1342,7 @@ export async function assertAssignee(assignedTo: string | null, what: string): P
  * accountant → owner; he sees the eventual refusal or payment, not the
  * disagreement on the way to it.
  */
-export type OutcomeRow = AwaitingRow & { needs_noting: boolean }
+export type OutcomeRow = AwaitingRow & { needs_noting: boolean; decided_it_himself: boolean }
 
 export async function listMyOutcomes(
   restaurantId: string,
@@ -1363,7 +1363,12 @@ export async function listMyOutcomes(
            ev.acted_by as last_by, ev.acted_at::text as last_at,
            -- THE OBLIGATION, NOT THE OUTCOME. A refusal he has noted is still
            -- refused; what changes is that nobody is holding it any more.
-           (a.assigned_to is not null) as needs_noting
+           (a.assigned_to is not null) as needs_noting,
+           -- WHETHER HE IS DOWNSTREAM OF THE DECISION AT ALL. An owner raises
+           -- a discard, approves it and applies it; telling him to stop
+           -- chasing it is telling him about his own act. When the raiser and
+           -- the decider are the same person the panel is a RECEIPT, not news.
+           (a.decided_by is not distinct from a.requested_by) as decided_it_himself
     from approval_requests a
     left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
     left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id

@@ -288,7 +288,20 @@ function Row({
 }) {
   return (
     <>
-      <tr className={`${trCls} ${isOpen ? 'bg-stone-50' : ''}`}>
+      {/* THE ROW IS THE CONTROL — Rajesh's own words, "if i click on vendor
+          name or tab it should expand". An action that lives only in the last
+          column is an action that disappears the moment the table is wider
+          than its scroller, and that failure is invisible: the markup is
+          complete and the button is simply off screen. A row you can hit
+          anywhere cannot be clipped out of reach.
+
+          The BUTTON stays, and it is the real control for anybody on a
+          keyboard — a <tr> with an onClick is not focusable and does not
+          announce itself. The row click is the convenience on top. */}
+      <tr
+        onClick={onToggle}
+        className={`${trCls} cursor-pointer ${isOpen ? 'bg-stone-50' : 'hover:bg-stone-50'}`}
+      >
         <td className={tdCls}>
           {/* A NAME IS A DOOR AND A ROW IS A TOGGLE. The vendor's name is the
               one link on the row that must go where it says — their page —
@@ -319,7 +332,12 @@ function Row({
         <td className={tdCls}>
           <button
             type="button"
-            onClick={onToggle}
+            onClick={(e) => {
+              // The row handles it; without this the click bubbles and the
+              // expansion opens and closes in the same gesture.
+              e.stopPropagation()
+              onToggle()
+            }}
             aria-expanded={isOpen}
             className="inline-block min-h-[40px] rounded-lg border border-emerald-300 px-3 py-2 text-xs font-semibold text-emerald-800 hover:border-emerald-500"
           >

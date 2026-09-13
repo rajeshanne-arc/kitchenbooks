@@ -10579,3 +10579,89 @@ table now.
 > restatement, not a check.** It is the reconciliation rule — a second source
 > that agrees 99% of the time is worse than none — pointed at an assertion
 > rather than at a report.
+
+## MARKUP CANNOT TELL YOU WHAT IS VISIBLE — the four-step chain
+
+The action column on the payment queue was in the markup, complete and
+correct, on every render, for every role — and **not one pixel of it was on
+screen.** `max-w-2xl` on the six group layouts is 672px on EVERY viewport, so a
+7-column table needing 651px sat inside 582px of usable width and its last
+column was scrolled out of its own `overflow-x-auto`. On a 1384px desktop.
+
+I verified it by counting `aria-expanded` in fetched HTML: 28, correct, and an
+answer to a different question. What answers this one is a bounding rect
+against its scroller — `button.right 1040` against `scroller.right 983`,
+`scrollLeft 0` — and that needs a browser.
+
+> **PRESENT IN SOURCE → not necessarily RENDERED.
+> RENDERED → not necessarily HYDRATED.
+> HYDRATED → not necessarily VISIBLE.
+> VISIBLE → not necessarily REACHABLE.**
+
+Each step defeats a check that stopped at the one before, and this file's
+built-and-unreachable findings sit at all four: the accountant role missing
+from a dropdown (rendered), extra hours with no write path (source), the day
+sheet nothing linked to (reachable), refill-from-last with nothing to offer
+(rendered), and now a clipped column (visible). **It took three rounds and a
+screenshot** because the first two answers were measured one step too early.
+
+The tell: if the question is about PIXELS, no amount of grep, curl or
+`assert.ok(src.includes(…))` can answer it. Open it.
+
+### AND THE FIX WAS THE LAYOUT, BECAUSE THE SWEEP SAID SO
+
+Six group layouts, byte-identical `mx-auto max-w-2xl px-4 pb-10 pt-6 sm:px-6`,
+with **59 tables under them** at 5–13 columns each. So it was never a table
+problem. 672px is a reading measure chosen for prose and phone entry; a table
+is not prose. `max-w-4xl` (896px, ~806 usable) holds every table measured —
+`over: 0` on reorder, orders, adjustments, staff and the pay queue — and phone
+behaviour is untouched, because a max-width only caps.
+
+**The gate cannot measure pixels, so it holds the thing it can**: all six
+widths must be equal (drift fails, naming which group), and the shared value
+must be ≥896px (a return to 2xl fails, naming the 651px the queue needs).
+
+### AN ACTION AT THE FAR RIGHT OF A SCROLLER IS THE WORST PLACE FOR ONE
+
+Nothing warns about it and nothing looks wrong. So the row IS the control now
+— Rajesh's own words, *"if i click on vendor name or tab it should expand"* —
+and a row you can hit anywhere cannot be clipped out of reach. The button stays
+as the focusable, announced control for a keyboard, with the row click as the
+convenience on top; the button stops propagation, or one gesture would open and
+close it.
+
+**If a table must scroll horizontally, its action must not be the scrolled
+column.** Pin it, move it left, or make the row the control.
+
+## AN OUTCOME IS DESCRIBED IN ITS OWN KIND'S WORDS
+
+"What happened to yours" read `status` and never `kind`, so two applied
+DISCARDS rendered as:
+
+    PAID · CHICKEN BONES — you asked: "dup"
+    Paid — nothing for you to do. Stop chasing it.
+
+`applied` means paid for exactly one kind and something else for every other.
+**Borrowed vocabulary is not vague, it is wrong** — a discard that was applied
+means a duplicate code is closed, and the sentence now says that.
+
+The default arm is deliberately colourless: a kind this app has not written a
+sentence for says something true and dull rather than reaching for the nearest
+one. *A wrong sentence reads as a fact; a dull one reads as a gap somebody can
+fill.* Gated by deriving the kinds from the CHECK constraint — a sixth kind
+fails until it has words — and by asserting the default borrows none of them.
+
+### AND WHO DECIDED IT IS PART OF THE COPY
+
+*"Stop chasing it"* addresses somebody waiting on another person. The owner
+raises a discard, approves it and applies it: he is downstream of nothing, and
+being told to stop chasing his own act is the panel talking past its reader.
+
+`decided_it_himself` is `decided_by IS NOT DISTINCT FROM requested_by`, and
+when they are the same person the panel is a **receipt** rather than news —
+*"Discarded — PLT-0012 is closed, by you."*
+
+The panel's SCOPE was correct all along and worth stating, because the obvious
+diagnosis was a leak: `listMyOutcomes` filters `requested_by = <the reader>`,
+so it shows anyone their own requests and is not scoped to the store. The
+store-manager voice was in the COPY, not in the query.
