@@ -17,7 +17,7 @@ import { useRouter } from 'next/navigation'
 import Honesty from '@/components/Honesty'
 import SaveAck from '@/components/SaveAck'
 import { decideApproval } from '@/server/approvals-actions'
-import type { ApprovalRow, Preview, RefCount } from '@/server/approvals-queries'
+import type { ApprovalRow, AwaitingRow, Preview, RefCount } from '@/server/approvals-queries'
 import type { AccountBalanceRow } from '@/lib/types'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -25,70 +25,108 @@ import { btnCls, btnGhostCls, cardCls, codeCls, fieldLabelCls, inputCls } from '
 import { fmtDateTime } from '@/lib/format'
 
 export type QueueItem = {
-  row: ApprovalRow
+  row: AwaitingRow
   /** re-run at page load. Null when the request can no longer be previewed at
    *  all — the row was closed by something else in the meantime. */
   fresh: Preview | null
   freshError: string | null
 }
 
+/** What a row is called in one line, wherever it is listed. */
+function what(r: ApprovalRow): string {
+  return r.kind === 'payment'
+    ? `Pay ${r.from_name ?? 'a vendor'}`
+    : r.kind === 'discard'
+      ? `Discard ${r.from_code ?? '—'}`
+      : r.kind === 'reopen_period'
+        ? 'Reopen a closed month'
+        : `Merge ${r.from_code ?? '—'} → ${r.to_code ?? '—'}`
+}
+
 export default function ApprovalsClient({
   items,
   balances,
+  elsewhere,
+  decided,
 }: {
   items: QueueItem[]
   balances: AccountBalanceRow[]
+  /** open, and with somebody else. Context, never work — see listElsewhere. */
+  elsewhere: AwaitingRow[]
+  decided: AwaitingRow[]
 }) {
   const [ack, setAck] = useState<string | null>(null)
-  const pending = items.filter((i) => i.row.status === 'pending')
-  const decided = items.filter((i) => i.row.status !== 'pending')
 
+  // NO SPLIT ON STATUS HERE ANY MORE. The page used to divide its own list
+  // into pending and decided; both halves now arrive as their own list from
+  // awaiting_me and from listDecided, so the screen cannot classify a row
+  // differently from the badge that counted it.
   return (
     <div className="space-y-4">
       {ack !== null && <SaveAck headline={ack} />}
 
-      {pending.length === 0 ? (
+      {items.length === 0 ? (
         <section className={cardCls}>
           <p className="text-sm text-stone-600">
-            Nothing is waiting. Discards and merges are the only two things in this app that leave no trace
-            of their own, so they come here; a void, a retirement or a re-filed count never will.
+            Nothing is waiting on you. A payment somebody has asked you to make comes here, and so do the
+            two things that leave no trace of their own — a discard and a merge. A void, a retirement or a
+            re-filed count never will.
           </p>
         </section>
       ) : (
-        pending.map((i) => <Request key={i.row.id} item={i} balances={balances} onDone={setAck} />)
+        items.map((i) => <Request key={i.row.id} item={i} balances={balances} onDone={setAck} />)
+      )}
+
+      {/* WHERE IT WENT. The instant a payment is forwarded it leaves this
+          queue — correctly — and would otherwise vanish from the only screen
+          the owner ever saw it on. This is the answer to the question that
+          correctness creates, not a second queue. */}
+      {elsewhere.length > 0 && (
+        <section className={cardCls}>
+          <h3 className="text-[11px] font-medium uppercase tracking-wide text-stone-500">
+            Out with somebody else
+          </h3>
+          <ul className="mt-2 divide-y divide-rule-soft">
+            {elsewhere.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-baseline gap-x-2 py-2 text-sm">
+                <span className="font-medium text-stone-800">{what(r)}</span>
+                {r.amount !== null && (
+                  <span className="font-mono text-stone-700">{formatMoneyString(r.amount)}</span>
+                )}
+                <span className="text-stone-500">
+                  with the {r.assigned_to} since {fmtDateTime(r.last_at ?? r.requested_at)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {decided.length > 0 && (
         <section className={cardCls}>
           <h3 className="text-[11px] font-medium uppercase tracking-wide text-stone-500">Already decided</h3>
           <ul className="mt-2 divide-y divide-rule-soft">
-            {decided.map((i) => (
-              <li key={i.row.id} className="py-2 text-sm">
+            {decided.map((r) => (
+              <li key={r.id} className="py-2 text-sm">
                 <div className="flex flex-wrap items-baseline gap-x-2">
-                  <StatusChip status={i.row.status} />
-                  <span className="font-medium text-stone-800">
-                    {i.row.kind === 'payment'
-                      ? `Pay ${i.row.from_name ?? 'a vendor'}`
-                      : i.row.kind === 'discard'
-                        ? `Discard ${i.row.from_code ?? '—'}`
-                        : `Merge ${i.row.from_code ?? '—'} → ${i.row.to_code ?? '—'}`}
-                  </span>
-                  <span className="text-stone-500">“{i.row.reason}”</span>
-                  {i.row.decided_by !== null && (
+                  <StatusChip status={r.status} />
+                  <span className="font-medium text-stone-800">{what(r)}</span>
+                  <span className="text-stone-500">“{r.reason}”</span>
+                  {r.decided_by !== null && (
                     <span className="ml-auto text-xs text-stone-400">
-                      {i.row.decided_by} · {i.row.decided_at === null ? '' : fmtDateTime(i.row.decided_at)}
+                      {r.decided_by} · {r.decided_at === null ? '' : fmtDateTime(r.decided_at)}
                     </span>
                   )}
                 </div>
                 {/* A FAILURE KEEPS ITS REASON. An approval that could not be
                     applied is not a refusal and must not read like one. */}
-                {i.row.status === 'failed' && (
+                {r.status === 'failed' && (
                   <p className="mt-1 text-[13px] text-red-800">
                     Approved, but it could not be applied:{' '}
-                    {(i.row.applied_result as { error?: string } | null)?.error ?? 'no reason recorded'}
+                    {(r.applied_result as { error?: string } | null)?.error ?? 'no reason recorded'}
                   </p>
                 )}
-                {i.row.status === 'applied' && <AppliedLine result={i.row.applied_result} />}
+                {r.status === 'applied' && <AppliedLine result={r.applied_result} />}
               </li>
             ))}
           </ul>
@@ -153,6 +191,12 @@ function Request({
   const nowRefs = fresh?.totalRefs ?? null
   const drifted = askedRefs !== null && nowRefs !== null && askedRefs !== nowRefs
 
+  // A DECISION IS ONLY AVAILABLE WHERE THERE IS ONE TO MAKE. `pending` has
+  // never been answered; `challenged` is a question somebody put BACK to the
+  // owner, so it is decidable in exactly the same way. An `approved` payment
+  // is past deciding — what it needs is routing, which is a different act.
+  const decidable = row.status === 'pending' || row.status === 'challenged'
+
   async function decide(decision: 'approved' | 'refused') {
     setBusy(true)
     setError(null)
@@ -193,6 +237,39 @@ function Request({
       <p className="mt-2 rounded-lg border border-rule bg-field px-3 py-2 text-sm text-stone-800">
         “{row.reason}”
       </p>
+
+      {/* WHY IT IS SITTING HERE, in the words of the last thing that happened
+          to it. §3 leaves a return at `approved` — the approval stands and the
+          ROUTE came off — so status alone cannot tell a fresh approval from
+          one the accountant sent back. The event can, and it is the only thing
+          that can. */}
+      {row.status === 'approved' && (
+        <div className="mt-3">
+          {row.last_action === 'returned' ? (
+            <Honesty verdict="sent back">
+              {row.last_by ?? 'Somebody'} could not pay it this way
+              {row.last_note === null ? '' : ` — “${row.last_note}”`}. The approval stands; what came off is
+              the route. It needs saying again how it will be paid.
+            </Honesty>
+          ) : (
+            <Honesty verdict="approved, not paid">
+              Nothing has moved. Which account it leaves, and whether you make the transfer or the
+              accountant does, is chosen on the routing screen — and that screen is not built yet. Until it
+              is, an approved payment waits here.
+            </Honesty>
+          )}
+        </div>
+      )}
+
+      {row.status === 'challenged' && (
+        <div className="mt-3">
+          <Honesty verdict="challenged" level="alarm">
+            {row.last_by ?? 'Somebody'} does not think this should be paid
+            {row.last_note === null ? '' : ` — “${row.last_note}”`}. That is an objection to the payment
+            rather than to the route, so it is back with you to decide again.
+          </Honesty>
+        </div>
+      )}
 
       {row.kind === 'payment' && <PaymentAsk row={row} balances={balances} />}
 
@@ -282,9 +359,16 @@ function Request({
       )}
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={() => decide('approved')} disabled={busy} className={btnCls}>
-          {busy ? 'Working…' : 'Approve and apply'}
-        </button>
+        {decidable && (
+          <button type="button" onClick={() => decide('approved')} disabled={busy} className={btnCls}>
+            {/* A PAYMENT IS NOT APPLIED, AND THE BUTTON MUST NOT SAY IT IS.
+                Approving one moves no money and writes no payments row: it
+                says yes, and how it is paid is a separate act by whoever
+                makes the transfer. Everything else really is applied on the
+                spot, under a lock, by a database function. */}
+            {busy ? 'Working…' : row.kind === 'payment' ? 'Approve' : 'Approve and apply'}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => decide('refused')}

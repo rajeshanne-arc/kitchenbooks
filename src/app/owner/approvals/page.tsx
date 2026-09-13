@@ -73,18 +73,26 @@ export default async function ApprovalsPage() {
           pleased to find empty into four things to check and dismiss. So an
           empty queue is one sentence and nothing else — the same law as every
           badge in the app being silent at zero, applied to a whole screen. */}
-      {nothing ? (
+      {nothing && waiting.elsewhere.length === 0 && waiting.decided.length === 0 ? (
         <section className={cardCls}>
           <h2 className="font-display text-lg font-semibold text-emerald-800">Nothing is waiting on you.</h2>
           <p className="mt-1.5 text-sm text-stone-600">
-            No discards or merges to decide, no words anybody has typed that need adding to a list, no
-            payroll run prepared and unapproved, no closed month anybody has asked to reopen. This page is
-            meant to be empty; when it is not, the tab carries a count.
+            No payment anybody has asked you to make, no discards or merges to decide, no words anybody has
+            typed that need adding to a list, no payroll run prepared and unapproved, no closed month
+            anybody has asked to reopen. This page is meant to be empty; when it is not, the tab carries a
+            count — and the count and this list are the same query, so they cannot disagree.
           </p>
         </section>
       ) : (
         <>
-          {items.length > 0 && <ApprovalsClient items={items} balances={balances} />}
+          {(items.length > 0 || waiting.elsewhere.length > 0 || waiting.decided.length > 0) && (
+            <ApprovalsClient
+              items={items}
+              balances={balances}
+              elsewhere={waiting.elsewhere}
+              decided={waiting.decided}
+            />
+          )}
 
           {/* A POINTER, NEVER A COPY. Approving payroll means seeing the whole
               run — the people, the days, the withholdings, the account each

@@ -8683,6 +8683,193 @@ async function run() {
     console.log('      recordAct and insertPayment write on the lent handle only; payments has one insert site')
   })
 
+  await check('awaiting_me is the single badge source, and every badge reads it', async () => {
+    // THE FAULT THIS CLOSES: the view filters `assigned_to IS NOT NULL` and
+    // nothing had ever written that column, so it was structurally empty and
+    // every gate was green over it — a view returning no rows is
+    // indistinguishable from a view over no work.
+    //
+    // So this moves a request all the way through the state machine and
+    // watches the count move WITH it, per role. The fixture is never
+    // committed, which is also what proves the reads are on the lent handle.
+    const { txn } = await import('../src/lib/db')
+    const {
+      recordAct,
+      countAwaiting,
+      countWaiting,
+      listAwaiting,
+      listElsewhere,
+    } = await import('../src/server/approvals-queries')
+    const out: string[] = []
+
+    await txn(async (tx) => {
+      const [vendor] = await tx<{ id: string; name: string }[]>`
+        select id, name from vendors
+        where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+      assert.ok(vendor !== undefined, 'no active vendor to hang the fixture on')
+
+      const owner0 = await countAwaiting(liveTenant, 'owner', tx)
+      const acct0 = await countAwaiting(liveTenant, 'accountant', tx)
+      const badge0 = await countWaiting(liveTenant, tx)
+
+      const [req] = await tx<{ id: string }[]>`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, reason, amount, suggested_mode,
+           status, assigned_to, requested_by)
+        values (${liveTenant}, 'payment', 'vendor', ${vendor.id}, 'badge probe',
+                250.00, 'Bank transfer', 'pending', 'owner', 'gate')
+        returning id`
+      const mine = async (role: 'owner' | 'accountant' | 'store') =>
+        (await listAwaiting(liveTenant, role, tx)).filter((r) => r.id === req.id)
+
+      // ── raised: it is the owner's, and the BADGE agrees with the PAGE ──
+      assert.equal(await countAwaiting(liveTenant, 'owner', tx), owner0 + 1, 'a raised request is not waiting on the owner')
+      assert.equal((await mine('owner')).length, 1, 'the page does not list what the badge counted')
+      assert.equal(await countWaiting(liveTenant, tx), badge0 + 1, 'the owner badge did not move with it')
+      out.push(`raised: owner ${owner0} -> ${owner0 + 1}, badge ${badge0} -> ${badge0 + 1}`)
+
+      // ── approved: a payment is NOT applied, so it is still the owner's ──
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'approved', from: ['pending'], status: 'approved',
+        by: 'gate', decision: true, assignTo: 'owner',
+      })
+      assert.equal(
+        await countAwaiting(liveTenant, 'owner', tx),
+        owner0 + 1,
+        'an approved payment stopped being counted — approving one moves no money, so it is still work',
+      )
+      // THE MOMENT THE TWO IMPLEMENTATIONS DIVERGE, and the first version of
+      // this probe did not check it: a badge counting `status = 'pending'` by
+      // hand drops to zero here while the page still lists the row. Every
+      // other step agrees under both, so this single line is what makes the
+      // whole probe able to fail.
+      assert.equal(
+        await countWaiting(liveTenant, tx),
+        badge0 + 1,
+        'the badge stopped counting an approved payment that is still waiting on the owner',
+      )
+
+      // ── routed + forwarded, in ONE transaction: it becomes theirs ──────
+      // This is the assertion that proves the accountant's badge can fire at
+      // all. Nothing else in the app sets assigned_to to the accountant, and
+      // routePayment has no screen yet — so without this the badge would be
+      // wired and never once exercised.
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'routed', from: ['approved'], status: 'approved',
+        by: 'gate', mode: 'Bank transfer', route: true, assignTo: 'owner',
+      })
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'forwarded', from: ['approved'], status: 'approved',
+        by: 'gate', assignTo: 'accountant',
+      })
+      assert.equal(await countAwaiting(liveTenant, 'owner', tx), owner0, 'it did not leave the owner’s queue')
+      assert.equal(
+        await countWaiting(liveTenant, tx),
+        badge0,
+        'the owner’s badge still counts a request that is with somebody else',
+      )
+      assert.equal(await countAwaiting(liveTenant, 'accountant', tx), acct0 + 1, 'it never reached the accountant')
+      assert.equal((await mine('accountant')).length, 1, 'the accountant’s panel does not list it')
+
+      // TWO EVENTS IN ONE TRANSACTION TIE ON acted_at, which is the
+      // transaction timestamp. `seq` is what says `forwarded` came second —
+      // an ordering on the timestamp alone would return either. This is the
+      // created_at-tie rule, on a table that writes two rows per save.
+      const [row] = await mine('accountant')
+      assert.equal(row.last_action, 'forwarded', 'the trail head is the wrong one of two events written together')
+      assert.equal(row.routed_mode, 'Bank transfer', 'the route did not stick')
+
+      // ── and the owner can still SEE it, which the badge's own
+      //    correctness would otherwise have taken away ────────────────────
+      const away = (await listElsewhere(liveTenant, 'owner', tx)).filter((r) => r.id === req.id)
+      assert.equal(away.length, 1, 'a forwarded request vanished from the owner’s screen entirely')
+      out.push(`forwarded: owner ${owner0 + 1} -> ${owner0}, accountant ${acct0} -> ${acct0 + 1}, and still visible as "out with somebody else"`)
+
+      // ── paid: NOBODY is waiting, and the count goes DOWN ───────────────
+      // A badge that can only grow is not a badge.
+      await recordAct(tx, liveTenant, {
+        id: req.id, action: 'paid', from: ['approved'], status: 'applied',
+        by: 'gate', mode: 'Bank transfer', assignTo: null,
+      })
+      assert.equal(await countAwaiting(liveTenant, 'accountant', tx), acct0, 'a paid request is still waiting on somebody')
+      assert.equal(await countWaiting(liveTenant, tx), badge0, 'the badge never came back down')
+      out.push(`paid: accountant back to ${acct0}, badge back to ${badge0}`)
+
+      throw new Error('ROLLBACK-BADGE-PROBE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-BADGE-PROBE') throw e
+    })
+    for (const l of out) console.log(`      ${l}`)
+  })
+
+  await check('nothing counts waiting work except through that one view', async () => {
+    // SINGLE SOURCE, CHECKED AS ONE. The owner's badge used to count
+    // `status = 'pending'` on its own while the page filtered the same way
+    // separately; the two agreed until a payment could sit approved-and-
+    // unrouted, which is real work that one of them could not see.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = `${d}/${e.name}`
+        if (e.isDirectory()) walk(p, out)
+        else if (/\.tsx?$/.test(e.name)) out.push(p)
+      }
+      return out
+    }
+    const files = walk('src')
+    // `from awaiting_me`, not the bare word: the name is written in half a
+    // dozen doc comments explaining WHY it is the one source, and a checker
+    // that reads source is part of the source it reads.
+    const readers = files.filter((f) => /\bfrom\s+awaiting_me\b/.test(readFileSync(f, 'utf8')))
+    assert.deepEqual(
+      readers,
+      ['src/server/approvals-queries.ts'],
+      `awaiting_me is read from more than one place: ${readers.join(', ')}`,
+    )
+
+    // And no badge counts approval work by hand. The tab strip is where a
+    // second count would appear, because that is where badges are assembled.
+    // THE BADGE'S READER IS MOUNTED. A badge whose destination does not
+    // mention what it counted is the Setup-badge fault — a number that sends
+    // somebody to a screen where there is nothing to find. A real JSX
+    // boundary, not a prefix: `/<AwaitingPanel/` also matches
+    // `<AwaitingPanelX`, which is the flaw already recorded three times.
+    const mounts = files.filter((f) => /<AwaitingPanel[\s/>]/.test(readFileSync(f, 'utf8')))
+    assert.deepEqual(
+      mounts.sort(),
+      ['src/app/accounts/payments/pay/page.tsx', 'src/app/store/purchasing/pay/page.tsx'],
+      `the awaiting panel is mounted on ${mounts.join(', ') || 'nothing'} — the badge for those two roles opens a screen that does not name what it counted`,
+    )
+
+    const strip = readFileSync('src/components/GroupTabs.tsx', 'utf8')
+    assert.ok(/countAwaiting\(/.test(strip), 'the tab strip does not read the shared count')
+    assert.ok(
+      !/approval_requests/.test(strip),
+      'the tab strip counts approvals with SQL of its own — that is the second source',
+    )
+
+    // THE BADGE AND THE PAGE ARE THE SAME QUERY. getWaiting.total is what the
+    // page prints; countWaiting is what the tab shows. They are built from
+    // different expressions and must agree on live data.
+    const { getWaiting, countWaiting } = await import('../src/server/approvals-queries')
+    const [w, n] = await Promise.all([getWaiting(liveTenant), countWaiting(liveTenant)])
+    assert.equal(
+      n,
+      w.total,
+      `the tab says ${n} and the page says ${w.total} — the badge and its own list disagree`,
+    )
+    // UNTESTED, NOT PASSED. `0 === 0` is true under every implementation,
+    // including one where the badge counts something the page cannot see —
+    // which is precisely the fault this pair exists to catch. The movement
+    // assertions in the probe above ARE non-vacuous, because they put a
+    // request through the machine and watch the number follow it.
+    const live =
+      n === 0
+        ? 'UNTESTED on live data — nothing is waiting, so the equality holds under any implementation'
+        : `tab ${n} = page ${w.total}`
+    console.log(`      awaiting_me read in one file · ${live} (${w.approvals.length} approvals · ${w.suggestions.length} suggestions · ${w.payrollRuns.length} runs)`)
+  })
+
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */
   console.log('\nthe letterhead')
 

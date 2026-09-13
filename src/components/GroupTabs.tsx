@@ -8,9 +8,10 @@ import { tabsFor } from '@/server/settings'
 import { countOpenIndents, getStockBadge, stockBadgeHref } from '@/server/store-queries'
 import { listOpenQueries } from '@/server/accountant-queries'
 import { countMissingCloses } from '@/server/cashier-queries'
-import { countWaiting } from '@/server/approvals-queries'
+import { countAwaiting, countWaiting } from '@/server/approvals-queries'
 import { canAccess, type Role } from '@/lib/roles'
 import { chipsOf, type TabBadges, type TabGroup, type TabHrefs } from '@/lib/tabs'
+import { chipHref } from '@/lib/routes'
 import TabStrip from '@/components/TabStrip'
 
 /** Counts that belong on a group's tabs. Server-rendered with the strip
@@ -46,7 +47,20 @@ async function badgesFor(
     // Everything unresolved, not just unanswered: an answer the accountant
     // has not read yet is still a question standing between them and a
     // closed month.
-    return { badges: { review: (await listOpenQueries(restaurantId)).length }, hrefs: {} }
+    //
+    // PAYMENTS COUNTS WHAT WAS FORWARDED TO THEM, from the same awaiting_me
+    // the owner's badge sums — one source, two readers, so the two strips
+    // cannot come to disagree about what "waiting" means. Its tab opens Pay a
+    // vendor rather than the tab's own first chip (Expense), because a badged
+    // tab must open the thing it is complaining about.
+    const [queries, forwarded] = await Promise.all([
+      listOpenQueries(restaurantId),
+      countAwaiting(restaurantId, 'accountant'),
+    ])
+    return {
+      badges: { review: queries.length, payments: forwarded },
+      hrefs: forwarded === 0 ? {} : { payments: chipHref('accounts', 'payments', 'pay') },
+    }
   }
   if (group === 'sales') {
     // THE BADGE THAT BROUGHT THE TAB BACK. A day with sales and no close is
@@ -60,17 +74,22 @@ async function badgesFor(
   // THE STOCK BADGE COUNTS THREE PROBLEMS, not one. It used to count only
   // reorder, which meant the shelf could read minus four kilos — the app's
   // loudest finding — with nothing on the strip to say so.
-  const [stock, issue] = await Promise.all([
+  const [stock, issue, routed] = await Promise.all([
     getStockBadge(restaurantId),
     countOpenIndents(restaurantId),
+    // A PAYMENT THE OWNER ROUTED BACK TO HIM. Same awaiting_me, same word.
+    countAwaiting(restaurantId, 'store'),
   ])
   const total = stock.negative + stock.unaccepted + stock.reorder
   const target = stockBadgeHref(stock)
   return {
-    badges: { stock: total, issue },
+    badges: { stock: total, issue, purchasing: routed },
     // Only when something is firing. With a quiet shelf the tab keeps its own
     // href and opens On hand, which is what Stock means when nothing is wrong.
-    hrefs: target === null ? {} : { stock: target },
+    hrefs: {
+      ...(target === null ? {} : { stock: target }),
+      ...(routed === 0 ? {} : { purchasing: chipHref('store', 'purchasing', 'pay') }),
+    },
   }
 }
 

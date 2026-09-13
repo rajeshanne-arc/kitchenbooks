@@ -43,6 +43,18 @@ The corollary, paid for repeatedly and catalogued throughout this file: a gate
 that has never failed has not been tested. Perturb it, watch it name the fault,
 and only then believe it.
 
+**And a third instance of this preamble's own argument, recorded here because
+it is evidence for the rule rather than a new rule.** *A guard must count
+something that survives the fix* is written down twice below — once for the
+PersonLink sweep, whose denominator fell to zero when the bug was gone, and
+once for the SaveAck census. The approvals-trail guard was then written with a
+denominator that shrinks to nothing as each act moves onto the shared helper,
+by somebody who had just read both entries, and it went red for being correct.
+
+Backticks in a SQL comment; a denominator that goes to zero. Two rules, each
+correct, each recorded, each broken by its most recent reader. **Written down
+was not enough, twice, in the same file.**
+
 ## HOW MUCH PROOF IS WORTH THE WALL CLOCK
 
 The corollary above is not a licence to prove everything. It has a cost, and the
@@ -5667,6 +5679,20 @@ Fourth of its family, and the family is now clear enough to state as one rule:
 | the extra-hours gate | it wrote its own insert, so the app's column list was never exercised |
 | the prune's invisibility check | both generations carried IDENTICAL figures |
 | the walking-order gate | every item was unplaced, so it examined ZERO rows |
+| **`awaiting_me`** | it filtered `assigned_to IS NOT NULL` and **nothing had ever written that column** |
+
+**The fifth is a different costume and belongs here rather than beside the
+gates**, because it is not a test at all — it is a VIEW, and a view is an
+assertion about what the data contains. `awaiting_me` was the single badge
+source a whole step was to be built on, it had no reader, and it had no writer
+either; every gate was green over it.
+
+> **A VIEW RETURNING NO ROWS IS INDISTINGUISHABLE FROM A VIEW OVER NO WORK.**
+
+Ask it of any view whose `WHERE` names a column: does anything write that
+column, and would you be able to tell the difference today if nothing did? An
+empty result is the same shape either way, and on a quiet restaurant it is the
+expected one — which is exactly what makes it invisible.
 
 **The fix is always the same: make the two sides genuinely different, and make
 the fixture capable of distinguishing them.** Here that meant placing three
@@ -9688,6 +9714,34 @@ Step 1 of the payment routing work: `raised`, `approved`, `routed`,
 one of them through a single `recordAct(tx, …)`. What building it found matters
 more than the wiring.
 
+### A GUARD ABOUT DATA IS NOT A GUARD ABOUT KIND — AND NEVER FALL THROUGH
+
+The sharpest thing this step found. `applyRequest` branches on `reopen_period`,
+then `merge`, then **falls through** to DISCARD. A payment request carries
+`entity_type = 'vendor'`, so approving a request to PAY somebody ran the
+discard path against their vendor row.
+
+It has never discarded a vendor, and the reason is the tell: the discard branch
+re-reads `reference_counts` and refuses anything with history, and every vendor
+in `vendor_aging` NECESSARILY has a bill pointing at it — that is what puts
+them in the view. **That guard is about DATA, not about KIND.** One bill-less
+outstanding balance and approving a payment would close a live vendor's code,
+and nothing on any screen would have looked wrong.
+
+> **A POLYMORPHIC DISPATCH WITH A FALLTHROUGH IS A DISPATCH THAT WILL
+> EVENTUALLY ROUTE THE WRONG ACT TO THE WRONG BRANCH. Refuse by kind, never
+> fall through.**
+
+The final `else` is not a default, it is a bet that no kind will ever be added
+— and `payment` was added to the CHECK two migrations before this code was
+read. Every kind is named or refused now, at the top of the function, and the
+refusal says what settles a payment instead.
+
+The same shape as every other *rule holding by accident* in this file: the
+cases the guard had met were all one shape, and the first case of a new shape
+is where it breaks. The difference here is that the accident was doing the
+work of a guard that was never written.
+
 ### A VIEW THAT FILTERS ON A COLUMN IS A CLAIM THAT SOMETHING WRITES IT
 
 `awaiting_me` — the single badge source the next step is built on — ends
@@ -9696,33 +9750,40 @@ more than the wiring.
 structurally empty and always would have been.
 
 That is a new costume of *a feature reported live whose surface was never
-built*, and the sharpest one yet: extra hours had a migration that worked and
-no write path; the day sheet had a page that worked and no door. Here the VIEW
-works and BOTH ends were missing — no writer and no reader — and every gate was
-green, because **a view returning no rows is indistinguishable from a view over
-no work.**
+built*: extra hours had a migration that worked and no write path; the day
+sheet had a page that worked and no door. Here the VIEW works and BOTH ends
+were missing. It is also the fifth member of the vacuity family — see **"A
+FIXTURE THAT CANNOT TELL TWO ANSWERS APART IS NOT A FIXTURE"**, where it is
+catalogued with the four probes that could not fail, because the reason is the
+same one: *a view returning no rows is indistinguishable from a view over no
+work.*
 
 The raise sets it now and every act moves it: a refusal, a cancel and a
 completed payment CLEAR it, because a request nobody is waiting on has to leave
 the queue or the badge stops meaning anything.
 
-### A GUARD ABOUT DATA IS NOT A GUARD ABOUT KIND
+### AN UNCOMMITTED FIXTURE PROVES TRANSACTION MEMBERSHIP WITHOUT ASSERTING IT
 
-`applyRequest` branches on `reopen_period`, then `merge`, then falls through to
-DISCARD. A payment request carries `entity_type = 'vendor'`, so approving a
-request to PAY somebody ran the discard path against their vendor row.
+**A technique, not an incident — the general form first, because it is reusable
+anywhere a helper is required to write on a handle its caller lends.**
 
-It has never discarded a vendor, and the reason is the tell: the discard branch
-re-reads `reference_counts` and refuses anything with history, and every vendor
-in `vendor_aging` has at least one bill pointing at it — the lowest is ASHFAQUE
-at 1. **That guard is about DATA, not about KIND.** One bill-less outstanding
-balance and approving a payment would close a live vendor's code.
+> A row inside an uncommitted transaction is invisible to every other
+> connection. So any write that opens its OWN handle raises against it: an
+> UPDATE matches zero rows, an INSERT violates its foreign key. **Succeeding
+> therefore proves both writes are on the lent handle — for free, with no
+> assertion about transactions at all.**
+>
+> A COMMITTED fixture proves nothing here, because a helper opening its own
+> transaction succeeds against one just as happily. The invisibility IS the
+> instrument.
 
-Refused by kind now, at the top of the function. The same shape as every other
-*rule holding by accident* in this file: the cases it had met were all one
-shape, and the first case of a new shape is where it breaks.
+It costs nothing to adopt: do not commit the fixture, and read the result. It
+is worth reaching for on `getClosePrefill`-shaped helpers, on anything taking
+`tx` as its first argument, and on every future act that has to commit with
+something beside it. What it cannot see is a helper that swallows its own
+error — that needs the forced seam below.
 
-### AN UNCOMMITTED FIXTURE IS WHAT MAKES THE HAPPY PATH AN ASSERTION
+The instance it was found on:
 
 The rule being proved is that a state change and its event are ONE write. The
 obvious probe — call the act, see both rows — passes identically whether they
@@ -9874,3 +9935,143 @@ store's inline expansion after, the owner's routing screen last — and it is
 exactly the state this file calls *a feature is not shipped until something
 leads to it*. They are wired, gated and unreachable, and saying so is the
 difference between a report and a claim.
+
+## THE BADGE AND THE PAGE ARE ONE QUERY — `awaiting_me`, and what it cost to mean it
+
+Step 2. The owner's badge used to count `approval_requests` where
+`status = 'pending'`, and the page it opens filtered the same way separately.
+Two expressions of one idea, agreeing perfectly — until a payment could sit
+**approved and unrouted**, which is real work waiting on the owner that one of
+them could not see. That is the moment a second source stops being redundant
+and starts being wrong.
+
+`awaiting_me` is the one source now: the tab sums it, the page lists it, and
+there is nothing left to drift from.
+
+### A VIEW IS A PREDICATE, SO JOIN THROUGH IT RATHER THAN RESTATING IT
+
+The view is an AGGREGATE — one row per (role, kind, status) — so the badge
+sums it directly and the LIST cannot select from it at all; it holds no ids.
+The obvious move is to copy its `WHERE` into the list query, and that is the
+second copy of the rule deciding what "waiting" MEANS.
+
+So the list **joins through the view** on (restaurant, role, kind, status). A
+request appears in the join exactly when a group exists for its own three
+values — which is exactly when it satisfies the view's `WHERE`. Not an
+approximation of the predicate: the predicate itself, inherited.
+
+> **Where a view already expresses a rule and you need the rows behind it, JOIN
+> to the view on its grouping keys. A restated `WHERE` is a copy, and a copy of
+> a rule is a rule with two versions.**
+
+### THE COUNT MUST BE ABLE TO GO DOWN
+
+A badge that only grows is not a badge. So every act moves `assigned_to`, and
+three of them CLEAR it: a refusal, a cancel and a completed payment. A request
+nobody is waiting on has to leave the queue, or the number stops meaning
+"somebody is waiting on you" and starts meaning "this app has been used".
+
+The probe follows one request the whole way and watches the count move with
+it — raised → owner, approved → still owner (approving a payment moves no
+money), forwarded → accountant, paid → nobody. Four states, four counts, per
+role, inside a rolled-back transaction.
+
+### THE OWNER'S OWN QUEUE BEING CORRECT TAKES SOMETHING AWAY
+
+The instant a payment is forwarded it leaves the owner's queue. That is right,
+and it means the request **vanishes from the only screen the owner ever saw it
+on**. "Where did my approval go" is the first question that produces.
+
+So the page carries **"Out with somebody else"** — with whom, since when, for
+how much. It is not a second queue and nothing counts it: it is the answer to a
+question the badge's own correctness creates. Ask it of any queue that
+correctly empties itself: *what did the person lose sight of when it did?*
+
+### THE TRAIL HEAD IS WHAT SEPARATES TWO ROWS WITH THE SAME STATUS
+
+§3 leaves a return at `approved` — the approval stands, the route came off — so
+status alone cannot tell "approved a minute ago and not yet routed" from "the
+accountant sent it back". Only the last EVENT can, which is the whole reason
+the trail exists, and every row the owner reads now carries it.
+
+**Ordered `acted_at desc, seq desc`, and the second key is load-bearing.**
+`acted_at` defaults to `now()`, the TRANSACTION timestamp — and `routePayment`
+writes `routed` and `forwarded` in ONE transaction, so those two carry the
+identical instant and TIE. This is the `created_at` tie for the fifth time in
+this file, on a table that was written to be two-rows-per-save from its first
+day. Proved by perturbation: flipping the tiebreak to `seq asc` fails with *the
+trail head is the wrong one of two events written together*.
+
+### THE BADGE FOR A ROLE THE APP CANNOT YET ASSIGN TO
+
+The accountant's and the store's badges are wired, correct, and **cannot fire
+today** — `routePayment` is the only thing that sets `assigned_to` to those
+roles and it has no screen until §4. That is stated rather than discovered, and
+it is guarded two ways rather than hoped:
+
+- the probe ROUTES a request to the accountant inside a rolled-back
+  transaction, so the path is exercised now rather than on the day it first
+  matters;
+- `<AwaitingPanel>` is mounted on both payment screens, because a badge whose
+  destination does not mention what it counted is the Setup-badge fault — a
+  number that summons somebody to a screen where there is nothing to find.
+
+**The panel does not act, and that is a decision rather than an omission.** A
+pay form built now would be a form no state could reach, which is worse than
+none: five findings in this file are features that were built and unreachable,
+and building the sixth deliberately would be the worst of them.
+
+### AND MY OWN GATE WAS VACUOUS, FOUND ONLY BY PERTURBING IT
+
+The probe above passed with the badge reverted to counting `status = 'pending'`
+by hand — the exact fault it was written to catch. Every step agreed under both
+implementations: a raised request IS pending, a paid one is NOT, and the probe
+never re-checked the badge at the one moment they diverge — **after the
+approval**, where the hand-rolled count drops to zero while the page still
+lists the row.
+
+One line fixed it. The lesson is the one this file keeps paying for: *if you
+cannot say what the assertion would look like when it fails, it is not
+asserting anything* — and the way to find out is to break the thing on purpose,
+not to read the probe again.
+
+The same run produced a second instance in the same check: `tab 0 = page 0` is
+true under every implementation on a restaurant with nothing waiting. It says
+**UNTESTED** now, and the load-bearing half is the movement assertions, which
+put a request through the machine.
+
+### A SECTION THAT COULD NEVER RENDER, AND A COMMENT THAT SAID IT DID
+
+Found while repointing the page. `listApprovals` carried this, in its own
+docblock:
+
+> *Decided rows STAY on the list: a refusal and a failure are both findings,
+> and a queue that empties itself of everything except work cannot answer
+> "what happened to the request I raised on Tuesday".*
+
+Correct, argued, and **false of the code it sat on.** Its only caller passed
+`pendingOnly = true`, so the query returned nothing but pending rows; the
+client then split that list into pending and decided, and the decided half was
+empty by construction. The "Already decided" section could not render, ever.
+
+A caption describing the INTENT rather than the code, for the second time in
+this file — and the first one at least described a query that ran. This one
+described a branch that could not. It is `listDecided` now, with a caller, and
+the section renders.
+
+**The tell is a doc comment asserting a behaviour rather than explaining one.**
+"Decided rows stay" is a claim about output; "this returns X because Y" is an
+explanation. Claims rot silently, because nothing renders differently when they
+stop being true.
+
+### `returned` IS A STATUS THE APP NEVER WRITES
+
+`awaiting_me` filters `status IN ('pending','approved','returned','challenged')`
+and §3 settled that a return leaves the status at `approved`. So the view's
+`returned` arm is an OR branch that never matches.
+
+Harmless — it is one of four and the other three carry the queue — but it is
+the same shape as the column nothing wrote, one level down, and it should go
+the next time that view is replaced. Recorded rather than fixed, because
+replacing a view to delete a dead OR arm cascades to its dependents for no
+change in behaviour.

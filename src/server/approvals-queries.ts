@@ -649,14 +649,118 @@ export type ApprovalRow = {
 }
 
 /**
- * The queue. Pending first and oldest first within it — a request somebody is
- * waiting on outranks one already decided, and the oldest is the one that has
- * been waiting longest. Decided rows STAY on the list: a refusal and a failure
- * are both findings, and a queue that empties itself of everything except work
- * cannot answer "what happened to the request I raised on Tuesday".
+ * `awaiting_me` IS THE PREDICATE, WRITTEN ONCE, IN THE DATABASE.
+ *
+ * It is an aggregate — one row per (role, kind, status) with a count, the
+ * oldest ask and the total amount — so the badge sums it directly. The LIST
+ * cannot select from it (it holds no ids), and restating its WHERE here would
+ * be a second copy of the rule that decides what "waiting" means, which is how
+ * a badge and the page it opens come to disagree about the same word.
+ *
+ * So the list JOINS THROUGH THE VIEW on (restaurant, role, kind, status). A
+ * request appears in the join exactly when a group exists for its own three
+ * values — which is exactly when it satisfies the view's WHERE. Not an
+ * approximation of the predicate: the predicate itself, inherited.
+ *
+ * WHAT THE VIEW SAYS IS WAITING: status pending, approved, returned or
+ * challenged, AND a role named in `assigned_to`. `applied`, `refused`,
+ * `cancelled` and `failed` are finished or stuck, and nothing is stopping the
+ * person named on them — a request nobody is waiting on has to leave the queue
+ * or the badge stops meaning anything.
+ *
+ * `returned` IS A STATUS THE APP NEVER WRITES, and that is worth knowing
+ * rather than discovering. §3 settled that a return cancels the ROUTING and
+ * not the APPROVAL, so `returnRequest` leaves the status at `approved` and
+ * clears the route; the view's `returned` branch anticipated a design that was
+ * not taken. It is an OR arm that never matches — harmless, and one of four,
+ * so the view is not vacuous — but it is the same shape as the column nothing
+ * wrote, and it should be dropped the next time this view is replaced.
  */
-export async function listApprovals(restaurantId: string, pendingOnly: boolean): Promise<ApprovalRow[]> {
-  return tsql<ApprovalRow[]>`
+export type AwaitingGroup = {
+  role: string
+  kind: string
+  status: string
+  n: number
+  oldest: string | null
+  total_amount: string | null
+}
+
+/**
+ * THE HEAD OF THE TRAIL, on every row the owner reads.
+ *
+ * Status alone cannot tell "approved a minute ago and not yet routed" from
+ * "the accountant sent it back" — §3 leaves both at `approved`, deliberately,
+ * because a return cancels the ROUTING and not the APPROVAL. The last EVENT is
+ * what separates them, and separating them is the whole reason the trail
+ * exists.
+ *
+ * ORDERED `acted_at desc, seq desc`, and the second key is not decoration.
+ * `acted_at` defaults to now(), which is the TRANSACTION timestamp — and
+ * `routePayment` writes `routed` and `forwarded` in ONE transaction, so those
+ * two carry the identical instant and TIE. `seq` is a bigserial and resolves
+ * it. Time leads because it is the truth across transactions; seq only decides
+ * inside one. An `order by seq desc` alone would agree here and disagree the
+ * day a row is inserted later than one stamped later.
+ */
+export type TrailHead = {
+  last_action: string | null
+  last_note: string | null
+  last_by: string | null
+  last_at: string | null
+}
+export type AwaitingRow = ApprovalRow & TrailHead
+
+export async function getAwaiting(
+  restaurantId: string,
+  role: Role,
+  tx?: postgres.TransactionSql,
+): Promise<AwaitingGroup[]> {
+  const q = (tx ?? tsql) as typeof tsql
+  return q<AwaitingGroup[]>`
+    select role, kind, status, n::int as n,
+           oldest::text as oldest, total_amount::text as total_amount
+    from awaiting_me
+    where restaurant_id = ${restaurantId} and role = ${role}
+    order by kind, status`
+}
+
+/**
+ * The badge. Silent at zero, like every other one in the app.
+ *
+ * The handle is optional so a gate can count inside its own rolled-back
+ * transaction — a `tsql` there opens a second connection that cannot see the
+ * uncommitted fixture, finds nothing, and reports a tick.
+ */
+export async function countAwaiting(
+  restaurantId: string,
+  role: Role,
+  tx?: postgres.TransactionSql,
+): Promise<number> {
+  const q = (tx ?? tsql) as typeof tsql
+  const [row] = await q<{ n: number }[]>`
+    select coalesce(sum(n), 0)::int as n from awaiting_me
+    where restaurant_id = ${restaurantId} and role = ${role}`
+  return row?.n ?? 0
+}
+
+/**
+ * The rows behind that number, for the page the badge opens.
+ *
+ * PAYMENTS FIRST, and not because they are more urgent in the abstract:
+ * a payment request is the only kind where somebody OUTSIDE the building is
+ * waiting on the answer, and the only kind carrying an amount and a due date
+ * that keep moving while it sits. A discard waits perfectly well.
+ *
+ * Oldest first within a kind — the one that has been waiting longest is the
+ * one to answer — which is the same order the queue has always used.
+ */
+export async function listAwaiting(
+  restaurantId: string,
+  role: Role,
+  tx?: postgres.TransactionSql,
+): Promise<AwaitingRow[]> {
+  const q = (tx ?? tsql) as typeof tsql
+  return q<AwaitingRow[]>`
     select a.id, a.kind, a.entity_type, a.entity_id, a.target_entity_id, a.reason,
            a.snapshot, a.status, a.requested_by, a.requested_at::text as requested_at,
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
@@ -664,16 +768,115 @@ export async function listApprovals(restaurantId: string, pendingOnly: boolean):
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
            coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
-           coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name
+           coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
+           ev.action as last_action, ev.note as last_note,
+           ev.acted_by as last_by, ev.acted_at::text as last_at
+    from approval_requests a
+    join awaiting_me w
+      on w.restaurant_id = a.restaurant_id and w.role = a.assigned_to
+     and w.kind = a.kind and w.status = a.status
+    left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
+    left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
+    left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
+    left join lateral (
+      select e.action, e.note, e.acted_by, e.acted_at
+      from approval_events e
+      where e.restaurant_id = a.restaurant_id and e.request_id = a.id
+      order by e.acted_at desc, e.seq desc
+      limit 1
+    ) ev on true
+    where a.restaurant_id = ${restaurantId} and w.role = ${role}
+    order by (a.kind = 'payment') desc, a.requested_at asc
+    limit 200`
+}
+
+/**
+ * OPEN, AND WITH SOMEBODY ELSE.
+ *
+ * The instant the owner forwards a payment to the accountant it leaves their
+ * queue — which is right, and would otherwise mean it VANISHES from the only
+ * screen they ever saw it on. "Where did my approval go" is the first question
+ * that produces, so the page says where: with whom, how long, and for how
+ * much. It is not work; it is the answer to a question the badge's own
+ * correctness creates.
+ */
+export async function listElsewhere(
+  restaurantId: string,
+  role: Role,
+  tx?: postgres.TransactionSql,
+): Promise<AwaitingRow[]> {
+  const q = (tx ?? tsql) as typeof tsql
+  return q<AwaitingRow[]>`
+    select a.id, a.kind, a.entity_type, a.entity_id, a.target_entity_id, a.reason,
+           a.snapshot, a.status, a.requested_by, a.requested_at::text as requested_at,
+           a.decided_by, a.decided_at::text as decided_at, a.decision_note,
+           a.applied_at::text as applied_at, a.applied_result,
+           a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.routed_account_id::text as routed_account_id, a.assigned_to,
+           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
+           ev.action as last_action, ev.note as last_note,
+           ev.acted_by as last_by, ev.acted_at::text as last_at
+    from approval_requests a
+    join awaiting_me w
+      on w.restaurant_id = a.restaurant_id and w.role = a.assigned_to
+     and w.kind = a.kind and w.status = a.status
+    left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
+    left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
+    left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
+    left join lateral (
+      select e.action, e.note, e.acted_by, e.acted_at
+      from approval_events e
+      where e.restaurant_id = a.restaurant_id and e.request_id = a.id
+      order by e.acted_at desc, e.seq desc
+      limit 1
+    ) ev on true
+    where a.restaurant_id = ${restaurantId} and w.role <> ${role}
+    order by a.requested_at asc
+    limit 50`
+}
+
+/**
+ * RECENTLY CLOSED, and they stay on the page.
+ *
+ * A queue that empties itself of everything except work cannot answer "what
+ * happened to the request I raised on Tuesday". A refusal and a failure are
+ * both findings — the refusal carries the only sentence the requester will
+ * ever get, and the failure carries the database's own words about a yes that
+ * did nothing.
+ *
+ * NOT counted by any badge: nothing here is waiting on anybody.
+ */
+export async function listDecided(restaurantId: string, limit = 20): Promise<AwaitingRow[]> {
+  return tsql<AwaitingRow[]>`
+    select a.id, a.kind, a.entity_type, a.entity_id, a.target_entity_id, a.reason,
+           a.snapshot, a.status, a.requested_by, a.requested_at::text as requested_at,
+           a.decided_by, a.decided_at::text as decided_at, a.decision_note,
+           a.applied_at::text as applied_at, a.applied_result,
+           a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.routed_account_id::text as routed_account_id, a.assigned_to,
+           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
+           ev.action as last_action, ev.note as last_note,
+           ev.acted_by as last_by, ev.acted_at::text as last_at
     from approval_requests a
     left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
     left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
     left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
     left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
+    left join lateral (
+      select e.action, e.note, e.acted_by, e.acted_at
+      from approval_events e
+      where e.restaurant_id = a.restaurant_id and e.request_id = a.id
+      order by e.acted_at desc, e.seq desc
+      limit 1
+    ) ev on true
     where a.restaurant_id = ${restaurantId}
-      and (${pendingOnly} = false or a.status = 'pending')
-    order by (a.status = 'pending') desc, a.requested_at asc
-    limit 200`
+      and a.status in ('applied', 'refused', 'failed', 'cancelled')
+    order by coalesce(a.applied_at, a.decided_at, a.requested_at) desc
+    limit ${limit}`
 }
 
 /** Anything still open against one row — so a form can say "already asked"
@@ -691,14 +894,6 @@ export async function pendingFor(restaurantId: string, entityId: string): Promis
     where a.restaurant_id = ${restaurantId}
       and a.entity_id = ${entityId}
       and a.status in ('pending', 'approved')`
-}
-
-/** Silent at zero, like every other badge in the app. */
-export async function countPendingApprovals(restaurantId: string): Promise<number> {
-  const [row] = await tsql<{ n: number }[]>`
-    select count(*)::int as n from approval_requests
-    where restaurant_id = ${restaurantId} and status = 'pending'`
-  return row?.n ?? 0
 }
 
 export async function getApproval(restaurantId: string, id: string): Promise<ApprovalRow | null> {
@@ -1025,7 +1220,11 @@ export type WaitingPayrollRun = {
 }
 
 export type Waiting = {
-  approvals: ApprovalRow[]
+  approvals: AwaitingRow[]
+  /** open, and with somebody else — context, never work. Not counted. */
+  elsewhere: AwaitingRow[]
+  /** closed, kept so the page can answer "what happened to mine". Not counted. */
+  decided: AwaitingRow[]
   suggestions: { id: string; list_key: string; value: string; suggested_by: string | null; seen_count: number }[]
   payrollRuns: WaitingPayrollRun[]
   total: number
@@ -1042,8 +1241,15 @@ export type Waiting = {
  * to recognise it and a link, and nothing you could approve from.
  */
 export async function getWaiting(restaurantId: string): Promise<Waiting> {
-  const [approvals, suggestions, payrollRuns] = await Promise.all([
-    listApprovals(restaurantId, true),
+  // THE PAGE READS WHAT THE BADGE COUNTS. It used to read `status = 'pending'`
+  // while the badge counted the same thing separately; now both go through
+  // awaiting_me, so a payment sitting approved-and-unrouted — which IS work,
+  // and which the old filter dropped — appears on the page that claims to
+  // list everything waiting.
+  const [approvals, elsewhere, decided, suggestions, payrollRuns] = await Promise.all([
+    listAwaiting(restaurantId, 'owner'),
+    listElsewhere(restaurantId, 'owner'),
+    listDecided(restaurantId),
     tsql<{ id: string; list_key: string; value: string; suggested_by: string | null; seen_count: number }[]>`
       select id, list_key, value, suggested_by, seen_count
       from list_suggestions
@@ -1063,6 +1269,8 @@ export async function getWaiting(restaurantId: string): Promise<Waiting> {
   ])
   return {
     approvals,
+    elsewhere,
+    decided,
     suggestions,
     payrollRuns,
     total: approvals.length + suggestions.length + payrollRuns.length,
@@ -1070,7 +1278,15 @@ export async function getWaiting(restaurantId: string): Promise<Waiting> {
 }
 
 /**
- * The badge. Silent at zero, like every other one in the app.
+ * The OWNER's badge: everything awaiting them, plus the two queues that live
+ * outside approval_requests entirely — words somebody typed, and a payroll run
+ * prepared and unapproved.
+ *
+ * The approvals leg is `awaiting_me`, not a second `status = 'pending'` count
+ * of its own. It used to be the latter, and the two disagreed the moment a
+ * payment could sit approved-and-unrouted: real work, waiting on the owner,
+ * invisible to the badge. ONE SOURCE means the number and the page cannot
+ * drift, because there is nothing to drift from.
  *
  * Takes an optional handle so a gate can count inside its own rolled-back
  * transaction — a tsql there would open a second connection that cannot see
@@ -1079,7 +1295,8 @@ export async function getWaiting(restaurantId: string): Promise<Waiting> {
 export async function countWaiting(restaurantId: string, tx?: postgres.TransactionSql): Promise<number> {
   const q = (tx ?? tsql) as typeof tsql
   const [row] = await q<{ n: number }[]>`
-    select (select count(*) from approval_requests where restaurant_id = ${restaurantId} and status = 'pending')::int
+    select (select coalesce(sum(n), 0) from awaiting_me
+             where restaurant_id = ${restaurantId} and role = 'owner')::int
          + (select count(*) from list_suggestions where restaurant_id = ${restaurantId} and status = 'pending')::int
          + (select count(*) from payroll_runs where restaurant_id = ${restaurantId} and status = 'draft')::int
       as n`

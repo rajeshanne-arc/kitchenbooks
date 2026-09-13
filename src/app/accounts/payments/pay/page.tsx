@@ -1,4 +1,5 @@
 import { getRestaurant } from '@/server/queries'
+import AwaitingPanel from '@/components/approvals/AwaitingPanel'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { listVendorsWithDues } from '@/server/books-queries'
 import { getList } from '@/server/settings'
@@ -31,6 +32,7 @@ export default async function PayVendorPage() {
           {restaurant.name} — the transfer you make, against what is owed. The queue is worst first.
         </p>
       </header>
+      <AwaitingPanel />
       <BankPayment vendors={vendors} accounts={accounts} modes={modes} />
     </>
   )
