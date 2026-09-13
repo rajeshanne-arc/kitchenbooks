@@ -17,19 +17,71 @@ import type { BillOutstandingRow, VendorAgingRow, AgingCheck } from '@/lib/types
 
 /** @scope now */
 export async function listVendorAging(restaurantId: string): Promise<VendorAgingRow[]> {
+  // THE ROUTING DETAILS TRAVEL WITH THE QUEUE, because the row expands IN
+  // PLACE. `modesForVendor` needs to know whether this vendor has an account
+  // number and a UPI id to decide which modes may be offered, and fetching
+  // that on expand would make opening a row a round trip — an expand that has
+  // to FETCH is worse than a link that moves you, because it hangs where a
+  // link at least goes somewhere.
   return tsql<VendorAgingRow[]>`
-    select vendor_id, vendor_code, vendor_name, payment_terms,
-           outstanding::text as outstanding,
-           coalesce(terms_not_set, 0)::text as terms_not_set,
-           oldest_due::text as oldest_due,
-           latest_unpaid_bill::text as latest_unpaid_bill,
-           open_bills::int as open_bills
-    from vendor_aging
-    where restaurant_id = ${restaurantId}
+    select a.vendor_id, a.vendor_code, a.vendor_name, a.payment_terms,
+           a.outstanding::text as outstanding,
+           coalesce(a.terms_not_set, 0)::text as terms_not_set,
+           a.oldest_due::text as oldest_due,
+           a.latest_unpaid_bill::text as latest_unpaid_bill,
+           a.open_bills::int as open_bills,
+           v.account_no, v.upi_id
+    from vendor_aging a
+    join vendors v on v.restaurant_id = a.restaurant_id and v.id = a.vendor_id
+    where a.restaurant_id = ${restaurantId}
     -- OLDEST DUE FIRST, and a vendor whose due date could not be worked out
     -- sorts LAST rather than first: a null is not an overdue date, and
     -- putting nulls first would promote the vendors we know least about.
-    order by oldest_due asc nulls last, outstanding desc`
+    order by a.oldest_due asc nulls last, a.outstanding desc`
+}
+
+/**
+ * THE OLDEST THREE UNPAID BILLS PER VENDOR — what each balance is MADE OF.
+ *
+ * A figure with no composition is a figure nobody can check, and these are the
+ * bills a payment actually clears: payments here are ON ACCOUNT and tied to no
+ * bill, so FIFO is not a preference, it is what `bills_outstanding` does.
+ *
+ * CAPPED IN SQL, NOT BY SLICING. 250 unpaid bills across 28 vendors today, and
+ * the row expands in place — so the alternative is shipping every one of them
+ * to show three. The cap grows with the restaurant and the payload does not;
+ * `open_bills` on the ageing row already carries the true count, so "and 14
+ * older" is still exact.
+ */
+export async function listOldestBillsPerVendor(
+  restaurantId: string,
+): Promise<Record<string, BillOutstandingRow[]>> {
+  // A CTE RATHER THAN A DERIVED TABLE, and that is about the gate rather than
+  // about taste. audit:schema resolves `from <name> [alias]` and knows the
+  // names a `with x as (…)` introduces; it has no way to tell `) ranked` from
+  // a bare column, so it read the alias as one and reported
+  // `bills_outstanding has no column "ranked"`. Teaching it the construct
+  // needs paren matching — a loose `\) word` pattern would swallow
+  // `count(*) filter (…)` and start blinding it to real columns. Spelling the
+  // same query in the form it already parses costs nothing and is the clearer
+  // one to read.
+  const rows = await tsql<(BillOutstandingRow & { vendor_id: string })[]>`
+    with ranked as (
+      select b.vendor_id, b.purchase_id, b.bill_no, b.bill_date, b.due_date, b.unpaid,
+             row_number() over (
+               partition by b.vendor_id
+               order by b.due_date asc nulls last, b.bill_date asc
+             ) as rn
+      from bills_outstanding b
+      where b.restaurant_id = ${restaurantId} and b.unpaid > 0
+    )
+    select vendor_id, purchase_id, bill_no, bill_date::text as bill_date,
+           due_date::text as due_date, unpaid::text as unpaid
+    from ranked
+    where rn <= 3`
+  const out: Record<string, BillOutstandingRow[]> = {}
+  for (const r of rows) out[r.vendor_id] = [...(out[r.vendor_id] ?? []), r]
+  return out
 }
 
 /**

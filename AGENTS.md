@@ -10427,3 +10427,155 @@ lives in before searching it.** The gate cuts the `WHERE` out of
 `pg_get_viewdef` and asks only that. Two instruments, one hour, both defeated
 by text that was legitimately there — which is what makes "anchor on structure,
 never on a substring" a rule about REGIONS and not only about names.
+
+## THE MONEY SCREEN — the only door, and it expands in place
+
+Step 3, asked for three times. Everything behind it existed — events, badges,
+owner routing, accountant return and challenge, store acknowledgement — and
+**zero requests had ever been raised, because this screen is the only way to
+raise one.** A whole machine with no handle.
+
+### HE PICKS A MODE; THE APP SAYS WHAT FOLLOWS
+
+He is never asked to choose between "record" and "request". He picks a MODE,
+which is a fact he knows — he handed over notes, or he did not — and the screen
+states the consequence **before the button**:
+
+- **cash** → *"You handed over the cash."* Straight to the ledger, naming the
+  account it left.
+- **anything else** → *"You are not making this transfer."* A request; no money
+  moves, no account is touched, and the vendor is owed exactly what they are
+  owed until somebody pays.
+
+**THE MODE STARTS EMPTY.** Preselecting the first one decides the branch before
+he has said anything, which is the `issues.session` fault for the fifth time in
+this file — a question that answers itself is not a question. It is also what
+makes "the screen says which is happening" true at all: with a mode preselected
+the sentence is there before he has looked.
+
+### AN EXPAND THAT HAS TO FETCH IS WORSE THAN A LINK THAT MOVES YOU
+
+Selecting a vendor used to NAVIGATE, because the form needed that vendor's
+bills and routing details from the server. He is scanning a queue deciding
+**who** to pay, so a modal or a page load takes the list away every time he
+looks at one, and comparing two vendors means opening, closing, opening.
+
+Everything the expansion needs travels with the queue — and the cost of that is
+**capped in SQL, not by slicing**. 250 unpaid bills across 28 vendors today; a
+window function ships the oldest three per vendor, which is 70 rows, and
+`open_bills` on the ageing row carries the true count so "and 14 older" is
+still exact. The cap grows with the restaurant and the payload does not.
+
+### CASH LEAVES A CASH ACCOUNT, AND THERE IS NONE
+
+§6, enforced rather than displayed. Four accounts exist — two bank, a wallet
+and the owner's — and **not one is `kind = 'cash'`**. Recording a cash payment
+against a bank account is not untidy: it moves a bank balance for money that
+never went through the bank, and the only thing that ever disagrees is a
+reconciliation months later with no route back to the cause.
+
+So the branch says it before the button — *"No cash account exists yet. Create
+one in Owner → Setup → Money accounts and count it"* — and `assertCashAccount`
+refuses it at the action, because a form is never the check. A refusal at save
+is a refusal after the work.
+
+**THE SECOND BRANCH IS EXERCISED AGAINST AN ACCOUNT THAT DOES NOT EXIST.**
+Refusing a bank account *when a cash one is available* is unreachable on this
+restaurant's data, and an untested refusal is one that will be wrong the day it
+first fires — so the probe creates a cash account inside a rolled-back
+transaction and checks both directions. That is what the lent handle on
+`listMoneyAccounts` is for: a `tsql` inside the probe opens a second connection
+that cannot see the uncommitted fixture, finds nothing, and reports a tick.
+
+### THE SECOND LINE OF THE REQUEST ACKNOWLEDGEMENT IS THE WHOLE POINT
+
+    Asked the owner to pay GOLDEN MUTTON ₹1,11,400.
+    No money has moved and no account has been touched. They are still
+    owed ₹1,11,400 — they stay on this queue until somebody pays them.
+
+Without it he reads the first line as *handled* and stops chasing, **which is
+how a vendor holds tomorrow's delivery over a payment nobody made.** It is the
+honesty strip's `missing` slot doing exactly what it exists for: said while it
+can still be acted on.
+
+The figure is deliberately ECHOED rather than re-read, and that is the one
+place in this app where echoing is correct — the claim being made is that
+nothing moved, so the number he was looking at is the number.
+
+The payment acknowledgement reads the other way: both figures come back from
+the database. *"₹10,458 paid to K.RAJA from Cash drawer. They owe nothing — 5
+bills cleared,"* with the account's new balance beside it and **loud if it goes
+negative** — more out of an account than the books say went in is a missing
+deposit or a payment against the wrong account, and either is a thing to find
+now.
+
+**The bill count is stated only when the balance reaches zero.** A partial
+payment clears some unknowable number of bills, and "5 bills cleared" is a
+figure the app cannot support after one — so it says what it knows.
+
+### ONE BRANCH, TWO DOORS
+
+`PaymentForm` is DELETED. The queue and the vendor's own page both pay a
+vendor, and two implementations of one decision is how they drift — so
+`PayOrAsk` is the branch and both mount it. The vendor page gets the mode
+withholding, the cash blocker and the before-the-button sentence for free.
+
+**The acknowledgement is placed differently in the two, and the reason is about
+the PARENT rather than the form.** On the vendor page nothing vanishes, so it
+renders where the button was. In the queue, paying a vendor in full removes
+them from `vendor_aging` — the row holding the button is gone on the refresh —
+so it is lifted above the list, where SaveAck scrolls it into view. Third
+instance of *an act that removes its own card cannot acknowledge inside it*.
+
+### THE SCHEMA GATE MET A CONSTRUCT IT CANNOT PARSE, AND THE QUERY MOVED
+
+`from ( select … ) ranked` was reported as *`bills_outstanding` has no column
+"ranked"*. Not a false positive about a real column and not a real fault: the
+gate resolves `from <name> [alias]` and knows the names a `with x as (…)`
+introduces, and it has no way to tell a DERIVED TABLE'S alias from a bare
+column, because both are an identifier sitting on its own.
+
+**Teaching it the construct properly needs paren matching** — knowing that the
+`(` this `)` closes was itself preceded by a `from`. A loose `\)\s*word`
+pattern would have been one line and would have swallowed
+`count(*) filter (…)`, `coalesce(x, 0) something`, and every other identifier
+that happens to follow a closing paren: it would start ADDING names to the
+skip list, which is the one direction a gate must never move.
+
+So the query is spelled as a CTE instead. Same plan, same rows, and it is the
+clearer of the two to read — the gate already parses `with` precisely, so
+nothing was blinded and nothing was papered over.
+
+**The rule this sits under, and the three cases now line up:** when the gate
+disagrees with the code, ask whether the CODE is ambiguous, the GATE is wrong,
+or the construct is simply outside what it can parse.
+
+| | | |
+|---|---|---|
+| `a.total` on `attendance_current` | the code was genuinely ambiguous | rename the alias |
+| `both` / `at time zone` | the gate was wrong about SQL | fix the gate |
+| `) ranked` | neither — an unparseable construct | write it in a form the gate already handles |
+
+The third is the one that looks like giving in, and is not: a gate widened
+until it can parse everything is a gate that skips things.
+
+### AND TWO OF MY OWN ASSERTIONS WERE VACUOUS AGAIN
+
+**A boundary that could not be crossed.** "Requests raised before the trail
+existed are allowed to have no `raised` event" was written as
+`requested_at < (select min(acted_at) …)` — and with NO events on the tenant
+that subquery is NULL, every comparison yields NULL, and the exemption counted
+ZERO while every request in existence qualified. `coalesce(…, 'infinity')` is
+the fix, and it tightens by itself the moment the first event is written.
+
+**Two things derived from one field cannot check each other.** The queue's
+routing details were asserted by checking that `modesForVendor` withholds UPI
+exactly where `upi_id` is empty — both sides read the same field, so falsifying
+it moved them together and the check passed against a queue carrying an
+invented UPI id. A cross-check needs a SECOND SOURCE; it reads the `vendors`
+table now.
+
+> **If both sides of an equality come from the same value, the equality is a
+> restatement, not a check.** It is the reconciliation rule — a second source
+> that agrees 99% of the time is worse than none — pointed at an assertion
+> rather than at a report.

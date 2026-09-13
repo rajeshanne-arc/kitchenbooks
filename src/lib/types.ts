@@ -394,7 +394,15 @@ export type VoidBillResult =
   | { ok: false; error: string }
 
 export type PaymentResult =
-  | { ok: true; payment: PaymentRow; dues: DuesSnap; duesBefore: string }
+  | {
+      ok: true
+      payment: PaymentRow
+      dues: DuesSnap
+      duesBefore: string
+      /** the account AFTER the payment, read back rather than echoed. Null
+       *  only where the account has since been retired off the active list. */
+      account: { name: string; balance: string; kind: MoneyAccountKind } | null
+    }
   | { ok: false; error: string }
 
 export type UpdateVendorResult = { ok: true; vendor: VendorDetail } | { ok: false; error: string }
@@ -3759,6 +3767,10 @@ export type VendorAgingRow = {
   oldest_due: string | null
   latest_unpaid_bill: string | null
   open_bills: number
+  /** carried on the QUEUE so a row can expand without a round trip — they are
+   *  what modesForVendor withholds a mode on. */
+  account_no: string | null
+  upi_id: string | null
 }
 
 export type BillOutstandingRow = {

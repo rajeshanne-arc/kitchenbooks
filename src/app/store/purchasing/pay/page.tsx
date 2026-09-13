@@ -2,7 +2,7 @@ import { getRestaurant } from '@/server/queries'
 import AwaitingPanel, { MyOutcomesPanel } from '@/components/approvals/AwaitingPanel'
 import { getList } from '@/server/settings'
 import { listMoneyAccounts } from '@/server/accounts-queries'
-import { getAgingCheck, getVendorAging, listBillsOutstanding, listVendorAging } from '@/server/aging-queries'
+import { getAgingCheck, listOldestBillsPerVendor, listVendorAging } from '@/server/aging-queries'
 import PaymentClient from '@/components/store/PaymentClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
 
@@ -24,19 +24,19 @@ export default async function StorePaymentPage({
 }) {
   const { vendor: preselect } = await searchParams
   const restaurant = await getRestaurant()
-  const [modes, aging, accounts, check] = await Promise.all([
+  // EVERYTHING THE EXPANSION NEEDS TRAVELS WITH THE QUEUE. A row opens IN
+  // PLACE, so the bills it is made of and the vendor's routing details are
+  // fetched once for the whole list rather than on expand — an expand that has
+  // to fetch is worse than a link that moves you. The bills are capped in SQL
+  // at the oldest three per vendor, so the payload does not grow with the
+  // ledger: 250 unpaid bills across 28 vendors today, 84 rows shipped.
+  const [modes, aging, accounts, check, bills] = await Promise.all([
     getList(restaurant.id, 'payment_mode'),
     listVendorAging(restaurant.id),
     listMoneyAccounts(restaurant.id),
     getAgingCheck(restaurant.id),
+    listOldestBillsPerVendor(restaurant.id),
   ])
-
-  // The preselected vendor's own row and bills, so the form opens with the
-  // balance prefilled and says what it is made of.
-  const [selectedAging, selectedBills] =
-    preselect === undefined
-      ? [null, []]
-      : await Promise.all([getVendorAging(restaurant.id, preselect), listBillsOutstanding(restaurant.id, preselect)])
 
   return (
     <>
@@ -51,9 +51,8 @@ export default async function StorePaymentPage({
         accounts={accounts}
         aging={aging}
         check={check}
-        preselectVendorId={preselect ?? null}
-        selectedAging={selectedAging}
-        selectedBills={selectedBills}
+        bills={bills}
+        preopenVendorId={preselect ?? null}
       />
     </>
   )

@@ -15,12 +15,18 @@
 import { z } from 'zod'
 import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
-import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
+import {
+  AccountRefusal,
+  assertAccount,
+  assertCashAccount,
+  getAccountBalances,
+} from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
 import { insertPayment } from '@/server/payment-write'
 import { getBill, getDues, getItemDetail, getVendorDetail } from '@/server/books-queries'
 import { parseMoney } from '@/lib/money'
+import { isCashMode } from '@/lib/payment-mode'
 import type {
   CreateItemInput,
   CreateItemResult,
@@ -158,6 +164,9 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
     if (!vendor[0]) throw new BooksError('Vendor not found')
 
     const accountId = await assertAccount(rid, input.accountId, 'the account this payment left')
+    // A FORM IS NEVER THE CHECK. The screen offers only cash accounts on the
+    // cash branch; this is what holds when somebody posts to the action.
+    if (isCashMode(input.mode)) await assertCashAccount(rid, accountId)
     const duesBefore = (await getDues(input.vendorId)).balance
     // Read outside the transaction: it goes to the database, and a second
     // checkout while holding a connection is the shape that deadlocked the pool.
@@ -180,8 +189,18 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
       }),
     )
 
-    const dues = await getDues(input.vendorId)
-    return { ok: true, payment, dues, duesBefore }
+    // READ THE FIGURE BACK, NEVER ECHO THE INPUT — both of them. The vendor's
+    // balance and the account's are what the person needs to see, and both are
+    // what the database says after the write rather than what was typed.
+    const [dues, balances] = await Promise.all([getDues(input.vendorId), getAccountBalances(rid)])
+    const account = balances.find((b) => b.account_id === accountId) ?? null
+    return {
+      ok: true,
+      payment,
+      dues,
+      duesBefore,
+      account: account === null ? null : { name: account.name, balance: account.balance, kind: account.kind },
+    }
   } catch (e) {
     return fail(e)
   }

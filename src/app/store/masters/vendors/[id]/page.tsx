@@ -12,7 +12,7 @@ import { fmtDate } from '@/lib/format'
 import { StatusBadge } from '@/components/books/Badges'
 import BillList from '@/components/books/BillList'
 import CopyField from '@/components/books/CopyField'
-import PaymentForm from '@/components/books/PaymentForm'
+import { PayPanel } from '@/components/store/PayOrAsk'
 import VendorEdit from '@/components/books/VendorEdit'
 import MasterActions, { ClosedNote } from '@/components/books/MasterActions'
 import { pendingFor, REQUESTERS } from '@/server/approvals-queries'
@@ -249,14 +249,22 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
         </section>
       </div>
 
-      <PaymentForm
-        vendorId={vendor.id}
-        vendorName={vendor.name}
-        modes={modes}
-        accounts={accounts}
-        aging={aging}
-        bills={unpaidBills}
-      />
+      {/* THE SAME BRANCH THE QUEUE USES, not a second implementation of it.
+          One component decides cash-or-request, withholds a mode whose detail
+          this vendor lacks, and says which act is happening before the button
+          — so the two doors cannot come to disagree about what a mode means.
+          The oldest three bills, the same as the queue shows. */}
+      <section className={cardCls}>
+        <h3 className={sectionHeadCls}>Pay {vendor.name}</h3>
+        <PayPanel
+          vendorId={vendor.id}
+          vendorName={vendor.name}
+          modes={modes}
+          accounts={accounts}
+          aging={aging}
+          bills={unpaidBills.slice(0, 3)}
+        />
+      </section>
 
       {/* payment history */}
       <section className={cardCls}>

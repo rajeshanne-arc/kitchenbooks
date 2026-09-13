@@ -9386,6 +9386,214 @@ async function run() {
     )
   })
 
+  /* ── the money screen: the only door to everything above ──────────── */
+  console.log('\nthe payment queue')
+
+  await check('cash leaves a cash account, and there is none', async () => {
+    // §6, ENFORCED RATHER THAN DISPLAYED. Recording a cash payment against a
+    // BANK account is not untidy — it moves a bank balance for money that
+    // never went through the bank, and the only thing that ever disagrees is
+    // a reconciliation months later with no route back to the cause.
+    const { txn } = await import('../src/lib/db')
+    const { assertCashAccount, listMoneyAccounts } = await import('../src/server/accounts-queries')
+    const live = await listMoneyAccounts(liveTenant)
+    const cash = live.filter((a) => a.kind === 'cash')
+    const bank = live.find((a) => a.kind !== 'cash')
+    assert.ok(bank !== undefined, 'no non-cash account to try to pay cash from')
+
+    // THE BLOCKER AS IT STANDS. Four accounts, none of them cash.
+    if (cash.length === 0) {
+      await assert.rejects(
+        () => assertCashAccount(liveTenant, bank.id),
+        (e: Error) => /no cash account exists yet/i.test(e.message) && /Money accounts/i.test(e.message),
+        'a cash payment is allowed with no cash account, or the refusal does not say what to do',
+      )
+      console.log(
+        `      ${live.length} accounts (${live.map((a) => a.kind).join(', ')}) · none is cash, so every cash payment is refused by name`,
+      )
+    }
+
+    // AND THE OTHER BRANCH, exercised against a cash account that exists only
+    // inside a rolled-back transaction — otherwise it could not be reached at
+    // all until Rajesh creates one, and an untested refusal is a refusal that
+    // will be wrong on the day it first fires.
+    await txn(async (tx) => {
+      const [made] = await tx<{ id: string }[]>`
+        insert into money_accounts (restaurant_id, name, kind, opening_balance, status)
+        values (${liveTenant}, 'Zz Probe Drawer', 'cash', 0, 'active')
+        returning id`
+      // the cash one is accepted …
+      await assertCashAccount(liveTenant, made.id, tx)
+      // … and a bank account is refused BY KIND, naming it.
+      await assert.rejects(
+        () => assertCashAccount(liveTenant, bank.id, tx),
+        (e: Error) => e.message.includes(bank.name) && /cash leaves a cash account/i.test(e.message),
+        'with a cash account available, paying cash from a bank account was allowed',
+      )
+      console.log(`      with one: the cash account passes, ${bank.name} (${bank.kind}) is refused by kind`)
+      throw new Error('ROLLBACK-CASH-PROBE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-CASH-PROBE') throw e
+    })
+  })
+
+  await check('a row expands without fetching, and its bills are capped in SQL', async () => {
+    // AN EXPAND THAT HAS TO FETCH IS WORSE THAN A LINK THAT MOVES YOU — it
+    // hangs where a link at least goes somewhere. So everything the expansion
+    // needs travels with the queue, and the cost of that is capped in SQL
+    // rather than by slicing a payload that grows with the ledger.
+    const { listVendorAging, listOldestBillsPerVendor } = await import('../src/server/aging-queries')
+    const [aging, bills] = await Promise.all([
+      listVendorAging(liveTenant),
+      listOldestBillsPerVendor(liveTenant),
+    ])
+    assert.ok(aging.length > 0, 'nothing is outstanding — this check is looking at nothing')
+
+    for (const v of aging) {
+      const mine = bills[v.vendor_id] ?? []
+      assert.ok(mine.length <= 3, `${v.vendor_code} shipped ${mine.length} bills — the cap is not in the query`)
+      assert.ok(
+        mine.length > 0,
+        `${v.vendor_code} is owed ${v.outstanding} and its expansion would open with no bills behind the figure`,
+      )
+      assert.ok(
+        v.open_bills >= mine.length,
+        `${v.vendor_code} claims ${v.open_bills} open bills and ${mine.length} were shipped`,
+      )
+    }
+    // THE ROUTING DETAILS TRAVEL TOO, CHECKED AGAINST THE MASTER. The first
+    // version asserted that modesForVendor withholds UPI exactly where
+    // `upi_id` is empty — two things derived from the SAME field, so
+    // falsifying the field moved both sides together and the check passed
+    // against a queue carrying an invented UPI id. A cross-check needs a
+    // SECOND source, and the vendors table is it.
+    const master = await (await import('../src/lib/db')).tsql<
+      { id: string; account_no: string | null; upi_id: string | null }[]
+    >`select id, account_no, upi_id from vendors where restaurant_id = ${liveTenant}`
+    const byId = new Map(master.map((m) => [m.id, m]))
+    for (const v of aging) {
+      const m = byId.get(v.vendor_id)
+      assert.ok(m !== undefined, `${v.vendor_code} is on the queue and not in vendors`)
+      assert.equal(v.upi_id, m.upi_id, `${v.vendor_code} carries a UPI id the master does not`)
+      assert.equal(v.account_no, m.account_no, `${v.vendor_code} carries an account number the master does not`)
+    }
+    const shipped = Object.values(bills).reduce((a, b) => a + b.length, 0)
+    const [total] = await (await import('../src/lib/db')).tsql<{ n: number }[]>`
+      select count(*)::int as n from bills_outstanding
+      where restaurant_id = ${liveTenant} and unpaid > 0`
+    assert.ok(shipped < total.n, `${shipped} of ${total.n} bills shipped — the cap is not saving anything`)
+    console.log(
+      `      ${aging.length} vendors · ${shipped} of ${total.n} unpaid bills shipped · every row opens with its composition and its modes`,
+    )
+  })
+
+  await check('every request carries the event that created it', async () => {
+    // THE ONE EVENT THAT CANNOT BE BACKFILLED. `requested_by` survives, but
+    // the ACT of raising — and the mode he suggested — exist nowhere else, and
+    // no later event implies them. So the row and the event are one write, and
+    // this is the invariant that says so about the data rather than the code.
+    const { tsql, txn } = await import('../src/lib/db')
+    const orphans = async (q: typeof tsql) =>
+      q<{ id: string; kind: string }[]>`
+        select r.id, r.kind from approval_requests r
+        where r.restaurant_id = ${liveTenant}
+          and not exists (
+            select 1 from approval_events e
+            where e.restaurant_id = r.restaurant_id and e.request_id = r.id and e.action = 'raised'
+          )`
+    const live = [...(await orphans(tsql))]
+    // Requests raised before the trail existed carry no `raised` event and
+    // cannot be given one — stated rather than asserted away.
+    // COALESCE TO INFINITY, and the reason is the whole subtlety: with NO
+    // events at all the subquery is NULL, every comparison against it yields
+    // NULL, and "requests that predate the trail" counted ZERO — while every
+    // request in existence predates it. The boundary tightens by itself the
+    // moment the first `raised` event is written, and until then it is
+    // correctly everything.
+    const [oldest] = await tsql<{ n: number }[]>`
+      select count(*)::int as n from approval_requests
+      where restaurant_id = ${liveTenant}
+        and requested_at < coalesce(
+          (select min(acted_at) from approval_events where restaurant_id = ${liveTenant}),
+          'infinity'::timestamptz
+        )`
+    assert.ok(
+      live.length <= (oldest?.n ?? 0),
+      `${live.length} request(s) have no raised event and only ${oldest?.n ?? 0} predate the trail`,
+    )
+
+    // PROVED BY LEAVING ONE SET — a clean table says nothing about whether the
+    // query could see a dirty one.
+    await txn(async (tx) => {
+      const [vendor] = await tx<{ id: string }[]>`
+        select id from vendors where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+      await tx`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, reason, status, assigned_to, requested_by)
+        values (${liveTenant}, 'payment', 'vendor', ${vendor.id}, 'orphan probe', 'pending', 'owner', 'gate')`
+      const found = [...(await orphans(tx as unknown as typeof tsql))]
+      assert.equal(
+        found.length,
+        live.length + 1,
+        'the invariant cannot see a request with no event behind it',
+      )
+      throw new Error('ROLLBACK-ORPHAN-PROBE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-ORPHAN-PROBE') throw e
+    })
+    console.log(
+      `      ${live.length} request(s) without a raised event, all ${oldest?.n ?? 0} of them predating the trail`,
+    )
+  })
+
+  await check('one branch decides cash-or-request, and the mode is never chosen for him', async () => {
+    // TWO IMPLEMENTATIONS OF ONE DECISION IS HOW THEY DRIFT. The queue and the
+    // vendor's own page both pay a vendor, and they used to do it through two
+    // components; PaymentForm is deleted and PayOrAsk is the one branch.
+    const { readFileSync, readdirSync, existsSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = `${d}/${e.name}`
+        if (e.isDirectory()) walk(p, out)
+        else if (/\.tsx?$/.test(e.name)) out.push(p)
+      }
+      return out
+    }
+    const ui = walk('src/components').concat(walk('src/app'))
+    const asks = ui.filter((f) => /\brequestVendorPayment\s*\(/.test(readFileSync(f, 'utf8')))
+    assert.deepEqual(
+      asks,
+      ['src/components/store/PayOrAsk.tsx'],
+      `a vendor payment is requested from ${asks.length} places: ${asks.join(', ')}`,
+    )
+    // THE TWO HALVES OF THE BRANCH LIVE TOGETHER. A file that can ask but not
+    // record is half a decision, and the person using it would have to know
+    // which screen does which.
+    const src = readFileSync(asks[0], 'utf8')
+    assert.ok(/\brecordPayment\s*\(/.test(src), 'the branch can request a payment and not record one')
+    assert.ok(!existsSync('src/components/books/PaymentForm.tsx'), 'the second payment form is back')
+
+    // THE MODE STARTS EMPTY. Preselecting one decides the branch before he has
+    // said anything — the `issues.session` fault, where a question that
+    // answers itself is not a question. It is also what makes "the screen says
+    // which is happening before he presses" true at all.
+    assert.ok(
+      /const \[mode, setMode\] = useState\(''\)/.test(src),
+      'the mode is preselected, so the record-or-request branch is decided before he chooses',
+    )
+    assert.ok(
+      /Choose how it goes/.test(src),
+      'the empty mode has no prompt, so the control reads as broken rather than unanswered',
+    )
+    // AND BOTH DOORS GO THROUGH IT.
+    const mounts = ui.filter((f) => /<PayOrAsk[\s/>]|<PayPanel[\s/>]/.test(readFileSync(f, 'utf8')))
+    assert.ok(
+      mounts.length >= 2,
+      `only ${mounts.length} screen mounts the branch — the queue and the vendor page should both`,
+    )
+    console.log(`      one branch · mounted on ${mounts.map((m) => m.split('/').pop()).join(', ')}`)
+  })
+
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */
   console.log('\nthe letterhead')
 
