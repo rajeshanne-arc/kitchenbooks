@@ -11,16 +11,17 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { cancelPurchaseOrder, closePurchaseOrder, sendPurchaseOrder } from '@/server/po-actions'
+import { cancelPurchaseOrder, closePurchaseOrder, requestPurchaseOrderApproval, sendPurchaseOrder } from '@/server/po-actions'
 import { toast } from '@/components/Toasts'
 import SaveAck from '@/components/SaveAck'
 import Honesty from '@/components/Honesty'
 import { btnCls, btnGhostCls, inputCls } from '@/components/ui'
-import type { PoStatus } from '@/lib/types'
+import type { PoApprovalStatus, PoStatus } from '@/lib/types'
 
 export default function PoActions({
   id,
   status,
+  approvalStatus,
   docNo,
   vendorName,
   waHref,
@@ -28,6 +29,7 @@ export default function PoActions({
 }: {
   id: string
   status: PoStatus
+  approvalStatus: PoApprovalStatus
   docNo: string | null
   vendorName: string
   /** null when the vendor has no usable phone number — the button is replaced
@@ -40,6 +42,8 @@ export default function PoActions({
   const [error, setError] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState(false)
   const [reason, setReason] = useState('')
+  const [approvalReason, setApprovalReason] = useState('')
+  const [requestingApproval, setRequestingApproval] = useState(false)
   const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
 
   async function run(p: Promise<{ ok: true } | { ok: false; error: string }>, done: () => void) {
@@ -70,6 +74,23 @@ export default function PoActions({
       if (via === 'whatsapp' && waHref !== null) window.open(waHref, '_blank', 'noopener')
     })
 
+  async function requestApproval() {
+    if (approvalReason.trim() === '') return
+    setRequestingApproval(true)
+    setError(null)
+    try {
+      const res = await requestPurchaseOrderApproval(id, approvalReason)
+      if (res.ok) {
+        setApprovalReason('')
+        router.refresh()
+      } else setError(res.error)
+    } catch {
+      setError('Could not reach the server — nothing was changed.')
+    } finally {
+      setRequestingApproval(false)
+    }
+  }
+
   return (
     <div className="space-y-3">
       {ack !== null && <SaveAck headline={ack.headline} sub={ack.sub} onDismiss={() => setAck(null)} />}
@@ -86,8 +107,20 @@ export default function PoActions({
         </Honesty>
       )}
 
+      {status === 'draft' && approvalStatus === 'pending' && (
+        <Honesty verdict="waiting for owner approval" level="pending">
+          This order is frozen until an owner approves or refuses it. Nothing has been sent to the vendor yet.
+        </Honesty>
+      )}
+
+      {status === 'draft' && approvalStatus === 'approved' && (
+        <Honesty verdict="approved — ready to send" level="pending">
+          An owner approved this order. It is still not sent; choose WhatsApp or print below to record the vendor hand-off.
+        </Honesty>
+      )}
+
       <div className="flex flex-wrap gap-2">
-        {status === 'draft' && (
+        {status === 'draft' && approvalStatus !== 'pending' && (
           <>
             {waHref !== null && (
               <button type="button" disabled={busy} onClick={() => void send('whatsapp')} className={btnCls}>
@@ -101,6 +134,11 @@ export default function PoActions({
               Mark sent by print
             </button>
           </>
+        )}
+        {status === 'draft' && approvalStatus !== 'pending' && approvalStatus !== 'approved' && (
+          <button type="button" onClick={() => setRequestingApproval(true)} disabled={busy} className={btnGhostCls}>
+            Request owner approval
+          </button>
         )}
         {(status === 'sent' || status === 'received') && (
           <>
@@ -128,6 +166,17 @@ export default function PoActions({
           </button>
         )}
       </div>
+
+      {requestingApproval && status === 'draft' && approvalStatus !== 'pending' && approvalStatus !== 'approved' && (
+        <div className="rounded-xl border border-amber-300 bg-field p-3">
+          <p className="text-sm text-stone-800">The order will be frozen while the owner decides. It will not be sent yet.</p>
+          <input value={approvalReason} onChange={(e) => setApprovalReason(e.target.value)} maxLength={300} placeholder="Why is this purchase needed?" className={`${inputCls} mt-2`} />
+          <div className="mt-2 flex gap-2">
+            <button type="button" disabled={busy || approvalReason.trim() === ''} onClick={() => void requestApproval()} className={`${btnCls} disabled:bg-stone-300`}>Send for approval</button>
+            <button type="button" onClick={() => setRequestingApproval(false)} className={btnGhostCls}>Keep editing</button>
+          </div>
+        </div>
+      )}
 
       {cancelling && (
         <div className="rounded-xl border border-amber-300 bg-field p-3">

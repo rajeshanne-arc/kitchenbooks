@@ -44,8 +44,10 @@ export const BOOKS: Record<TabGroup, BookView[]> = {
   ],
   sales: [
     { href: '/sales/books/sales', label: 'Sales' },
+    { href: '/sales/books/import', label: 'Import' },
     { href: '/sales/books/cash', label: 'Cash' },
     { href: '/sales/books/fetch', label: 'Fetch a day' },
+    { href: '/sales/books/reconciliation', label: 'POS reconciliation' },
     { href: '/sales/books/gst', label: 'GST & service' },
     { href: '/sales/books/handovers', label: 'Handovers' },
   ],

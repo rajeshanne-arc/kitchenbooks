@@ -10,6 +10,15 @@ import { getAttendanceOverPeriod } from '@/server/labour-queries'
 import { readPeriodParam, resolvePeriod } from '@/lib/period'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import { cardCls, dataTableCls, sectionHeadCls, tdCls, tdNumCls, thCls, thNumCls, trCls } from '@/components/ui'
+import HolidayEditor from '@/components/labour/HolidayEditor'
+import { listHolidays } from '@/server/holiday-queries'
+import { listLeavePolicies, listCurrentLeaveAssignments } from '@/server/leave-queries'
+import { listRoster } from '@/server/labour-queries'
+import LeavePolicyEditor from '@/components/labour/LeavePolicyEditor'
+import LeaveRequestsPanel from '@/components/labour/LeaveRequestsPanel'
+import { getLeaveBalances, listLeaveRequests } from '@/server/leave-request-queries'
+import { getSessionUser } from '@/server/current-user'
+import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,11 +42,18 @@ export default async function AttendancePage({
   const today = await businessToday()
   const date = d !== undefined && DATE_RE.test(d) ? d : today
   const restaurant = await getRestaurant()
+  const sessionUser = await getSessionUser()
   const period = resolvePeriod(readPeriodParam(periodParam, today).param, today)
-  const [sheet, summary] = await Promise.all([
+  const [sheet, summary, policies, assignments, roster, leaveRequests, leaveBalances] = await Promise.all([
     getDaySheet(restaurant.id, date),
     view === 'this-period' ? getAttendanceOverPeriod(restaurant.id, period.months) : Promise.resolve([]),
+    listLeavePolicies(restaurant.id),
+    listCurrentLeaveAssignments(restaurant.id),
+    listRoster(restaurant.id, 'by-department'),
+    listLeaveRequests(restaurant.id, Number(date.slice(0, 4))),
+    getLeaveBalances(restaurant.id, Number(date.slice(0, 4))),
   ])
+  const holidays = await listHolidays(restaurant.id)
 
   return (
     <>
@@ -56,7 +72,12 @@ export default async function AttendancePage({
 
       {view === 'this-day' ? (
         <div className="mt-4">
+          <OutsidePeriod basis="now" what="The roster, holiday list, and active leave policies are current operating records, not figures recalculated by the period lens." />
+          <OutsidePeriod basis="all-time" what="Leave requests and year balances are shown for the selected calendar year; changing the reporting period does not rewrite those decisions." className="mt-1" />
           <AttendanceSheet key={date} date={date} initialSheet={sheet} />
+          <HolidayEditor holidays={holidays} />
+          <LeavePolicyEditor policies={policies} assignments={assignments} staff={roster} />
+          <LeaveRequestsPanel staff={roster.map((s) => ({ id: s.id, code: s.code, name: s.name }))} policies={policies.map((p) => ({ id: p.id, code: p.code, name: p.name }))} requests={leaveRequests} balances={leaveBalances} year={Number(date.slice(0, 4))} canRecordCarryForward={sessionUser?.role === 'owner' || sessionUser?.role === 'accountant'} />
         </div>
       ) : (
         <div className="mt-4 space-y-4">

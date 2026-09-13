@@ -15,7 +15,7 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPurchaseOrder, updatePurchaseOrder } from '@/server/po-actions'
-import { formatMoneyString, decimalStringToPaise, parseMoney, parseQty } from '@/lib/money'
+import { formatMoneyString, parseMoney, parseQty } from '@/lib/money'
 import type { PoDraftLine, PoLineRow } from '@/lib/types'
 import SaveAck from '@/components/SaveAck'
 import Honesty from '@/components/Honesty'

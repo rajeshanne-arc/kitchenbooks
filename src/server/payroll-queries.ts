@@ -8,10 +8,9 @@
 // buildable now and was not before.
 //
 // THE PAY LAW LIVES IN THE DATABASE, not here: present = 1, half = 0.5,
-// off = 1 (off is PAID — a stated assumption), leave and absent = 0,
-// divided by the REAL days of the period. labour_cost_by_section has
-// applied exactly that since phase 5; the draft below reproduces it
-// verbatim rather than inventing a second arithmetic that could drift.
+// off = 1 (off is PAID — a stated assumption), and absent = 0. Leave is
+// credited only up to the assigned policy's paid_days; an unassigned leave
+// remains unpaid. The draft adds only that explicit policy credit.
 import 'server-only'
 import { sql, tsql } from '@/lib/db'
 import type {
@@ -123,6 +122,15 @@ export async function getPayrollDraft(
         and a.att_date between ${from}::date and ${to}::date
       group by a.staff_id
     ),
+    leave_marks as (
+      select a.staff_id, count(*)::numeric as leave_days
+      from attendance_current a
+      join staff st on st.id = a.staff_id
+      where st.restaurant_id = ${restaurantId}
+        and a.att_date between ${from}::date and ${to}::date
+        and a.status = 'leave'
+      group by a.staff_id
+    ),
     -- What is still owed on advances: everything advanced, less every
     -- recovery already frozen onto an earlier run. Reversal rows carry a
     -- negative amount, so they net themselves out of the first sum.
@@ -144,15 +152,48 @@ export async function getPayrollDraft(
            (select n from days)::text as days_in_period,
            -- capped at the period: the CHECK would refuse more, and a
            -- silent refusal at insert time is worse than an honest cap here
-           least(coalesce(m.days_paid, 0), (select n from days))::text as days_paid,
-           coalesce(s.base_salary, 0)::text as base_salary,
-           (s.base_salary is null) as unsalaried,
-           round(coalesce(s.base_salary, 0)
-                 * least(coalesce(m.days_paid, 0), (select n from days))
+           least(coalesce(m.days_paid, 0) + coalesce(holiday.paid_days, 0) + coalesce(leave_credit.paid_days, 0), (select n from days))::text as days_paid,
+           coalesce(salary.base_salary, s.base_salary, 0)::text as base_salary,
+           (coalesce(salary.base_salary, s.base_salary) is null) as unsalaried,
+           round(coalesce(salary.base_salary, s.base_salary, 0)
+                 * least(coalesce(m.days_paid, 0) + coalesce(holiday.paid_days, 0) + coalesce(leave_credit.paid_days, 0), (select n from days))
                  / (select n from days), 2)::text as earned,
            greatest(coalesce(adv.total, 0) - coalesce(rc.total, 0), 0)::text as advance_outstanding
     from staff s
     left join sections sec on sec.id = s.section_id
+    left join lateral (
+      select count(*)::numeric as paid_days
+      from staff_holidays h
+      where h.restaurant_id = s.restaurant_id and h.paid = true
+        and h.holiday_date between ${from}::date and ${to}::date
+        and not exists (
+          select 1 from attendance_current ah
+          where ah.restaurant_id = s.restaurant_id and ah.staff_id = s.id
+            and ah.att_date = h.holiday_date
+        )
+    ) holiday on true
+    left join leave_marks lm on lm.staff_id = s.id
+    left join lateral (
+      select least(coalesce(lm.leave_days, 0), coalesce(policy.paid_days, 0)) as paid_days
+      from (select coalesce((
+        select p.paid_days
+        from staff_leave_policy_assignments a
+        join leave_policies p on p.restaurant_id = a.restaurant_id and p.id = a.policy_id
+        where a.restaurant_id = s.restaurant_id and a.staff_id = s.id
+          and a.effective_from <= ${to}::date
+          and (a.effective_to is null or a.effective_to >= ${from}::date)
+          and p.status = 'active'
+        order by a.effective_from desc limit 1
+      ), 0::numeric) as paid_days) policy
+    ) leave_credit on true
+    left join lateral (
+      select ss.base_salary
+      from salary_structures ss
+      where ss.restaurant_id = s.restaurant_id and ss.staff_id = s.id
+        and ss.effective_from <= ${to}::date
+      order by ss.effective_from desc
+      limit 1
+    ) salary on true
     left join marks m on m.staff_id = s.id
     left join advanced adv on adv.staff_id = s.id
     left join recovered rc on rc.staff_id = s.id

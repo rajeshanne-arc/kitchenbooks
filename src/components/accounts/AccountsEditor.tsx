@@ -15,7 +15,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { AccountBalanceRow, MoneyAccount, MoneyAccountKind, SaveMoneyAccountInput } from '@/lib/types'
+import type { AccountBalanceRow, AccountingAccount, MoneyAccount, MoneyAccountKind, SaveMoneyAccountInput } from '@/lib/types'
 import { createMoneyAccount, updateMoneyAccount } from '@/server/accounts-actions'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -33,6 +33,7 @@ import { LockedField } from '@/components/books/Locked'
 import { toast } from '@/components/Toasts'
 import DiscardControl from '@/components/books/DiscardControl'
 import SaveAck from '@/components/SaveAck'
+import { linkMoneyAccount } from '@/server/accounting-accounts'
 
 const KIND_LABEL: Record<MoneyAccountKind, string> = {
   cash: 'Cash',
@@ -80,9 +81,11 @@ const toDraft = (a: MoneyAccount): SaveMoneyAccountInput => ({
 export default function AccountsEditor({
   initialAccounts,
   balances,
+  ledgerAccounts = [],
 }: {
   initialAccounts: MoneyAccount[]
   balances: AccountBalanceRow[]
+  ledgerAccounts?: AccountingAccount[]
 }) {
   const router = useRouter()
   const [accounts, setAccounts] = useState(initialAccounts)
@@ -91,6 +94,7 @@ export default function AccountsEditor({
   const [adding, setAdding] = useState(initialAccounts.length === 0)
   const [busy, setBusy] = useState(false)
   const [ack, setAck] = useState<{ headline: string; sub?: string } | null>(null)
+  const [linking, setLinking] = useState<string | null>(null)
 
   const balanceOf = (id: string) => balances.find((b) => b.account_id === id) ?? null
 
@@ -140,6 +144,16 @@ export default function AccountsEditor({
     setEditing(null)
     setAdding(true)
     setDraft(blank())
+  }
+
+  async function linkLedger(moneyAccountId: string, accountingAccountId: string) {
+    if (accountingAccountId === '' || linking !== null) return
+    setLinking(moneyAccountId)
+    const result = await linkMoneyAccount({ moneyAccountId, accountingAccountId })
+    setLinking(null)
+    if (!result.ok) return toast(result.error, 'error')
+    toast('Ledger account linked', 'ok')
+    setAccounts((prev) => prev.map((account) => account.id === moneyAccountId ? { ...account, accounting_account_id: accountingAccountId } : account))
   }
 
   const groups = ORDER.map((k) => ({ kind: k, rows: accounts.filter((a) => a.kind === k) })).filter(
@@ -205,6 +219,21 @@ export default function AccountsEditor({
                           <span className="block truncate font-mono text-[11px] text-stone-500">
                             {a.identifier}
                           </span>
+                        )}
+                        {ledgerAccounts.length > 0 && (
+                          <select
+                            aria-label={`Ledger account for ${a.name}`}
+                            className={`${selectCls} mt-1 max-w-[18rem] py-0 text-[11px]`}
+                            value={a.accounting_account_id ?? ''}
+                            disabled={linking !== null || a.status !== 'active'}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => void linkLedger(a.id, e.target.value)}
+                          >
+                            <option value="">— no ledger mapping —</option>
+                            {ledgerAccounts.filter((account) => account.status === 'active').map((account) => (
+                              <option key={account.id} value={account.id}>{account.code} · {account.name}</option>
+                            ))}
+                          </select>
                         )}
                       </span>
                       {/* account_balances covers ACTIVE accounts only, so a

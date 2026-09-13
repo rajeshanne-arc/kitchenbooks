@@ -173,6 +173,21 @@ export async function saveVendorReturn(raw: VendorReturnInput): Promise<VendorRe
       if (n !== input.lines.length) {
         throw new VendorReturnRefusal('Verification failed: the lines did not all reach the return')
       }
+      await tx`
+        insert into stock_lot_movements (restaurant_id, lot_id, quantity_delta, movement_date, movement_type, source_id, source_line_id, location_id, entered_by)
+        select v.restaurant_id, l.id, -v.qty, h.return_date, 'return', h.id, v.id, l.location_id, ${by}
+        from vendor_return_lines v
+        join vendor_returns h on h.restaurant_id = v.restaurant_id and h.id = v.vendor_return_id
+        join stock_lots l on l.restaurant_id = v.restaurant_id and l.source_purchase_line_id = v.source_purchase_line_id
+        where v.restaurant_id = ${rid} and v.vendor_return_id = ${header.id}`
+      const [negative] = await tx<{ bad: boolean }[]>`
+        select exists (
+          select 1 from stock_lots l
+          where l.restaurant_id = ${rid}
+            and l.id in (select lot_id from stock_lot_movements where restaurant_id = ${rid} and source_id = ${header.id})
+            and l.initial_qty + coalesce((select sum(m.quantity_delta) from stock_lot_movements m where m.restaurant_id = l.restaurant_id and m.lot_id = l.id), 0) < 0
+        ) as bad`
+      if (negative?.bad) throw new VendorReturnRefusal('The return exceeds the available quantity in its receipt lot')
       return header
     })
 
@@ -259,6 +274,10 @@ export async function voidVendorReturn(id: string): Promise<{ ok: true } | { ok:
                                          reason, source_purchase_line_id)
         select restaurant_id, ${rev.id}, item_id, qty, rate, reason, source_purchase_line_id
         from vendor_return_lines where vendor_return_id = ${id}`
+      await tx`
+        insert into stock_lot_movements (restaurant_id, lot_id, quantity_delta, movement_date, movement_type, source_id, source_line_id, location_id, entered_by)
+        select restaurant_id, lot_id, -quantity_delta, ${orig.return_date}, 'return', ${rev.id}, source_line_id, location_id, ${by}
+        from stock_lot_movements where restaurant_id = ${rid} and source_id = ${id} and movement_type = 'return'`
 
       const [check] = await tx<{ n: number }[]>`
         select count(*)::int as n from vendor_return_lines where vendor_return_id = ${rev.id}`

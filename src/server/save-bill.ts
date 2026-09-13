@@ -10,6 +10,7 @@
 import { z } from 'zod'
 import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { createPurchaseLots } from '@/server/lot-ledger'
 import { enteredBy } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
 import {
@@ -22,6 +23,7 @@ import {
   sumMicro,
 } from '@/lib/money'
 import type { SaveBillInput, SaveBillResult } from '@/lib/types'
+import { postJournalEntryTx } from '@/server/journal'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const moneyStr = z.string().regex(/^\d{1,5}(\.\d{1,2})?$/, 'must be a plain amount with up to 2 decimals')
@@ -31,6 +33,7 @@ const nameStr = z.string().trim().min(1).max(120)
 
 const Input = z.object({
   billDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  billNo: z.string().trim().max(120).optional(),
   /** THE ORDER THIS BILL FULFILS, if it fulfils one.
    *
    *  Optional, and it must stay optional: a delivery can arrive against no
@@ -232,11 +235,27 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
       }
 
       const [purchase] = await tx<{ id: string }[]>`
-        insert into purchases (restaurant_id, bill_date, vendor_id, goods_total, gst_total, transport, entered_by, doc_no, purchase_order_id)
+        insert into purchases (restaurant_id, bill_date, vendor_id, bill_no, goods_total, gst_total, transport, entered_by, doc_no, purchase_order_id)
         values (${rid}, ${input.billDate}, ${vendorId},
+                ${input.billNo ?? null},
                 ${goodsTotal}::numeric, ${paiseToString(gstPaise)}::numeric, ${paiseToString(transportPaise)}::numeric,
                 ${by}, ${docNo}, ${poId})
         returning id`
+
+      const mappings = await tx<{ mapping_key: string; account_id: string; account_type: string }[]>`
+        select m.mapping_key, m.account_id, a.account_type
+        from accounting_posting_mappings m
+        join accounting_accounts a on a.restaurant_id = m.restaurant_id and a.id = m.account_id
+        where m.restaurant_id = ${rid}
+          and m.mapping_key = any(${['inventory_asset', 'input_tax_asset', 'vendor_payable']})
+          and a.status = 'active'`
+      const mapping = new Map(mappings.map((row) => [row.mapping_key, row]))
+      if (!mapping.get('inventory_asset') || mapping.get('inventory_asset')?.account_type !== 'asset') {
+        throw new BillError('Configure an asset ledger account for inventory before recording a purchase')
+      }
+      if (!mapping.get('vendor_payable') || mapping.get('vendor_payable')?.account_type !== 'liability') {
+        throw new BillError('Configure the vendor-payable liability mapping before recording a purchase')
+      }
 
       // A DELIVERY MOVES THE ORDER ON, the way an issue flips an indent. Only
       // sent → received: a part-delivered order stays where it is, and only a
@@ -274,6 +293,82 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
         expiry_date: l.expiryDate === undefined || l.expiryDate === '' ? null : l.expiryDate,
       }))
       await tx`insert into purchase_lines ${tx(lineRows, 'restaurant_id', 'purchase_id', 'item_id', 'qty', 'rate', 'gst_amount', 'transport_alloc', 'expiry_date')}`
+      await createPurchaseLots(tx, rid, purchase.id, by)
+
+      // ASSESS, DO NOT ALTER, the invoice against its cited order. This is an
+      // evidence row: the bill remains immutable and later review can see
+      // exactly what was compared when it was received.
+      const [match] = await tx<{ status: 'unmatched' | 'matched' | 'partial' | 'exception'; quantity_exception: boolean; price_exception: boolean; snapshot: unknown }[]>`
+        with ordered as (
+          select l.item_id, l.qty::numeric as ordered_qty, l.rate::numeric as ordered_rate
+          from purchase_order_lines l
+          where l.restaurant_id = ${rid} and l.purchase_order_id = ${poId}::uuid
+        ), delivered as (
+          select pl.item_id, sum(pl.qty)::numeric as delivered_qty,
+                 bool_or(o.item_id is not null and pl.rate::numeric <> o.ordered_rate) as price_exception
+          from purchase_lines pl
+          join purchases p on p.restaurant_id = pl.restaurant_id and p.id = pl.purchase_id
+          left join ordered o on o.item_id = pl.item_id
+          where pl.restaurant_id = ${rid} and p.purchase_order_id = ${poId}::uuid
+          group by pl.item_id
+        ), comparison as (
+          select o.item_id, o.ordered_qty, o.ordered_rate,
+                 coalesce(d.delivered_qty, 0)::numeric as delivered_qty,
+                 coalesce(d.price_exception, false) as price_exception,
+                 false as unlisted
+          from ordered o left join delivered d on d.item_id = o.item_id
+          union all
+          select d.item_id, 0, null, d.delivered_qty, coalesce(d.price_exception, false), true
+          from delivered d left join ordered o on o.item_id = d.item_id
+          where o.item_id is null
+        ), flags as (
+          select coalesce(bool_or(delivered_qty > ordered_qty or unlisted), false) as quantity_exception,
+                 coalesce(bool_or(price_exception), false) as price_exception,
+                 coalesce(bool_and(delivered_qty = ordered_qty and not unlisted), false) as all_received,
+                 coalesce(bool_or(delivered_qty < ordered_qty), false) as has_short
+          from comparison
+        )
+        select case when ${poId}::uuid is null then 'unmatched'::text
+                    when quantity_exception or price_exception then 'exception'::text
+                    when all_received then 'matched'::text
+                    when has_short then 'partial'::text
+                    else 'exception'::text end as status,
+               quantity_exception, price_exception,
+               jsonb_build_object('purchase_order_id', ${poId}::uuid, 'lines', coalesce((select jsonb_agg(to_jsonb(comparison)) from comparison), '[]'::jsonb)) as snapshot
+        from flags`
+      if (!match) throw new BillError('Could not assess the purchase against its order')
+      const matchSnapshot = typeof match.snapshot === 'string' ? match.snapshot : JSON.stringify(match.snapshot)
+      await tx`
+        insert into purchase_invoice_matches
+          (restaurant_id, purchase_id, purchase_order_id, status, quantity_exception, price_exception, snapshot, assessed_by)
+        values (${rid}, ${purchase.id}, ${poId}, ${match.status}, ${match.quantity_exception}, ${match.price_exception}, ${matchSnapshot}::jsonb, ${by})`
+
+      const [taxSetting] = await tx<{ creditable: boolean }[]>`
+        select coalesce((select value = 'true' from settings
+                         where restaurant_id = ${rid} and key = 'input_tax_creditable'), false) as creditable`
+      const [totals] = await tx<{ goods: string; gst: string; transport: string; total: string }[]>`
+        select goods_total::text as goods, gst_total::text as gst,
+               transport::text as transport, bill_total::text as total
+        from purchases where id = ${purchase.id} and restaurant_id = ${rid}`
+      if (!totals) throw new BillError('Could not read the purchase totals before journal posting')
+      const journalLines = [] as { accountId: string; debit?: string; credit?: string; description: string }[]
+      if (taxSetting.creditable && Number(totals.gst) > 0) {
+        const tax = mapping.get('input_tax_asset')
+        if (!tax || tax.account_type !== 'asset') throw new BillError('Input tax is marked creditable, so configure its asset ledger mapping')
+        journalLines.push({ accountId: mapping.get('inventory_asset')!.account_id, debit: (Number(totals.goods) + Number(totals.transport)).toFixed(2), description: 'Inventory and transport' })
+        journalLines.push({ accountId: tax.account_id, debit: totals.gst, description: 'Input tax' })
+      } else {
+        journalLines.push({ accountId: mapping.get('inventory_asset')!.account_id, debit: totals.total, description: 'Inventory purchase' })
+      }
+      journalLines.push({ accountId: mapping.get('vendor_payable')!.account_id, credit: totals.total, description: 'Vendor payable' })
+      await postJournalEntryTx(tx, rid, {
+        date: input.billDate,
+        sourceType: 'purchase',
+        sourceId: purchase.id,
+        memo: `Purchase ${docNo}`,
+        postedBy: by ?? undefined,
+        lines: journalLines,
+      })
 
       return { purchaseId: purchase.id, vendorId, vendorCreated, createdItems }
     })

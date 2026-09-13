@@ -9,6 +9,7 @@ import { currentTenant, tenantGuc } from '@/lib/tenant'
 
 /** True while a session lookup is resolving the tenant — see txn(). */
 const resolvingSession = new AsyncLocalStorage<boolean>()
+const activeTransaction = new AsyncLocalStorage<postgres.TransactionSql>()
 
 declare global {
   var __kbSql: ReturnType<typeof postgres> | undefined
@@ -19,7 +20,10 @@ function connect() {
   if (!url) throw new Error('DATABASE_URL is not set — copy .env.example to .env.local')
   return postgres(url, {
     prepare: false, // Supavisor transaction mode does not support prepared statements
-    ssl: 'require',
+    // TLS is mandatory by default. A local acceptance database can opt out
+    // explicitly because it is reached through a Unix socket on the same
+    // workstation; no deployment environment changes its secure default.
+    ssl: process.env.KB_DB_SSL === 'disable' ? false : 'require',
     // 12, not 4. At max:4 the pool DEADLOCKED in production: a group layout
     // (session + restaurant + tab list + tab badges) and the page it wraps
     // check out connections concurrently, and the heaviest page — the item
@@ -50,6 +54,9 @@ export const sql = globalThis.__kbSql ?? (globalThis.__kbSql = connect())
  * tenant and nothing is announced, which is correct for the smoke suites.
  */
 export async function txn<T>(fn: (tx: postgres.TransactionSql) => Promise<T>): Promise<T> {
+  const inherited = activeTransaction.getStore()
+  if (inherited !== undefined) return fn(inherited)
+
   // Resolved here rather than required at 65 call sites. An explicit
   // withTenant() wins when one is in scope — that is how a background job
   // or a provisioning script announces a tenant it was told about — and
@@ -99,10 +106,10 @@ export async function txn<T>(fn: (tx: postgres.TransactionSql) => Promise<T>): P
   // of a tenant table returns nothing under RLS, loudly and safely, instead
   // of quietly returning somebody else's rows.
   const guc = tenantGuc(tenant)
-  return sql.begin(async (tx) => {
+  return sql.begin(async (tx) => activeTransaction.run(tx, async () => {
     if (guc !== null) await tx.unsafe(guc)
     return fn(tx)
-  }) as Promise<T>
+  })) as Promise<T>
 }
 
 /**

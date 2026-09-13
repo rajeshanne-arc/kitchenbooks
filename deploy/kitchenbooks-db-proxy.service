@@ -1,0 +1,18 @@
+[Unit]
+Description=KitchenBooks PostgreSQL TLS loopback proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/kitchenbooks
+Environment=KB_DB_TLS_PROXY_PORT=55432
+Environment=KB_DB_TARGET_PORT=5432
+Environment=KB_DB_TLS_KEY=%h/apps/kitchenbooks/.secrets/db-proxy.key
+Environment=KB_DB_TLS_CERT=%h/apps/kitchenbooks/.secrets/db-proxy.crt
+ExecStart=%h/.nvm/versions/node/v22.23.1/bin/node %h/apps/kitchenbooks/deploy/postgres-tls-proxy.mjs
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -10,6 +10,22 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # KitchenBooks — rules for working in this repo
 
+## Mobile completion gate
+
+For the mobile-app implementation, the continuity ledger is the source of
+truth. Before ending a work turn, read its `Current known gap` and `Next exact
+work sequence`, complete the next item, and update the ledger with evidence.
+Do not send a progress report while those items remain. The only acceptable
+early stop is a genuinely external blocker after all safe workspace and
+authorized-server alternatives have been exhausted; state that blocker and
+leave the exact next action recorded. A final report is allowed only when the
+ledger's pending list is empty or the documented external blocker is real and
+reproducible.
+
+This is a completion gate, not a reminder. Every implementation turn must
+finish with the verification commands in the mobile ledger, and deployment
+work must include a live service check.
+
 ## WRITTEN DOWN WAS NOT ENOUGH
 
 Read this before the rules, because it is about them.
@@ -4661,7 +4677,7 @@ What a `SECURITY DEFINER` accessor actually buys, stated exactly:
 The app still handles the key it uses, for as long as the request takes.
 Nobody should believe otherwise.
 
-## THE FIVE TABLES THAT MAY BE DELETED FROM — one reason in five costumes
+## THE SEVEN TABLES THAT MAY BE DELETED FROM — one reason in seven costumes
 
 `kb_app` holds DELETE on exactly six tables, and the count is not the point;
 the reason is, and it is the same reason every time:
@@ -4678,6 +4694,7 @@ the reason is, and it is the same reason every time:
 | `reconciliation_matches` | judgement | a wrong match was never true, so there is nothing to reverse |
 | `pos_orders` | cache | Petpooja holds the truth; a fetch is a photocopy |
 | `pos_lines` | cache | same, and they follow their order by cascade |
+| `recipe_line_substitutions` | intention | a substitution is part of an editable recipe line; removing it changes the recipe definition, not an historical event |
 
 `smoke:a2` reads `table_privileges` and asserts the list BY VALUE, and that
 every name on it appears in this file. **A sixth table appearing without its
@@ -4953,7 +4970,7 @@ sharper stake than the one written here yesterday. It also means the tier-2 keye
 three: `where id = $1` alone crosses the boundary today. Every query in
 `meters-queries.ts` names `restaurant_id` explicitly and says why in a comment.
 
-`migrations/meters_attachments_rls.sql` is **written and NOT applied**;
+The current attachment boundary is recorded in `migrations/attachments_rls.sql`;
 `audit:tenancy --strict` stays red until it is. `smoke:a2` holds the general
 form instead of the instance: **every tenant table without RLS must be named in
 a written migration**. That passes now, passes after the migration lands, and
@@ -4980,8 +4997,8 @@ That is the point worth keeping: three earlier `created_at` ties in this file
 were each found by reasoning about one table, and this one was found by a probe
 doing the ordinary thing a user does.
 
-**Fixed STRUCTURALLY rather than by relying on the app.** Migration
-`meters_attachments_rls_and_latest_wins_tiebreak` gave `attendance`,
+**Fixed STRUCTURALLY rather than by relying on the app.** The tiebreak migration
+gave `attendance`,
 `day_closes`, `kitchen_closings` and `meter_readings` a `bigserial seq`, and all
 four views now order by `created_at desc, seq desc`. **`created_at` still
 leads**, because it is the truth across transactions; `seq` only decides ties
@@ -5042,7 +5059,7 @@ says `kb_app` may INSERT into `attendance`, and that is true and useless — the
 insert still fails. The privilege that decides it lives on the sequence, and the
 link from the column to the sequence is in `pg_depend`.
 
-`migrations/kb_app_sequence_usage.sql` is written and **NOT applied**;
+The sequence grant change is part of the applied schema;
 `smoke:a2` is red until it is. The gate holds the CLASS rather than these four:
 it walks every table `kb_app` may INSERT into, finds every column whose default
 is a `nextval()`, and fails naming any whose sequence `kb_app` cannot use — so

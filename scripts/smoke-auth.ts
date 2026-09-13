@@ -17,6 +17,8 @@ import assert from 'node:assert/strict'
 process.loadEnvFile('.env.local')
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
   const { getRestaurant } = await import('../src/server/queries')
   const {
     createFirstOwner, createUser, listUsers, resetPassword, updateUser, verifyCredentials,
@@ -24,7 +26,7 @@ async function main() {
   const { signSession, verifySession } = await import('../src/lib/session')
   const { ALL_ROLES, canAccess, deniedHint, navFor } = await import('../src/lib/roles')
   const { getSessionUser } = await import('../src/server/current-user')
-  const { sql } = await import('../src/lib/db')
+  const { sql, tsql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
@@ -162,7 +164,7 @@ async function main() {
 
   // ---- 8. the database refuses DELETE — retire is the only removal
   await assert.rejects(
-    async () => sql`delete from app_users where username like 'zz-%'`,
+    async () => tsql`delete from app_users where username like 'zz-%'`,
     /permission denied/i,
     'kb_app must hold no DELETE on app_users',
   )
@@ -173,6 +175,7 @@ async function main() {
   console.log('ALL AUTH SMOKE ASSERTIONS PASSED')
   console.log('CLEANUP_IDS ' + JSON.stringify({ app_users_like: 'zz-%', count: (await listUsers(rid)).length }))
   await sql.end()
+  })
 }
 
 main().catch((e) => {

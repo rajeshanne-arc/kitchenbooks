@@ -127,6 +127,10 @@ export default async function PayrollRunPage({ params }: { params: Promise<{ id:
           canApprove={isOwner}
         />
 
+        <Link href={`/accounts/payroll/runs/${run.id}/payslips`} className="inline-block text-sm font-medium text-emerald-700 underline underline-offset-2">
+          View / print payslips →
+        </Link>
+
         <section className={cardCls}>
           <h2 className={sectionHeadCls}>The lines</h2>
           <p className="mt-1.5 text-sm text-stone-700">

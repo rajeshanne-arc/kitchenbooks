@@ -17,7 +17,7 @@ export async function listMoneyAccounts(
   showClosed = false,
 ): Promise<MoneyAccount[]> {
   return tsql<MoneyAccount[]>`
-    select id, name, kind, identifier, is_till,
+    select id, name, kind, identifier, is_till, accounting_account_id,
            opening_balance::text as opening_balance,
            opening_date::text as opening_date,
            sort_order, status
@@ -33,7 +33,7 @@ export async function listMoneyAccounts(
 
 export async function getMoneyAccount(restaurantId: string, id: string): Promise<MoneyAccount | null> {
   const rows = await tsql<MoneyAccount[]>`
-    select id, name, kind, identifier, is_till,
+    select id, name, kind, identifier, is_till, accounting_account_id,
            opening_balance::text as opening_balance,
            opening_date::text as opening_date,
            sort_order, status

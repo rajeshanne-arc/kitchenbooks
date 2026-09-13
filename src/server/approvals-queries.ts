@@ -837,7 +837,8 @@ export type Waiting = {
 }
 
 /**
- * FOUR THINGS WAIT ON RAJESH IN FOUR PLACES HE WOULD HAVE TO REMEMBER TO
+ * Several things can wait on Rajesh in separate places he would otherwise
+ * have to remember to
  * VISIT. This is the one page that says what is waiting — including for the
  * things it does not itself execute.
  *
@@ -847,7 +848,7 @@ export type Waiting = {
  * to recognise it and a link, and nothing you could approve from.
  */
 export async function getWaiting(restaurantId: string): Promise<Waiting> {
-  const [approvals, suggestions, payrollRuns] = await Promise.all([
+  const [approvals, suggestions, payrollRuns, purchaseApprovals] = await Promise.all([
     listApprovals(restaurantId, true),
     tsql<{ id: string; list_key: string; value: string; suggested_by: string | null; seen_count: number }[]>`
       select id, list_key, value, suggested_by, seen_count
@@ -865,12 +866,15 @@ export async function getWaiting(restaurantId: string): Promise<Waiting> {
       from payroll_runs r
       where r.restaurant_id = ${restaurantId} and r.status = 'draft'
       order by r.period_start`,
+    tsql<{ n: number }[]>`
+      select count(*)::int as n from purchase_order_approvals
+      where restaurant_id = ${restaurantId} and status = 'pending'`,
   ])
   return {
     approvals,
     suggestions,
     payrollRuns,
-    total: approvals.length + suggestions.length + payrollRuns.length,
+    total: approvals.length + suggestions.length + payrollRuns.length + (purchaseApprovals[0]?.n ?? 0),
   }
 }
 
@@ -886,7 +890,9 @@ export async function countWaiting(restaurantId: string, tx?: postgres.Transacti
   const [row] = await q<{ n: number }[]>`
     select (select count(*) from approval_requests where restaurant_id = ${restaurantId} and status = 'pending')::int
          + (select count(*) from list_suggestions where restaurant_id = ${restaurantId} and status = 'pending')::int
-         + (select count(*) from payroll_runs where restaurant_id = ${restaurantId} and status = 'draft')::int
+      + (select count(*) from payroll_runs where restaurant_id = ${restaurantId} and status = 'draft')::int
+         + (select count(*) from purchase_order_approvals where restaurant_id = ${restaurantId} and status = 'pending')::int
+         + (select count(*) from stock_adjustment_requests where restaurant_id = ${restaurantId} and status = 'pending')::int
       as n`
   return row?.n ?? 0
 }

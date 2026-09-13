@@ -7,6 +7,10 @@ import {
   type ApprovalKind,
 } from '@/server/approvals-queries'
 import { getListSuggestions } from '@/server/settings'
+import { listPendingPurchaseApprovals } from '@/server/po-queries'
+import PurchaseApprovalsQueue from '@/components/settings/PurchaseApprovalsQueue'
+import { listPendingStockAdjustmentApprovals } from '@/server/adjustment-queries'
+import StockAdjustmentApprovalsQueue from '@/components/settings/StockAdjustmentApprovalsQueue'
 import ApprovalsClient, { type QueueItem } from '@/components/settings/ApprovalsClient'
 import SuggestionsQueue from '@/components/settings/SuggestionsQueue'
 import { cardCls, codeCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
@@ -17,9 +21,11 @@ export const dynamic = 'force-dynamic'
 
 export default async function ApprovalsPage() {
   const restaurant = await getRestaurant()
-  const [waiting, suggestions] = await Promise.all([
+  const [waiting, suggestions, purchaseApprovals, adjustmentApprovals] = await Promise.all([
     getWaiting(restaurant.id),
     getListSuggestions(restaurant.id),
+    listPendingPurchaseApprovals(restaurant.id),
+    listPendingStockAdjustmentApprovals(restaurant.id),
   ])
 
   // The fresh check, run now, for everything still pending. Not the authority
@@ -43,7 +49,8 @@ export default async function ApprovalsPage() {
     }),
   )
 
-  const nothing = waiting.total === 0
+  const totalWaiting = waiting.total + adjustmentApprovals.length
+  const nothing = totalWaiting === 0
 
   return (
     <div className="mt-4 space-y-4">
@@ -52,7 +59,7 @@ export default async function ApprovalsPage() {
         <p className={pageSubCls}>
           {nothing
             ? 'Everything that needs you, in one place.'
-            : `${waiting.total} thing${waiting.total === 1 ? '' : 's'} waiting on you.`}
+            : `${totalWaiting} thing${totalWaiting === 1 ? '' : 's'} waiting on you.`}
         </p>
       </div>
 
@@ -61,7 +68,7 @@ export default async function ApprovalsPage() {
           pleased to find empty into four things to check and dismiss. So an
           empty queue is one sentence and nothing else — the same law as every
           badge in the app being silent at zero, applied to a whole screen. */}
-      {nothing ? (
+      {nothing && purchaseApprovals.length === 0 ? (
         <section className={cardCls}>
           <h2 className="font-display text-lg font-semibold text-emerald-800">Nothing is waiting on you.</h2>
           <p className="mt-1.5 text-sm text-stone-600">
@@ -72,6 +79,8 @@ export default async function ApprovalsPage() {
         </section>
       ) : (
         <>
+          {purchaseApprovals.length > 0 && <PurchaseApprovalsQueue rows={purchaseApprovals} />}
+          {adjustmentApprovals.length > 0 && <StockAdjustmentApprovalsQueue rows={adjustmentApprovals} />}
           {items.length > 0 && <ApprovalsClient items={items} />}
 
           {/* A POINTER, NEVER A COPY. Approving payroll means seeing the whole

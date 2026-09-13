@@ -25,11 +25,14 @@ const EVERYONE: Role[] = ALL_ROLES
 
 // First prefix match wins — keep more specific paths above their parents.
 const RULES: [prefix: string, roles: Role[]][] = [
+  ['/account', EVERYONE],
+  ['/sops', EVERYONE],
   // --- accountant group ------------------------------------------------
   // The accountant works from home and their screen is a QUEUE, not a form.
   // The owner is here too: they own the business, and someone must be able
   // to work the loop when there is no accountant yet.
   ['/accounts', ['accountant', 'owner']],
+  ['/accounts/registers/opening-balances', ['accountant', 'owner']],
 
   // --- owner group ---------------------------------------------------
   //
@@ -49,6 +52,7 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // of the same master under their own group. It is reached from
   // /accounts/money.
   ['/owner/setup/accounts', ['owner', 'accountant']],
+  ['/owner/setup/accounts/import', ['owner', 'accountant']],
   // METERS: the master, the rate and the analysis. Admitted to the accountant
   // for exactly the reason accounts is — the rate is the number every estimate
   // turns on, and they are the one holding the real electricity bill up
@@ -83,6 +87,7 @@ const RULES: [prefix: string, roles: Role[]][] = [
   ['/kitchen', ['chef', 'manager', 'owner']],
 
   // --- store group -----------------------------------------------------
+  ['/store/purchasing/import', ['store', 'manager', 'owner']],
   // BILL PHOTOS ARE A NAVIGABLE ROUTE, so they are in the matrix like any
   // other. Most API routes never appear here because nothing LINKS to them —
   // they are fetched by a component that is already on an admitted page. This
@@ -90,8 +95,10 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // a door that is not in the matrix is a door nothing governs. The handler
   // asks canAccess for THIS path, so the route and the link agree by
   // construction rather than by two lists being kept in step.
-  ['/api/attachments', ['store', 'manager', 'owner']],
+  ['/api/attachments', ['cashier', 'store', 'manager', 'owner']],
   ['/store', ['store', 'manager', 'owner']],
+  ['/store/masters/vendors/import', ['store', 'manager', 'owner']],
+  ['/store/masters/items/import', ['store', 'manager', 'owner']],
 
   // --- sales group (cashier) -------------------------------------------
   // THE MAPPING QUEUE ADMITS THE CHEF. It is the one sales path they may
@@ -101,6 +108,7 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // can actually answer is worth one rule.
   ['/sales/books/sales/mapping', ['cashier', 'chef', 'manager', 'owner']],
   ['/sales', ['cashier', 'manager', 'owner']],
+  ['/sales/books/import', ['cashier', 'manager', 'owner', 'accountant']],
 
   // --- staff group (manager) -------------------------------------------
   // THE EMPLOYEE PROFILE ADMITS THE ACCOUNTANT. A person is the second unit
@@ -118,6 +126,7 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // owner) — which is where this repo says a gate belongs anyway, because a
   // form is never the check.
   ['/staff/people/employees/new', ['manager', 'owner']],
+  ['/staff/people/employees/import', ['manager', 'owner']],
   ['/staff/people/employees', ['manager', 'owner', 'accountant']],
   ['/staff', ['manager', 'owner']],
 

@@ -10,11 +10,13 @@ import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { cardCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import { businessToday } from '@/server/business-day'
+import { getSessionUser } from '@/server/current-user'
 
 export const dynamic = 'force-dynamic'
 
 export default async function CashPage() {
   const restaurant = await getRestaurant()
+  const user = await getSessionUser()
   const today = await businessToday()
   const [prefill, handedToNames, trend, ladder, accounts, meters, unread] = await Promise.all([
     getClosePrefill(restaurant.id, today),
@@ -49,7 +51,7 @@ export default async function CashPage() {
         {/* Renders NOTHING when no meter is set up — this restaurant is on
             cylinders and does not meter electricity, which is the ordinary
             state and not a gap. */}
-        <MeterReadingEntry meters={meters} unread={unreadReadable} date={today} />
+        <MeterReadingEntry meters={meters} unread={unreadReadable} date={today} canArchive={user !== null && ['manager', 'owner'].includes(user.role)} />
 
         {trend.length > 0 && (
           <section className={cardCls}>

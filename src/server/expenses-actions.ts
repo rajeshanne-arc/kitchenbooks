@@ -15,7 +15,8 @@ import { nextDocNo } from '@/server/doc-numbers'
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
 import { getCasualLabour, getContractBill, getExpense } from '@/server/expenses-queries'
-import { parseMoney } from '@/lib/money'
+import { parseMoney, paiseToString } from '@/lib/money'
+import { postJournalEntryTx } from '@/server/journal'
 import type {
   CasualLabourRow,
   SaveCasualLaboursInput,
@@ -125,6 +126,15 @@ export async function saveExpenses(raw: SaveExpensesInput): Promise<SaveExpenses
 
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [mapping] = await tx<{ expense_account_id: string | null }[]>`
+        select account_id as expense_account_id
+        from accounting_posting_mappings m
+        join accounting_accounts a on a.restaurant_id = m.restaurant_id and a.id = m.account_id
+        where m.restaurant_id = ${rid} and m.mapping_key = 'operating_expense'
+          and a.status = 'active' and a.account_type = 'expense'`
+      if (!mapping?.expense_account_id) {
+        throw new ExpenseError('Configure the operating-expense ledger mapping before recording an expense')
+      }
       const ids: string[] = []
       for (const [i, l] of input.lines.entries()) {
         // The expense's own date, not today: a receipt entered a week late
@@ -138,6 +148,27 @@ export async function saveExpenses(raw: SaveExpensesInput): Promise<SaveExpenses
                   ${l.amount}, ${l.paidVia},
                   ${l.note === '' ? null : l.note}, ${by}, ${accountIds[i]}, ${docNo})
           returning id`
+        const amountPaise = parseMoney(l.amount)
+        if (amountPaise === null) throw new ExpenseError('Expense amount could not be represented exactly')
+        const [money] = await tx<{ accounting_account_id: string | null; account_type: string | null }[]>`
+          select ma.accounting_account_id, a.account_type
+          from money_accounts ma
+          left join accounting_accounts a on a.restaurant_id = ma.restaurant_id and a.id = ma.accounting_account_id
+          where ma.restaurant_id = ${rid} and ma.id = ${accountIds[i]} and ma.status = 'active'`
+        if (!money?.accounting_account_id || money.account_type !== 'asset') {
+          throw new ExpenseError(`“${l.category}” needs a money account mapped to an active asset ledger account`)
+        }
+        await postJournalEntryTx(tx, rid, {
+          date: input.date,
+          sourceType: 'operating_expense',
+          sourceId: row.id,
+          memo: `Expense ${docNo}`,
+          postedBy: by ?? undefined,
+          lines: [
+            { accountId: mapping.expense_account_id, debit: paiseToString(amountPaise) },
+            { accountId: money.accounting_account_id, credit: paiseToString(amountPaise) },
+          ],
+        })
         ids.push(row.id)
       }
       return ids
@@ -185,6 +216,26 @@ export async function voidExpense(id: string): Promise<VoidExpenseResult> {
         select restaurant_id, expense_date, category, payee, -amount, paid_via, 'void', id, ${by}, ${revDocNo}, account_id
         from expenses where id = ${id}
         returning id`
+      const originalJournal = await tx<{ account_id: string; debit: string; credit: string; description: string | null }[]>`
+        select l.account_id, l.debit::text as debit, l.credit::text as credit, l.description
+        from journal_entries e
+        join journal_lines l on l.restaurant_id = e.restaurant_id and l.journal_entry_id = e.id
+        where e.restaurant_id = ${rid} and e.source_type = 'operating_expense' and e.source_id = ${id}`
+      if (originalJournal.length > 0) {
+        await postJournalEntryTx(tx, rid, {
+          date: orig.expense_date,
+          sourceType: 'operating_expense',
+          sourceId: rev.id,
+          memo: `Reversal of expense ${id}`,
+          postedBy: by ?? undefined,
+          lines: originalJournal.map((line) => ({
+            accountId: line.account_id,
+            description: line.description ?? undefined,
+            debit: line.credit,
+            credit: line.debit,
+          })),
+        })
+      }
       const [check] = await tx<{ zeroed: boolean }[]>`
         select ((select amount from expenses where id = ${id})
               + (select amount from expenses where id = ${rev.id}) = 0) as zeroed`

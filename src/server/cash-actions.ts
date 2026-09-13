@@ -21,7 +21,8 @@ import {
   getVoucher,
 } from '@/server/cash-queries'
 import { nextDocNo } from '@/server/doc-numbers'
-import { parseMoney, parseQty } from '@/lib/money'
+import { parseMoney, parseQty, paiseToString } from '@/lib/money'
+import { postJournalEntryTx } from '@/server/journal'
 import type {
   CloseDayInput,
   CloseDayResult,
@@ -128,6 +129,15 @@ export async function saveOtherIncomes(raw: SaveOtherIncomesInput): Promise<Save
 
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [mapping] = await tx<{ revenue_account_id: string | null }[]>`
+        select account_id as revenue_account_id
+        from accounting_posting_mappings m
+        join accounting_accounts a on a.restaurant_id = m.restaurant_id and a.id = m.account_id
+        where m.restaurant_id = ${rid} and m.mapping_key = 'other_income_revenue'
+          and a.status = 'active' and a.account_type = 'revenue'`
+      if (!mapping?.revenue_account_id) {
+        throw new CashError('Configure the other-income revenue ledger mapping before recording income')
+      }
       const ids: string[] = []
       for (const [i, l] of input.lines.entries()) {
         if (l.unit !== '') {
@@ -141,6 +151,27 @@ export async function saveOtherIncomes(raw: SaveOtherIncomesInput): Promise<Save
                   ${l.buyer === '' ? null : cleanName(l.buyer)},
                   ${l.receivedBy === '' ? null : cleanName(l.receivedBy)}, ${by}, ${accountIds[i]})
           returning id`
+        const amountPaise = parseMoney(l.amount)
+        if (amountPaise === null) throw new CashError(`${l.item}: amount could not be represented exactly`)
+        const [money] = await tx<{ accounting_account_id: string | null; account_type: string | null }[]>`
+          select ma.accounting_account_id, a.account_type
+          from money_accounts ma
+          left join accounting_accounts a on a.restaurant_id = ma.restaurant_id and a.id = ma.accounting_account_id
+          where ma.restaurant_id = ${rid} and ma.id = ${accountIds[i]} and ma.status = 'active'`
+        if (!money?.accounting_account_id || money.account_type !== 'asset') {
+          throw new CashError(`${l.item}: the receiving money account needs an active asset ledger mapping`)
+        }
+        await postJournalEntryTx(tx, rid, {
+          date: input.date,
+          sourceType: 'other_income',
+          sourceId: row.id,
+          memo: `Other income ${l.item}`,
+          postedBy: by ?? undefined,
+          lines: [
+            { accountId: money.accounting_account_id, debit: paiseToString(amountPaise) },
+            { accountId: mapping.revenue_account_id, credit: paiseToString(amountPaise) },
+          ],
+        })
         ids.push(row.id)
       }
       return ids
@@ -256,6 +287,45 @@ export async function saveVouchers(raw: SaveVouchersInput): Promise<SaveVouchers
                   ${l.paidBy === 'owner' ? cleanName(l.ownerName) : null}, ${l.category},
                   ${l.note === '' ? null : l.note}, ${by}, ${l.isStockPurchase}, ${l.isCasualLabour}, ${accountIds[i]}, ${docNo})
           returning id`
+        const amountPaise = parseMoney(l.amount)
+        if (amountPaise === null) throw new CashError(`${l.paidTo}: amount could not be represented exactly`)
+        const expenseKey = l.isStockPurchase ? 'food_cost' : l.isCasualLabour ? 'labour_expense' : 'operating_expense'
+        const [expenseMapping] = await tx<{ account_id: string | null }[]>`
+          select m.account_id
+          from accounting_posting_mappings m
+          join accounting_accounts a on a.restaurant_id = m.restaurant_id and a.id = m.account_id
+          where m.restaurant_id = ${rid} and m.mapping_key = ${expenseKey}
+            and a.status = 'active' and a.account_type = 'expense'`
+        if (!expenseMapping?.account_id) throw new CashError(`Configure the ${expenseKey.replace('_', ' ')} ledger mapping before recording a voucher`)
+        let creditAccount: string | null = null
+        if (l.paidBy === 'owner') {
+          const [ownerMapping] = await tx<{ account_id: string | null }[]>`
+            select m.account_id
+            from accounting_posting_mappings m
+            join accounting_accounts a on a.restaurant_id = m.restaurant_id and a.id = m.account_id
+            where m.restaurant_id = ${rid} and m.mapping_key = 'owner_payable'
+              and a.status = 'active' and a.account_type = 'liability'`
+          creditAccount = ownerMapping?.account_id ?? null
+        } else {
+          const [money] = await tx<{ accounting_account_id: string | null; account_type: string | null }[]>`
+            select ma.accounting_account_id, a.account_type
+            from money_accounts ma
+            left join accounting_accounts a on a.restaurant_id = ma.restaurant_id and a.id = ma.accounting_account_id
+            where ma.restaurant_id = ${rid} and ma.id = ${accountIds[i]} and ma.status = 'active'`
+          if (money?.account_type === 'asset') creditAccount = money.accounting_account_id
+        }
+        if (!creditAccount) throw new CashError(`${l.paidTo}: the payment source needs a valid asset or owner-payable ledger mapping`)
+        await postJournalEntryTx(tx, rid, {
+          date: input.date,
+          sourceType: 'cash_voucher',
+          sourceId: row.id,
+          memo: `Cash voucher ${docNo}`,
+          postedBy: by ?? undefined,
+          lines: [
+            { accountId: expenseMapping.account_id, debit: paiseToString(amountPaise) },
+            { accountId: creditAccount, credit: paiseToString(amountPaise) },
+          ],
+        })
         ids.push(row.id)
       }
       return ids

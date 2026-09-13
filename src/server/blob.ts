@@ -1,4 +1,8 @@
 import 'server-only'
+import { createReadStream } from 'node:fs'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { Readable } from 'node:stream'
 
 /**
  * THE STORAGE BOUNDARY — one file, so the backend is one decision in one place.
@@ -57,9 +61,11 @@ export class BlobNotFound extends Error {}
  * makes a "configured" check say yes and then fails at the call with "Access
  * denied". Hence the shape check below.
  */
-type BlobAuth = { oidcToken: string; storeId: string } | { token: string }
+type BlobAuth = { oidcToken: string; storeId: string } | { token: string } | { directory: string }
 
 function auth(): BlobAuth | null {
+  const directory = (process.env.KB_FILE_STORAGE_DIR ?? '').trim()
+  if (directory !== '' && isAbsolute(directory)) return { directory: resolve(directory) }
   const oidc = process.env.VERCEL_OIDC_TOKEN ?? ''
   const store = process.env.BLOB_STORE_ID ?? ''
   if (oidc !== '' && store !== '') return { oidcToken: oidc, storeId: store }
@@ -71,6 +77,16 @@ function auth(): BlobAuth | null {
 }
 
 export const blobConfigured = (): boolean => auth() !== null
+
+function localPath(directory: string, key: string): string {
+  const root = resolve(directory)
+  const path = resolve(root, key)
+  const rel = relative(root, path)
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    throw new BlobNotFound('That file key is invalid.')
+  }
+  return path
+}
 
 function assertConfigured(): BlobAuth {
   const a = auth()
@@ -96,6 +112,13 @@ function assertConfigured(): BlobAuth {
  */
 export async function putObject(key: string, body: ArrayBuffer, contentType: string): Promise<string> {
   const a = assertConfigured()
+  if ('directory' in a) {
+    const path = localPath(a.directory, key)
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    await writeFile(path, Buffer.from(body), { mode: 0o600 })
+    void contentType
+    return key
+  }
   const { put } = await import('@vercel/blob')
   const res = await put(key, Buffer.from(body), {
     access: 'private',
@@ -112,8 +135,20 @@ export async function putObject(key: string, body: ArrayBuffer, contentType: str
  * a non-200 for a range or a redirect we did not ask for; both are refusals
  * rather than something to unwrap optimistically.
  */
-export async function getObject(key: string): Promise<{ body: ReadableStream<Uint8Array>; contentType: string }> {
+export async function getObject(key: string, fallbackContentType = 'application/octet-stream'): Promise<{ body: ReadableStream<Uint8Array>; contentType: string }> {
   const a = assertConfigured()
+  if ('directory' in a) {
+    const path = localPath(a.directory, key)
+    try {
+      await readFile(path)
+      return {
+        body: Readable.toWeb(createReadStream(path)) as ReadableStream<Uint8Array>,
+        contentType: fallbackContentType,
+      }
+    } catch {
+      throw new BlobNotFound('That photograph is no longer in storage.')
+    }
+  }
   const { get } = await import('@vercel/blob')
   const res = await get(key, { access: 'private', ...a })
   if (res === null) throw new BlobNotFound('That photograph is no longer in storage.')

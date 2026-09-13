@@ -21,7 +21,8 @@ export default async function ItemsPage({
 
   return (
     <section>
-      <div className="mt-3 flex items-center justify-end">
+      <div className="mt-3 flex items-center justify-end gap-2">
+        <Link href="/store/masters/items/import" className="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50">Import</Link>
         <Link
           href="/store/masters/items/new"
           className="rounded-lg border border-emerald-700 px-3 py-1.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"

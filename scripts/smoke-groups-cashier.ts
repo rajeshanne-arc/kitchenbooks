@@ -27,6 +27,8 @@ const NEXT_DATE = '2001-07-03'
 const NR_DATE = '2001-07-04'
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
   const { getRestaurant } = await import('../src/server/queries')
   const {
     saveSettlement, voidSettlement, saveOffBook, voidOffBook,
@@ -42,7 +44,7 @@ async function main() {
   const { searchIssuableItems } = await import('../src/server/store-queries')
   const { getKitchenSections } = await import('../src/server/kitchen-queries')
   const { decimalStringToPaise } = await import('../src/lib/money')
-  const { sql } = await import('../src/lib/db')
+  const { sql, tsql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
@@ -109,7 +111,7 @@ async function main() {
 
   // a 2001 close row straight through the INSERT grant — the ladder view
   // must count cash off-book in expected, and ONLY cash
-  await sql`
+  await tsql`
     insert into day_closes (restaurant_id, close_date, opening_cash, extra_cash_in, handed_over, cash_counted, note)
     values (${rid}, ${CLOSE_DATE}, '100', '0', '0', '1650', 'zz cashier smoke')`
   const ladder = await getLadderDay(rid, CLOSE_DATE)
@@ -205,6 +207,7 @@ async function main() {
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

@@ -11,6 +11,8 @@ import assert from 'node:assert/strict'
 process.loadEnvFile('.env.local')
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
 const { businessMonthStart, businessToday } = await import('../src/server/business-day')
     const { getRestaurant } = await import('../src/server/queries')
   const { getSections } = await import('../src/server/store-queries')
@@ -135,6 +137,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
       JSON.stringify({ staff: [cook.staff.id, steward.staff.id, valet.staff.id, helper.staff.id] }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {
