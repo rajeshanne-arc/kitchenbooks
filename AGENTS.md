@@ -9640,3 +9640,43 @@ asserts the arithmetic that ties the two findings together: where an overpayment
 exists, the totals MUST differ by exactly the credit. That is the sum an alarm
 would otherwise have been raised over, so proving it is the credit is what
 proves the difference is not a fault.
+
+## THE EVENT AND THE STATE CHANGE ARE ONE TRANSACTION, OR THE TRAIL HAS THE HOLE IT EXISTS TO CLOSE
+
+For step 1 of the approvals work, and it is the kind of fault that only appears
+under a crash.
+
+If `decideApproval` updates `status`/`decided_by` and writes its `approved`
+event as two statements outside a transaction, a failure between them leaves **a
+request that is approved with nothing saying who approved it**. That is exactly
+the hole the trail was built to close, arriving by a different route — and it is
+worse than the overwriting fault it replaced, because an overwrite at least
+leaves somebody's name.
+
+The same for the payment side: **a payment recorded with no `paid` event, or a
+`paid` event with no payment, are both worse than neither.** One is money that
+moved with no account of who moved it; the other is a trail asserting a payment
+that does not exist. Neither can be repaired afterwards, because nothing else
+knows which of the two happened.
+
+> **An event and the state it describes are one write or they are a lie waiting
+> for a crash.**
+
+`requestVendorPayment` already does this — the `raised` event is written on the
+same `tx` as the request row, inside the same `txn()`, so a request cannot exist
+without the event that created it. Every act added in step 1 follows that shape:
+the `update ... set status` and the `insert into approval_events` go in one
+`txn`, under the same advisory lock the write already takes.
+
+### AND ASSERT IT THE WAY THAT CAN FAIL
+
+**A test that only runs the happy path proves both statements write, not that
+they write TOGETHER.** It passes identically whether they share a transaction or
+not, which makes it exactly the vacuous-assertion family this file records five
+times over.
+
+So: force a failure between the two — throw after the status update and before
+the event insert — and assert that **NOTHING landed**: the status is unchanged
+AND no event row exists. Run it inside a transaction that rolls back, the way
+the money probes already do. The assertion is about the absence of a partial
+write, and the only way to observe that is to cause one.
