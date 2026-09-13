@@ -9439,3 +9439,73 @@ The general form, and it is the reverse of the usual advice to push rules into
 the database: **where one column serves several kinds, the database can enforce
 the SHAPE and only the app can enforce the KIND.** Do not read a permissive
 CHECK as permission.
+
+## TWO ROLES ON ONE ACCOUNT IS TWO ACCOUNTS — and the till is where I got it wrong
+
+I argued for one `operated_by` role per account on the grounds that an account
+with two operators stops being able to answer "who spent this", and that the
+case should never be pre-permitted by a data structure. **That argument breaks
+on the first account it would meet.** The cashier counts the drawer at day close
+and puts sales cash in; the store manager pays vendors out of it. Two roles, one
+account — and it is the till itself.
+
+The resolution keeps the property the argument was protecting rather than
+abandoning it:
+
+> **Two roles on one account is a sign you have two accounts, not a sign you
+> need two operators.** Split them and "who spent this" stays answerable from
+> the account alone.
+
+    Cash drawer   operated_by cashier   sales in, counted nightly
+    Store float   operated_by store     an imprest, replenished from the drawer
+
+### BUT BOTH CANNOT BE is_till, AND THE APP ALREADY REFUSES IT
+
+`is_till` does not mean "holds cash". It means **this account's balance IS the
+cashier's nightly count** — `account_balances` joins `day_close_current` per
+RESTAURANT, so a second till would wear the same counted cash and both accounts
+would claim to hold the whole drawer. The refusal is live at both write paths
+and a gate asserts at most one exists.
+
+So the shape is:
+
+    Cash drawer   kind cash · is_till TRUE  · operated_by cashier · balance COUNTED
+    Store float   kind cash · is_till FALSE · operated_by store   · balance COMPUTED
+
+**And that leaves a real gap, named rather than glossed.** The float is cash and
+nothing counts it. Its balance is opening + movements, so `account_balances.basis`
+reads `computed` — it would be the one cash account in the building whose
+balance is arithmetic rather than a physical fact, which is exactly what the
+drawer law exists to avoid. Closing it needs either a float count or a rule that
+a handover counts it, and neither is designed. **Do not mark the float
+`is_till` to get a counted basis; that is the one-till fault wearing a fix.**
+
+## A NULLABLE COLUMN ADDED FOR ONE BRANCH CANNOT BE ENFORCED BY ITS OWN CHECK
+
+`approval_requests.amount` is `CHECK (amount IS NULL OR amount > 0)`. It must
+permit a null, because discard, merge and reopen carry no amount — so it permits
+a PAYMENT request with none, which is not a request anybody can act on. The
+column was also written nowhere on the first pass: the amount went into the
+`snapshot` jsonb and the column stayed null, and nothing failed.
+
+> **Where one column serves several kinds, the database enforces the SHAPE and
+> only the app can enforce the KIND. A permissive CHECK is not permission.**
+
+This is the general case of every nullable column added for one branch of a
+polymorphic table, and this project has several:
+
+| table | column | belongs to |
+|---|---|---|
+| `approval_requests` | `amount` | payment only |
+| `approval_requests` | `target_entity_id` | merge only |
+| `dish_cost_snapshots` | `selling_price`, `food_cost_pct`, `section_code` | dish only — a sub has none |
+| `pos_item_map` | `recipe_id`, `item_id`, `section_id` | three different costing routes |
+| `queries` | `entity_id` | deliberately null for "why was Tuesday short?" |
+
+**The counter-example is the one that shows where the line is.**
+`recipe_lines` is `component_item_id` XOR `component_recipe_id` — a real CHECK,
+because the rule is about the ROW and needs no knowledge of a kind stored
+elsewhere. The moment the rule is "required when `kind` is X", a single CHECK
+can still express it (`kind <> 'payment' OR amount IS NOT NULL`) — but only if
+somebody writes that clause per kind, and the one that exists here does not.
+**Read what the constraint actually says before trusting it to hold a rule.**
