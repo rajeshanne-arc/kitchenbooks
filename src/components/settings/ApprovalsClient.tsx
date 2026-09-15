@@ -24,6 +24,7 @@ import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { btnCls, btnGhostCls, cardCls, codeCls, fieldLabelCls, inputCls } from '@/components/ui'
 import { fmtDateTime } from '@/lib/format'
+import NameFigure from '@/components/NameFigure'
 import { readObject } from '@/lib/read-object'
 
 export type QueueItem = {
@@ -109,14 +110,14 @@ export default function ApprovalsClient({
           </h3>
           <ul className="mt-2 divide-y divide-rule-soft">
             {elsewhere.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-baseline gap-x-2 py-2 text-sm">
-                <span className="font-medium text-stone-800">{what(r)}</span>
-                {r.amount !== null && (
-                  <span className="font-mono text-stone-700">{formatMoneyString(r.amount)}</span>
-                )}
-                <span className="text-stone-500">
+              <li key={r.id} className="py-2">
+                <NameFigure
+                  name={what(r)}
+                  figure={r.amount === null ? null : formatMoneyString(r.amount)}
+                />
+                <p className="mt-0.5 text-xs text-stone-500">
                   with the {r.assigned_to} since {fmtDateTime(r.last_at ?? r.requested_at)}
-                </span>
+                </p>
               </li>
             ))}
           </ul>

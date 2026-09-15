@@ -101,7 +101,11 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
                 >
                   <span className="min-w-0">
                     <span className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-[15px] font-medium text-stone-900">{v.name}</span>
+                      {/* WRAPS, NEVER CLIPS. Three vendors here are 28
+                          characters and all three were being cut mid-word at
+                          phone width — measured — which makes two vendors
+                          sharing an opening read as the same row. */}
+                      <span className="break-words text-[15px] font-medium text-stone-900">{v.name}</span>
                       <StatusBadge status={v.status} />
                     </span>
                     <span className="mt-0.5 block text-xs text-stone-500">
@@ -115,16 +119,27 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
                       )}
                     </span>
                   </span>
-                  {balP > 0 ? (
-                    <span className="shrink-0 text-sm font-semibold tabular-nums text-amber-700">
-                      owes {formatMoneyString(v.balance)}
-                    </span>
-                  ) : balP < 0 ? (
-                    <span className="shrink-0 text-sm font-semibold tabular-nums text-emerald-700">
-                      advance {formatMoneyString(v.balance)}
-                    </span>
-                  ) : (
+                  {/* THE FIGURE GETS ITS OWN COLUMN, one step LARGER than the
+                      name and mono, because it is what a reader scans this
+                      list for — and the WORD becomes a quiet label above it
+                      rather than a prefix that pushes every balance to a
+                      different starting column. Owed and advance then line up
+                      as one column somebody can compare down. */}
+                  {balP === 0 ? (
                     <span className="shrink-0 text-sm text-stone-300">settled</span>
+                  ) : (
+                    <span className="shrink-0 text-right">
+                      <span className="block text-[10px] font-medium uppercase tracking-wide text-stone-400">
+                        {balP > 0 ? 'owes' : 'advance'}
+                      </span>
+                      <span
+                        className={`block font-mono text-base font-semibold tabular-nums ${
+                          balP > 0 ? 'text-amber-700' : 'text-emerald-700'
+                        }`}
+                      >
+                        {formatMoneyString(v.balance)}
+                      </span>
+                    </span>
                   )}
                 </Link>
               </li>

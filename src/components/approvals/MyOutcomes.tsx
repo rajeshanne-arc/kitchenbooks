@@ -31,6 +31,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from '@/components/Toasts'
+import NameFigure from '@/components/NameFigure'
 import { acknowledgeRequest } from '@/server/approvals-actions'
 import type { OutcomeRow } from '@/server/approvals-queries'
 import { formatMoneyString } from '@/lib/money'
@@ -67,25 +68,29 @@ function Row({ row }: { row: OutcomeRow }) {
   const { chip, what, nothingToDo } = words(row)
   return (
     <li className="py-2.5">
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <span
-          className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
-            refused
-              ? 'border-red-200 bg-red-50 text-red-700'
-              : 'border-emerald-200 bg-emerald-50 text-emerald-800'
-          }`}
-        >
-          {chip}
-        </span>
-        <span className="font-medium text-stone-900">{what}</span>
-        {row.amount !== null && (
-          <span className="font-mono text-stone-800">{formatMoneyString(row.amount)}</span>
-        )}
-        <span className="ml-auto text-xs text-stone-400">
-          {row.decided_by ?? row.last_by ?? 'somebody'} ·{' '}
-          {fmtDateTime(row.applied_at ?? row.decided_at ?? row.requested_at)}
-        </span>
-      </div>
+      {/* THE SAME SHAPE AS THE ROUTED QUEUE. The outcome chip rides beside the
+          NAME rather than beside the figure — a badge in the right-hand column
+          would shunt the amount sideways on whichever rows happened to have
+          one, and the column stops being a column. */}
+      <NameFigure
+        name={what}
+        figure={row.amount === null ? null : formatMoneyString(row.amount)}
+        after={
+          <span
+            className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+              refused
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+            }`}
+          >
+            {chip}
+          </span>
+        }
+      />
+      <p className="mt-1 text-xs text-stone-400">
+        {row.decided_by ?? row.last_by ?? 'somebody'} ·{' '}
+        {fmtDateTime(row.applied_at ?? row.decided_at ?? row.requested_at)}
+      </p>
       <p className="mt-1 text-[13px] text-stone-500">you asked: “{row.reason}”</p>
 
       {/* THE REASON IS THE WHOLE OF WHAT HE IS BEING SHOWN. A refusal with no

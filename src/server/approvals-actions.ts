@@ -987,9 +987,15 @@ export async function payApproval(raw: {
     return {
       ok: true,
       id: input.id,
+      // THE NUMBER WAS ALLOCATED AND THROWN AWAY. `paid` was assigned and
+      // never read — the linter said so — and what it holds is the PAY series
+      // number, which is the one thing on this receipt an accountant will
+      // quote months later and the one figure no screen already carries.
+      // Saying numbers rather than a checkmark is the rule; this was the
+      // number.
       message: `${formatPaise(paise)} paid to ${req.from_name ?? 'the vendor'}${
         acct === undefined ? '' : ` from ${acct.name}`
-      }. ${
+      }${paid.doc_no === null ? '' : ` — ${paid.doc_no}`}. ${
         owedAfter <= 0
           ? `They owe nothing${cleared > 0 ? ` — ${cleared} ${cleared === 1 ? 'bill' : 'bills'} cleared` : ''}.`
           : `They are now owed ${formatPaise(owedAfter)}.`

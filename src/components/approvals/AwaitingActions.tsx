@@ -34,6 +34,7 @@ import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
 import CopyField from '@/components/books/CopyField'
 import BillNumberGap from '@/components/books/BillNumberGap'
+import NameFigure from '@/components/NameFigure'
 import { payApproval, returnRequest } from '@/server/approvals-actions'
 import type { AwaitingRow, VendorRouting } from '@/server/approvals-queries'
 import type { AccountBalanceRow, BillOutstandingRow } from '@/lib/types'
@@ -41,6 +42,7 @@ import type { BillNumbers } from '@/lib/bill-gaps'
 import { applyFifo } from '@/lib/settle'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
+import { lateness, LATE_TONE } from '@/lib/lateness'
 import {
   btnCls,
   btnGhostCls,
@@ -77,9 +79,15 @@ export default function AwaitingActions({
   const [open, setOpen] = useState<string | null>(null)
 
   return (
-    <section className={`${cardCls} mb-4 border-amber-300`}>
+    <section className={`${cardCls} mb-4`}>
       <h2 className={sectionHeadCls}>{mine ? 'Routed to you' : `Routed to the ${role}`}</h2>
-      <ul className="mt-2 divide-y divide-rule-soft">
+      {/* ONE BLOCK PER REQUEST, WITH A GAP. A hairline divider makes a queue
+          read as one object with lines through it; a gap makes each request a
+          thing you can look at on its own, which is what somebody working
+          down a list is actually doing. It also gives the ageing somewhere to
+          live — a border belongs to a block and cannot belong to a row in a
+          divided list. */}
+      <ul className="mt-3 space-y-2">
         {rows.map((r) => (
           <Row
             key={r.id}
@@ -150,26 +158,58 @@ function Row({
     router.refresh()
   }
 
+  // URGENCY IS DERIVED FROM THE AGEING, NEVER DECLARED, and it is said in
+  // words as well as coloured. `today` is the BUSINESS day, handed down from
+  // the page — the browser clock says tomorrow at 00:30 and would age every
+  // vendor by a day for two hours a night.
+  //
+  // A FAILED LOOKUP IS NOT A VENDOR WITH NO DUE DATE. Where nothing came back
+  // there is no band to state, so no chip is drawn at all and the red sentence
+  // below is left to say what happened — a cheerful “no due date on the
+  // books” over a failed read would be a claim the data cannot support.
+  const late = vendor === undefined ? null : lateness(vendor.oldest_due, today)
+  const tone = late === null ? { border: 'border-red-300', chip: '' } : LATE_TONE[late.band]
+
   return (
     <li
       onClick={onToggle}
-      className={`relative cursor-pointer py-2.5 pl-3 transition-opacity ${
-        isOpen ? 'bg-amber-50/70' : dimmed ? 'opacity-45 hover:opacity-80' : 'hover:bg-stone-50'
+      className={`relative cursor-pointer rounded-xl border bg-white p-3 transition ${tone.border} ${
+        isOpen
+          ? 'bg-amber-50/70 shadow-sm'
+          : dimmed
+            ? 'opacity-45 hover:opacity-80'
+            : 'hover:bg-stone-50'
       }`}
     >
-      {isOpen && <span className="absolute inset-y-0 left-0 w-1 rounded-full bg-amber-500" />}
+      {/* THE OPEN BLOCK IS LIFTED THREE WAYS AT ONCE — tinted, barred down its
+          left edge, and every other block dimmed — because any one alone is
+          missable on a long queue. The bar is AMBER and the border is the
+          AGEING, so the two signals never compete for the same edge. */}
+      {isOpen && <span className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-amber-500" />}
 
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className="font-medium text-stone-900">{row.from_name ?? 'a vendor'}</span>
-        {row.amount !== null && (
-          <span className="font-mono font-semibold text-stone-900">{formatMoneyString(row.amount)}</span>
+      {/* THE FIGURE GETS ITS OWN COLUMN, so several blocks line up as a column
+          a reader can compare down. The top line carries the name and the
+          amount and nothing else. */}
+      <NameFigure
+        name={row.from_name ?? 'a vendor'}
+        figure={row.amount === null ? '—' : formatMoneyString(row.amount)}
+      />
+
+      {/* THE SECOND LINE CARRIES EVERYTHING ELSE — how late, who asked, WHEN
+          (the date as well as the time: “2:55 pm” alone leaves a reader
+          guessing which day, and a request sitting for a fortnight looks
+          identical to one raised this afternoon), and the mode. */}
+      <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500">
+        {late !== null && (
+          <span className={`rounded-full border px-1.5 py-0.5 font-medium ${tone.chip}`}>{late.text}</span>
         )}
-        {row.routed_mode !== null && <span className="text-sm text-stone-600">by {row.routed_mode}</span>}
-        <span className="ml-auto text-xs text-stone-400">
+        <span>
           {row.requested_by ?? 'someone'} · {fmtDateTime(row.requested_at)}
         </span>
-      </div>
-      <p className="mt-1 text-[13px] text-stone-600">“{row.reason}”</p>
+        {row.routed_mode !== null && <span>· by {row.routed_mode}</span>}
+      </p>
+
+      <p className="mt-1.5 text-[13px] text-stone-600">“{row.reason}”</p>
       {row.last_note !== null && row.last_action !== 'raised' && (
         <p className="mt-0.5 text-[13px] text-stone-500">
           {row.last_by ?? 'the owner'}: “{row.last_note}”
