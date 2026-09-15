@@ -927,8 +927,17 @@ export async function payApproval(raw: {
     // The account is refused by name here, outside the transaction, because
     // the refusal reaches the user in its own words rather than as a
     // foreign-key violation nobody can read.
-    // HOW MANY BILLS THERE WERE, so "23 bills cleared" is a DIFFERENCE and not
-    // a figure this screen made up. Read before the write, like duesBefore.
+    // TWO EXTRA ROUND TRIPS, DELIBERATELY — do not optimise them away.
+    //
+    // The screen already holds a bill count and a balance, and echoing them
+    // would cost nothing. It would also be a RESTATEMENT WEARING A RESULT'S
+    // CLOTHES: "23 bills cleared" would be repeating what was on screen before
+    // the write rather than reporting what the write did. Post-save figures
+    // come from the database, never from what was typed — the rule the void
+    // toasts were fixed under, and the reason `duesBefore` is read here too.
+    //
+    // This runs a few times a day at ~6ms a read. It is the cheapest
+    // correctness in the app.
     const before = await getVendorAging(rid, req.entity_id)
     const billsBefore = before?.open_bills ?? 0
     const accountId = await assertAccount(rid, input.accountId, 'the account this payment left')

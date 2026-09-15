@@ -9949,8 +9949,26 @@ async function run() {
       `${seq.length} of ${rows.length} vendors read as sequential — the threshold is too loose to mean anything`,
     )
     assert.ok(flagged.length > 0, 'nothing is flagged — the finding path was not exercised')
+    // A REUSED NUMBER QUALIFIES THE GAP, it does not sit beside it. A vendor
+    // whose numbers repeat cannot be read for gaps at all, so the strip must
+    // not present both as independent findings — that invites somebody to
+    // chase a missing bill that was never missing.
+    const { readFileSync } = await import('node:fs')
+    const strip = readFileSync('src/components/books/BillNumberGap.tsx', 'utf8')
+    assert.ok(
+      /a gap may mean nothing/.test(strip),
+      'the strip lists gaps for a vendor who reuses numbers without saying the gaps cannot be read',
+    )
+    // AND IT MUST NOT CALL A REUSED NUMBER A DUPLICATE BILL. Measured on this
+    // vendor: 97 on 17 and 18 Aug are both ₹2,112 with identical lines, which
+    // for a daily dairy supplier is two ordinary days. "Possible duplicate
+    // bill" would send somebody hunting a double payment that is not there.
+    assert.ok(
+      !/duplicate bill|paid twice|double payment/i.test(strip.replace(/\/\*[\s\S]*?\*\//g, '')),
+      'the strip reads a duplicate NUMBER as a duplicate BILL',
+    )
     console.log(
-      `      ${seq.length} of ${rows.length} vendors number sequentially · ${flagged.length} have a gap or a duplicate · ${seq.length - flagged.length} clean and silent`,
+      `      ${seq.length} of ${rows.length} vendors number sequentially · ${flagged.length} have a gap or a reused number · ${seq.length - flagged.length} clean and silent`,
     )
   })
 

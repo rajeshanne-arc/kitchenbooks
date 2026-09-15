@@ -10999,6 +10999,37 @@ the thing a list shows and a total cannot, and it is not a display detail:
 payments here are ON ACCOUNT and tied to no bill, so FIFO is not a preference
 — it is what happens to the money. `applyFifo` is pure and asserted by value.
 
+## A BY-VALUE CASE MUST EXERCISE THE CONSTANT IT IS DEFENDING
+
+**A NEW SHAPE, and it is deliberately not filed with the vacuity family.**
+Those assertions COULD NOT FAIL — an empty fixture, a converging probe, two
+identical generations, a loop over zero rows. This one could fail, did fail on
+a real perturbation, and had a real fixture behind it. **The path to the
+constant was simply never taken.**
+
+`MIN_DENSITY = 0.7` decides which vendors count as numbering sequentially.
+Dropping it to `0.05` took the detector from 5 vendors to 12 — a third of the
+book — and every assertion stayed GREEN. The case meant to defend it was
+`['1','40','900','2200','5000','9000']`, which is rejected by the RUN-LENGTH
+rule several lines earlier: six isolated clusters of one, so `run.length <
+MIN_RUN` returns before density is read. **The constant was undefended while
+its case passed.**
+
+> **FOR EVERY THRESHOLD, ASK WHICH FIXTURE REACHES IT AND NOTHING ELSE.** A
+> case that fails for an earlier reason tests the earlier reason. Two guards in
+> sequence need two fixtures, and the second one has to survive the first.
+
+Here that meant a SPARSE SINGLE CLUSTER — `10 18 26 34 42 50`, steps of eight
+so the clusterer keeps them together, six numbers across a span of 41 — which
+passes the run-length floor and only density can reject. Perturbing the floor
+now names it.
+
+The tell that it was missing, in hindsight: the fixture and the constant had
+nothing to do with each other. A case built from "what does scattered look
+like" does not necessarily reach a rule about *density*, and nobody notices,
+because the assertion is green and the perturbation nobody ran is the only
+thing that would have said so.
+
 ## A GAP IN A VENDOR'S BILL NUMBERS — and why the span is the wrong test
 
 Sri Vyshnavi bills daily: `79 81 82 83 84 85 87 89 … 100`. **80, 86, 88 and 96
@@ -11007,10 +11038,41 @@ total, and worth asking before ₹64,815 leaves.
 
 **BOTH READINGS, NEITHER ASSERTED.** A missing number is either a bill that
 never reached us — so what they are owed is understated — or a number that
-vendor used for somebody else, in which case there is nothing to find. A
-duplicate is either a reused number or a delivery entered twice, and the second
-reading means the balance is OVERSTATED. This app cannot tell which, and
-guessing would turn a question worth asking into an accusation.
+vendor used for somebody else, in which case there is nothing to find. This app
+cannot tell which, and guessing would turn a question worth asking into an
+accusation.
+
+### A DUPLICATE NUMBER IS NOT A DUPLICATE BILL
+
+The first wording called a reused number a possible double entry. **Measured,
+it is not:**
+
+    bill 97   17 Aug   ₹2,112   Curd 20 @ 75 · Milk 12 @ 51
+    bill 97   18 Aug   ₹2,112   Curd 20 @ 75 · Milk 12 @ 51
+    bill 99   20 Aug   ₹2,112   Curd 20 @ 75 · Milk 12 @ 51
+    bill 99   22 Aug   ₹3,765   Curd 40 @ 75 · Milk 15 @ 51
+
+For a daily dairy supplier **that is what ordinary days look like** — and note
+that three of those four are identical, across two different numbers, which is
+what kills "identical lines" as a duplicate signal for this vendor entirely.
+*"Possible duplicate bill"* would have sent Rajesh hunting a double payment
+that is not there.
+
+**So the finding is the NUMBERING, not the bills**, and the screen says exactly
+that: *"same number, different deliveries — a numbering habit, not a bill
+entered twice."*
+
+### AND A REUSED NUMBER QUALIFIES THE GAP RATHER THAN SITTING BESIDE IT
+
+This is the part that would have been got wrong by listing both honestly. **A
+vendor who reuses numbers cannot be read for gaps at all** — the sequence is
+not a sequence — so showing "numbers missing" and "numbers reused" as two
+independent findings invites somebody to chase a missing bill that was never
+missing. Where the numbering is unreliable the gaps are still listed, with the
+qualifier attached: *"with numbers being reused, a gap may mean nothing."*
+
+> **Two findings from one signal are not two findings.** Ask whether the second
+> changes what the first MEANS before showing them side by side.
 
 ### THE SPAN IS THE WRONG TEST, AND LIVE DATA IS WHAT SAID SO
 
@@ -11049,6 +11111,26 @@ density floor can reject.
 It is a CONTROL, not a payment-time nicety, so it is on the vendor's own page
 as well.
 
+## READ THE FIGURE BACK — and why two extra round trips stay
+
+`payApproval` reads the vendor's ageing TWICE: once before the write for the
+bill count, once after for the balance. The screen already holds both, and
+echoing them would cost nothing.
+
+**It would also be a restatement wearing a result's clothes.** "23 bills
+cleared" built from the number that was on screen before the payment is
+repeating the input; built from the difference between two reads it is a
+report of what the write did. That is phase 1's rule — *post-save figures come
+from the DB, not echoed from input* — and the rule the void toasts were fixed
+under.
+
+A few times a day at ~6ms a read. **The cheapest correctness in the app**, and
+the reason is in the code so nobody optimises it away.
+
+The one place echoing IS correct sits two screens over, and the contrast is
+the whole rule: a payment REQUEST re-states the outstanding figure unchanged,
+because the claim being made is precisely that nothing moved.
+
 ## HE STATES THE FACT; THE OWNER CLASSIFIES IT
 
 `challenged` is collapsed into `returned`, and not because the distinction was
@@ -11079,6 +11161,32 @@ nobody can read. `decideApproval` still accepts it. The app CONSTANT does not
 stay — a constant with no reader is dead vocabulary the next person wires up
 without the argument — and the gate's exemption for the unwritten action names
 the condition that expires it: bring `challengeRequest` back and it is gone.
+
+### ANCHOR ON THE ROLE A TOKEN PLAYS, NOT ON ITS PRESENCE
+
+Third of this shape, and the pattern across all three is the same sentence:
+**a STRING appearing somewhere legitimate satisfied a search for a
+BEHAVIOUR.**
+
+| the search was for | what satisfied it |
+|---|---|
+| a `set (security_invoker = on)` statement | the comment explaining why one is needed |
+| a `::text` cast before `::jsonb` | the comment explaining why it is needed |
+| an ACTION named `challenged` being written | a STATUS literal in `from: ['pending', 'challenged']` |
+
+The first two are prose satisfying a search for code. The third is code
+satisfying it — a real literal, in a real array, doing a completely different
+job. So "strip comments before matching" is only half the remedy, and the half
+that generalises is:
+
+> **Match the ROLE a token plays, not its presence.** An action is written
+> where something writes an action — the `action:` property, or a positional
+> literal inside an `insert into approval_events`. A quoted word anywhere else
+> is a different word that happens to be spelled the same.
+
+Every instance is a checker asking *"does this string appear?"* when the
+question is *"does this thing happen?"*, and the distance between those two is
+where all three hid.
 
 ### AND THAT GATE WAS PASSING ON THE WRONG EVIDENCE
 
