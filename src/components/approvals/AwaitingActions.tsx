@@ -34,6 +34,7 @@ import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
 import CopyField from '@/components/books/CopyField'
 import BillNumberGap from '@/components/books/BillNumberGap'
+import BillSheet from '@/components/books/BillSheet'
 import NameFigure from '@/components/NameFigure'
 import BillScope from '@/components/approvals/BillScope'
 import BillDrift from '@/components/approvals/BillDrift'
@@ -147,6 +148,9 @@ function Row({
   const [paidDate, setPaidDate] = useState(today)
   const [note, setNote] = useState('')
   const [showAll, setShowAll] = useState(false)
+  // A SIBLING OF THE FORM, so the mode, the account and a half-typed note
+  // survive a look at the paper.
+  const [openBill, setOpenBill] = useState<string | null>(null)
   const [busy, setBusy] = useState<null | 'pay' | 'back'>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -250,7 +254,14 @@ function Row({
             outstanding={vendor?.outstanding ?? null}
             showAll={showAll}
             onShowAll={() => setShowAll(true)}
+            onOpenBill={setOpenBill}
           />
+          {/* INSIDE the stopPropagation block: the row itself is the expand
+              control, so a click in the sheet would otherwise close the row
+              underneath it. */}
+          {openBill !== null && (
+            <BillSheet key={openBill} purchaseId={openBill} onClose={() => setOpenBill(null)} />
+          )}
           {numbers !== undefined && <BillNumberGap g={numbers} vendorName={row.from_name ?? 'this vendor'} />}
 
           {/* SAID BEFORE THE BUTTON. The server refuses this under a row lock
@@ -423,6 +434,7 @@ function WhatThisSettles({
   outstanding,
   showAll,
   onShowAll,
+  onOpenBill,
 }: {
   bills: BillOutstandingRow[]
   /** null on a pre-range request — a claim on the whole balance */
@@ -431,6 +443,7 @@ function WhatThisSettles({
   outstanding: string | null
   showAll: boolean
   onShowAll: () => void
+  onOpenBill: (purchaseId: string) => void
 }) {
   const scoped = range === null ? bills : inRange(bills, range)
   const { rows, clears, leftUnapplied } = applyFifo(scoped, amountPaise)
@@ -475,12 +488,17 @@ function WhatThisSettles({
         <>
           <ul className="mt-1.5 space-y-0.5">
             {shown.map((s) => (
-              <li
-                key={s.bill.purchase_id}
-                className={`flex items-baseline justify-between gap-2 text-xs ${
-                  s.fate === 'untouched' ? 'text-stone-400' : 'text-stone-600'
-                }`}
-              >
+              <li key={s.bill.purchase_id}>
+                {/* THE ROW IS THE CONTROL. He is reconciling against the
+                    vendor's own statement, so the bill he wants is whichever
+                    line disagrees — and a button is what a keyboard reaches. */}
+                <button
+                  type="button"
+                  onClick={() => onOpenBill(s.bill.purchase_id)}
+                  className={`flex w-full items-baseline justify-between gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-stone-50 ${
+                    s.fate === 'untouched' ? 'text-stone-400' : 'text-stone-600'
+                  }`}
+                >
                 <span className="truncate">
                   {s.bill.bill_no ?? 'no bill no'} · {fmtDate(s.bill.bill_date)}
                   {s.fate === 'partial' && (
@@ -498,6 +516,7 @@ function WhatThisSettles({
                     formatMoneyString(s.bill.unpaid)
                   )}
                 </span>
+                </button>
               </li>
             ))}
           </ul>

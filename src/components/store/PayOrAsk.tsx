@@ -31,6 +31,7 @@ import { decimalStringToPaise, formatMoneyString, formatPaise, parseMoney } from
 import { isCashMode } from '@/lib/payment-mode'
 import { modesForVendor } from '@/lib/payment-routing'
 import Honesty from '@/components/Honesty'
+import BillSheet from '@/components/books/BillSheet'
 import { fmtDate, fmtRange } from '@/lib/format'
 import { defaultRange, inRange, ordered, totalPaise, type DateRange } from '@/lib/bill-range'
 import { useBusinessToday } from '@/components/BusinessDay'
@@ -108,6 +109,10 @@ export default function PayOrAsk({
   // overwriting a typed number would be the app arguing with him.
   const [amountTouched, setAmountTouched] = useState(false)
   const [showAllBills, setShowAllBills] = useState(false)
+  // THE SHEET IS A SIBLING, NOT A ROUTE. Everything typed into this form —
+  // the range, the amount, the reason — is still here when it closes, which a
+  // navigation to the bill page could never have promised.
+  const [openBill, setOpenBill] = useState<string | null>(null)
 
   const requestBranch = mode !== '' && !isCashMode(mode)
   const scopedBills = vendorBills === null ? null : inRange(vendorBills, range)
@@ -315,7 +320,12 @@ export default function PayOrAsk({
           error={billsError}
           showAll={showAllBills}
           onShowAll={() => setShowAllBills(true)}
+          onOpenBill={setOpenBill}
         />
+      )}
+
+      {openBill !== null && (
+        <BillSheet key={openBill} purchaseId={openBill} onClose={() => setOpenBill(null)} />
       )}
 
       {aging !== null && decimalStringToPaise(aging.terms_not_set) > 0 && (
@@ -534,6 +544,7 @@ function BillRange({
   error,
   showAll,
   onShowAll,
+  onOpenBill,
 }: {
   vendorName: string
   loaded: boolean
@@ -545,6 +556,7 @@ function BillRange({
   error: string | null
   showAll: boolean
   onShowAll: () => void
+  onOpenBill: (purchaseId: string) => void
 }) {
   const shown = scoped === null ? [] : showAll ? scoped : scoped.slice(0, 5)
   const hidden = scoped === null ? 0 : scoped.length - shown.length
@@ -619,14 +631,23 @@ function BillRange({
         <>
           <ul className="mt-2 space-y-0.5">
             {shown.map((b) => (
-              <li key={b.purchase_id} className="flex justify-between gap-2 text-xs text-stone-500">
-                <span className="truncate">
-                  {b.bill_no ?? 'no bill no'} · {fmtDate(b.bill_date)}
-                  {b.due_date !== null && (
-                    <span className="text-stone-400"> · due {fmtDate(b.due_date)}</span>
-                  )}
-                </span>
-                <span className="shrink-0 tabular-nums">{formatMoneyString(b.unpaid)}</span>
+              <li key={b.purchase_id}>
+                {/* THE ROW IS THE CONTROL, and it is a real button so a
+                    keyboard reaches it — the clipped-action lesson, which was
+                    about a control nobody could get to. */}
+                <button
+                  type="button"
+                  onClick={() => onOpenBill(b.purchase_id)}
+                  className="flex w-full justify-between gap-2 rounded px-1 py-0.5 text-left text-xs text-stone-500 hover:bg-stone-50"
+                >
+                  <span className="truncate">
+                    {b.bill_no ?? 'no bill no'} · {fmtDate(b.bill_date)}
+                    {b.due_date !== null && (
+                      <span className="text-stone-400"> · due {fmtDate(b.due_date)}</span>
+                    )}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{formatMoneyString(b.unpaid)}</span>
+                </button>
               </li>
             ))}
           </ul>

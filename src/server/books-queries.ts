@@ -18,6 +18,7 @@ import type {
   VendorDueRow,
   VendorHit,
   VendorListRow,
+  BillSheetRow,
 } from '@/lib/types'
 
 const BILL_SELECT = `
@@ -428,4 +429,67 @@ export async function getItemLedger(
     order by move_date desc, row_id desc
     limit ${limit}`
   return { rows, total: rows[0]?.total ?? 0 }
+}
+
+/**
+ * ONE BILL, WHOLE, IN ONE STATEMENT — for the read-only sheet.
+ *
+ * ONE READ RATHER THAN SIX, and that is about the pool rather than tidiness.
+ * The bill document page fires six reads, and every one of them is a `tsql` —
+ * which is BEGIN + SET LOCAL app.restaurant_id + the query + COMMIT, three
+ * round trips each. A sheet that opens on a click cannot spend six
+ * transactions out of a pool of twelve; the item master deadlocked at max 4
+ * for exactly this shape. Sub-selects put lines and photographs inside the one
+ * statement instead.
+ *
+ * `storage_key` IS NOT SELECTED, deliberately. It carries the tenant prefix
+ * that `keyBelongsTo` checks, it is the one field no browser needs, and
+ * BillPhotos already strips it for the same reason. A read that returns it and
+ * a component that drops it is one refactor away from shipping it.
+ *
+ * TENANT-SCOPED ON THE HEADER, which is what makes the sub-selects safe:
+ * `getBillLines` takes no restaurant id — a tier-2 keyed read that RLS alone
+ * protects — and this never reaches one for a bill the caller cannot see,
+ * because the outer WHERE has already refused it.
+ *
+ * @scope now
+ */
+export async function getBillSheet(restaurantId: string, id: string): Promise<BillSheetRow | null> {
+  const rows = await tsql<BillSheetRow[]>`
+    select b.id, b.bill_date::text as bill_date, b.bill_no,
+           b.vendor_id, b.vendor_code, b.vendor_name,
+           b.goods_total::text as goods_total, b.gst_total::text as gst_total,
+           b.transport::text as transport, b.bill_total::text as bill_total,
+           b.line_count::int as line_count, b.is_reversal, b.is_voided,
+           b.entered_by, b.created_at::text as created_at, p.reverses_id, p.doc_no,
+           v.payment_terms,
+           bo.due_date::text as due_date, bo.unpaid::text as unpaid,
+           (
+             select coalesce(json_agg(json_build_object(
+               'id', pl.id, 'item_code', i.code, 'item_name', i.name,
+               'purchase_unit', i.purchase_unit,
+               'qty', pl.qty::text, 'rate', pl.rate::text, 'amount', pl.amount::text,
+               'gst_amount', pl.gst_amount::text, 'landed', pl.landed::text
+             ) order by i.code asc, pl.id asc), '[]'::json)
+             from purchase_lines pl
+             join items i on i.id = pl.item_id
+             where pl.purchase_id = b.id
+           ) as lines,
+           (
+             select coalesce(json_agg(json_build_object(
+               'id', a.id, 'filename', a.filename, 'mime_type', a.mime_type,
+               'byte_size', a.byte_size, 'uploaded_by', a.uploaded_by,
+               'created_at', a.created_at::text
+             ) order by a.created_at asc, a.id asc), '[]'::json)
+             from attachments a
+             where a.restaurant_id = b.restaurant_id
+               and a.entity_type = 'purchase' and a.entity_id = b.id
+           ) as photos
+    from bills b
+    join purchases p on p.id = b.id
+    join vendors v on v.restaurant_id = b.restaurant_id and v.id = b.vendor_id
+    left join bills_outstanding bo
+      on bo.restaurant_id = b.restaurant_id and bo.purchase_id = b.id
+    where b.restaurant_id = ${restaurantId} and b.id = ${id}`
+  return rows[0] ?? null
 }

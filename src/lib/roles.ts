@@ -90,7 +90,14 @@ const RULES: [prefix: string, roles: Role[]][] = [
   // a door that is not in the matrix is a door nothing governs. The handler
   // asks canAccess for THIS path, so the route and the link agree by
   // construction rather than by two lists being kept in step.
-  ['/api/attachments', ['store', 'manager', 'owner']],
+  // THE ACCOUNTANT IS ADMITTED, and it is a real permission change rather
+  // than a tidy-up. A bill photograph is the ONLY check this app has on a rate
+  // typed wrong — every other reconciliation compares one query with another —
+  // and the accountant holding a vendor's statement against our figures is
+  // exactly the person doing that check. Refusing them the paper on the one
+  // screen where they need it would make the bill sheet a picture frame with
+  // nothing in it. Same reasoning that admits them to /owner/accounts.
+  ['/api/attachments', ['store', 'manager', 'owner', 'accountant']],
   ['/store', ['store', 'manager', 'owner']],
 
   // --- sales group (cashier) -------------------------------------------

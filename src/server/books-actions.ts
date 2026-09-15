@@ -21,10 +21,10 @@ import {
   assertCashAccount,
   getAccountBalances,
 } from '@/server/accounts-queries'
-import { enteredBy } from '@/server/current-user'
+import { enteredBy, getSessionUser } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
 import { insertPayment } from '@/server/payment-write'
-import { getBill, getDues, getItemDetail, getVendorDetail } from '@/server/books-queries'
+import { getBill, getBillSheet, getDues, getItemDetail, getVendorDetail } from '@/server/books-queries'
 import { parseMoney } from '@/lib/money'
 import { isCashMode } from '@/lib/payment-mode'
 import type {
@@ -39,6 +39,7 @@ import type {
   UpdateVendorInput,
   UpdateVendorResult,
   VoidBillResult,
+  BillSheetRow,
 } from '@/lib/types'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -525,6 +526,44 @@ export async function createItem(raw: CreateItemInput): Promise<CreateItemResult
     const item = await getItemDetail(rid, saved.id)
     if (!item) throw new BooksError('Could not read the item back after saving')
     return { ok: true, item }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+// ─────────────────────────────────────────── the paper, opened in place ───
+
+/** Who may open a bill sheet. The two mounts are the store's payment queue and
+ *  the accountant's routed queue, so those four and nobody else — a chef or a
+ *  cashier has no reason to read a vendor's paper. */
+const SHEET_READERS = ['store', 'manager', 'owner', 'accountant'] as const
+
+/**
+ * ONE BILL, READ-ONLY, FOR THE SHEET.
+ *
+ * A READ, so it writes nothing and acknowledges nothing. It is still gated:
+ * every export from a `'use server'` file is a public HTTP endpoint, and this
+ * one would otherwise hand any signed-in reader a vendor's bill from a guessed
+ * id. RLS would still scope it to their own restaurant — the gate is about
+ * ROLE, which RLS knows nothing about.
+ */
+export async function loadBillSheet(
+  id: string,
+): Promise<{ ok: true; bill: BillSheetRow } | { ok: false; error: string }> {
+  try {
+    if (!UUID.test(id)) throw new BooksError('Malformed bill id')
+    const user = await getSessionUser()
+    if (!user) throw new BooksError('Sign in again — the session has expired')
+    if (!(SHEET_READERS as readonly string[]).includes(user.role)) {
+      throw new BooksError('Reading a vendor’s bill is the store’s, the accountant’s or an owner’s')
+    }
+    const restaurant = await getRestaurant()
+    const bill = await getBillSheet(restaurant.id, id)
+    // ABSENT IS A FINDING, not a blank sheet. A bill that cannot be read is
+    // either not this restaurant's or no longer there, and either is worth
+    // saying rather than opening an empty panel.
+    if (bill === null) throw new BooksError('That bill is not on this restaurant’s books any more')
+    return { ok: true, bill }
   } catch (e) {
     return fail(e)
   }

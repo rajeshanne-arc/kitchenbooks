@@ -3810,3 +3810,38 @@ export type StaleUnmatchedRow = {
   account_name: string | null
   age_days: number
 }
+
+/** A bill as the read-only sheet shows it — header, lines and photographs in
+ *  one read. `storage_key` is deliberately absent: it carries the tenant
+ *  prefix and must never cross the wire. */
+export type BillSheetLine = {
+  id: string
+  item_code: string
+  item_name: string
+  purchase_unit: string | null
+  qty: string
+  rate: string
+  amount: string
+  gst_amount: string
+  landed: string
+}
+
+export type BillSheetPhoto = {
+  id: string
+  filename: string | null
+  mime_type: string | null
+  byte_size: number | null
+  uploaded_by: string | null
+  created_at: string
+}
+
+export type BillSheetRow = BillRow & {
+  /** from bills_outstanding, so NULL once nothing of this bill is unpaid —
+   *  which is a different fact from "no terms were set" and the sheet says
+   *  which */
+  due_date: string | null
+  unpaid: string | null
+  payment_terms: string | null
+  lines: BillSheetLine[]
+  photos: BillSheetPhoto[]
+}

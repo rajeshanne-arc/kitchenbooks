@@ -12114,6 +12114,158 @@ async function run() {
     console.log('      status stayed approved · the accountant refused, the owner admitted')
   })
 
+  /* ── the bill opens in a sheet ─────────────────────────────────────── */
+  console.log('\nthe paper opens where you are standing')
+
+  await check('the sheet is read-only, dismissible, and above the nav', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/components/books/BillSheet.tsx', 'utf8')
+    const strip = (t: string) =>
+      t
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/^\s*\/\/.*$/gm, ' ')
+    const code = strip(src)
+
+    // READ-ONLY, AND NO WAY OUT OF IT. A link is how a sheet stops being a
+    // sheet: it takes the screen away and loses the half-typed form the sheet
+    // existed to preserve.
+    assert.ok(!/<Link[\s/>]/.test(code), 'the sheet links somewhere — it is a look at the paper, not a trip away from it')
+    assert.ok(!/router\.(push|replace)/.test(code), 'the sheet navigates')
+    assert.ok(!/href=/.test(code.replace(/src=\{`\/api\/attachments[^`]*`\}/g, '')), 'the sheet carries an href')
+    for (const banned of ['voidBill', 'updateBill', 'saveBill', 'attachPhoto']) {
+      assert.ok(!code.includes(banned), `the sheet can ${banned} — it is supposed to be read-only`)
+    }
+
+    // ABOVE THE NAV. The ladder is dropdowns 20 < PeriodControl 30 < TopNav
+    // 40 < modals 50, and a fixed sheet below 50 renders UNDER a sticky bar
+    // it cannot cover. Checked against the nav's own class rather than a
+    // remembered number.
+    assert.match(code, /fixed inset-0 z-50/, 'the sheet is not a full-screen overlay at z-50')
+    const nav = readFileSync('src/components/TopNav.tsx', 'utf8')
+    const navZ = Number((nav.match(/sticky top-0 z-(\d+)/) ?? [])[1] ?? 0)
+    assert.ok(navZ > 0, 'the nav no longer declares a z-index — the ladder cannot be checked')
+    assert.ok(50 > navZ, `the nav is z-${navZ} and the sheet is z-50 — the sheet would render under it`)
+
+    // BOTH DISMISSALS. PeriodControl is the only other place in the app that
+    // does either, and the four confirm modals do neither — so this is the
+    // first shape where getting it wrong strands somebody.
+    assert.match(code, /'keydown'/, 'Escape does not close the sheet')
+    assert.match(code, /'mousedown'/, 'clicking outside does not close the sheet')
+    assert.match(code, /removeEventListener/, 'the sheet leaves its document listeners behind')
+    console.log(`      read-only · z-50 over a z-${navZ} nav · Escape + outside click, both removed on unmount`)
+  })
+
+  await check('the sheet is mounted twice and reads the bill in ONE statement', async () => {
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((f) => {
+        const full = `${d}/${f}`
+        return statSync(full).isDirectory() ? walk(full) : full.endsWith('.tsx') ? [full] : []
+      })
+    const mounts = walk('src/components')
+      .concat(walk('src/app'))
+      .filter((f) => !f.endsWith('BillSheet.tsx'))
+      .map((f) => ({ f, n: (readFileSync(f, 'utf8').match(/<BillSheet[\s/>]/g) ?? []).length }))
+      .filter((x) => x.n > 0)
+    const total = mounts.reduce((n, m) => n + m.n, 0)
+    assert.equal(total, 2, `BillSheet is mounted ${total} times, not 2: ${mounts.map((m) => m.f).join(', ')}`)
+    for (const want of ['src/components/store/PayOrAsk.tsx', 'src/components/approvals/AwaitingActions.tsx']) {
+      assert.ok(mounts.some((m) => m.f === want), `${want} does not open the sheet`)
+    }
+    // KEYED, so a second bill REMOUNTS rather than showing the first one's
+    // lines under the second one's name — the key={prefill?.id} fix again.
+    for (const m of mounts) {
+      assert.match(readFileSync(m.f, 'utf8'), /<BillSheet key=/, `${m.f} does not key the sheet on the bill id`)
+    }
+
+    // ONE READ, NOT SIX. Every tsql is BEGIN + SET LOCAL + query + COMMIT, and
+    // the bill page fires six of them; a sheet that opens on a click cannot
+    // spend six transactions out of a pool of twelve. The item master
+    // deadlocked at max 4 for exactly this shape.
+    const q = readFileSync('src/server/books-queries.ts', 'utf8')
+    const at = q.indexOf('export async function getBillSheet')
+    assert.ok(at > 0, 'getBillSheet is gone')
+    const body = q.slice(at, q.indexOf('\n}', at))
+    assert.equal((body.match(/tsql</g) ?? []).length, 1, 'getBillSheet issues more than one transaction')
+
+    // AND THE STORAGE KEY NEVER CROSSES THE WIRE. It carries the tenant prefix
+    // that keyBelongsTo checks; BillPhotos strips it for the same reason, and
+    // a read that returns it with a component that drops it is one refactor
+    // from shipping it.
+    assert.ok(!body.includes('storage_key'), 'getBillSheet selects storage_key — it would reach the browser')
+    const types = readFileSync('src/lib/types.ts', 'utf8')
+    const tAt = types.indexOf('export type BillSheetPhoto')
+    assert.ok(tAt > 0 && !types.slice(tAt, tAt + 400).includes('storage_key'), 'BillSheetPhoto carries storage_key')
+    console.log(`      ${total} mounts, both keyed · one statement · no storage_key`)
+  })
+
+  await check('everybody who can open a bill sheet can open its photographs', async () => {
+    // THE FIRST SLIDE-OVER IN THIS APP, so LAW 1 has never met one — and this
+    // is the exact shape that caught the chip row: a rule that looked
+    // universal because every case it had met was uniform. The sheet renders
+    // the photograph inline through /api/attachments, so any role that can
+    // open the sheet and CANNOT open that route gets an empty frame.
+    const { readFileSync } = await import('node:fs')
+    const { canAccess } = await import('../src/lib/roles')
+    const act = readFileSync('src/server/books-actions.ts', 'utf8')
+    const m = act.match(/const SHEET_READERS = \[([^\]]*)\]/)
+    assert.ok(m !== null, 'SHEET_READERS is gone — who may open a bill sheet is no longer stated')
+    const readers = (m as RegExpMatchArray)[1]
+      .split(',')
+      .map((r) => r.trim().replace(/['"]/g, ''))
+      .filter(Boolean)
+    assert.ok(readers.length > 0, 'nobody may open a bill sheet — this check is looking at nothing')
+    for (const r of readers) {
+      assert.ok(
+        canAccess(r as Parameters<typeof canAccess>[0], '/api/attachments'),
+        `${r} can open a bill sheet and cannot open /api/attachments — the photograph would be an empty frame`,
+      )
+    }
+    // AND IT IS NOT VACUOUS THE OTHER WAY: the route must not be open to
+    // everybody, or the check above passes by the matrix having no opinion.
+    const all = ['owner', 'manager', 'chef', 'store', 'cashier', 'accountant'] as const
+    const denied = all.filter((r) => !canAccess(r, '/api/attachments'))
+    assert.ok(denied.length > 0, '/api/attachments admits every role — this assertion proves nothing')
+    console.log(`      sheet readers: ${readers.join(', ')} · all admitted to the paper · still denied: ${denied.join(', ')}`)
+  })
+
+  await check('a real bill reads whole, and its lines add up to its own total', async () => {
+    const { getBillSheet } = await import('../src/server/books-queries')
+    const { withTenant } = await import('../src/lib/tenant')
+    const { decimalStringToPaise } = await import('../src/lib/money')
+    const out = await withTenant(liveTenant, async () => {
+      // THE MOST-LINED BILL, because a one-line bill cannot tell a working
+      // sub-select from a broken one.
+      const [b] = await tsql<{ id: string; n: number }[]>`
+        select purchase_id as id, count(*)::int as n
+        from purchase_lines where restaurant_id = ${liveTenant}
+        group by purchase_id order by count(*) desc limit 1`
+      assert.ok(b !== undefined, 'no bill has any lines — this check is looking at nothing')
+      const sheet = await getBillSheet(liveTenant, b.id)
+      assert.ok(sheet !== null, 'the most-lined bill on the books did not read')
+      return { sheet: sheet as NonNullable<typeof sheet>, expect: b.n }
+    })
+    const s2 = out.sheet
+    assert.equal(s2.lines.length, out.expect, `the sheet returned ${s2.lines.length} lines and the bill has ${out.expect}`)
+    assert.equal(s2.line_count, out.expect, 'the header line_count disagrees with the lines')
+    // THE ARITHMETIC THE SHEET PUTS ON SCREEN. Summed as integer paise — the
+    // rounding rule this codebase has now arrived at three times.
+    const lines = s2.lines.reduce((n, l) => n + decimalStringToPaise(l.amount), 0)
+    assert.equal(
+      lines,
+      decimalStringToPaise(s2.goods_total),
+      `the lines total ${lines}p and the header says ${decimalStringToPaise(s2.goods_total)}p — the sheet would show a bill that does not add up`,
+    )
+    assert.ok(Array.isArray(s2.photos), 'photos did not come back as an array')
+    for (const v of [s2.vendor_name, s2.bill_date, s2.bill_total, s2.created_at]) {
+      assert.ok(v !== null && v !== undefined && String(v) !== 'undefined', 'the sheet would render "undefined"')
+    }
+    console.log(
+      `      ${s2.vendor_code} ${s2.bill_no ?? 'no bill no'} · ${s2.lines.length} lines = ${s2.goods_total} goods · ${s2.photos.length} photo(s) · due ${s2.due_date ?? 'nothing outstanding'}`,
+    )
+  })
+
   if (only !== null) {
     console.log(`\nFILTERED RUN — ${ran} check(s) matching "${only}", ${skipped} skipped. THIS IS NOT THE SUITE.`)
     if (ran === 0) {
