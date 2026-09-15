@@ -51,9 +51,26 @@ once for the SaveAck census. The approvals-trail guard was then written with a
 denominator that shrinks to nothing as each act moves onto the shared helper,
 by somebody who had just read both entries, and it went red for being correct.
 
-Backticks in a SQL comment; a denominator that goes to zero. Two rules, each
-correct, each recorded, each broken by its most recent reader. **Written down
-was not enough, twice, in the same file.**
+**And a third, which is the strongest the file has, because the rule was broken
+by the check written to enforce it.** *Strip comments before matching* is
+recorded below with its own worked example: a migration's comment explaining
+why `security_invoker` must be set again is what satisfied the search for
+`security_invoker`. Three commits later, the gate written to catch `::jsonb`
+casts went red on correct code — because **the comment explaining why `::text`
+is needed contains the string `::jsonb`**, and the check for `::jsonb` found
+it. Same author, same week, same fault, inside the instrument built to hold the
+rule against exactly that.
+
+Backticks in a SQL comment; a denominator that goes to zero; a justification
+answering the search for the thing it justifies, twice. **Three rules, each
+correct, each recorded, each broken by its most recent reader — and the last
+while implementing the check for it.** Written down was not enough, three
+times, in the same file.
+
+The corollary, since it is the half that generalises: **the better documented a
+rule is, the more certainly its prose will satisfy a naive search for its
+implementation.** Careful explanation and a substring check are adversaries.
+Anchor on structure; strip the prose first.
 
 ## HOW MUCH PROOF IS WORTH THE WALL CLOCK
 
@@ -10666,21 +10683,20 @@ diagnosis was a leak: `listMyOutcomes` filters `requested_by = <the reader>`,
 so it shows anyone their own requests and is not scoped to the store. The
 store-manager voice was in the COPY, not in the query.
 
-## A jsonb PARAMETER IS JSON-ENCODED AGAIN — five silent columns
+## AN INFERRED TYPE CAN CHANGE THE MEANING OF A VALUE, NOT ONLY ITS FORMATTING
 
-`"undefined points at undefined. Nothing had to move."` reached a user, on a
-discard, in the "already decided" list. The reported cause was the merge
-sentence being used for a discard. **It was not.** `AppliedLine` branches on
-`r.discarded` first and that branch is correct; the DATA never arrived as an
-object.
+The general rule first, because the instance is only how it was found.
+`at time zone` recorded half of it — a parameter inferred as `timestamptz`
+converted an already-anchored instant a second time — and that read as a
+formatting problem. It is not:
 
-    jsonb_typeof(applied_result) = 'string'
-    applied_result::text         = "{\"discarded\":\"PLT-0012\"}"
+> **A driver reads the CAST a parameter is going into and encodes the value to
+> match. Where the value is ALREADY in that encoding, it is encoded AGAIN, and
+> the result is a different value wearing the right type.**
 
-`${JSON.stringify(x)}::jsonb` **double-encodes.** postgres.js infers a
-parameter's type from the cast it is going into, so a JS STRING heading for
-jsonb is JSON-encoded a second time and the column holds the jsonb *string*
-`"{…}"` rather than the object. Measured, all three spellings:
+`${JSON.stringify(x)}::jsonb` hands postgres.js a JS string bound for jsonb, so
+it JSON-encodes it, and the column holds the jsonb STRING `"{…}"` rather than
+the object. Measured, all three spellings:
 
 | | |
 |---|---|
@@ -10688,56 +10704,107 @@ jsonb is JSON-encoded a second time and the column holds the jsonb *string*
 | `${JSON.stringify(x)}::text::jsonb` | object |
 | `${tx.json(x)}::jsonb` | object |
 
-Casting through `::text` removes the inference — **the same remedy, for the
-same reason, as the `at time zone` bug**: *a parameter's inferred type can
-change the MEANING of the value, not only its formatting.* That entry warned
-about a timezone; this is the general case.
+Casting through `::text` removes the inference, exactly as it did for the
+timezone. Two faults, one cause, and the cause is about neither dates nor JSON:
+**a cast is an instruction to the driver as well as to Postgres.**
 
-**IT IS SILENT IN EVERY DIRECTION.** The write succeeds. The column is
-populated. The value is valid jsonb. `audit:schema` is satisfied — the column
-exists and the type is right. Only a `.field` read comes back undefined, and
-only a template interpolating one shows it. Five write sites, and the one that
-produced a visible symptom was the least of them: **`snapshot` was
-double-encoded on all four requests**, so the approvals screen's entire "when
-it was asked" half — the reference count, the cost move, the amount, the
-urgency, the ageing at asking — has been reading undefined since it was built.
-That is the comparison the whole preview exists to make.
+### A FAULT SILENT IN EVERY DIRECTION IS FOUND ONLY WHERE IT HAPPENS TO BE RENDERED
 
-**Four rows cannot be repaired**: `kb_app` has no UPDATE grant on `snapshot`.
-So the reader PARSES the legacy shape rather than guessing at it — the string
-IS the object's JSON, so parsing recovers it exactly — and anything that fails
-to parse renders nothing rather than `undefined`.
+This is what makes the rule worth the space. Nothing objected anywhere:
 
-The gate is two halves: no `::jsonb` in `src` without `::text` in front of it,
+| | |
+|---|---|
+| the write | succeeded |
+| the column | populated, valid jsonb, correct type |
+| `audit:schema` | passes — the column exists and resolves |
+| a `.field` read | `undefined` |
+
+**So the only surface that can report it is one that interpolates a missing
+field into visible text.** `"undefined points at undefined. Nothing had to
+move."` was the cosmetic edge of it, on the one kind whose sentence happens to
+name two fields — and **without that string nothing would ever have shown.**
+
+What was actually broken made no sound at all: **`snapshot` was double-encoded
+on every request ever made**, so the approvals preview's entire *"when it was
+asked"* half — reference count, cost move, amount, urgency, ageing at asking —
+**has never worked, once.** That is the comparison the preview exists to make,
+and the screen rendered its "no snapshot recorded" fallback every time, which
+reads as missing data rather than as a broken read.
+
+For the next one: where a fault can only be seen where a template prints it,
+the absence of complaints is not evidence. Ask which surfaces would be CAPABLE
+of showing it — and if the answer is "one, by accident", assume the rest are
+wrong too and go and look.
+
+### READING ROUND AN UNREPAIRABLE ROW, WITHOUT INVENTING ONE
+
+Four requests hold the old shape and **cannot be repaired: `kb_app` has no
+UPDATE grant on `snapshot`.** So the reader PARSES it — the stored string IS
+the object's JSON, so parsing recovers the original exactly — and where it
+cannot parse, renders NOTHING rather than `undefined`.
+
+**That is only available because the old shape is losslessly recoverable, and
+it does not generalise.** Reading round a fault you cannot repair is right
+while the broken value still contains everything the correct one had; it
+becomes inventing a value the moment it does not. Where an encoding has LOST
+something, the honest move is the one this file takes everywhere else: say what
+is missing and why, and never compute a figure to fill a gap.
+
+### The gate for it, and what the gate did to itself
+
+Two halves: **no `::jsonb` in `src` without `::text` in front of it** — which
+catches the class where it is created rather than where it happens to show —
 and no decided row whose result would reach the merge sentence without both
-codes. **And its first version went red on correct code, because the comment
-explaining why `::text` is needed contains the string `::jsonb`.** Second time
-in three commits that a justification satisfied the search for the thing it
-justifies. Comments stripped first.
+codes, which is the cheap form of *nothing renders `undefined`*. Five write
+sites, all fixed; removing one `::text` names the file and the fragment.
 
-## A BADGE IS A CLAIM ABOUT A SCREEN, NOT ABOUT ITS READER
+**Its first version went red on correct code**, because the comment explaining
+why `::text` is needed contains `::jsonb`. That is recorded in the PREAMBLE
+rather than here: it is not a rule about gates, it is the file's strongest
+evidence that written down was not enough.
 
-Seventh built-and-unreachable finding, and the second where a badge pointed at
-a screen that did not show its subject.
+## ONE SOURCE IS NOT ONE ANSWER IF TWO CALLERS PASS IT DIFFERENT ARGUMENTS
 
-The Payments badge counted `countAwaiting(rid, 'accountant')` — the GROUP's
-role, hardcoded. `AwaitingPanel` listed `listAwaiting(rid, user.role)` — the
-SIGNED-IN READER's. Those agree for an accountant and disagree for everybody
-else, and the owner can open `/accounts`: he saw **a badge of 2 over a screen
-with no panel at all**, because both payments were routed to the accountant and
-none was waiting on him.
+**An ADDITION to the single-source rule, not an instance of it**, and the
+distinction is the point. `awaiting_me` was a genuine single source: one view,
+one predicate, read in one file, and GATED to be read in one file. It still
+gave two answers.
 
-One source (`awaiting_me`) is not one answer if two callers pass it different
-arguments. `GROUP_QUEUE_ROLE` names the role once and the badge and the panel
-both read it; the heading says *"Routed to the accountant"* when the reader is
-not that role, because "Routed to you" would be a claim about the wrong person.
+> **A shared source removes the risk of two DEFINITIONS. It does nothing about
+> two ARGUMENTS.** `f(x)` and `f(y)` disagree however carefully `f` is written,
+> and every check asking "is there one f?" says yes.
 
-Gated: a role LITERAL in the tab strip fails, and each payment page must hand
-the panel the same constant.
+The earlier entry — **"THE BADGE AND THE PAGE ARE ONE QUERY"** — closed the
+first half and reads, in hindsight, as though it had closed both. It had not:
+the Payments badge passed the literal `'accountant'` and the panel passed
+`user.role`, so the count and the list answered about different queues while
+the gate asserting "one reader of the view" stayed true throughout.
 
-**What worked, and it is the hard part:** the whole chain — raise, approve,
-route, forward — wrote correctly, in one transaction, with the trail intact
-(`raised → approved → routed → forwarded`, `routed` and `forwarded` sharing a
-timestamp and ordered by `seq`) and nothing moving. Three screens were wrong
-about data that was right. **The badge was the only part telling the truth**,
-which is what the single source was for.
+**Name the argument once as well.** `GROUP_QUEUE_ROLE` is read by the badge
+and by the panel, and a role LITERAL in the tab strip now fails. Ask it of the
+next shared query: is the SOURCE shared, or is the CALL shared? Only the second
+makes two surfaces agree.
+
+### A HEADING IS A CLAIM ABOUT SOMEBODY
+
+"Routed to you" was rendered to an owner reading the accountant's queue —
+correct data, correct scope, and a sentence about the wrong person. It reads
+*"Routed to the accountant"* when the reader is not that role.
+
+**A figure can be right for a screen while its label is wrong for its reader,
+and the label is the half somebody acts on.**
+
+### Seventh built-and-unreachable, and what worked
+
+The seventh of that family, and the second where a badge pointed at a screen
+not showing its subject. The panel was MOUNTED and correct and conditioned on
+something false — which is why "is it rendered" and "is it mounted" both
+answered yes and neither helped.
+
+**What worked is the hard part, so it is worth saying.** The whole chain —
+raise, approve, route, forward — wrote correctly, in one transaction, with the
+trail intact (`raised → approved → routed → forwarded`, the last two sharing a
+transaction timestamp and ordered by `seq`) and nothing moving: no payment
+rows, no balances touched. Three screens were wrong about data that was right,
+and **the badge was the only part telling the truth** — which is what the
+single source was for, even while it was being handed two arguments.
