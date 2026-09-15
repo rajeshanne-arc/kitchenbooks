@@ -26,6 +26,7 @@ import {
   getVendorRouting,
   listAwaiting,
   listMyOutcomes,
+  listMyWaiting,
   type VendorRouting,
 } from '@/server/approvals-queries'
 import { listBillNumbersFor, listBillsOutstandingFor } from '@/server/aging-queries'
@@ -88,7 +89,7 @@ export default async function AwaitingPanel({ role }: { role: Role }) {
 }
 
 /**
- * WHAT CAME BACK TO THE PERSON READING THIS SCREEN.
+ * WHAT CAME BACK TO THE PERSON READING THIS SCREEN — and what has not.
  *
  * Mounted beside AwaitingPanel and answering the other half of the question:
  * that one is "what is waiting on me", this one is "what happened to what I
@@ -96,14 +97,28 @@ export default async function AwaitingPanel({ role }: { role: Role }) {
  * — one is an obligation, the other is news — and the badge counts only the
  * first.
  *
- * Silent when he has raised nothing that has been decided. A permanent empty
+ * THREE QUESTIONS NOW, AND THE THIRD IS THE ONE HE ASKS MOST: what has not
+ * come back yet. A request sitting with the owner appeared on no screen at
+ * all, which is indistinguishable from never having asked.
+ *
+ * TWO QUERIES, IN PARALLEL, and they stay two. One WHERE clause over both
+ * status sets would be shorter and would then need unpicking in the component
+ * — and the two lists are ordered opposite ways on purpose: waiting is
+ * LONGEST-HELD first, because that is the one to chase; decided is NEWEST
+ * first, because that is the one he has not read.
+ *
+ * Silent when he has nothing in flight and nothing decided. A permanent empty
  * card is a thing to read and dismiss every morning.
  */
 export async function MyOutcomesPanel() {
   const user = await getSessionUser()
   if (!user) return null
   const restaurant = await getRestaurant()
-  const rows = await listMyOutcomes(restaurant.id, user.username)
-  if (rows.length === 0) return null
-  return <MyOutcomes rows={rows} />
+  const today = await businessToday()
+  const [waiting, rows] = await Promise.all([
+    listMyWaiting(restaurant.id, user.username, today),
+    listMyOutcomes(restaurant.id, user.username),
+  ])
+  if (waiting.length === 0 && rows.length === 0) return null
+  return <MyOutcomes waiting={waiting} rows={rows} />
 }

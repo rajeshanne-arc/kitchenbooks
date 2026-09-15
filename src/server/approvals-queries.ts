@@ -1380,6 +1380,223 @@ export async function assertAssignee(assignedTo: string | null, what: string): P
 
 
 /**
+ * WHO MAY TAKE A REQUEST BACK, AND FROM WHERE.
+ *
+ * A RULING, so it is declared once and read by the action AND the gate. A
+ * probe that restates the rule it is testing is testing the mechanism rather
+ * than the rule — the lesson SEND_BACK already paid for.
+ *
+ *   THE RAISER, while PENDING. Nobody has decided anything, so taking it back
+ *   costs nobody a decision. He asked; he may stop asking.
+ *
+ *   THE OWNER, also once he has APPROVED it. He made that decision and the
+ *   money has not moved, so he may unmake it — and this is the state a return
+ *   comes back to, since a return leaves the status at `approved` and only
+ *   clears the route. `returned` and `challenged` are here because the schema
+ *   still admits them, not because the app writes them today.
+ *
+ * NOBODY, ONCE IT IS PAID. `applied` is money that has left an account, and
+ * unmaking that is a VOID — a negative twin on the payments table — not a
+ * withdrawal. The refusal says so rather than failing on a status list.
+ */
+export const WITHDRAW_FROM = {
+  raiser: ['pending'],
+  owner: ['pending', 'approved', 'returned', 'challenged'],
+} as const
+
+/**
+ * MAY THIS PERSON TAKE THIS REQUEST BACK, RIGHT NOW — read under the row lock.
+ *
+ * IT LIVES HERE, NOT IN THE ACTION FILE, for the reason `applyRequest` does:
+ * every export from a `'use server'` file is a public HTTP endpoint, and this
+ * one decides who may act on the strength of an actor passed IN. Exported from
+ * there it would be a way to withdraw anybody's request as anybody. Living
+ * here is also what lets the gate run the APP'S OWN rule rather than a copy of
+ * it — the action resolves the session and hands the answer down.
+ *
+ * FOR UPDATE, because the whole point is that a decision landing while the
+ * screen was open must still win. The same shape as the pay guard and the
+ * purchase-order freeze.
+ */
+export type Withdrawable = {
+  status: string
+  kind: string
+  entity_id: string
+  requested_by: string
+}
+
+export async function assertWithdrawable(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+  id: string,
+  actor: { username: string; role: Role },
+): Promise<Withdrawable & { from: readonly string[] }> {
+  const [row] = await tx<Withdrawable[]>`
+    select status, kind, entity_id::text as entity_id, requested_by
+    from approval_requests
+    where id = ${id} and restaurant_id = ${restaurantId}
+    for update`
+  if (!row) throw new ApprovalRefusal('That request is not on this restaurant’s books')
+
+  const isOwner = actor.role === 'owner'
+  // IT USED TO CHECK NEITHER HALF OF THIS. `assertRequester()` admits store,
+  // chef, manager and owner, and nothing compared the caller to
+  // `requested_by` — so any of them could withdraw somebody else's pending
+  // request through a public endpoint.
+  if (row.requested_by !== actor.username && !isOwner) {
+    throw new ApprovalRefusal(
+      `${row.requested_by} raised that one — only they or an owner can take it back`,
+    )
+  }
+
+  const from: readonly string[] = isOwner ? WITHDRAW_FROM.owner : WITHDRAW_FROM.raiser
+  if (!from.includes(row.status)) {
+    // NAMED BY WHAT HAPPENED, because the reasons are different jobs and
+    // "wrong status" is not one anybody can act on.
+    throw new ApprovalRefusal(
+      row.status === 'applied' && row.kind === 'payment'
+        ? 'That payment has already been made — money has left an account, so putting it back is a void on the payment, not a withdrawal'
+        : row.status === 'applied'
+          ? 'That one has already been applied — withdrawing it now would change nothing that has not already happened'
+          : row.status === 'cancelled'
+            ? 'That one was already withdrawn'
+            : row.status === 'refused'
+              ? 'That one was refused rather than left waiting — tap Noted to take it off your list'
+              : `Only an owner can withdraw a request that has been ${row.status}`,
+    )
+  }
+  return { ...row, from }
+}
+
+/**
+ * WHERE THE VENDOR STANDS ONCE THE REQUEST IS GONE.
+ *
+ * Read AFTER the withdrawal and INSIDE the same transaction, for two reasons
+ * that are really one: the figure must be read back rather than echoed — this
+ * app's rule since phase 1 — and the count of other open requests must exclude
+ * the one just cancelled, which it does only if it is read after it.
+ *
+ * `open_requests` is CHECKED, NOT ASSUMED. "Nobody is holding a request for
+ * them" is a claim about the whole table, and the exclusion constraint only
+ * forbids OVERLAPPING open ranges — two requests over two different ranges for
+ * one vendor are perfectly legal. Saying nobody is holding one while somebody
+ * is would send him to promise a vendor something twice.
+ *
+ * A LEFT JOIN FROM NOTHING: `vendor_dues` carries every vendor, so a vendor
+ * owed nothing is a row reading zero rather than an absent one — which is what
+ * lets the acknowledgement say "they are owed nothing" instead of going quiet.
+ */
+export type VendorStanding = { vendor_name: string; balance: string; open_requests: number }
+
+export async function getVendorStanding(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+  vendorId: string,
+): Promise<VendorStanding | null> {
+  const [row] = await tx<VendorStanding[]>`
+    select v.name as vendor_name,
+           coalesce(d.balance, 0)::text as balance,
+           (select count(*)::int from approval_requests r
+             where r.restaurant_id = v.restaurant_id
+               and r.kind = 'payment'
+               and r.entity_id = v.id
+               and r.status = any(${[...WAITING_STATUSES]})) as open_requests
+    from vendors v
+    left join vendor_dues d on d.vendor_id = v.id
+    where v.restaurant_id = ${restaurantId} and v.id = ${vendorId}`
+  return row ?? null
+}
+
+
+/**
+ * WHAT HE RAISED THAT IS STILL IN FLIGHT — and who is holding it.
+ *
+ * The other half of "what happened to yours", and it was the missing half:
+ * the panel showed refused and paid, so a request that had been sitting with
+ * the owner for three days appeared NOWHERE. He had asked, nothing had come
+ * back, and the screen he was told to read said nothing at all — which reads
+ * exactly like a request that was never made.
+ *
+ * It answers with a NAME AND A DATE rather than a status word, because the
+ * next thing he does with it is walk up to somebody: "with the owner since
+ * Mon 14 Sep" is actionable and "PENDING" is not.
+ *
+ * THE STATUSES ARE DERIVED, NEVER LISTED. `ASSIGNABLE_STATUSES` already says
+ * where somebody may still be holding a request; waiting is that set minus
+ * `refused`, which is an OUTCOME and already has its own section with its own
+ * button. A hand-written list here is the fault this file records four times
+ * over — the retired URLs at 51 against 57, DOC_TYPES at eight against nine,
+ * a pinned "Accounts → Money", and a WHERE clause restating what a column
+ * already said. A status added to the CHECK lands here on the day it exists.
+ *
+ * LONGEST-HELD FIRST. The one that has been sitting a week is the one to ask
+ * about, and a list ordered by when it was raised buries it under this
+ * morning's. Same law as the reorder queue leading with what is most urgent
+ * rather than what is alphabetically first.
+ */
+export const WAITING_STATUSES = ASSIGNABLE_STATUSES.filter((s) => s !== 'refused')
+
+export type WaitingRow = AwaitingRow & { held_since: string; held_days: number }
+
+export async function listMyWaiting(
+  restaurantId: string,
+  username: string,
+  /** THE BUSINESS DAY, PASSED IN. The browser says tomorrow at 00:30, and a
+   *  screen that reports how long somebody has been sitting on a request must
+   *  not add a day to it for two hours a night. */
+  today: string,
+  tx?: postgres.TransactionSql,
+): Promise<WaitingRow[]> {
+  const q = (tx ?? tsql) as typeof tsql
+  return q<WaitingRow[]>`
+    select a.id, a.kind, a.entity_type, a.entity_id, a.target_entity_id, a.reason,
+           a.snapshot, a.status, a.requested_by, a.requested_at::text as requested_at,
+           a.decided_by, a.decided_at::text as decided_at, a.decision_note,
+           a.applied_at::text as applied_at, a.applied_result,
+           a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.bills_from::text as bills_from, a.bills_to::text as bills_to,
+           a.routed_account_id::text as routed_account_id, a.assigned_to,
+           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
+           ev.action as last_action, ev.note as last_note,
+           ev.acted_by as last_by, ev.acted_at::text as last_at,
+           -- SINCE WHEN IT HAS BEEN WHERE IT IS. The last act's timestamp, not
+           -- the raise: a request approved on Monday and forwarded on Tuesday
+           -- has been with the accountant since TUESDAY, and saying Monday
+           -- would age somebody else's queue by a day.
+           --
+           -- COALESCED TO THE RAISE for the handful of requests made before
+           -- the trail existed. Those carry a permanent hole at the start of
+           -- their own history and nothing can backfill it; the raise is the
+           -- one thing about them that is certainly true.
+           coalesce(ev.acted_at, a.requested_at)::text as held_since,
+           -- THE COUNT IS COMPUTED HERE, not from the rendered date. Every
+           -- timestamp in this app renders in IST; business_date reads the
+           -- restaurant's own timezone and cutover setting. They agree for
+           -- this restaurant and would not for one that closes at 2am
+           -- somewhere else, and the DURATION is the half somebody acts on.
+           (${today}::date - business_date(coalesce(ev.acted_at, a.requested_at)))::int as held_days
+    from approval_requests a
+    left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
+    left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
+    left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
+    left join lateral (
+      select e.action, e.note, e.acted_by, e.acted_at
+      from approval_events e
+      where e.restaurant_id = a.restaurant_id and e.request_id = a.id
+      order by e.acted_at desc, e.seq desc
+      limit 1
+    ) ev on true
+    where a.restaurant_id = ${restaurantId}
+      and a.requested_by = ${username}
+      and a.status = any(${[...WAITING_STATUSES]})
+    order by coalesce(ev.acted_at, a.requested_at) asc
+    limit 20`
+}
+
+
+/**
  * WHAT HAPPENED TO THE ONES HE RAISED — a different question from "what is
  * waiting on me", and deliberately a different query.
  *

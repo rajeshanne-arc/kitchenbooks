@@ -32,6 +32,25 @@ export function tabHref(group: TabGroup, key: string): string {
   return tab.href
 }
 
+/**
+ * A tab's LABEL, from the same registry as its URL.
+ *
+ * Prose that names a door — "import a statement under Cash & bank" — is a
+ * hand-maintained copy of a label, and this file already records what those
+ * cost: a gate pinned the literal "Accounts → Money" and stayed pinned through
+ * the relabel to Cash & bank, and eleven sentences said "Settings → Lists"
+ * after that tab became Setup → Lists. A gate can catch the drift; asking
+ * removes it.
+ *
+ * Throws on an unknown key for the reason tabHref does: naming a door that
+ * does not exist is worse than not naming one.
+ */
+export function tabLabel(group: TabGroup, key: string): string {
+  const tab = TAB_DEFAULTS[group].find((t) => t.key === key)
+  if (tab === undefined) throw new Error(`No ${group} tab called "${key}" — check src/lib/tabs.ts`)
+  return tab.label
+}
+
 /** A chip's URL: its tab's href, plus the chip key. Same shape the chip row
  *  builds, so the two cannot drift. */
 export function chipHref(group: TabGroup, tabKey: string, chipKey: string): string {

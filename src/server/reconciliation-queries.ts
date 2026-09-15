@@ -214,6 +214,62 @@ export async function findUnmatchedMovement(
 }
 
 /**
+ * HAS THE BANK EVER BEEN CONSULTED AT ALL — the precondition under every
+ * figure on the Review's payment half.
+ *
+ * "Paid on our books, not yet on a statement" reports a LAG: these have been
+ * sitting a while, the rest are fine. That sentence is only true once matching
+ * is a thing somebody does. With no statement ever imported nothing has been
+ * checked — not the ones it lists and not the ones it does not — and the
+ * section is SILENT AT ZERO, which reads as a clean bill of health. That is
+ * this file's own law twice over: a card declares its precondition before it
+ * reports its finding, and an honest empty state is exactly where a check that
+ * has never run hides.
+ *
+ * TWO NUMBERS, BECAUSE THEY ARE TWO DIFFERENT FACTS and a statement only fixes
+ * one of them:
+ *
+ *   `reconcilable`  names an account, so a statement line could one day agree.
+ *   `unaccounted`   names NONE. `unmatched_movements` requires `account_id is
+ *                   not null`, so these are invisible to the whole control —
+ *                   not unmatched, UNMATCHABLE — and importing a statement
+ *                   will never reach them. They are the entries made before
+ *                   money accounts existed, plus tax deposits, which carry a
+ *                   null account by the view's own design.
+ *
+ * ONE STATEMENT, five scalar subqueries. It renders on a queue somebody opens
+ * every morning, and five round trips for five counts is the fan-out that
+ * deadlocked the item master.
+ *
+ * @scope now
+ */
+export type ReconciliationReadiness = {
+  statements: number
+  matches: number
+  reconcilable: number
+  unaccounted: number
+  unaccounted_value: string
+}
+
+export async function getReconciliationReadiness(
+  restaurantId: string,
+): Promise<ReconciliationReadiness> {
+  const [row] = await tsql<ReconciliationReadiness[]>`
+    select
+      (select count(*)::int from statements
+        where restaurant_id = ${restaurantId}) as statements,
+      (select count(*)::int from reconciliation_matches
+        where restaurant_id = ${restaurantId}) as matches,
+      (select count(*)::int from money_movements
+        where restaurant_id = ${restaurantId} and account_id is not null) as reconcilable,
+      (select count(*)::int from money_movements
+        where restaurant_id = ${restaurantId} and account_id is null) as unaccounted,
+      (select coalesce(sum(abs(amount)), 0)::text from money_movements
+        where restaurant_id = ${restaurantId} and account_id is null) as unaccounted_value`
+  return row ?? { statements: 0, matches: 0, reconcilable: 0, unaccounted: 0, unaccounted_value: '0' }
+}
+
+/**
  * EVERY PAYMENT IS A CLAIM UNTIL IT MATCHES A BANK STATEMENT LINE.
  *
  * Cash or bank, recorded by the store or approved by the owner — a payment is

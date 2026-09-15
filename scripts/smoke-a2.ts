@@ -11661,10 +11661,24 @@ async function run() {
   })
 
   await check('the range reads on every screen a request reaches', async () => {
-    // FIVE MOUNTS, ONE DEFINITION. The owner's card, the routed queue, out
-    // with somebody else, already decided and what happened to yours all
-    // answer the same question about the same row — and five hand-written
-    // versions is how one comes to say something the others do not.
+    // ONE DEFINITION, HOWEVER MANY MOUNTS. The owner's card, the routed queue,
+    // out with somebody else, already decided, still waiting and what happened
+    // to yours all answer the same question about the same row — and hand-
+    // written versions are how one comes to say something the others do not.
+    //
+    // THE COUNT USED TO BE PINNED AT FIVE, AND THAT WAS THE WRONG ASSERTION.
+    // It went red the day a sixth screen — the waiting section — started
+    // showing the range it names, which is the behaviour this check exists to
+    // REQUIRE. A pinned total is a hand-maintained copy of "how many screens a
+    // request reaches", the fault this file records for the retired URLs at 51
+    // against 57 and DOC_TYPES at eight against nine; and it was guarding
+    // nothing, because mounting the shared component is the correct act
+    // everywhere. The fault is the opposite one, and the rogue check below is
+    // what catches it. A gate that cries wolf on correct code is a gate people
+    // start ignoring.
+    //
+    // So: the definition is ONE, the screens that must show a range DO, nobody
+    // builds their own, and the census is PRINTED rather than asserted.
     const { readFileSync, readdirSync, statSync } = await import('node:fs')
     const walk = (d: string): string[] =>
       readdirSync(d).flatMap((f) => {
@@ -11672,19 +11686,56 @@ async function run() {
         return statSync(full).isDirectory() ? walk(full) : full.endsWith('.tsx') || full.endsWith('.ts') ? [full] : []
       })
     const files = [...walk('src/components'), ...walk('src/app')]
+    const stripComments = (t: string) =>
+      t
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/^\s*\/\/.*$/gm, ' ')
     // A REAL JSX BOUNDARY, never a prefix — `<BillScope` matches `<BillScopeX`
     // too, and a rename would leave this green. Recorded three times already.
     const mounts = files
       .map((f) => ({ f, n: (readFileSync(f, 'utf8').match(/<BillScope[\s/>]/g) ?? []).length }))
       .filter((x) => x.n > 0)
     const total = mounts.reduce((n, m) => n + m.n, 0)
-    assert.equal(total, 5, `BillScope is mounted ${total} times, not 5: ${mounts.map((m) => `${m.f}×${m.n}`).join(', ')}`)
+    // ONE DEFINITION. This is the half the pinned count was reaching for and
+    // never tested: a second BillScope beside the first is how two screens
+    // start disagreeing about one row.
+    const defs = files.filter((f) => /export default function BillScope\b/.test(readFileSync(f, 'utf8')))
+    assert.deepEqual(defs, ['src/components/approvals/BillScope.tsx'], 'BillScope is defined more than once')
+    // THE FLOOR IS THE THREE SCREENS THAT LIST REQUESTS. Named, and that is
+    // legitimate where a pinned total is not: this is a "these must not
+    // regress" list, not a census that has to be complete to be correct. A
+    // fourth screen appearing does not make it wrong.
     for (const want of [
       'src/components/settings/ApprovalsClient.tsx',
       'src/components/approvals/AwaitingActions.tsx',
       'src/components/approvals/MyOutcomes.tsx',
     ]) {
       assert.ok(mounts.some((m) => m.f === want), `${want} does not render the range`)
+    }
+
+    // AND PER COMPONENT, NOT PER FILE, where the file holds more than one row.
+    // MyOutcomes renders TWO kinds of request row — one still waiting, one
+    // decided — and a file-level check passes while either has quietly lost
+    // its range. Slicing each top-level component out and asking of the ones
+    // that render a request's FIGURE is what makes "the range reads wherever
+    // the request does" actually checkable. Derived: a third row component
+    // added to that file is covered the day it is written.
+    //
+    // (A first attempt swept every file rendering `row.amount` and named
+    // eleven — withholdings, dues, off-book, expenses — none of which are
+    // approval requests at all. A derivation that cries wolf is the fault
+    // this whole edit is fixing, so it is scoped to the one file that holds
+    // more than one request row.)
+    const multi = 'src/components/approvals/MyOutcomes.tsx'
+    const body = stripComments(readFileSync(multi, 'utf8'))
+    const blocks = body.split(/\nfunction |\nexport default function /).slice(1)
+    assert.ok(blocks.length >= 3, `only ${blocks.length} components sliced out of MyOutcomes — the slice is wrong`)
+    const rowish = blocks.filter((b) => /formatMoneyString\(row\.amount/.test(b))
+    assert.ok(rowish.length >= 2, `only ${rowish.length} request rows found in MyOutcomes — waiting and decided should both be there`)
+    for (const b of rowish) {
+      const name = (b.match(/^(\w+)/) ?? ['?', '?'])[1]
+      assert.match(b, /<BillScope[\s/>]/, `${name} in MyOutcomes shows a request's amount and not the bills it is about`)
     }
     // AND NOBODY ELSE BUILDS ONE. A second hand-rolled "bills … · N bills" is
     // the drift this component exists to prevent.
@@ -11696,11 +11747,6 @@ async function run() {
     // indistinguishable, to a substring search, from the rule being broken;
     // this file's preamble calls that its strongest instance and it was made
     // again here, in the check written to enforce the rule.
-    const stripComments = (t: string) =>
-      t
-        .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
-        .replace(/\/\*[\s\S]*?\*\//g, ' ')
-        .replace(/^\s*\/\/.*$/gm, ' ')
     //
     // AND THE EXEMPTION IS A CONDITION, NOT A NAME. BillDrift legitimately
     // says "in the whole balance now" — it is the drift LINE, a different
@@ -12264,6 +12310,297 @@ async function run() {
     console.log(
       `      ${s2.vendor_code} ${s2.bill_no ?? 'no bill no'} · ${s2.lines.length} lines = ${s2.goods_total} goods · ${s2.photos.length} photo(s) · due ${s2.due_date ?? 'nothing outstanding'}`,
     )
+  })
+
+  /* ── still waiting, taken back, and never checked ──────────────────── */
+  console.log('\nwhat has not come back, and what nobody checked')
+
+  await check('waiting and decided partition the statuses, and the words are by value', async () => {
+    const { ASSIGNABLE_STATUSES, WAITING_STATUSES, WITHDRAW_FROM } = await import(
+      '../src/server/approvals-queries'
+    )
+    const { heldText, holder, withdrawnMessage, worthChasing, CHASE_AFTER } = await import(
+      '../src/lib/waiting'
+    )
+    const { tsql } = await import('../src/lib/db')
+
+    // EVERY STATUS THE DATABASE ADMITS, READ FROM THE CHECK — never a list
+    // here. A sixth status added to the constraint must land in exactly one of
+    // the three buckets on the day it exists, and fail loudly if it lands in
+    // none. That is the hand-maintained-copy fault this file records four
+    // times, and a WHERE clause is where it hides best.
+    const [{ def }] = await tsql<{ def: string }[]>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'approval_requests'::regclass and conname like '%status%'
+      limit 1`
+    const all = [...new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))].sort()
+    assert.ok(all.length >= 6, `only ${all.length} statuses parsed out of the CHECK — the parse is wrong`)
+
+    const waiting = new Set<string>(WAITING_STATUSES)
+    const decided = new Set(['refused', 'applied'])
+    const silent = new Set(['cancelled'])
+    const both = [...waiting].filter((x) => decided.has(x))
+    assert.deepEqual(both, [], 'these statuses are on BOTH lists — a request would render twice')
+    const orphan = all.filter((x) => !waiting.has(x) && !decided.has(x) && !silent.has(x))
+    assert.deepEqual(orphan, [], 'these statuses appear on no list — a request in one is on no screen at all')
+    // AND REFUSED IS THE INTERESTING MEMBER: assignable, so somebody is still
+    // holding it, yet an OUTCOME with its own section and its own button.
+    assert.ok(ASSIGNABLE_STATUSES.includes('refused'), 'refused stopped being assignable')
+    assert.ok(!waiting.has('refused'), 'a refusal is waiting AND decided — it would render in both')
+
+    // THE RULING, BY VALUE. The raiser may only take back what nobody has
+    // decided; the owner may also unmake his own approval.
+    assert.deepEqual([...WITHDRAW_FROM.raiser], ['pending'])
+    assert.ok(WITHDRAW_FROM.owner.includes('approved'), 'the owner cannot take back his own approval')
+    assert.ok(!(WITHDRAW_FROM.owner as readonly string[]).includes('applied'), 'a PAID request can be withdrawn')
+
+    // THE PHRASING, BY VALUE — including the two that only fire on data this
+    // restaurant does not have today.
+    assert.equal(heldText(0), 'since today')
+    assert.equal(heldText(1), 'since yesterday')
+    assert.equal(heldText(4), '4 days')
+    assert.equal(heldText(-1), 'dated ahead of today', 'a timestamp ahead of the business day is hidden')
+    assert.equal(holder('owner'), 'the owner')
+    assert.equal(holder('accountant'), 'the accountant')
+    assert.equal(holder(null), 'nobody', 'an unheld request claims somebody is holding it')
+    assert.equal(worthChasing(CHASE_AFTER - 1), false)
+    assert.equal(worthChasing(CHASE_AFTER), true)
+
+    // THE ACKNOWLEDGEMENT, BY VALUE. The second clause is the whole point: a
+    // withdrawal that reads as "handled" is how a vendor goes unpaid.
+    const m = (v: string) => `Rs ${v}`
+    assert.equal(
+      withdrawnMessage('payment', { vendor_name: 'SRI VYSHNAVI', balance: '64815.00', open_requests: 0 }, m),
+      'Withdrawn. SRI VYSHNAVI still owes Rs 64815.00 and nobody is holding a request for them.',
+    )
+    assert.match(
+      withdrawnMessage('payment', { vendor_name: 'X', balance: '0', open_requests: 2 }, m),
+      /X is owed nothing and there are still 2 other requests open for them/,
+    )
+    // A BROKEN READ MUST NOT WEAR THE EMPTY STATE'S WORDS.
+    const broken = withdrawnMessage('payment', null, m)
+    assert.ok(!/owed nothing/.test(broken), 'a failed vendor read renders as "owed nothing"')
+    assert.match(broken, /would not read/)
+    assert.equal(withdrawnMessage('discard', null, m), 'Withdrawn. Nothing was changed.')
+    console.log(
+      `      ${all.length} statuses · ${waiting.size} waiting / ${decided.size} decided / ${silent.size} silent · chase after ${CHASE_AFTER}d`,
+    )
+  })
+
+  await check('a request he raised is on his own screen the whole way through', async () => {
+    const { txn } = await import('../src/lib/db')
+    const { assertWithdrawable, getVendorStanding, listMyWaiting, listMyOutcomes, recordAct } =
+      await import('../src/server/approvals-queries')
+    const { businessToday } = await import('../src/server/business-day')
+    const { withdrawnMessage } = await import('../src/lib/waiting')
+    const { formatMoneyString } = await import('../src/lib/money')
+    const today = await businessToday()
+    const out: string[] = []
+
+    await txn(async (tx) => {
+      const [vendor] = await tx<{ id: string; name: string }[]>`
+        select v.id, v.name from vendors v
+        where v.restaurant_id = ${liveTenant} and v.status = 'active' order by v.code limit 1`
+      const [raiser] = await tx<{ username: string }[]>`
+        select username from app_users
+        where restaurant_id = ${liveTenant} and role = 'store' and status = 'active' limit 1`
+      assert.ok(vendor !== undefined && raiser !== undefined, 'no active vendor or store user')
+
+      const mk = async (status: string, assigned: string | null) => {
+        const [r] = await tx<{ id: string }[]>`
+          insert into approval_requests
+            (restaurant_id, kind, entity_type, entity_id, reason, amount, suggested_mode,
+             status, assigned_to, requested_by)
+          values (${liveTenant}, 'payment', 'vendor', ${vendor.id}, 'waiting probe',
+                  750.00, 'Bank transfer', ${status}, ${assigned}, ${raiser.username})
+          returning id`
+        return r.id
+      }
+      const waitingIds = async () =>
+        (await listMyWaiting(liveTenant, raiser.username, today, tx)).map((r) => r.id)
+      const decidedIds = async () =>
+        (await listMyOutcomes(liveTenant, raiser.username, tx)).map((r) => r.id)
+
+      // ── PENDING: on the waiting list, held by the owner ────────────────
+      const pending = await mk('pending', 'owner')
+      assert.ok((await waitingIds()).includes(pending), 'a request he just raised is on no screen')
+      assert.ok(!(await decidedIds()).includes(pending), 'a pending request reads as decided')
+
+      // THE DURATION IS COMPUTED FROM THE BUSINESS DAY, and the only way to
+      // prove that is a row whose act is genuinely old. Live data is all from
+      // today, so held_days is 0 on every real row and an assertion over it
+      // would pass against a broken subtraction.
+      await tx`
+        insert into approval_events (restaurant_id, request_id, action, acted_by, acted_at)
+        values (${liveTenant}, ${pending}, 'raised', ${raiser.username},
+                (${today}::date - 4)::timestamptz + interval '10 hours')`
+      const aged = (await listMyWaiting(liveTenant, raiser.username, today, tx)).find((r) => r.id === pending)
+      assert.ok(aged !== undefined)
+      assert.equal(aged.held_days, 4, `an act four days old reads as ${aged.held_days} days`)
+      assert.equal(aged.assigned_to, 'owner')
+      out.push(`pending → waiting, with ${aged.assigned_to}, ${aged.held_days}d`)
+
+      // ── THE RAISER MAY TAKE IT BACK; A STRANGER MAY NOT ───────────────
+      // The hole this closed: assertRequester() alone admits store, chef,
+      // manager and owner, and nothing compared the caller to requested_by.
+      await assert.rejects(
+        assertWithdrawable(tx, liveTenant, pending, { username: 'somebody-else', role: 'manager' }),
+        /only they or an owner can take it back/,
+        'a manager who did not raise it can withdraw somebody else’s request',
+      )
+      const ok = await assertWithdrawable(tx, liveTenant, pending, {
+        username: raiser.username,
+        role: 'store',
+      })
+      assert.deepEqual([...ok.from], ['pending'])
+
+      // ── APPROVED: STILL his, still waiting — and NOT his to take back ──
+      const approved = await mk('approved', 'accountant')
+      assert.ok((await waitingIds()).includes(approved), 'an approved-but-unpaid request is on no screen')
+      await assert.rejects(
+        assertWithdrawable(tx, liveTenant, approved, { username: raiser.username, role: 'store' }),
+        /Only an owner can withdraw/,
+        'the raiser can unmake an owner’s approval',
+      )
+      const byOwner = await assertWithdrawable(tx, liveTenant, approved, {
+        username: 'rajeshanne',
+        role: 'owner',
+      })
+      assert.ok([...byOwner.from].includes('approved'))
+      out.push('approved → still waiting, raiser refused, owner admitted')
+
+      // ── PAID IS A VOID, NOT A WITHDRAWAL ──────────────────────────────
+      const paid = await mk('applied', null)
+      await assert.rejects(
+        assertWithdrawable(tx, liveTenant, paid, { username: 'rajeshanne', role: 'owner' }),
+        /void on the payment, not a withdrawal/,
+        'a paid request can be withdrawn, which would leave the money gone and the request open',
+      )
+      assert.ok((await decidedIds()).includes(paid), 'a paid request is not on his decided list')
+      assert.ok(!(await waitingIds()).includes(paid), 'a paid request still reads as waiting')
+
+      // ── THE WITHDRAWAL ITSELF ─────────────────────────────────────────
+      const before = await getVendorStanding(tx, liveTenant, vendor.id)
+      assert.ok(before !== null)
+      await recordAct(tx, liveTenant, {
+        id: pending, action: 'cancelled', from: ok.from, status: 'cancelled',
+        by: raiser.username, decision: true, assignTo: null,
+      })
+      const [gone] = await tx<{ status: string; assigned_to: string | null }[]>`
+        select status, assigned_to from approval_requests where id = ${pending}`
+      assert.equal(gone.status, 'cancelled')
+      // THE BADGE HAS TO BE ABLE TO GO DOWN.
+      assert.equal(gone.assigned_to, null, 'a withdrawn request stays in somebody’s queue forever')
+      assert.ok(!(await waitingIds()).includes(pending), 'a withdrawn request is still on the waiting list')
+      assert.ok(!(await decidedIds()).includes(pending), 'a withdrawn request surfaced as an outcome')
+
+      // THE FIGURE IS READ BACK, and it is the VENDOR'S BALANCE rather than
+      // the amount that was asked for — 750 was the ask, and the sentence must
+      // not report it as what they are owed.
+      const after = await getVendorStanding(tx, liveTenant, vendor.id)
+      assert.ok(after !== null)
+      assert.equal(after.balance, before.balance, 'withdrawing a request moved the vendor’s balance')
+      const msg = withdrawnMessage('payment', after, formatMoneyString)
+      assert.ok(!msg.includes('750'), 'the acknowledgement reports the amount ASKED as what is owed')
+      assert.ok(msg.includes(vendor.name), 'the acknowledgement does not name the vendor')
+      // AND THE SECOND CLAUSE IS CHECKED, NOT ASSUMED. `approved` is still
+      // open for this vendor, so "nobody is holding a request" would be false.
+      assert.ok(after.open_requests >= 1, 'the still-open approved request was not counted')
+      assert.ok(
+        !/nobody is holding/.test(msg),
+        'it claims nobody holds a request while an open one exists — he would promise the vendor twice',
+      )
+      out.push(`withdrawn → ${msg}`)
+
+      throw new Error('ROLLBACK-WAITING-PROBE')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'ROLLBACK-WAITING-PROBE') throw e
+    })
+    for (const o of out) console.log(`      ${o}`)
+  })
+
+  await check('the Review says the bank has never been consulted', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { getReconciliationReadiness } = await import('../src/server/reconciliation-queries')
+    const r = await getReconciliationReadiness(liveTenant)
+
+    // THE TWO HALVES MUST ACCOUNT FOR EVERY MOVEMENT. If they ever fail to,
+    // the sentence is quoting a denominator that is not the books.
+    const { tsql } = await import('../src/lib/db')
+    const [{ n }] = await tsql<{ n: number }[]>`
+      select count(*)::int as n from money_movements where restaurant_id = ${liveTenant}`
+    assert.equal(r.reconcilable + r.unaccounted, n, 'the readiness split does not cover every movement')
+
+    const src = readFileSync('src/app/accounts/page.tsx', 'utf8')
+    // IT CLEARS ITSELF. The condition is the STATE, not a flag somebody has to
+    // remember to turn off — an exemption must expire by itself.
+    assert.match(src, /recon\.statements === 0 &&/, 'the precondition is not conditioned on the state')
+    assert.ok(
+      !/statements > 0/.test(src),
+      'the strip is gated on something other than whether a statement exists',
+    )
+
+    // IT SITS ABOVE THE SECTION WHOSE SILENCE IT EXPLAINS. Below it, the
+    // reader has already taken a quiet list as a clean bill of health.
+    const strip = src.indexOf('Not checked against the bank')
+    const section = src.indexOf('Paid on our books, not yet on a statement')
+    assert.ok(strip > 0 && section > 0, 'one of the two is gone')
+    assert.ok(strip < section, 'the precondition renders BELOW the finding it is the precondition for')
+
+    // THE DOOR IS ASKED FOR, NOT COPIED. Eleven sentences in this app said
+    // "Settings → Lists" after that tab became Setup → Lists, and a gate
+    // pinned "Accounts → Money" through the relabel to Cash & bank.
+    assert.match(src, /tabLabel\('accounts', 'money'\)/, 'the door is named by a literal')
+    const { tabLabel, tabHref } = await import('../src/lib/routes')
+    assert.equal(tabHref('accounts', 'money'), '/accounts/money')
+    assert.ok(tabLabel('accounts', 'money').length > 0)
+
+    // NOT VACUOUS, AND HONEST ABOUT WHICH WAY. Today nothing has ever been
+    // imported, so the strip is on screen; the day one is, this says so
+    // instead of quietly testing nothing.
+    if (r.statements === 0) {
+      assert.equal(r.matches, 0, 'matches exist with no statement behind them')
+      console.log(
+        `      no statement ever imported · ${r.unaccounted} of ${n} movements name no account (${r.unaccounted_value}) — UNMATCHABLE, not unmatched`,
+      )
+    } else {
+      console.log(`      ${r.statements} statement(s), ${r.matches} matches — the strip is UNEXERCISED now`)
+    }
+  })
+
+  await check('the waiting section is mounted, and Withdraw is offered only where it works', async () => {
+    const { readFileSync } = await import('node:fs')
+    const panel = readFileSync('src/components/approvals/AwaitingPanel.tsx', 'utf8')
+    const outcomes = readFileSync('src/components/approvals/MyOutcomes.tsx', 'utf8')
+    const route = readFileSync('src/components/approvals/RouteControl.tsx', 'utf8')
+    const strip = (t: string) =>
+      t.replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ')
+
+    // THE PANEL FEEDS BOTH HALVES, and goes quiet only when BOTH are empty.
+    assert.match(panel, /listMyWaiting\(restaurant\.id, user\.username, today\)/, 'the waiting list is not fetched')
+    assert.match(
+      panel,
+      /waiting\.length === 0 && rows\.length === 0/,
+      'the panel hides itself while something is still waiting',
+    )
+    assert.match(panel, /<MyOutcomes waiting=/, 'the waiting rows never reach the component')
+
+    // THE BUTTON MATCHES THE SERVER'S RULE. A control that refuses when tapped
+    // is a refusal arriving after the work.
+    const code = strip(outcomes)
+    assert.match(code, /row\.status === 'pending' && !open/, 'Withdraw is offered on more than pending')
+    const { WITHDRAW_FROM } = await import('../src/server/approvals-queries')
+    assert.deepEqual([...WITHDRAW_FROM.raiser], ['pending'], 'the screen and the server disagree about when')
+
+    // AND THE OWNER'S HALF EXISTS, on the control that already holds his other
+    // two acts — the same action, so there is one set of rules and one event.
+    assert.match(strip(route), /cancelApproval\(row\.id, note\.trim\(\)\)/, 'the owner cannot withdraw')
+    assert.match(strip(route), /'withdraw'/, 'the owner’s control has no withdraw branch')
+
+    // THE ROW LEAVES WHEN IT IS WITHDRAWN, so the acknowledgement cannot live
+    // inside it — it goes to the bottom-anchored toast, which survives.
+    assert.match(code, /toast\(r\.ok \? r\.message : r\.error/, 'the withdrawal says nothing')
+    console.log('      panel feeds both · Withdraw on pending only · owner’s on RouteControl · toast carries it')
   })
 
   if (only !== null) {

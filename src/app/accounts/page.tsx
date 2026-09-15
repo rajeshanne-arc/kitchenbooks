@@ -13,7 +13,8 @@ import {
 import { countUnaccountedMovements } from '@/server/accounts-queries'
 import { countOrdersWithTime, getBusinessDayDisagreements } from '@/server/business-day'
 import { getAggregatorReceivable } from '@/server/register-queries'
-import { listStaleUnmatchedPayments } from '@/server/reconciliation-queries'
+import { getReconciliationReadiness, listStaleUnmatchedPayments } from '@/server/reconciliation-queries'
+import { tabHref, tabLabel } from '@/lib/routes'
 import { businessToday } from '@/server/business-day'
 import QueueClient from '@/components/accountant/QueueClient'
 import Honesty from '@/components/Honesty'
@@ -32,7 +33,7 @@ const TONE: Record<string, 'alarm' | 'pending'> = {
 export default async function AccountsReviewPage() {
   const restaurant = await getRestaurant()
   const asOf = await businessToday()
-  const [completeness, open, all, unaccounted, receivable, dayGaps, timed, stale] = await Promise.all([
+  const [completeness, open, all, unaccounted, receivable, dayGaps, timed, stale, recon] = await Promise.all([
     getBooksCompleteness(restaurant.id),
     listOpenQueries(restaurant.id),
     listQueries(restaurant.id, 40),
@@ -44,6 +45,10 @@ export default async function AccountsReviewPage() {
     // than a week, because one made yesterday has not had time to appear and
     // listing it would train the reader to dismiss the list.
     listStaleUnmatchedPayments(restaurant.id, asOf),
+    // THE PRECONDITION UNDER ALL OF IT. Whether the bank has ever been
+    // consulted at all — which the section above cannot say, because its
+    // silence means the same thing either way.
+    getReconciliationReadiness(restaurant.id),
   ])
 
   // Only partners who actually owe something. A row at zero is settled, and
@@ -95,6 +100,40 @@ export default async function AccountsReviewPage() {
             </p>
           )}
         </section>
+
+        {/* NOBODY HAS CHECKED ANY OF THIS AGAINST THE BANK.
+            The section below reports a LAG — these have been sitting a week,
+            the rest are fine — and it is SILENT AT ZERO. Both readings are
+            wrong while no statement has ever been imported: nothing has been
+            verified, and a quiet section says so in the same voice it uses for
+            a clean one. So the precondition is declared before the finding, in
+            the law this app already holds everywhere else.
+
+            IT CLEARS ITSELF. The condition is `statements === 0`, so the first
+            import takes it off the screen with nobody remembering to. */}
+        {recon.statements === 0 && (
+          <Honesty
+            level="alarm"
+            verdict="Not checked against the bank"
+            action={{
+              href: tabHref('accounts', 'money'),
+              label: `Import a statement under ${tabLabel('accounts', 'money')} →`,
+            }}
+          >
+            No bank statement has ever been imported, so not one payment on these books has been
+            verified against the bank. Every payment figure here is a claim — what we say happened,
+            agreed with by nothing.
+            {recon.unaccounted > 0 && (
+              <>
+                {' '}
+                And a statement will not reach all of it: {recon.unaccounted} of the{' '}
+                {recon.unaccounted + recon.reconcilable} movements on the books name no account at
+                all ({formatMoneyString(recon.unaccounted_value)}), so they can never be matched to
+                a line — they are not unmatched, they are unmatchable.
+              </>
+            )}
+          </Honesty>
+        )}
 
         {/* EVERY PAYMENT IS A CLAIM UNTIL IT IS MATCHED.
             Cash handed over by the store or a transfer approved by the owner —

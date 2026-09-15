@@ -32,7 +32,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Honesty from '@/components/Honesty'
 import CopyField from '@/components/books/CopyField'
-import { payApproval, routePayment } from '@/server/approvals-actions'
+import { cancelApproval, payApproval, routePayment } from '@/server/approvals-actions'
 import type { AwaitingRow, VendorRouting } from '@/server/approvals-queries'
 import { modesForVendor } from '@/lib/payment-routing'
 import type { AccountBalanceRow } from '@/lib/types'
@@ -71,7 +71,7 @@ export default function RouteControl({
   const [accountId, setAccountId] = useState(row.routed_account_id ?? '')
   const [paidDate, setPaidDate] = useState(today)
   const [note, setNote] = useState('')
-  const [busy, setBusy] = useState<null | 'pay' | 'forward'>(null)
+  const [busy, setBusy] = useState<null | 'pay' | 'forward' | 'withdraw'>(null)
   const [error, setError] = useState<string | null>(null)
 
   const askPaise = row.amount === null ? 0 : decimalStringToPaise(row.amount)
@@ -79,19 +79,29 @@ export default function RouteControl({
   const short =
     chosen !== undefined && askPaise > 0 && decimalStringToPaise(chosen.balance) < askPaise
 
-  async function run(which: 'pay' | 'forward') {
+  async function run(which: 'pay' | 'forward' | 'withdraw') {
     setBusy(which)
     setError(null)
     const r =
       which === 'pay'
         ? await payApproval({ id: row.id, accountId, paidDate, mode, note: note.trim() })
-        : await routePayment({
-            id: row.id,
-            mode,
-            accountId,
-            assignTo: 'accountant',
-            note: note.trim(),
-          })
+        : which === 'withdraw'
+          ? // TAKING BACK HIS OWN APPROVAL, before any money moves. It is the
+            // SAME action the raiser uses — one act, one set of rules, one
+            // event — and the server decides who may do it from which status
+            // rather than this screen deciding for it.
+            //
+            // THE NOTE IS THE REASON, and it is the note already on this form:
+            // a second box for "why are you withdrawing it" beside a box for
+            // "note" would be two fields for one sentence.
+            await cancelApproval(row.id, note.trim())
+          : await routePayment({
+              id: row.id,
+              mode,
+              accountId,
+              assignTo: 'accountant',
+              note: note.trim(),
+            })
     setBusy(null)
     if (!r.ok) setError(r.error)
     else onDone(r.message)
@@ -257,10 +267,24 @@ export default function RouteControl({
         >
           {busy === 'forward' ? 'Sending…' : 'Send to the accountant'}
         </button>
+        {/* NEEDS NO MODE AND NO ACCOUNT, because it is not a payment — it is
+            the decision coming back off. Disabling it until a mode is picked
+            would make the way OUT of a request depend on answering the
+            question the request is asking. */}
+        <button
+          type="button"
+          onClick={() => run('withdraw')}
+          disabled={busy !== null}
+          className="min-h-[40px] rounded-lg border border-rule px-3 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-50"
+        >
+          {busy === 'withdraw' ? 'Withdrawing…' : 'Withdraw it'}
+        </button>
       </div>
       <p className="mt-1.5 text-xs text-stone-500">
         Recording it writes the payment, the event and the vendor&rsquo;s balance in one go. Sending it
         keeps the approval and hands over the route — it stays approved, and it stops being yours.
+        Withdrawing takes the whole request off: nothing is paid, and the vendor is still owed what
+        they are owed.
       </p>
     </div>
   )

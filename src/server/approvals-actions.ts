@@ -31,12 +31,17 @@ import {
   assertPayer,
   PAYERS,
   SEND_BACK,
+  assertWithdrawable,
+  getVendorStanding,
   roleOfRequester,
   type ApprovalEntity,
   type ApprovalKind,
 } from '@/server/approvals-queries'
 
 import { AccountRefusal, assertAccount, getAccountBalances } from '@/server/accounts-queries'
+import { getSessionUser } from '@/server/current-user'
+import { formatMoneyString } from '@/lib/money'
+import { withdrawnMessage } from '@/lib/waiting'
 import { insertPayment } from '@/server/payment-write'
 import { getVendorAging, listBillsOutstanding } from '@/server/aging-queries'
 import type { DateRange } from '@/lib/bill-range'
@@ -369,27 +374,72 @@ export async function decideApproval(raw: {
   }
 }
 
-/** The requester taking it back. Only while nobody has decided. */
-export async function cancelApproval(id: string): Promise<ApprovalResult> {
+/**
+ * TAKING IT BACK — the act that leaves the least behind, which is why it is
+ * the one that has to say the most.
+ *
+ * WHO, AND FROM WHERE, is `WITHDRAW_FROM`: the raiser while nobody has
+ * decided, the owner also once he has approved it and before the money moves.
+ * The ruling lives beside the query so the gate reads the same object this
+ * does.
+ *
+ * IT USED TO CHECK NEITHER. `assertRequester()` alone admits store, chef,
+ * manager and owner — and nothing compared the caller to `requested_by`, so
+ * any of them could withdraw somebody else's pending request through a public
+ * endpoint. The cheap role gate still runs FIRST, before the row is read, for
+ * the reason every other act here does it: otherwise this answers "that
+ * request is applied" to anybody signed in who guesses an id. The precise
+ * check runs after, with the row in hand.
+ *
+ * THE REASON IS OPTIONAL, deliberately, and it is the one refusal-shaped act
+ * in this file where that is right. A refusal is somebody being told no and
+ * leaves nothing but the sentence, so its reason is required. A withdrawal is
+ * the person who asked deciding not to ask any more — there is nobody
+ * downstream who needs to be told why, and demanding a sentence would make
+ * changing your mind cost more than the request did.
+ */
+export async function cancelApproval(id: string, reason?: string): Promise<ApprovalResult> {
   try {
     if (!UUID.test(id)) throw new ApprovalRefusal('Malformed request id')
-    const by = await assertRequester()
+    // THE CHEAP ROLE GATE RUNS FIRST, before the row is read — otherwise this
+    // public endpoint answers "that request is applied" to anybody signed in
+    // who guesses an id. The precise check runs under the lock, with the row.
+    await assertRequester()
+    const user = await getSessionUser()
+    if (!user) throw new ApprovalRefusal('Sign in again — the session has expired')
     const restaurant = await getRestaurant()
-    // `decided_by` is written here and nothing is overwritten by it: a cancel
-    // can only happen from `pending`, so there is no decision to displace. The
-    // event says what actually happened.
-    await txn((tx) =>
-      recordAct(tx, restaurant.id, {
+    const note = reason === undefined || reason.trim() === '' ? undefined : reason.trim()
+
+    return await txn(async (tx) => {
+      const row = await assertWithdrawable(tx, restaurant.id, id, {
+        username: user.username,
+        role: user.role,
+      })
+      await recordAct(tx, restaurant.id, {
         id,
         action: 'cancelled',
-        from: ['pending'],
+        from: row.from,
         status: 'cancelled',
-        by,
+        by: user.username,
+        note,
+        // THE CURRENT POSITION IS NOW WITHDRAWN, and this is who put it there.
+        // The approval it may displace is not lost: every act appends to
+        // `approval_events`, and these columns were never the only record.
         decision: true,
+        // NOBODY IS HOLDING IT. A badge that only grows is not a badge, and
+        // this is one of the acts that takes the count back down.
         assignTo: null,
-      }),
-    )
-    return { ok: true, id, message: 'Withdrawn. Nothing was changed.' }
+      })
+      // READ BACK, NEVER ECHOED, and read AFTER the cancel so the count of
+      // other open requests excludes the one just withdrawn.
+      const standing =
+        row.kind === 'payment' ? await getVendorStanding(tx, restaurant.id, row.entity_id) : null
+      return {
+        ok: true as const,
+        id,
+        message: withdrawnMessage(row.kind, standing, formatMoneyString),
+      }
+    })
   } catch (e) {
     return fail(e)
   }
