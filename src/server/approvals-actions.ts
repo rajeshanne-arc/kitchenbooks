@@ -25,6 +25,8 @@ import {
   getPreview,
   recordAct,
   assertPayableRange,
+  assertStillPayable,
+  assertAmountStillCovered,
   assertAssignee,
   assertPayer,
   PAYERS,
@@ -969,7 +971,7 @@ export async function payApproval(raw: {
     // The cheap role gate FIRST, before a row is read: without it these
     // endpoints answer "that request is applied" to anybody signed in who
     // guessed an id. assertAssignee narrows it once the row is in hand.
-    await assertPayer()
+    const payer = await assertPayer()
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
@@ -1020,6 +1022,25 @@ export async function payApproval(raw: {
 
     const paid = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+
+      // RE-READ FOR UPDATE, BEFORE THE MONEY. The status and assignee were
+      // checked above, outside the transaction — a courtesy that makes the
+      // common refusal fast and readable, and not the check. Between that read
+      // and this line somebody else can pay it, return it or re-route it.
+      //
+      // `recordAct` refuses a moved STATUS on its own and always has, so money
+      // has never been able to move twice. What it cannot see is a RETURN:
+      // §3 leaves the status at `approved` and only changes `assigned_to`, so
+      // a request taken off the accountant still satisfies `from: ['approved']`
+      // and a stale screen would pay it. Two questions, both asked here.
+      const locked = await assertStillPayable(tx, rid, input.id, payer.role)
+
+      // AND IS THE FIGURE STILL COVERED. A bill in the range can be voided or
+      // settled between approval and payment, and nothing about the request
+      // changes when it is — so the request would pay more than the bills it
+      // names are worth, silently. Recomputed under the same lock.
+      await assertAmountStillCovered(tx, rid, locked)
+
       const payment = await insertPayment(tx, rid, {
         vendorId: req.entity_id,
         paidDate: input.paidDate,

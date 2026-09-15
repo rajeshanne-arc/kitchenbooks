@@ -17,7 +17,14 @@ import { useRouter } from 'next/navigation'
 import Honesty from '@/components/Honesty'
 import SaveAck from '@/components/SaveAck'
 import { decideApproval } from '@/server/approvals-actions'
-import type { ApprovalRow, AwaitingRow, Preview, RefCount, VendorRouting } from '@/server/approvals-queries'
+import type {
+  ApprovalRow,
+  AwaitingRow,
+  Preview,
+  RangeScope,
+  RefCount,
+  VendorRouting,
+} from '@/server/approvals-queries'
 import RouteControl from '@/components/approvals/RouteControl'
 import type { AccountBalanceRow } from '@/lib/types'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
@@ -26,6 +33,7 @@ import { btnCls, btnGhostCls, cardCls, codeCls, fieldLabelCls, inputCls } from '
 import { fmtDateTime } from '@/lib/format'
 import NameFigure from '@/components/NameFigure'
 import BillScope from '@/components/approvals/BillScope'
+import BillDrift from '@/components/approvals/BillDrift'
 import { readObject } from '@/lib/read-object'
 
 export type QueueItem = {
@@ -53,6 +61,7 @@ export default function ApprovalsClient({
   elsewhere,
   decided,
   vendors,
+  scope,
   modes,
   today,
 }: {
@@ -63,6 +72,8 @@ export default function ApprovalsClient({
   decided: AwaitingRow[]
   /** keyed by vendor id, for the payments only — where the money would go */
   vendors: Record<string, VendorRouting>
+  /** keyed by REQUEST id — the live total of the bills each one names */
+  scope: Record<string, RangeScope>
   modes: string[]
   /** the BUSINESS day, resolved on the server. A `new Date()` here says
    *  tomorrow at 00:30, which is the fault the business day exists to stop. */
@@ -93,6 +104,7 @@ export default function ApprovalsClient({
             item={i}
             balances={balances}
             vendor={vendors[i.row.entity_id]}
+            scope={scope[i.row.id]}
             modes={modes}
             today={today}
             onDone={setAck}
@@ -240,6 +252,7 @@ function Request({
   item,
   balances,
   vendor,
+  scope,
   modes,
   today,
   onDone,
@@ -247,6 +260,7 @@ function Request({
   item: QueueItem
   balances: AccountBalanceRow[]
   vendor: VendorRouting | undefined
+  scope: RangeScope | undefined
   modes: string[]
   today: string
   onDone: (m: string) => void
@@ -360,14 +374,19 @@ function Request({
           approved: routing something nobody has said yes to would be choosing
           an account for a payment that may never happen. */}
       {row.kind === 'payment' && row.status === 'approved' && (
-        <RouteControl
-          row={row}
-          vendor={vendor}
-          balances={balances}
-          modes={modes}
-          today={today}
-          onDone={onDone}
-        />
+        <>
+          {/* SAID BEFORE THE BUTTON, on the owner's screen as well as the
+              accountant's — either of them can be the one who pays. */}
+          <BillDrift asked={row.amount} scope={scope} from={row.bills_from} to={row.bills_to} />
+          <RouteControl
+            row={row}
+            vendor={vendor}
+            balances={balances}
+            modes={modes}
+            today={today}
+            onDone={onDone}
+          />
+        </>
       )}
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">

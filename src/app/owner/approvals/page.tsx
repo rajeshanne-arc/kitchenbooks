@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import {
   getPreview,
+  getRangeScope,
   getVendorRouting,
   getWaiting,
   type ApprovalEntity,
@@ -41,6 +42,14 @@ export default async function ApprovalsPage() {
     waiting.approvals.filter((r) => r.kind === 'payment').map((r) => r.entity_id),
   )
   const vendors: Record<string, VendorRouting> = Object.fromEntries(vendorRows)
+
+  // WHAT THE BILLS EACH REQUEST NAMES COME TO NOW. The label under the name is
+  // as at asking and never moves; this is the live half, shown only where the
+  // two differ.
+  const scope = await getRangeScope(
+    restaurant.id,
+    waiting.approvals.filter((r) => r.kind === 'payment').map((r) => r.id),
+  )
 
   // The fresh check, run now, for everything still pending. Not the authority
   // — merge_items re-runs every guard under a row lock — but the owner must
@@ -107,6 +116,7 @@ export default async function ApprovalsPage() {
               elsewhere={waiting.elsewhere}
               decided={waiting.decided}
               vendors={vendors}
+              scope={scope}
               modes={modes}
               today={today}
             />

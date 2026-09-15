@@ -36,8 +36,9 @@ import CopyField from '@/components/books/CopyField'
 import BillNumberGap from '@/components/books/BillNumberGap'
 import NameFigure from '@/components/NameFigure'
 import BillScope from '@/components/approvals/BillScope'
+import BillDrift from '@/components/approvals/BillDrift'
 import { payApproval, returnRequest } from '@/server/approvals-actions'
-import type { AwaitingRow, VendorRouting } from '@/server/approvals-queries'
+import type { AwaitingRow, RangeScope, VendorRouting } from '@/server/approvals-queries'
 import type { AccountBalanceRow, BillOutstandingRow } from '@/lib/types'
 import type { BillNumbers } from '@/lib/bill-gaps'
 import { applyFifo } from '@/lib/settle'
@@ -60,6 +61,7 @@ export default function AwaitingActions({
   vendors,
   bills,
   numbers,
+  scope,
   balances,
   today,
   mine,
@@ -69,6 +71,8 @@ export default function AwaitingActions({
   vendors: Record<string, VendorRouting>
   bills: Record<string, BillOutstandingRow[]>
   numbers: Record<string, BillNumbers>
+  /** keyed by REQUEST id — the live total of the bills each one names */
+  scope: Record<string, RangeScope>
   balances: AccountBalanceRow[]
   today: string
   mine: boolean
@@ -97,6 +101,7 @@ export default function AwaitingActions({
             vendor={vendors[r.entity_id]}
             bills={bills[r.entity_id] ?? []}
             numbers={numbers[r.entity_id]}
+            scope={scope[r.id]}
             balances={balances}
             today={today}
             isOpen={open === r.id}
@@ -118,6 +123,7 @@ function Row({
   vendor,
   bills,
   numbers,
+  scope,
   balances,
   today,
   isOpen,
@@ -128,6 +134,7 @@ function Row({
   vendor: VendorRouting | undefined
   bills: BillOutstandingRow[]
   numbers: BillNumbers | undefined
+  scope: RangeScope | undefined
   balances: AccountBalanceRow[]
   today: string
   isOpen: boolean
@@ -245,6 +252,11 @@ function Row({
             onShowAll={() => setShowAll(true)}
           />
           {numbers !== undefined && <BillNumberGap g={numbers} vendorName={row.from_name ?? 'this vendor'} />}
+
+          {/* SAID BEFORE THE BUTTON. The server refuses this under a row lock
+              — a screen is never the check — but a refusal at save is a
+              refusal after the work. */}
+          <BillDrift asked={row.amount} scope={scope} from={row.bills_from} to={row.bills_to} />
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">

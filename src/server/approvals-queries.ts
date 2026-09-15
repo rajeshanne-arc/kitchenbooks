@@ -25,7 +25,7 @@ import { tsql } from '@/lib/db'
 import { getSessionUser } from '@/server/current-user'
 import type { Role } from '@/lib/roles'
 import { overlaps, type DateRange } from '@/lib/bill-range'
-import { fmtDayDate, fmtRange } from '@/lib/format'
+import { fmtDateTime, fmtDayDate, fmtRange } from '@/lib/format'
 import { decimalStringToPaise, formatPaise } from '@/lib/money'
 
 export class ApprovalRefusal extends Error {}
@@ -111,8 +111,19 @@ export const assertApprover = () =>
  * applied" to anybody signed in who guessed an id. This is the cheap gate that
  * runs first; the precise one runs after the read.
  */
-export const assertPayer = () =>
-  actor([...PAYERS] as Role[], 'Acting on a payment is the owner’s, the accountant’s or the store’s')
+export const assertPayer = async (): Promise<{ username: string; role: Role }> => {
+  const username = await actor(
+    [...PAYERS] as Role[],
+    'Acting on a payment is the owner’s, the accountant’s or the store’s',
+  )
+  // THE ROLE COMES BACK TOO, because the guard that runs under the row lock
+  // needs it and must not read the session itself. A guard that does its own
+  // authentication cannot be exercised from a script — getSessionUser returns
+  // null outside a request — so it would refuse for the wrong reason and any
+  // gate over it would pass while proving nothing. Hand it the actor.
+  const user = await getSessionUser()
+  return { username, role: (user as { role: Role }).role }
+}
 
 // ───────────────────────────────────────────────────── what points at a row
 
@@ -1731,5 +1742,162 @@ export async function assertPayableRange(
     }
   }
 
+  return scope
+}
+
+// ───────────────────────────────── what is still true at the moment of pay ──
+
+/** What a range covers RIGHT NOW — the live figure, beside the asked one. */
+export type RangeScope = { bills: number; total: string }
+
+/**
+ * THE LIVE TOTAL OF THE BILLS EACH REQUEST NAMES, for every request on a page.
+ *
+ * The label under the name is AS AT ASKING and never moves — it describes the
+ * request. This is the other half: what those bills come to today. The two are
+ * shown side by side and only when they DIFFER, because a drift line that is
+ * always there is one people stop reading, and because the difference is the
+ * finding rather than either number.
+ *
+ * A PRE-RANGE REQUEST COMPARES AGAINST THE WHOLE BALANCE. `bills_from is null`
+ * drops the date predicate entirely, so the same query answers for both kinds
+ * of row — a request that named no range claimed everything, and everything is
+ * what it must still be measured against.
+ *
+ * @scope now
+ */
+export async function getRangeScope(
+  restaurantId: string,
+  requestIds: string[],
+  tx?: postgres.TransactionSql,
+): Promise<Record<string, RangeScope>> {
+  if (requestIds.length === 0) return {}
+  const q = (tx ?? tsql) as typeof tsql
+  const rows = await q<{ request_id: string; bills: number; total: string }[]>`
+    select a.id as request_id, coalesce(s.n, 0)::int as bills, coalesce(s.total, 0)::text as total
+    from approval_requests a
+    left join lateral (
+      select count(*)::int as n, sum(b.unpaid) as total
+      from bills_outstanding b
+      where b.restaurant_id = a.restaurant_id and b.vendor_id = a.entity_id and b.unpaid > 0
+        and (a.bills_from is null or (b.bill_date >= a.bills_from and b.bill_date <= a.bills_to))
+    ) s on true
+    where a.restaurant_id = ${restaurantId} and a.id = any(${requestIds}) and a.kind = 'payment'`
+  const out: Record<string, RangeScope> = {}
+  for (const r of rows) out[r.request_id] = { bills: r.bills, total: r.total }
+  return out
+}
+
+/** The locked row, as it is at the instant money is about to move. */
+export type LockedRequest = {
+  id: string
+  status: string
+  assigned_to: string | null
+  amount: string | null
+  bills_from: string | null
+  bills_to: string | null
+  entity_id: string
+  vendor_name: string | null
+}
+
+/**
+ * IS THIS STILL MINE TO PAY — re-read FOR UPDATE, inside the paying
+ * transaction, immediately before the money moves.
+ *
+ * THE CHECK OUTSIDE THE TRANSACTION IS NOT THE CHECK. `payApproval` reads the
+ * request and tests status and assignee before it opens a transaction, and
+ * that is a courtesy: it makes the common refusal fast and readable. Between
+ * that read and the write, somebody else can pay it, return it or re-route it.
+ *
+ * AND `recordAct` ALONE WAS NOT ENOUGH, which is the part worth writing down.
+ * It refuses when the status has moved — `from: ['approved']` matches zero
+ * rows and it throws — so no money has ever been able to move twice. But a
+ * RETURN leaves the status at `approved` and only moves `assigned_to`: that is
+ * §3's ruling, deliberately, because a return cancels the ROUTING and not the
+ * APPROVAL. So a request sent back to the owner is still `approved`, and a
+ * stale accountant screen would satisfy `from: ['approved']` and pay something
+ * that had been taken off them.
+ *
+ * STATUS AND ASSIGNMENT ARE TWO QUESTIONS and this asks both, under the lock.
+ *
+ * The refusal NAMES WHAT HAPPENED, from the trail rather than from the row: a
+ * person who just lost a race needs to know who took it and when, or they will
+ * try again.
+ */
+export async function assertStillPayable(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+  id: string,
+  actorRole: Role,
+): Promise<LockedRequest> {
+  // FOR UPDATE, so a second payer waits here rather than racing past.
+  const [row] = await tx<LockedRequest[]>`
+    select a.id, a.status, a.assigned_to, a.amount::text as amount,
+           a.bills_from::text as bills_from, a.bills_to::text as bills_to,
+           a.entity_id, v.name as vendor_name
+    from approval_requests a
+    left join vendors v on v.restaurant_id = a.restaurant_id and v.id = a.entity_id
+    where a.id = ${id} and a.restaurant_id = ${restaurantId}
+    for update of a`
+  if (!row) throw new ApprovalRefusal('That request no longer exists')
+
+  const [ev] = await tx<{ action: string; acted_by: string | null; acted_at: string }[]>`
+    select action, acted_by, acted_at::text as acted_at
+    from approval_events
+    where restaurant_id = ${restaurantId} and request_id = ${id}
+    order by acted_at desc, seq desc
+    limit 1`
+  const when = ev === undefined ? 'a moment ago' : `on ${fmtDateTime(ev.acted_at)}`
+  const who = ev?.acted_by ?? 'somebody'
+
+  if (row.status !== 'approved') {
+    throw new ApprovalRefusal(
+      `This request is no longer waiting to be paid — it was ${ev?.action ?? 'changed'} by ${who} ${when}. Reload before acting on it.`,
+    )
+  }
+  // An owner may act on anything: a loop that stalls on one person's day off
+  // is a loop nobody uses, and for money the escape hatch is the owner.
+  if (actorRole !== 'owner' && row.assigned_to !== actorRole) {
+    throw new ApprovalRefusal(
+      row.assigned_to === null
+        ? `This request is with nobody — it was ${ev?.action ?? 'changed'} by ${who} ${when}, and the owner has to route it again.`
+        : `This request is no longer with you — it went to the ${row.assigned_to} ${when}. Reload before acting on it.`,
+    )
+  }
+  return row
+}
+
+/**
+ * IS THE FIGURE STILL COVERED BY THE BILLS IT NAMED — recomputed under the
+ * same lock, because a bill can be voided or paid between approval and
+ * payment and nothing about the request changes when it is.
+ *
+ * REFUSED RATHER THAN SILENTLY REDUCED. Paying the lower figure would be the
+ * app deciding what somebody meant; the amount that was APPROVED is what may
+ * be paid, and a different figure is a different request. So it names both
+ * numbers and both routes out.
+ *
+ * A PRE-RANGE REQUEST IS MEASURED AGAINST THE WHOLE OUTSTANDING, which is what
+ * it claimed. `getRangeScope` drops the date predicate for exactly that.
+ */
+export async function assertAmountStillCovered(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+  req: LockedRequest,
+): Promise<RangeScope> {
+  const scope = (await getRangeScope(restaurantId, [req.id], tx))[req.id] ?? { bills: 0, total: '0' }
+  const askPaise = req.amount === null ? 0 : decimalStringToPaise(req.amount)
+  const nowPaise = decimalStringToPaise(scope.total)
+  const who = req.vendor_name ?? 'this vendor'
+  const what =
+    req.bills_from === null || req.bills_to === null
+      ? `The whole balance for ${who}`
+      : `Bills ${fmtRange(req.bills_from, req.bills_to)} for ${who}`
+
+  if (askPaise > nowPaise) {
+    throw new ApprovalRefusal(
+      `${what} now total ${formatPaise(nowPaise)}; this request is for ${formatPaise(askPaise)}. Pay the lower figure by raising it again, or send this one back.`,
+    )
+  }
   return scope
 }

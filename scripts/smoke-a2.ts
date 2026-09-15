@@ -11701,10 +11701,30 @@ async function run() {
         .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
         .replace(/\/\*[\s\S]*?\*\//g, ' ')
         .replace(/^\s*\/\/.*$/gm, ' ')
-    const rogue = files.filter(
-      (f) => !f.endsWith('BillScope.tsx') && /whole balance/.test(stripComments(readFileSync(f, 'utf8'))),
-    )
+    //
+    // AND THE EXEMPTION IS A CONDITION, NOT A NAME. BillDrift legitimately
+    // says "in the whole balance now" — it is the drift LINE, a different
+    // sentence about the same row, and it prints MONEY rather than a range.
+    // What must not exist is a second component rendering the LABEL: the
+    // phrase AND a date range together. So a file may use the words only
+    // while it renders no range, and the day one starts to, it is duplicating
+    // BillScope and this fails without anybody editing it. A name on a list
+    // is forever; a condition is checked every run.
+    const rogue = files
+      .filter((f) => !f.endsWith('BillScope.tsx'))
+      .map((f) => ({ f, src: stripComments(readFileSync(f, 'utf8')) }))
+      .filter((x) => /whole balance/.test(x.src) && /fmtRange\(/.test(x.src))
+      .map((x) => x.f)
     assert.deepEqual(rogue, [], `these build their own range label instead of mounting BillScope: ${rogue.join(', ')}`)
+
+    // The exemption is PRINTED rather than filtered out of the query, so a
+    // reader can see it was considered.
+    const sanctioned = files
+      .filter((f) => !f.endsWith('BillScope.tsx') && /whole balance/.test(stripComments(readFileSync(f, 'utf8'))))
+      .map((f) => f.split('/').pop())
+    if (sanctioned.length > 0) {
+      console.log(`      exempt, and only while they render no range: ${sanctioned.join(', ')}`)
+    }
 
     const src = readFileSync('src/components/approvals/BillScope.tsx', 'utf8')
     assert.match(src, /whole balance/, 'a request with no range no longer reads "whole balance"')
@@ -11830,6 +11850,268 @@ async function run() {
     })
     assert.equal(trips, 0, `${trips} vendors have an unpaid bill older than their own default range — the default is not "everything"`)
     console.log('      scoped to the range · FIFO unchanged · the older-bills strip is UNEXERCISED by the default range, by construction')
+  })
+
+  await check('drift refuses at pay — a bill voided out of the range stops it', async () => {
+    // THE WORLD MOVES BETWEEN APPROVAL AND PAYMENT and nothing about the
+    // request changes when it does. Proved by voiding a bill INSIDE the range
+    // — a real reversal purchase, the app's own negative twin — and watching
+    // the guard refuse the figure it used to cover.
+    const { assertAmountStillCovered, getRangeScope, ApprovalRefusal } = await import(
+      '../src/server/approvals-queries'
+    )
+    const { withTenant } = await import('../src/lib/tenant')
+    const { formatPaise } = await import('../src/lib/money')
+
+    const out = await withTenant(liveTenant, async () => {
+      let before = ''
+      let after = ''
+      let refused: string | null = null
+      let accepted: string | null = null
+      let code = ''
+      let voided = ''
+      try {
+        await txn(async (tx) => {
+          // A VENDOR WITH AT LEAST TWO UNPAID BILLS, so voiding one leaves a
+          // range that still has something in it — a range emptied completely
+          // would refuse for the OTHER reason and prove the wrong rule.
+          const [v] = await tx<{ vendor_id: string; code: string; name: string; n: number }[]>`
+            select b.vendor_id, v.code, v.name, count(*)::int as n
+            from bills_outstanding b join vendors v on v.id = b.vendor_id
+            where b.restaurant_id = ${liveTenant} and b.unpaid > 0
+            group by b.vendor_id, v.code, v.name having count(*) >= 2
+            order by count(*) desc limit 1`
+          assert.ok(v !== undefined, 'no vendor has two unpaid bills — this could not be proved')
+          code = v.code
+
+          const bills = await tx<{ purchase_id: string; bill_date: string; unpaid: string }[]>`
+            select purchase_id, bill_date::text as bill_date, unpaid::text as unpaid
+            from bills_outstanding
+            where restaurant_id = ${liveTenant} and vendor_id = ${v.vendor_id} and unpaid > 0
+            order by bill_date`
+          const from = bills[0].bill_date
+          const to = bills[bills.length - 1].bill_date
+          const [tot] = await tx<{ t: string }[]>`
+            select coalesce(sum(unpaid), 0)::text as t from bills_outstanding
+            where restaurant_id = ${liveTenant} and vendor_id = ${v.vendor_id} and unpaid > 0
+              and bill_date >= ${from}::date and bill_date <= ${to}::date`
+          before = tot.t
+
+          // A ranged, approved request for exactly what the range holds.
+          const [req] = await tx<{ id: string }[]>`
+            insert into approval_requests
+              (restaurant_id, kind, entity_type, entity_id, reason, amount, suggested_mode,
+               bills_from, bills_to, status, assigned_to, requested_by)
+            values (${liveTenant}, 'payment', 'vendor', ${v.vendor_id}, 'Zz drift probe',
+                    ${before}::numeric, 'Bank transfer', ${from}::date, ${to}::date,
+                    'approved', 'accountant', 'gate')
+            returning id`
+          const locked = {
+            id: req.id, status: 'approved', assigned_to: 'accountant',
+            amount: before, bills_from: from, bills_to: to,
+            entity_id: v.vendor_id, vendor_name: v.name,
+          }
+
+          // 1. NO DRIFT YET — it must be payable, or the refusal below proves
+          //    nothing about voiding.
+          try {
+            await assertAmountStillCovered(tx, liveTenant, locked)
+          } catch (e) {
+            accepted = (e as Error).message
+          }
+
+          // 2. VOID A BILL IN RANGE — the app's own negative twin. Both halves
+          //    leave bills_outstanding, which is what the view's filter does.
+          const target = bills[bills.length - 1]
+          voided = target.unpaid
+          await tx`
+            insert into purchases (restaurant_id, bill_date, vendor_id, bill_no, doc_no,
+                                   goods_total, gst_total, transport, reverses_id, entered_by)
+            select restaurant_id, bill_date, vendor_id, coalesce(bill_no, '') || '-VOID', null,
+                   -goods_total, -gst_total, -transport, id, 'gate'
+            from purchases where id = ${target.purchase_id}`
+
+          const scope = (await getRangeScope(liveTenant, [req.id], tx))[req.id]
+          after = scope.total
+
+          // 3. AND NOW IT MUST REFUSE, naming both figures.
+          try {
+            await assertAmountStillCovered(tx, liveTenant, locked)
+          } catch (e) {
+            if (!(e instanceof ApprovalRefusal)) throw e
+            refused = e.message
+          }
+          throw new Error('KB_ROLLBACK')
+        })
+      } catch (e) {
+        if ((e as Error).message !== 'KB_ROLLBACK') throw e
+      }
+      return { before, after, refused, accepted, code, voided }
+    })
+
+    assert.equal(out.accepted, null, `${out.code} was refused before anything drifted: ${out.accepted}`)
+    assert.ok(
+      Number(out.after) < Number(out.before),
+      `voiding a bill did not reduce the range total (${out.before} -> ${out.after}) — the probe proved nothing`,
+    )
+    assert.ok(out.refused !== null, `${out.code}: a bill in range was voided and the request was still payable`)
+    for (const fig of [formatPaise(Math.round(Number(out.after) * 100)), formatPaise(Math.round(Number(out.before) * 100))]) {
+      assert.ok(String(out.refused).includes(fig), `the drift refusal must name ${fig} — it said "${out.refused}"`)
+    }
+    assert.ok(!String(out.refused).includes('undefined'), `the drift refusal rendered "undefined": ${out.refused}`)
+    console.log(`      ${out.code}: range ${out.before} -> ${out.after} after voiding ${out.voided} · refused by name`)
+  })
+
+  await check('the lock refuses the second payer — two transactions, one request', async () => {
+    // TWO TRANSACTIONS ON TWO CONNECTIONS, against a COMMITTED row: an
+    // uncommitted fixture is invisible to the second connection, so the race
+    // could not happen and the probe would pass by never being one. On the
+    // PROBE TENANT, because proving it needs a commit and the live books are
+    // not a test fixture.
+    //
+    // ONE ROW, REUSED. approval_requests has no DELETE grant, so a fresh
+    // fixture per run would accumulate forever; a fixed id reset at the start
+    // of each run leaves exactly one.
+    const { assertStillPayable, ApprovalRefusal } = await import('../src/server/approvals-queries')
+    const FIXED = '00000000-0000-4000-8000-0000000000aa'
+    const VENDOR = '00000000-0000-4000-8000-0000000000bb'
+
+    const out = await onProbe(async () => {
+      const prid = process.env.KB_PROBE_TENANT as string
+      // approval_requests has no foreign key on entity_id — it is polymorphic
+      // over items and vendors — so the fixture needs no vendor row.
+      await txn(async (tx) => {
+        const [had] = await tx<{ id: string }[]>`
+          select id from approval_requests where restaurant_id = ${prid} and id = ${FIXED}`
+        if (had === undefined) {
+          await tx`
+            insert into approval_requests
+              (id, restaurant_id, kind, entity_type, entity_id, reason, amount, suggested_mode,
+               status, assigned_to, requested_by)
+            values (${FIXED}, ${prid}, 'payment', 'vendor', ${VENDOR}, 'Zz lock probe', 100,
+                    'Bank transfer', 'approved', 'accountant', 'gate')`
+        } else {
+          await tx`
+            update approval_requests set status = 'approved', assigned_to = 'accountant'
+            where restaurant_id = ${prid} and id = ${FIXED}`
+        }
+      })
+
+      let second: string | null = null
+      let firstOk = false
+      let blockedMs = 0
+
+      // T1 takes the row lock, moves the request, and holds the transaction
+      // open long enough for T2 to arrive and block on FOR UPDATE.
+      const t1 = txn(async (tx) => {
+        await assertStillPayable(tx, prid, FIXED, 'accountant')
+        firstOk = true
+        await tx`update approval_requests set status = 'applied', assigned_to = null
+                 where restaurant_id = ${prid} and id = ${FIXED}`
+        await new Promise((r) => setTimeout(r, 400))
+      })
+
+      // T2 starts once T1 is certain to hold the lock.
+      const t2 = (async () => {
+        await new Promise((r) => setTimeout(r, 150))
+        const began = Date.now()
+        try {
+          await txn(async (tx) => {
+            await assertStillPayable(tx, prid, FIXED, 'accountant')
+          })
+        } catch (e) {
+          if (!(e instanceof ApprovalRefusal)) throw e
+          second = e.message
+        } finally {
+          blockedMs = Date.now() - began
+        }
+      })()
+
+      await Promise.all([t1, t2])
+      // leave the fixture where the next run expects it
+      await txn(
+        (tx) => tx`update approval_requests set status = 'approved', assigned_to = 'accountant'
+                   where restaurant_id = ${prid} and id = ${FIXED}`,
+      )
+      return { second, firstOk, blockedMs }
+    })
+
+    assert.ok(out.firstOk, 'the FIRST payer was refused — the fixture is wrong, not the lock')
+    assert.ok(
+      out.second !== null,
+      'the second payer was NOT refused — two people can pay one request at the same moment',
+    )
+    assert.match(
+      String(out.second),
+      /no longer waiting to be paid|no longer with you|with nobody/,
+      `the second payer was refused by something other than the lock: ${out.second}`,
+    )
+    assert.ok(!String(out.second).includes('undefined'), `the lock refusal rendered "undefined": ${out.second}`)
+    // AND IT WAITED. A refusal with no wait would mean FOR UPDATE is not
+    // holding anything and the two simply did not overlap.
+    assert.ok(
+      out.blockedMs >= 150,
+      `the second payer was refused in ${out.blockedMs}ms without ever blocking — FOR UPDATE is not taking the lock`,
+    )
+    console.log(`      second payer blocked ${out.blockedMs}ms on FOR UPDATE, then refused: “${String(out.second).slice(0, 72)}…”`)
+  })
+
+  await check('a return takes a request off the payer even though the status does not move', async () => {
+    // THE HOLE recordAct COULD NOT SEE. §3 leaves a return at `approved` and
+    // only moves `assigned_to`, so `from: ['approved']` still matches and a
+    // stale accountant screen would pay something taken off them. Status and
+    // assignment are two questions; this proves the second one is asked.
+    const { assertStillPayable, ApprovalRefusal } = await import('../src/server/approvals-queries')
+    const FIXED = '00000000-0000-4000-8000-0000000000ac'
+    const VENDOR = '00000000-0000-4000-8000-0000000000bb'
+
+    const out = await onProbe(async () => {
+      const prid = process.env.KB_PROBE_TENANT as string
+      let stillApproved = false
+      let refused: string | null = null
+      let ownerOk = false
+      try {
+        await txn(async (tx) => {
+          await tx`
+            insert into approval_requests
+              (id, restaurant_id, kind, entity_type, entity_id, reason, amount, suggested_mode,
+               status, assigned_to, requested_by)
+            values (${FIXED}, ${prid}, 'payment', 'vendor', ${VENDOR}, 'Zz return probe', 100,
+                    'Bank transfer', 'approved', 'owner', 'gate')
+            on conflict (id) do update set status = 'approved', assigned_to = 'owner'`
+          const [row] = await tx<{ status: string; assigned_to: string }[]>`
+            select status, assigned_to from approval_requests
+            where restaurant_id = ${prid} and id = ${FIXED}`
+          // THE PRECONDITION, asserted rather than assumed: the status really
+          // is still `approved` after a return. If §3 ever changes, this stops
+          // being the case it claims to test.
+          stillApproved = row.status === 'approved' && row.assigned_to === 'owner'
+          try {
+            await assertStillPayable(tx, prid, FIXED, 'accountant')
+          } catch (e) {
+            if (!(e instanceof ApprovalRefusal)) throw e
+            refused = e.message
+          }
+          // AND THE OWNER MAY STILL ACT. A guard that refuses everybody is not
+          // a guard.
+          await assertStillPayable(tx, prid, FIXED, 'owner')
+          ownerOk = true
+          throw new Error('KB_ROLLBACK')
+        })
+      } catch (e) {
+        if ((e as Error).message !== 'KB_ROLLBACK') throw e
+      }
+      return { stillApproved, refused, ownerOk }
+    })
+
+    assert.ok(out.stillApproved, 'the fixture is not the case under test — a returned request must still read approved')
+    assert.ok(
+      out.refused !== null,
+      'a request returned to the owner was still payable by the accountant — recordAct cannot see this and nothing else was checking it',
+    )
+    assert.match(String(out.refused), /no longer with you/, `refused for the wrong reason: ${out.refused}`)
+    assert.ok(out.ownerOk, 'the owner cannot act on a request assigned to the owner — the guard refuses everybody')
+    console.log('      status stayed approved · the accountant refused, the owner admitted')
   })
 
   if (only !== null) {

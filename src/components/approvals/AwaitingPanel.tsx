@@ -22,6 +22,7 @@
 import { getSessionUser } from '@/server/current-user'
 import { getRestaurant } from '@/server/queries'
 import {
+  getRangeScope,
   getVendorRouting,
   listAwaiting,
   listMyOutcomes,
@@ -50,12 +51,15 @@ export default async function AwaitingPanel({ role }: { role: Role }) {
   if (rows.length === 0) return null
 
   const ids = rows.map((r) => r.entity_id)
-  const [vendorRows, balances, today, bills, rawNumbers] = await Promise.all([
+  const [vendorRows, balances, today, bills, rawNumbers, scope] = await Promise.all([
     getVendorRouting(restaurant.id, ids),
     getAccountBalances(restaurant.id),
     businessToday(),
     listBillsOutstandingFor(restaurant.id, ids),
     listBillNumbersFor(restaurant.id, ids),
+    // WHAT THOSE BILLS COME TO NOW, keyed by REQUEST rather than by vendor —
+    // two requests can name two different ranges over one vendor's bills.
+    getRangeScope(restaurant.id, rows.map((r) => r.id)),
   ])
   const vendors: Record<string, VendorRouting> = Object.fromEntries(vendorRows)
   // The gap detector is PURE, so it runs here rather than in SQL: clustering
@@ -71,6 +75,7 @@ export default async function AwaitingPanel({ role }: { role: Role }) {
       vendors={vendors}
       bills={bills}
       numbers={numbers}
+      scope={scope}
       balances={balances}
       today={today}
       // "Routed to you" is only true when the reader IS the role the work was
