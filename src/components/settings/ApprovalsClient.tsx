@@ -25,6 +25,7 @@ import { fmtDate } from '@/lib/format'
 import { btnCls, btnGhostCls, cardCls, codeCls, fieldLabelCls, inputCls } from '@/components/ui'
 import { fmtDateTime } from '@/lib/format'
 import NameFigure from '@/components/NameFigure'
+import BillScope from '@/components/approvals/BillScope'
 import { readObject } from '@/lib/read-object'
 
 export type QueueItem = {
@@ -115,8 +116,9 @@ export default function ApprovalsClient({
                   name={what(r)}
                   figure={r.amount === null ? null : formatMoneyString(r.amount)}
                 />
-                <p className="mt-0.5 text-xs text-stone-500">
-                  with the {r.assigned_to} since {fmtDateTime(r.last_at ?? r.requested_at)}
+                <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-stone-500">
+                  <BillScope kind={r.kind} from={r.bills_from} to={r.bills_to} snapshot={r.snapshot} />
+                  <span>with the {r.assigned_to} since {fmtDateTime(r.last_at ?? r.requested_at)}</span>
                 </p>
               </li>
             ))}
@@ -140,6 +142,11 @@ export default function ApprovalsClient({
                     </span>
                   )}
                 </div>
+                {r.kind === 'payment' && (
+                  <p className="mt-0.5 text-xs">
+                    <BillScope kind={r.kind} from={r.bills_from} to={r.bills_to} snapshot={r.snapshot} />
+                  </p>
+                )}
                 {/* A FAILURE KEEPS ITS REASON. An approval that could not be
                     applied is not a refusal and must not read like one. */}
                 {r.status === 'failed' && (
@@ -300,6 +307,15 @@ function Request({
           {row.requested_by ?? 'someone'} · {fmtDateTime(row.requested_at)}
         </span>
       </div>
+
+      {/* WHICH BILLS, on the line under the name. The owner is being asked for
+          a figure, and "for which bills" is the half of that question the
+          amount cannot answer. */}
+      {row.kind === 'payment' && (
+        <p className="mt-1 text-xs">
+          <BillScope kind={row.kind} from={row.bills_from} to={row.bills_to} snapshot={row.snapshot} />
+        </p>
+      )}
 
       {/* THE REASON IS THE POINT OF THE WHOLE ROW. After this is applied there
           is no negative twin to read; this sentence is the record. */}

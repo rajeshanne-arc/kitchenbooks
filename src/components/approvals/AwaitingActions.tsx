@@ -35,13 +35,15 @@ import { toast } from '@/components/Toasts'
 import CopyField from '@/components/books/CopyField'
 import BillNumberGap from '@/components/books/BillNumberGap'
 import NameFigure from '@/components/NameFigure'
+import BillScope from '@/components/approvals/BillScope'
 import { payApproval, returnRequest } from '@/server/approvals-actions'
 import type { AwaitingRow, VendorRouting } from '@/server/approvals-queries'
 import type { AccountBalanceRow, BillOutstandingRow } from '@/lib/types'
 import type { BillNumbers } from '@/lib/bill-gaps'
 import { applyFifo } from '@/lib/settle'
+import { inRange, type DateRange } from '@/lib/bill-range'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
-import { fmtDate, fmtDateTime } from '@/lib/format'
+import { fmtDate, fmtDateTime, fmtRange } from '@/lib/format'
 import { lateness, LATE_TONE } from '@/lib/lateness'
 import {
   btnCls,
@@ -203,6 +205,7 @@ function Row({
         {late !== null && (
           <span className={`rounded-full border px-1.5 py-0.5 font-medium ${tone.chip}`}>{late.text}</span>
         )}
+        <BillScope kind={row.kind} from={row.bills_from} to={row.bills_to} snapshot={row.snapshot} />
         <span>
           {row.requested_by ?? 'someone'} · {fmtDateTime(row.requested_at)}
         </span>
@@ -231,6 +234,11 @@ function Row({
           <WhereItGoes vendor={vendor} />
           <WhatThisSettles
             bills={bills}
+            range={
+              row.bills_from !== null && row.bills_to !== null
+                ? { from: row.bills_from, to: row.bills_to }
+                : null
+            }
             amountPaise={askPaise}
             outstanding={vendor?.outstanding ?? null}
             showAll={showAll}
@@ -370,35 +378,86 @@ function WhereItGoes({ vendor }: { vendor: VendorRouting | undefined }) {
   )
 }
 
-/** WHAT THIS SETTLES — the composition, FIFO, and where the money runs out. */
+/**
+ * WHAT THIS SETTLES — the composition, FIFO, and where the money runs out.
+ *
+ * SCOPED TO THE RANGE THE REQUEST NAMES, because that is what he is being
+ * asked to pay. A pre-range request names none and shows the whole balance,
+ * which is what it always meant.
+ *
+ * AND THE SPLIT IS STILL FIFO OVER EVERYTHING, WHICH IS NOT THE SAME THING.
+ * This is the one place the two can come apart, so it is worth being exact:
+ *
+ *   the RANGE says which bills two people agreed this payment is about;
+ *   the LEDGER puts money against a BALANCE, oldest first, because payments
+ *   here are ON ACCOUNT and tied to no bill.
+ *
+ * With the default range those coincide — it starts at the oldest unpaid bill,
+ * so FIFO and the range walk the same list. They separate the moment somebody
+ * narrows the range and leaves something older outside it, and then the money
+ * clears the older bills FIRST whatever the request says. That is a real
+ * finding for the person about to pay it, so it is on screen rather than only
+ * in this comment.
+ *
+ * DO NOT "FIX" THIS BY ALLOCATING FIFO OVER THE SCOPED LIST. It would make the
+ * screen agree with itself and disagree with the ledger, which is the worse of
+ * the two — and per-bill allocation is a different product with a join table
+ * and no way to read the payments already on these books.
+ */
 function WhatThisSettles({
   bills,
+  range,
   amountPaise,
   outstanding,
   showAll,
   onShowAll,
 }: {
   bills: BillOutstandingRow[]
+  /** null on a pre-range request — a claim on the whole balance */
+  range: DateRange | null
   amountPaise: number
   outstanding: string | null
   showAll: boolean
   onShowAll: () => void
 }) {
-  const { rows, clears, leftUnapplied } = applyFifo(bills, amountPaise)
+  const scoped = range === null ? bills : inRange(bills, range)
+  const { rows, clears, leftUnapplied } = applyFifo(scoped, amountPaise)
   const shown = showAll ? rows : rows.slice(0, 5)
   const hidden = rows.length - shown.length
+  // OLDER THAN THE RANGE, and therefore first in the queue for this money.
+  const olderOutside =
+    range === null ? [] : bills.filter((b) => b.bill_date < range.from && b.unpaid !== '0')
 
   return (
     <div className="rounded-xl border border-rule bg-white p-3">
       <div className="flex items-baseline justify-between gap-2">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-stone-400">What this settles</h4>
+        <h4 className="text-xs font-medium uppercase tracking-wide text-stone-400">
+          What this settles
+          {range !== null && (
+            <span className="ml-1 normal-case tracking-normal text-stone-500">
+              — {scoped.length} {scoped.length === 1 ? 'bill' : 'bills'}, {fmtRange(range.from, range.to)}
+            </span>
+          )}
+        </h4>
         <span className="text-xs text-stone-400">bills_outstanding · oldest first</span>
       </div>
-      {bills.length === 0 ? (
+
+      {olderOutside.length > 0 && (
+        <div className="mt-1.5">
+          <Honesty verdict="older bills come first">
+            {olderOutside.length} unpaid {olderOutside.length === 1 ? 'bill' : 'bills'} predate this range.
+            A payment here is ON ACCOUNT and clears the oldest first, so this money will settle those before
+            it reaches the bills named above — the range is what was agreed, not what the ledger does.
+          </Honesty>
+        </div>
+      )}
+      {scoped.length === 0 ? (
         <p className="mt-1.5 text-sm text-stone-700">
           {outstanding === null
             ? 'Nothing is outstanding to them today — it was settled after this was asked.'
-            : 'No open bills came back for this vendor, so nothing here can say what the balance is made of. That is a failed read, not a settled account.'}
+            : bills.length > 0 && range !== null
+              ? `No unpaid bill falls inside ${fmtRange(range.from, range.to)} any more — every bill this request named has been settled since it was raised.`
+              : 'No open bills came back for this vendor, so nothing here can say what the balance is made of. That is a failed read, not a settled account.'}
         </p>
       ) : (
         <>

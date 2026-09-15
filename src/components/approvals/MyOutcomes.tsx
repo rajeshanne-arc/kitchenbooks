@@ -32,6 +32,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from '@/components/Toasts'
 import NameFigure from '@/components/NameFigure'
+import BillScope from '@/components/approvals/BillScope'
 import { acknowledgeRequest } from '@/server/approvals-actions'
 import type { OutcomeRow } from '@/server/approvals-queries'
 import { formatMoneyString } from '@/lib/money'
@@ -87,9 +88,12 @@ function Row({ row }: { row: OutcomeRow }) {
           </span>
         }
       />
-      <p className="mt-1 text-xs text-stone-400">
-        {row.decided_by ?? row.last_by ?? 'somebody'} ·{' '}
-        {fmtDateTime(row.applied_at ?? row.decided_at ?? row.requested_at)}
+      <p className="mt-1 flex flex-wrap gap-x-2 text-xs text-stone-400">
+        <BillScope kind={row.kind} from={row.bills_from} to={row.bills_to} snapshot={row.snapshot} />
+        <span>
+          {row.decided_by ?? row.last_by ?? 'somebody'} ·{' '}
+          {fmtDateTime(row.applied_at ?? row.decided_at ?? row.requested_at)}
+        </span>
       </p>
       <p className="mt-1 text-[13px] text-stone-500">you asked: “{row.reason}”</p>
 

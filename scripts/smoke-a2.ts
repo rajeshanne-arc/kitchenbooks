@@ -11660,6 +11660,178 @@ async function run() {
     console.log(`      ${cols.length} columns named, all real · the guard runs inside the lock`)
   })
 
+  await check('the range reads on every screen a request reaches', async () => {
+    // FIVE MOUNTS, ONE DEFINITION. The owner's card, the routed queue, out
+    // with somebody else, already decided and what happened to yours all
+    // answer the same question about the same row — and five hand-written
+    // versions is how one comes to say something the others do not.
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((f) => {
+        const full = `${d}/${f}`
+        return statSync(full).isDirectory() ? walk(full) : full.endsWith('.tsx') || full.endsWith('.ts') ? [full] : []
+      })
+    const files = [...walk('src/components'), ...walk('src/app')]
+    // A REAL JSX BOUNDARY, never a prefix — `<BillScope` matches `<BillScopeX`
+    // too, and a rename would leave this green. Recorded three times already.
+    const mounts = files
+      .map((f) => ({ f, n: (readFileSync(f, 'utf8').match(/<BillScope[\s/>]/g) ?? []).length }))
+      .filter((x) => x.n > 0)
+    const total = mounts.reduce((n, m) => n + m.n, 0)
+    assert.equal(total, 5, `BillScope is mounted ${total} times, not 5: ${mounts.map((m) => `${m.f}×${m.n}`).join(', ')}`)
+    for (const want of [
+      'src/components/settings/ApprovalsClient.tsx',
+      'src/components/approvals/AwaitingActions.tsx',
+      'src/components/approvals/MyOutcomes.tsx',
+    ]) {
+      assert.ok(mounts.some((m) => m.f === want), `${want} does not render the range`)
+    }
+    // AND NOBODY ELSE BUILDS ONE. A second hand-rolled "bills … · N bills" is
+    // the drift this component exists to prevent.
+    //
+    // STRIP COMMENTS FIRST, ALWAYS. The first version of this line reported
+    // AwaitingActions as building its own label — because the docblock
+    // EXPLAINING that a pre-range request shows the whole balance contains the
+    // words "whole balance". A careful explanation of a rule is
+    // indistinguishable, to a substring search, from the rule being broken;
+    // this file's preamble calls that its strongest instance and it was made
+    // again here, in the check written to enforce the rule.
+    const stripComments = (t: string) =>
+      t
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/^\s*\/\/.*$/gm, ' ')
+    const rogue = files.filter(
+      (f) => !f.endsWith('BillScope.tsx') && /whole balance/.test(stripComments(readFileSync(f, 'utf8'))),
+    )
+    assert.deepEqual(rogue, [], `these build their own range label instead of mounting BillScope: ${rogue.join(', ')}`)
+
+    const src = readFileSync('src/components/approvals/BillScope.tsx', 'utf8')
+    assert.match(src, /whole balance/, 'a request with no range no longer reads "whole balance"')
+    assert.match(src, /kind !== 'payment'/, 'BillScope would describe a discard or a merge as being about bills')
+    console.log(`      ${total} mounts across ${mounts.length} files · one definition, and nothing else builds the label`)
+  })
+
+  await check('every select list carries the range, and every row can render it', async () => {
+    // SIX HAND-COPIED SELECT LISTS. They were already duplicated and they stay
+    // duplicated on purpose — folding them into one interpolated fragment
+    // would hide ~140 column references from audit:schema, which is the gate
+    // that gutted itself once already. So they are held in step HERE instead.
+    const { readFileSync } = await import('node:fs')
+    const q = readFileSync('src/server/approvals-queries.ts', 'utf8')
+    // ADJACENCY, NOT A TOTAL. Counting both names and comparing the two
+    // numbers said "7 name the range and 6 name the amount" — and the seventh
+    // is assertPayableRange's own overlap query, which selects bills_from
+    // perfectly legitimately. A total cannot tell which list a name belongs
+    // to; the pairing can, and the pairing is the actual rule.
+    const lines = q.split('\n')
+    const selects = lines
+      .map((l, i) => ({ l, i }))
+      .filter((x) => /a\.amount::text as amount/.test(x.l))
+    assert.ok(selects.length > 0, 'no approval select list found — this check is looking at nothing')
+    for (const { i } of selects) {
+      assert.match(
+        lines[i + 1] ?? '',
+        /a\.bills_from::text as bills_from/,
+        `the select list at line ${i + 1} names the amount and not the range — that screen would render a blank`,
+      )
+    }
+
+    // AND EVERY LIVE ROW CAN RENDER THE LABEL. Asserting the INPUTS rather
+    // than grepping the output: a payment row is either wholly pre-range (both
+    // null) or wholly ranged (both set, ordered, with a count in the snapshot).
+    // A half-set pair or a ranged row with no count is what would put
+    // "undefined" or "will not read" on somebody's screen.
+    const rows = await tsql<
+      { id: string; kind: string; status: string; bills_from: string | null; bills_to: string | null; asked: number | null }[]
+    >`select id, kind, status, bills_from::text as bills_from, bills_to::text as bills_to,
+             (snapshot ->> 'askedRangeBills')::int as asked
+      from approval_requests where restaurant_id = ${liveTenant}`
+    assert.ok(rows.length > 0, 'no approval requests at all — this check is looking at nothing')
+    let pre = 0
+    let ranged2 = 0
+    for (const r of rows) {
+      if (r.kind !== 'payment') {
+        assert.ok(r.bills_from === null && r.bills_to === null, `${r.kind} request ${r.id} carries a bill range`)
+        continue
+      }
+      const half = (r.bills_from === null) !== (r.bills_to === null)
+      assert.ok(!half, `payment ${r.id} has half a range (${r.bills_from} .. ${r.bills_to}) — the label would render a blank`)
+      if (r.bills_from === null) {
+        pre++
+        continue
+      }
+      ranged2++
+      assert.ok(
+        (r.bills_from as string) <= (r.bills_to as string),
+        `payment ${r.id} range is backwards: ${r.bills_from} .. ${r.bills_to}`,
+      )
+      assert.ok(
+        typeof r.asked === 'number',
+        `payment ${r.id} names a range and its snapshot has no askedRangeBills — the label would say the count will not read`,
+      )
+    }
+    assert.ok(pre > 0, 'no pre-range request left — the "whole balance" branch is no longer exercised by live data')
+
+    // THE RANGED BRANCH IS UNEXERCISED UNTIL SOMEBODY RAISES ONE, and a tick
+    // over zero rows is not evidence. So the half that CAN be proved today is
+    // proved a different way: the count the label reads is written by the
+    // raise, in the same object literal as the rest of the snapshot, and that
+    // is checked in the source. When the first ranged request exists the loop
+    // above starts carrying the weight and this line goes quiet by itself.
+    const { readFileSync: rf } = await import('node:fs')
+    const act = rf('src/server/approvals-actions.ts', 'utf8')
+    const from = act.indexOf('export async function requestVendorPayment')
+    assert.ok(from > 0, 'requestVendorPayment is gone')
+    assert.match(
+      act.slice(from),
+      /askedRangeBills: scope\.bills/,
+      'the raise no longer writes askedRangeBills — every ranged row would render "bill count will not read"',
+    )
+    console.log(
+      `      ${rows.length} requests · ${pre} pre-range (whole balance) · ${ranged2} ranged` +
+        (ranged2 === 0
+          ? ' — the ranged branch is UNEXERCISED by live data; the count it reads is proved in the source instead'
+          : ', every one with a count'),
+    )
+  })
+
+  await check('the disclosure shows the bills the request named, and the ledger still says otherwise', async () => {
+    // THE ONE PLACE THE RANGE AND THE LEDGER CAN COME APART. The list is
+    // SCOPED to the range because that is what was agreed; the FIFO split runs
+    // over it because that is what the money does. With the default range the
+    // two coincide — it starts at the oldest unpaid bill — and they separate
+    // the moment somebody narrows it past something older.
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync('src/components/approvals/AwaitingActions.tsx', 'utf8')
+    const at = src.indexOf('function WhatThisSettles')
+    assert.ok(at > 0, 'WhatThisSettles is gone')
+    const body = src.slice(at)
+    assert.match(body, /const scoped = range === null \? bills : inRange\(bills, range\)/, 'the disclosure no longer scopes to the range')
+    assert.match(body, /olderOutside/, 'the disclosure no longer says when older bills will take the money first')
+
+    // AND THE DEFAULT RANGE NEVER TRIPS IT, which is why that strip is
+    // unexercised on live data and is built anyway: it is the only screen that
+    // can warn a person the money will not go where the request says.
+    const { listBillsOutstanding } = await import('../src/server/aging-queries')
+    const { defaultRange } = await import('../src/lib/bill-range')
+    const { withTenant } = await import('../src/lib/tenant')
+    const trips = await withTenant(liveTenant, async () => {
+      const [{ d: today }] = await tsql<{ d: string }[]>`select business_date(now())::text as d`
+      const vs = await tsql<{ vendor_id: string; vendor_code: string }[]>`
+        select vendor_id, vendor_code from vendor_aging where restaurant_id = ${liveTenant}`
+      let n = 0
+      for (const v of vs) {
+        const bills = await listBillsOutstanding(liveTenant, v.vendor_id)
+        const r = defaultRange(bills, today) as { from: string; to: string }
+        if (bills.some((b) => b.bill_date < r.from)) n++
+      }
+      return n
+    })
+    assert.equal(trips, 0, `${trips} vendors have an unpaid bill older than their own default range — the default is not "everything"`)
+    console.log('      scoped to the range · FIFO unchanged · the older-bills strip is UNEXERCISED by the default range, by construction')
+  })
+
   if (only !== null) {
     console.log(`\nFILTERED RUN — ${ran} check(s) matching "${only}", ${skipped} skipped. THIS IS NOT THE SUITE.`)
     if (ran === 0) {

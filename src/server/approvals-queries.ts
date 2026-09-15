@@ -639,6 +639,18 @@ export type ApprovalRow = {
   /** payment requests only — null on every other kind, because the CHECK on
    *  the column has to permit a null for them. */
   amount: string | null
+  /**
+   * WHICH BILLS THIS REQUEST IS ABOUT, and null on three kinds of row: every
+   * non-payment request, and the payment requests raised before the range
+   * existed.
+   *
+   * A NULL PAIR IS NOT A MISSING FIELD — it is a claim on the WHOLE BALANCE,
+   * which is what a payment request meant before it could name a range. Every
+   * screen reads it that way, through one component, so "whole balance" and
+   * "bills 1–14 Aug" are the two things this can say and neither is a blank.
+   */
+  bills_from: string | null
+  bills_to: string | null
   suggested_mode: string | null
   routed_mode: string | null
   routed_account_id: string | null
@@ -785,6 +797,7 @@ export async function listAwaiting(
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
            a.applied_at::text as applied_at, a.applied_result,
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
            coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
@@ -832,6 +845,7 @@ export async function listElsewhere(
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
            a.applied_at::text as applied_at, a.applied_result,
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
            coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
@@ -875,6 +889,7 @@ export async function listDecided(restaurantId: string, limit = 20): Promise<Awa
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
            a.applied_at::text as applied_at, a.applied_result,
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
            coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
@@ -907,6 +922,7 @@ export async function pendingFor(restaurantId: string, entityId: string): Promis
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
            a.applied_at::text as applied_at, a.applied_result,
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
            null as from_code, null as from_name, null as to_code, null as to_name
     from approval_requests a
@@ -922,6 +938,7 @@ export async function getApproval(restaurantId: string, id: string): Promise<App
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
            a.applied_at::text as applied_at, a.applied_result,
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
            coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name
@@ -1382,6 +1399,7 @@ export async function listMyOutcomes(
            a.decided_by, a.decided_at::text as decided_at, a.decision_note,
            a.applied_at::text as applied_at, a.applied_result,
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
+           a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
            coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
