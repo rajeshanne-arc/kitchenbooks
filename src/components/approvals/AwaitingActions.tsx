@@ -1,32 +1,44 @@
 'use client'
 
-// THE OTHER END OF THE ROUTE — three acts, and the two send-backs are
-// deliberately different sentences rather than one "reject".
+// THE OTHER END OF THE ROUTE — and what the accountant is actually reviewing.
 //
-//   PAY AND RECORD   the transfer is made. One transaction writes the
-//                    payments row, the `paid` event and the status.
-//   RETURN           "I CANNOT PAY IT THIS WAY." The account is short, the
-//                    beneficiary is not registered, the bank is down. None of
-//                    that is an objection to paying the vendor, so the
-//                    approval STANDS and only the route comes off. It goes
-//                    back to the owner to be routed again, never re-decided.
-//   CHALLENGE        "I DO NOT THINK THIS SHOULD BE PAID." The vendor was
-//                    already paid, the amount is wrong, the bill is disputed.
-//                    That is an objection to the PAYMENT, so it goes back for
-//                    a decision and the owner answers it again.
+// HE CANNOT CHECK WHETHER THE GOODS ARRIVED. The store manager stood at the
+// door and received them; that is settled and not his to re-open. What he CAN
+// check is arithmetic, duplicates, anomalies in a vendor's numbering, and
+// whether our figure agrees with the vendor's own statement.
 //
-// Collapsing the two would lose the only thing that distinguishes them, which
-// is what the owner has to do next. A reason is REQUIRED on both: after a send
-// back there is nothing else anywhere that explains why the route changed.
+// SO THE COMPOSITION IS A DISCLOSURE, NOT AN APPROVAL STEP. It is a
+// RECONCILIATION check rather than a receipt check — which is why there are NO
+// PER-BILL CHECKBOXES. Ticking bills would turn a reconciliation glance into a
+// second approval, and the owner has already approved: the accountant is
+// executing a decision, not re-taking it.
+//
+// TWO ACTIONS, AND THE SECOND IS NOT "REFUSE". He cannot refuse the payment —
+// the owner decided it should be made. He is declining to EXECUTE, and handing
+// the decision back with what he found.
+//
+//   I PAID IT — RECORD IT
+//   SEND IT BACK              a note is required, and refused by name if blank
+//
+// `challenged` IS COLLAPSED INTO `returned`. Three buttons made him classify
+// WHY before he could act, and the paragraph explaining routing-problem versus
+// should-we-pay-problem is a paragraph nobody reads at four in the afternoon.
+// HE STATES THE FACT; THE OWNER CLASSIFIES IT — and the owner is the one with
+// the information to tell them apart. "Their account is closed" and "I do not
+// think we owe this" both come back with a reason, and he decides what each
+// means.
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Honesty from '@/components/Honesty'
 import { toast } from '@/components/Toasts'
 import CopyField from '@/components/books/CopyField'
-import { challengeRequest, payApproval, returnRequest } from '@/server/approvals-actions'
+import BillNumberGap from '@/components/books/BillNumberGap'
+import { payApproval, returnRequest } from '@/server/approvals-actions'
 import type { AwaitingRow, VendorRouting } from '@/server/approvals-queries'
-import type { AccountBalanceRow } from '@/lib/types'
+import type { AccountBalanceRow, BillOutstandingRow } from '@/lib/types'
+import type { BillNumbers } from '@/lib/bill-gaps'
+import { applyFifo } from '@/lib/settle'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
 import {
@@ -42,6 +54,8 @@ import {
 export default function AwaitingActions({
   rows,
   vendors,
+  bills,
+  numbers,
   balances,
   today,
   mine,
@@ -49,24 +63,40 @@ export default function AwaitingActions({
 }: {
   rows: AwaitingRow[]
   vendors: Record<string, VendorRouting>
+  bills: Record<string, BillOutstandingRow[]>
+  numbers: Record<string, BillNumbers>
   balances: AccountBalanceRow[]
   today: string
-  /** the reader IS the role this was routed to */
   mine: boolean
   role: string
 }) {
-  // THE ACKNOWLEDGEMENT CANNOT LIVE IN HERE, and finding out why is the point.
-  // Paying the last routed request empties this panel, so the server renders
-  // nothing where it was, React unmounts the subtree and any state in it goes
-  // with the row — the acknowledgement would flash and vanish. The ROW LEAVING
-  // is the change on screen; the bottom-anchored toast carries the numbers,
-  // which is the same answer the three inline row controls already give.
+  // THE ROW IS THE CONTROL. "Pay it, or send it back →" was one button
+  // carrying two verbs, and it made the row itself un-openable — the same
+  // fault as an action clipped into the last column, arrived at from the other
+  // direction.
+  const [open, setOpen] = useState<string | null>(null)
+
   return (
     <section className={`${cardCls} mb-4 border-amber-300`}>
       <h2 className={sectionHeadCls}>{mine ? 'Routed to you' : `Routed to the ${role}`}</h2>
       <ul className="mt-2 divide-y divide-rule-soft">
         {rows.map((r) => (
-          <Row key={r.id} row={r} vendor={vendors[r.entity_id]} balances={balances} today={today} />
+          <Row
+            key={r.id}
+            row={r}
+            vendor={vendors[r.entity_id]}
+            bills={bills[r.entity_id] ?? []}
+            numbers={numbers[r.entity_id]}
+            balances={balances}
+            today={today}
+            isOpen={open === r.id}
+            // LIFTED THREE WAYS AT ONCE, because any one alone is missable on a
+            // long queue: the open row is tinted, carries a bar down its left
+            // edge, and the others are dimmed. Together it is unmistakable
+            // which one is open.
+            dimmed={open !== null && open !== r.id}
+            onToggle={() => setOpen(open === r.id ? null : r.id)}
+          />
         ))}
       </ul>
     </section>
@@ -76,40 +106,44 @@ export default function AwaitingActions({
 function Row({
   row,
   vendor,
+  bills,
+  numbers,
   balances,
   today,
+  isOpen,
+  dimmed,
+  onToggle,
 }: {
   row: AwaitingRow
   vendor: VendorRouting | undefined
+  bills: BillOutstandingRow[]
+  numbers: BillNumbers | undefined
   balances: AccountBalanceRow[]
   today: string
+  isOpen: boolean
+  dimmed: boolean
+  onToggle: () => void
 }) {
   const router = useRouter()
-  const [open, setOpen] = useState(false)
-  // THE MODE COMES FROM THE ROUTE, not from a list. The owner chose it; this
-  // screen is not where it is re-argued. It stays editable because the person
-  // at the bank is the one who finds out it cannot go that way — and if it
-  // cannot, the honest act is a RETURN, which is the button beside it.
   const [mode, setMode] = useState(row.routed_mode ?? row.suggested_mode ?? '')
   const [accountId, setAccountId] = useState(row.routed_account_id ?? '')
   const [paidDate, setPaidDate] = useState(today)
   const [note, setNote] = useState('')
-  const [busy, setBusy] = useState<null | 'pay' | 'return' | 'challenge'>(null)
+  const [showAll, setShowAll] = useState(false)
+  const [busy, setBusy] = useState<null | 'pay' | 'back'>(null)
   const [error, setError] = useState<string | null>(null)
 
   const askPaise = row.amount === null ? 0 : decimalStringToPaise(row.amount)
   const chosen = balances.find((b) => b.account_id === accountId)
   const short = chosen !== undefined && askPaise > 0 && decimalStringToPaise(chosen.balance) < askPaise
 
-  async function run(which: 'pay' | 'return' | 'challenge') {
+  async function run(which: 'pay' | 'back') {
     setBusy(which)
     setError(null)
     const r =
       which === 'pay'
         ? await payApproval({ id: row.id, accountId, paidDate, mode, note: note.trim() })
-        : which === 'return'
-          ? await returnRequest({ id: row.id, reason: note.trim() })
-          : await challengeRequest({ id: row.id, reason: note.trim() })
+        : await returnRequest({ id: row.id, reason: note.trim() })
     setBusy(null)
     if (!r.ok) setError(r.error)
     else toast(r.message, 'ok')
@@ -117,7 +151,14 @@ function Row({
   }
 
   return (
-    <li className="py-2.5">
+    <li
+      onClick={onToggle}
+      className={`relative cursor-pointer py-2.5 pl-3 transition-opacity ${
+        isOpen ? 'bg-amber-50/70' : dimmed ? 'opacity-45 hover:opacity-80' : 'hover:bg-stone-50'
+      }`}
+    >
+      {isOpen && <span className="absolute inset-y-0 left-0 w-1 rounded-full bg-amber-500" />}
+
       <div className="flex flex-wrap items-baseline gap-x-2">
         <span className="font-medium text-stone-900">{row.from_name ?? 'a vendor'}</span>
         {row.amount !== null && (
@@ -134,58 +175,38 @@ function Row({
           {row.last_by ?? 'the owner'}: “{row.last_note}”
         </p>
       )}
-      {/* A MISSING KEY IS NOT A VENDOR WITHOUT DETAILS — see RouteControl. The
-          map is keyed by these rows' own entity_ids, so an absent one is a
-          failed lookup and must not render as an absence of bank details. */}
+
       {vendor === undefined && (
         <p className="mt-1 text-[13px] text-red-800">
           Nothing came back for this vendor — where the money would go and what is owed are both unknown.
           That is a failed lookup, not a vendor with no details.
         </p>
       )}
-      {vendor !== undefined && vendor.outstanding !== null && (
-        <p className="mt-0.5 text-xs text-stone-500">
-          Owed now: {formatMoneyString(vendor.outstanding)}
-          {vendor.open_bills !== null && <> across {vendor.open_bills} bills</>}
-          {vendor.oldest_due !== null && <>, oldest due {fmtDate(vendor.oldest_due)}</>}.
-        </p>
-      )}
 
-      {!open ? (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="mt-2 min-h-[40px] rounded-lg border border-rule px-3 py-2 text-xs font-medium text-stone-700 hover:border-stone-400"
-        >
-          Pay it, or send it back →
-        </button>
-      ) : (
-        <div className="mt-2 rounded-xl border border-rule bg-white p-3">
-          {/* THE DETAILS THE TRANSFER IS ACTUALLY TYPED FROM. This is the
-              screen where an account number is retyped into a bank app under
-              time pressure, so the machine does the copying. */}
-          {vendor !== undefined &&
-            ((vendor.account_no ?? '') !== '' || (vendor.upi_id ?? '') !== '') && (
-              <div className="rounded-lg border border-rule bg-field/40 px-3 py-1">
-                {vendor.bank_name !== null && vendor.bank_name !== '' && (
-                  <CopyField label="Bank" value={vendor.bank_name} />
-                )}
-                {vendor.account_no !== null && vendor.account_no !== '' && (
-                  <CopyField label="Account number" value={vendor.account_no} group />
-                )}
-                {vendor.ifsc !== null && vendor.ifsc !== '' && (
-                  <CopyField label="IFSC" value={vendor.ifsc} />
-                )}
-                {vendor.upi_id !== null && vendor.upi_id !== '' && (
-                  <CopyField label="UPI" value={vendor.upi_id} />
-                )}
-              </div>
-            )}
+      {isOpen && (
+        <div onClick={(e) => e.stopPropagation()} className="mt-3 space-y-3 pr-1">
+          {/* TWO PANELS, NOT ONE. They answer different questions — where does
+              the money go, and what is it settling — and merging them gives a
+              block nobody reads. */}
+          <WhereItGoes vendor={vendor} />
+          <WhatThisSettles
+            bills={bills}
+            amountPaise={askPaise}
+            outstanding={vendor?.outstanding ?? null}
+            showAll={showAll}
+            onShowAll={() => setShowAll(true)}
+          />
+          {numbers !== undefined && <BillNumberGap g={numbers} vendorName={row.from_name ?? 'this vendor'} />}
 
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className={fieldLabelCls}>Mode</span>
-              <input value={mode} onChange={(e) => setMode(e.target.value)} className={inputCls} maxLength={40} />
+              <input
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+                className={inputCls}
+                maxLength={40}
+              />
             </label>
             <label className="block">
               <span className={fieldLabelCls}>From which account</span>
@@ -201,46 +222,41 @@ function Row({
           </div>
 
           {short && chosen !== undefined && (
-            <div className="mt-2">
-              <Honesty verdict="not enough in it">
-                {chosen.name} holds {formatMoneyString(chosen.balance)} and this is{' '}
-                {formatMoneyString(row.amount ?? '0')}. If it cannot go from there, send it back rather than
-                recording a payment the account cannot carry.
-              </Honesty>
-            </div>
+            <Honesty verdict="not enough in it">
+              {chosen.name} holds {formatMoneyString(chosen.balance)} and this is{' '}
+              {formatMoneyString(row.amount ?? '0')}. If it cannot go from there, send it back rather than
+              recording a payment the account cannot carry.
+            </Honesty>
           )}
 
-          <label className="mt-3 block">
-            <span className={fieldLabelCls}>Date paid</span>
-            <input
-              type="date"
-              value={paidDate}
-              onChange={(e) => setPaidDate(e.target.value)}
-              className={inputCls}
-            />
-          </label>
-
-          <label className="mt-3 block">
-            <span className={fieldLabelCls}>
-              Note — required to send it back, either way
-            </span>
-            <input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              className={inputCls}
-              maxLength={300}
-            />
-          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className={fieldLabelCls}>Date paid</span>
+              <input
+                type="date"
+                value={paidDate}
+                onChange={(e) => setPaidDate(e.target.value)}
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className={fieldLabelCls}>Note — required to send it back</span>
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                className={inputCls}
+                maxLength={300}
+              />
+            </label>
+          </div>
 
           {error !== null && (
-            <div className="mt-3">
-              <Honesty verdict="Nothing was written" level="alarm">
-                {error}
-              </Honesty>
-            </div>
+            <Honesty verdict="Nothing was written" level="alarm">
+              {error}
+            </Honesty>
           )}
 
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => run('pay')}
@@ -249,40 +265,157 @@ function Row({
             >
               {busy === 'pay' ? 'Recording…' : 'I paid it — record it'}
             </button>
-            {/* SENDING IT BACK TO YOURSELF IS NOT AN ACT. An owner standing
-                here is looking at their own queue; the server refuses both by
-                name, and offering a button whose only outcome is a refusal is
-                the picker-is-not-the-check rule pointed the wrong way. */}
+            {/* NOT "REFUSE". The owner decided this should be paid; the
+                accountant is declining to EXECUTE and handing the decision
+                back. The label has to say which of those it is. */}
             {row.assigned_to !== 'owner' && (
-              <>
-            <button
-              type="button"
-              onClick={() => run('return')}
-              disabled={busy !== null || note.trim() === ''}
-              className={btnGhostCls}
-            >
-              {busy === 'return' ? 'Sending…' : 'I cannot pay it this way'}
-            </button>
-            <button
-              type="button"
-              onClick={() => run('challenge')}
-              disabled={busy !== null || note.trim() === ''}
-              className={btnGhostCls}
-            >
-              {busy === 'challenge' ? 'Sending…' : 'I do not think this should be paid'}
-            </button>
-              </>
+              <button
+                type="button"
+                onClick={() => run('back')}
+                disabled={busy !== null || note.trim() === ''}
+                className={btnGhostCls}
+              >
+                {busy === 'back' ? 'Sending…' : 'Send it back'}
+              </button>
             )}
           </div>
 
-          {/* THE DIFFERENCE BETWEEN THE TWO, in the words of what happens next
-              rather than in the words of a status. */}
-          <p className="mt-1.5 text-xs text-stone-500">
-            Sending it back the first way keeps the approval and asks the owner to say how else it can go.
-            The second withdraws the question entirely — the owner decides again whether to pay at all.
+          {/* THE CONTROL MODEL, IN ONE SENTENCE. It is the only place the
+              division of authority is stated on this screen. */}
+          <p className="text-xs text-stone-500">
+            You are not approving these bills — the owner did. Sending it back returns it to him with your
+            note; he decides whether to route it differently or drop it.
           </p>
         </div>
       )}
     </li>
+  )
+}
+
+/** WHERE IT GOES — typed into a banking app under time pressure, so the
+ *  machine does the copying. A vendor missing a detail says WHICH is missing
+ *  rather than showing a blank: 32 of 39 have bank details and 7 have none at
+ *  all, and "no IFSC on record" is a thing somebody can go and fix. */
+function WhereItGoes({ vendor }: { vendor: VendorRouting | undefined }) {
+  if (vendor === undefined) return null
+  const missing = [
+    vendor.bank_name === null || vendor.bank_name === '' ? 'bank name' : null,
+    vendor.account_no === null || vendor.account_no === '' ? 'account number' : null,
+    vendor.ifsc === null || vendor.ifsc === '' ? 'IFSC' : null,
+  ].filter((m): m is string => m !== null)
+
+  return (
+    <div className="rounded-xl border border-rule bg-white p-3">
+      <h4 className="text-xs font-medium uppercase tracking-wide text-stone-400">Where it goes</h4>
+      {vendor.account_no !== null && vendor.account_no !== '' ? (
+        <div className="mt-1">
+          {vendor.bank_name !== null && vendor.bank_name !== '' && (
+            <CopyField label="Bank" value={vendor.bank_name} />
+          )}
+          <CopyField label="Account number" value={vendor.account_no} group />
+          {vendor.ifsc !== null && vendor.ifsc !== '' && <CopyField label="IFSC" value={vendor.ifsc} />}
+        </div>
+      ) : (
+        <p className="mt-1.5 text-sm text-stone-700">
+          {vendor.name} has no account number on record, so no transfer can be made to them. Add it on the
+          vendor, or send this back.
+        </p>
+      )}
+      {missing.length > 0 && vendor.account_no !== null && vendor.account_no !== '' && (
+        <p className="mt-1.5 text-xs text-amber-800">
+          No {missing.join(' and no ')} on record — a transfer usually needs {missing.length === 1 ? 'it' : 'them'}.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** WHAT THIS SETTLES — the composition, FIFO, and where the money runs out. */
+function WhatThisSettles({
+  bills,
+  amountPaise,
+  outstanding,
+  showAll,
+  onShowAll,
+}: {
+  bills: BillOutstandingRow[]
+  amountPaise: number
+  outstanding: string | null
+  showAll: boolean
+  onShowAll: () => void
+}) {
+  const { rows, clears, leftUnapplied } = applyFifo(bills, amountPaise)
+  const shown = showAll ? rows : rows.slice(0, 5)
+  const hidden = rows.length - shown.length
+
+  return (
+    <div className="rounded-xl border border-rule bg-white p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <h4 className="text-xs font-medium uppercase tracking-wide text-stone-400">What this settles</h4>
+        <span className="text-xs text-stone-400">bills_outstanding · oldest first</span>
+      </div>
+      {bills.length === 0 ? (
+        <p className="mt-1.5 text-sm text-stone-700">
+          {outstanding === null
+            ? 'Nothing is outstanding to them today — it was settled after this was asked.'
+            : 'No open bills came back for this vendor, so nothing here can say what the balance is made of. That is a failed read, not a settled account.'}
+        </p>
+      ) : (
+        <>
+          <ul className="mt-1.5 space-y-0.5">
+            {shown.map((s) => (
+              <li
+                key={s.bill.purchase_id}
+                className={`flex items-baseline justify-between gap-2 text-xs ${
+                  s.fate === 'untouched' ? 'text-stone-400' : 'text-stone-600'
+                }`}
+              >
+                <span className="truncate">
+                  {s.bill.bill_no ?? 'no bill no'} · {fmtDate(s.bill.bill_date)}
+                  {s.fate === 'partial' && (
+                    <span className="ml-1.5 font-semibold text-amber-800">part — the money runs out here</span>
+                  )}
+                  {s.fate === 'untouched' && <span className="ml-1.5">not covered</span>}
+                </span>
+                <span className="shrink-0 tabular-nums">
+                  {s.fate === 'partial' ? (
+                    <>
+                      {formatMoneyString(s.applied)}{' '}
+                      <span className="text-stone-400">of {formatMoneyString(s.bill.unpaid)}</span>
+                    </>
+                  ) : (
+                    formatMoneyString(s.bill.unpaid)
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {hidden > 0 && (
+            <button
+              type="button"
+              onClick={onShowAll}
+              className="mt-1.5 text-xs font-medium text-emerald-700 hover:underline"
+            >
+              show the other {hidden} →
+            </button>
+          )}
+          <p className="mt-2 border-t border-rule-soft pt-2 text-xs text-stone-600">
+            {clears === rows.length && leftUnapplied === 0 ? (
+              <>Clears all {rows.length} {rows.length === 1 ? 'bill' : 'bills'} — they will owe nothing.</>
+            ) : leftUnapplied > 0 ? (
+              <>
+                Clears all {rows.length} and leaves {formatMoneyString(String(leftUnapplied / 100))} over — an
+                advance against their next bill.
+              </>
+            ) : (
+              <>
+                Clears {clears} of {rows.length}
+                {rows.some((s) => s.fate === 'partial') && <>, part of one more</>}. The rest stay open.
+              </>
+            )}
+          </p>
+        </>
+      )}
+    </div>
   )
 }

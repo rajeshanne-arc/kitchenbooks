@@ -27,6 +27,8 @@ import {
   listMyOutcomes,
   type VendorRouting,
 } from '@/server/approvals-queries'
+import { listBillNumbersFor, listBillsOutstandingFor } from '@/server/aging-queries'
+import { billNumbers, type BillNumbers } from '@/lib/bill-gaps'
 import MyOutcomes from '@/components/approvals/MyOutcomes'
 import { getAccountBalances } from '@/server/accounts-queries'
 import { businessToday } from '@/server/business-day'
@@ -47,17 +49,28 @@ export default async function AwaitingPanel({ role }: { role: Role }) {
   const rows = (await listAwaiting(restaurant.id, role)).filter((r) => r.kind === 'payment')
   if (rows.length === 0) return null
 
-  const [vendorRows, balances, today] = await Promise.all([
-    getVendorRouting(restaurant.id, rows.map((r) => r.entity_id)),
+  const ids = rows.map((r) => r.entity_id)
+  const [vendorRows, balances, today, bills, rawNumbers] = await Promise.all([
+    getVendorRouting(restaurant.id, ids),
     getAccountBalances(restaurant.id),
     businessToday(),
+    listBillsOutstandingFor(restaurant.id, ids),
+    listBillNumbersFor(restaurant.id, ids),
   ])
   const vendors: Record<string, VendorRouting> = Object.fromEntries(vendorRows)
+  // The gap detector is PURE, so it runs here rather than in SQL: clustering
+  // and density are the sort of thing a window function can be made to do and
+  // nobody can then read.
+  const numbers: Record<string, BillNumbers> = Object.fromEntries(
+    Object.entries(rawNumbers).map(([id, nos]) => [id, billNumbers(nos)]),
+  )
 
   return (
     <AwaitingActions
       rows={rows}
       vendors={vendors}
+      bills={bills}
+      numbers={numbers}
       balances={balances}
       today={today}
       // "Routed to you" is only true when the reader IS the role the work was

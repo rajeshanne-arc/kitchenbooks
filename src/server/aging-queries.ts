@@ -85,6 +85,59 @@ export async function listOldestBillsPerVendor(
 }
 
 /**
+ * EVERY unpaid bill for a set of vendors, FIFO, keyed by vendor.
+ *
+ * Not the capped three the store's queue ships: the accountant is reconciling
+ * against the vendor's own statement, so he needs the whole composition — five
+ * on screen and the rest behind "show the other 18". Twenty-three rows inside
+ * an expanded row inside a queue is too much page, and the eighteen are still
+ * the thing he came for when a statement disagrees.
+ */
+export async function listBillsOutstandingFor(
+  restaurantId: string,
+  vendorIds: string[],
+): Promise<Record<string, BillOutstandingRow[]>> {
+  if (vendorIds.length === 0) return {}
+  const rows = await tsql<(BillOutstandingRow & { vendor_id: string })[]>`
+    select vendor_id, purchase_id, bill_no, bill_date::text as bill_date,
+           due_date::text as due_date, unpaid::text as unpaid
+    from bills_outstanding
+    where restaurant_id = ${restaurantId} and vendor_id = any(${vendorIds}) and unpaid > 0
+    order by due_date asc nulls last, bill_date asc`
+  const out: Record<string, BillOutstandingRow[]> = {}
+  for (const r of rows) out[r.vendor_id] = [...(out[r.vendor_id] ?? []), r]
+  return out
+}
+
+/**
+ * EVERY bill number a vendor has ever given us — paid ones included.
+ *
+ * The gap check CANNOT run over `bills_outstanding`: a bill that was entered
+ * and then paid is not outstanding, so it would read as a missing number and
+ * the control would accuse the books of a hole it had itself created. It runs
+ * over `purchases`, and it skips both halves of a reversed pair for the same
+ * reason every other reader does.
+ */
+export async function listBillNumbersFor(
+  restaurantId: string,
+  vendorIds: string[],
+): Promise<Record<string, (string | null)[]>> {
+  if (vendorIds.length === 0) return {}
+  const rows = await tsql<{ vendor_id: string; bill_no: string | null }[]>`
+    select p.vendor_id, p.bill_no
+    from purchases p
+    where p.restaurant_id = ${restaurantId} and p.vendor_id = any(${vendorIds})
+      and p.reverses_id is null
+      and not exists (
+        select 1 from purchases x
+        where x.restaurant_id = p.restaurant_id and x.reverses_id = p.id
+      )`
+  const out: Record<string, (string | null)[]> = {}
+  for (const r of rows) out[r.vendor_id] = [...(out[r.vendor_id] ?? []), r.bill_no]
+  return out
+}
+
+/**
  * TWO INDEPENDENT CALCULATIONS THAT MUST AGREE.
  *
  * `vendor_dues` is opening + purchased - paid, a flat balance.

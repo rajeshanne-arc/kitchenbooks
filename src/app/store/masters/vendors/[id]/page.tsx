@@ -6,7 +6,9 @@ import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getList } from '@/server/settings'
 import { getVendorReturnReasons } from '@/server/vendor-return-queries'
 import { getPoReadiness } from '@/server/po-queries'
-import { getVendorAging, listBillsOutstanding } from '@/server/aging-queries'
+import { getVendorAging, listBillNumbersFor, listBillsOutstanding } from '@/server/aging-queries'
+import { billNumbers } from '@/lib/bill-gaps'
+import BillNumberGap from '@/components/books/BillNumberGap'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { StatusBadge } from '@/components/books/Badges'
@@ -47,7 +49,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
   const vendor = await getVendorDetail(restaurant.id, id)
   if (!vendor) notFound()
 
-  const [bills, payments, modes, accounts, returnReasons, open, user, poReady, aging, unpaidBills] =
+  const [bills, payments, modes, accounts, returnReasons, open, user, poReady, aging, unpaidBills, billNos] =
     await Promise.all([
       getVendorBills(restaurant.id, id),
       getVendorPayments(id),
@@ -61,6 +63,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
       // the balance and states its composition rather than opening blank.
       getVendorAging(restaurant.id, id),
       listBillsOutstanding(restaurant.id, id),
+      listBillNumbersFor(restaurant.id, [id]),
     ])
   const balP = decimalStringToPaise(vendor.balance)
   const hasBank =
@@ -254,6 +257,13 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
           this vendor lacks, and says which act is happening before the button
           — so the two doors cannot come to disagree about what a mode means.
           The oldest three bills, the same as the queue shows. */}
+      {/* A CONTROL, NOT A PAYMENT-TIME NICETY — so it is here as well as on the
+          payment screen. A gap is worth asking about when somebody is looking
+          at the vendor, not only when money is about to leave. */}
+      <div className="mb-4">
+        <BillNumberGap g={billNumbers(billNos[vendor.id] ?? [])} vendorName={vendor.name} />
+      </div>
+
       <section className={cardCls}>
         <h3 className={sectionHeadCls}>Pay {vendor.name}</h3>
         <PayPanel

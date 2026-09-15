@@ -33,7 +33,7 @@ import {
   type ApprovalKind,
 } from '@/server/approvals-queries'
 
-import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
+import { AccountRefusal, assertAccount, getAccountBalances } from '@/server/accounts-queries'
 import { insertPayment } from '@/server/payment-write'
 import { getVendorAging } from '@/server/aging-queries'
 import { decimalStringToPaise, formatPaise, parseMoney } from '@/lib/money'
@@ -839,58 +839,24 @@ export async function returnRequest(raw: { id: string; reason: string }): Promis
 }
 
 /**
- * CHALLENGED IS THE OTHER SENTENCE, and it is a different one.
+ * `challenged` IS COLLAPSED INTO `returned`, AND NOT BECAUSE IT WAS WRONG.
  *
- * A return says "I cannot pay it this way". A challenge says "I do not think
- * we should pay this at all" — the vendor was already paid, the amount is
- * wrong, the bill is disputed. That is an objection to the PAYMENT, so unlike
- * a return it puts the question back for a DECISION: the status becomes
- * `challenged`, which `decideApproval` treats exactly as `pending`.
+ * It was a real distinction — "I cannot pay it this way" against "I do not
+ * think we should pay this" — and the accountant is the wrong person to draw
+ * it. Three buttons made him classify WHY before he could act, and the
+ * paragraph explaining the difference is a paragraph nobody reads at four in
+ * the afternoon.
  *
- * The routing comes off with it. Whatever the owner decides next, the old
- * route is not still live.
+ * HE STATES THE FACT; THE OWNER CLASSIFIES IT. "Their account is closed" and
+ * "I do not think we owe this" both come back as a RETURN with a reason, and
+ * the owner — who has the information to tell them apart — decides whether to
+ * route it differently or drop it.
+ *
+ * THE STATUS STAYS IN THE SCHEMA. A status nothing writes costs nothing; one
+ * dropped from a CHECK that history might reference costs a migration and a
+ * row nobody can read. `decideApproval` still accepts `challenged` as a
+ * decidable state for the same reason.
  */
-export async function challengeRequest(raw: { id: string; reason: string }): Promise<ApprovalResult> {
-  try {
-    const input = SendBackSchema.parse(raw)
-    // The cheap role gate FIRST, before a row is read: without it these
-    // endpoints answer "that request is applied" to anybody signed in who
-    // guessed an id. assertAssignee narrows it once the row is in hand.
-    await assertPayer()
-    const restaurant = await getRestaurant()
-    const rid = restaurant.id
-    const req = await getApproval(rid, input.id)
-    if (!req) throw new ApprovalRefusal('That request no longer exists')
-    if (req.status !== 'approved') {
-      throw new ApprovalRefusal(`That request is ${req.status} — only an approved one can be challenged`)
-    }
-    if (req.assigned_to === 'owner' || req.assigned_to === null) {
-      throw new ApprovalRefusal('This is already with the owner — refuse it rather than challenging it')
-    }
-    const by = await assertAssignee(
-      req.assigned_to,
-      `This was routed to the ${req.assigned_to} — only they or an owner can challenge it`,
-    )
-
-    await txn((tx) =>
-      recordAct(tx, rid, {
-        id: input.id,
-        action: 'challenged',
-        from: ['approved'],
-        by,
-        note: input.reason,
-        ...SEND_BACK.challenged,
-      }),
-    )
-    return {
-      ok: true,
-      id: input.id,
-      message: 'Challenged. The owner decides again — nothing will be paid until they do.',
-    }
-  } catch (e) {
-    return fail(e)
-  }
-}
 
 const PaySchema = z.object({
   id: z.string().regex(UUID),
@@ -961,6 +927,10 @@ export async function payApproval(raw: {
     // The account is refused by name here, outside the transaction, because
     // the refusal reaches the user in its own words rather than as a
     // foreign-key violation nobody can read.
+    // HOW MANY BILLS THERE WERE, so "23 bills cleared" is a DIFFERENCE and not
+    // a figure this screen made up. Read before the write, like duesBefore.
+    const before = await getVendorAging(rid, req.entity_id)
+    const billsBefore = before?.open_bills ?? 0
     const accountId = await assertAccount(rid, input.accountId, 'the account this payment left')
 
     const paid = await txn(async (tx) => {
@@ -996,10 +966,25 @@ export async function payApproval(raw: {
       return payment
     })
 
+    // READ BACK WHAT MOVED, never echo what was typed. The vendor's balance
+    // and the account's are both facts about after the write.
+    const [after, balances] = await Promise.all([
+      getVendorAging(rid, req.entity_id),
+      getAccountBalances(rid),
+    ])
+    const acct = balances.find((b) => b.account_id === accountId)
+    const owedAfter = after === null ? 0 : decimalStringToPaise(after.outstanding)
+    const cleared = billsBefore - (after?.open_bills ?? 0)
     return {
       ok: true,
       id: input.id,
-      message: `${formatPaise(paise)} to ${req.from_name ?? 'the vendor'} — recorded as ${paid.doc_no ?? 'a payment'}.`,
+      message: `${formatPaise(paise)} paid to ${req.from_name ?? 'the vendor'}${
+        acct === undefined ? '' : ` from ${acct.name}`
+      }. ${
+        owedAfter <= 0
+          ? `They owe nothing${cleared > 0 ? ` — ${cleared} ${cleared === 1 ? 'bill' : 'bills'} cleared` : ''}.`
+          : `They are now owed ${formatPaise(owedAfter)}.`
+      } Not on a bank statement yet — nothing here has been reconciled against one.`,
     }
   } catch (e) {
     return fail(e)

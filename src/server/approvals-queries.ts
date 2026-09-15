@@ -1174,16 +1174,24 @@ export type Act = {
  * the two actions, so the RULING is a value a gate can assert rather than a
  * pair of literals somebody could change in one place and not the other.
  *
- *   returned   "I cannot pay it this way." The approval STANDS — status stays
- *              `approved` — and only the route comes off. Sending it to
- *              `pending` would erase the approval before it ever left, and
- *              afterwards nobody could explain why the route changed.
- *   challenged "I do not think this should be paid." An objection to the
- *              PAYMENT, so the decision reopens: `decideApproval` treats
- *              `challenged` exactly as `pending`.
+ *   returned   the approval STANDS — status stays `approved` — and only the
+ *              route comes off. Sending it to `pending` would erase the
+ *              approval before it ever left, and afterwards nobody could
+ *              explain why the route changed. It clears the route: whatever
+ *              the owner decides next, the old one is not still live.
  *
- * Both clear the route. Whatever the owner decides next, the old one is not
- * still live.
+ * THERE IS ONLY ONE SEND-BACK NOW. `challenged` was the second — "I do not
+ * think this should be paid" against "I cannot pay it this way" — and it was a
+ * real distinction drawn by the WRONG PERSON. The accountant had to classify
+ * WHY before he could act, and the paragraph explaining the difference is a
+ * paragraph nobody reads at four in the afternoon. He STATES THE FACT; the
+ * owner, who has the information to tell them apart, CLASSIFIES IT.
+ *
+ * THE STATUS STAYS IN THE SCHEMA and `decideApproval` still accepts it: a
+ * status nothing writes costs nothing, and one dropped from a CHECK that
+ * history might reference costs a migration and a row nobody can read. The app
+ * CONSTANT does not stay, because a constant with no reader is dead vocabulary
+ * that the next person wires up without the argument.
  */
 /**
  * WHY `status` AND `assigned_to` BOTH EXIST — asked here because a later
@@ -1251,7 +1259,6 @@ export const TERMINAL_ACTS = ['paid', 'cancelled', 'acknowledged'] as const
 
 export const SEND_BACK = {
   returned: { status: 'approved', clearRouting: true, assignTo: 'owner' },
-  challenged: { status: 'challenged', clearRouting: true, assignTo: 'owner' },
 } as const
 
 /**

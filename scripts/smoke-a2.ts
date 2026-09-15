@@ -8670,24 +8670,41 @@ async function run() {
     // is a word in the trail's language that the trail never speaks — and it
     // reads, to anybody browsing the constraint, as a thing the app records.
     const { APPROVAL_ACTIONS } = await import('../src/server/approvals-queries')
-    // Matched as a quoted literal rather than as `action:` — the two raise
-    // sites write theirs inside the SQL, where there is no property name.
-    const unwritten = APPROVAL_ACTIONS.filter((act) => !new RegExp(`'${act}'`).test(a))
+    // AN ACTION IS WRITTEN WHERE AN ACTION IS WRITTEN. Matching any quoted
+    // occurrence passed `challenged` on the strength of `from: ['pending',
+    // 'challenged']` — a STATUS literal satisfying an ACTION check, which is
+    // the same shape as a comment satisfying the search for the statement it
+    // explains. So: the `action:` property, plus the two raise sites, which
+    // write theirs positionally inside SQL where there is no property name.
+    const written = new Set<string>()
+    for (const m of a.matchAll(/action: '([a-z_]+)'/g)) written.add(m[1])
+    for (const m of a.matchAll(/insert into approval_events[\s\S]{0,400}?values\s*\([\s\S]{0,300}?\)/g)) {
+      for (const lit of m[0].matchAll(/'([a-z_]+)'/g)) written.add(lit[1])
+    }
+    const unwritten = APPROVAL_ACTIONS.filter((act) => !written.has(act))
     // The exemption states the condition that makes it exempt, so it expires
     // by itself: `reopened` is not written because applyRequest stamps
     // reopened_by / reopened_at / reopen_reason on the period row itself, in
     // the same transaction as the `approved` event. Take that stamp away and
     // this stops being exempt on the next run.
     const reopenStamped = /reopened_by = |reopened_at = now\(\)/.test(q)
-    const allowed = reopenStamped ? ['reopened'] : []
+    // `challenged` is exempt WHILE THE APP PERFORMS NO CHALLENGE. It was
+    // collapsed into `returned` deliberately — the accountant states the fact
+    // and the owner classifies it — and the status stays in the schema for the
+    // rows that could carry it. Bring `challengeRequest` back and the
+    // exemption evaporates on the next run without anybody editing this.
+    const noChallengeAct = !/export async function challengeRequest/.test(a)
+    const allowed = [...(reopenStamped ? ['reopened'] : []), ...(noChallengeAct ? ['challenged'] : [])]
     assert.deepEqual(
       unwritten.filter((x) => !allowed.includes(x)),
       [],
       `these actions are in the CHECK and nothing writes them: ${unwritten.join(', ')}`,
     )
-    for (const x of unwritten) {
-      console.log(`      not written: ${x} — the period row carries reopened_by / reopened_at / reopen_reason itself`)
+    const why: Record<string, string> = {
+      reopened: 'the period row carries reopened_by / reopened_at / reopen_reason itself',
+      challenged: 'collapsed into returned — the app performs no challenge, and the status stays for history',
     }
+    for (const x of unwritten) console.log(`      not written: ${x} — ${why[x] ?? 'no reason given'}`)
     console.log(`      ${movers.length} state-moving actions, each with an event: ${movers.join(' · ')}`)
     console.log(`      ${raw.length} write approval_requests directly: ${raw.join(' · ')}`)
     console.log('      recordAct and insertPayment write on the lent handle only; payments has one insert site')
@@ -8956,7 +8973,9 @@ async function run() {
       // ── A RETURN KEEPS THE APPROVAL AND DROPS THE ROUTE ────────────────
       // DRIVEN BY THE DECLARATION, not by literals repeated here. A probe
       // that restates the ruling it is testing asserts only that recordAct
-      // does what it is told.
+      // does what it is told. The CHALLENGE below is the exception and is
+      // spelled out: the app no longer performs one, and this proves the
+      // status a historical row could carry is still decidable.
       await recordAct(tx, liveTenant, {
         id: req.id, action: 'returned', from: ['approved'],
         by: 'acct1', note: 'the beneficiary is not registered', ...SEND_BACK.returned,
@@ -8973,8 +8992,8 @@ async function run() {
 
       // ── A CHALLENGE REOPENS THE DECISION ──────────────────────────────
       await recordAct(tx, liveTenant, {
-        id: req.id, action: 'challenged', from: ['approved'],
-        by: 'acct1', note: 'we already paid this one', ...SEND_BACK.challenged,
+        id: req.id, action: 'challenged', from: ['approved'], status: 'challenged',
+        by: 'acct1', note: 'we already paid this one', clearRouting: true, assignTo: 'owner',
       })
       assert.equal((await state()).status, 'challenged', 'a challenge did not reopen the decision')
 
@@ -9078,7 +9097,9 @@ async function run() {
     }
     const ui = walk('src/components').concat(walk('src/app'))
     const srcOf = new Map(ui.map((f) => [f, readFileSync(f, 'utf8')]))
-    const acts = ['routePayment', 'returnRequest', 'challengeRequest', 'payApproval', 'decideApproval']
+    // challengeRequest is DELIBERATELY ABSENT — collapsed into returnRequest,
+    // see SEND_BACK. The next check holds that it stays gone.
+    const acts = ['routePayment', 'returnRequest', 'payApproval', 'decideApproval']
     const where: string[] = []
     for (const a of acts) {
       const sites = ui.filter((f) => new RegExp(`\\b${a}\\s*\\(`).test(srcOf.get(f) as string))
@@ -9267,23 +9288,31 @@ async function run() {
     console.log('      applied: a refused-and-unacknowledged request counts, and Noted clears it')
   })
 
-  await check('a challenge is never routed to whoever raised it', async () => {
-    // THE ARGUMENT RUNS ACCOUNTANT → OWNER. The person who raised the request
-    // sees the eventual refusal or payment, not the disagreement on the way to
-    // it — being told "the accountant thinks we already paid this" is being
-    // handed somebody else's half-finished argument.
+  await check('there is one send-back, and the status it replaced still parses', async () => {
+    // COLLAPSED, NOT DELETED. `challenged` was a real distinction drawn by the
+    // wrong person: the accountant had to classify WHY before he could act.
+    // He states the fact; the owner classifies it.
     const { SEND_BACK } = await import('../src/server/approvals-queries')
-    assert.equal(SEND_BACK.challenged.assignTo, 'owner', 'a challenge is routed somewhere other than the owner')
-    assert.equal(SEND_BACK.returned.assignTo, 'owner', 'a return is routed somewhere other than the owner')
+    assert.deepEqual(Object.keys(SEND_BACK), ['returned'], 'a second send-back is back without its argument')
+    assert.equal(SEND_BACK.returned.assignTo, 'owner', 'a return goes somewhere other than the owner')
+    assert.equal(SEND_BACK.returned.status, 'approved', 'a return un-approved the request')
+
     const { readFileSync } = await import('node:fs')
     const src = readFileSync('src/server/approvals-actions.ts', 'utf8')
-    const fn = src.slice(src.indexOf('export async function challengeRequest'))
-    const body = fn.slice(0, fn.indexOf('\nexport async function '))
+    assert.ok(!/export async function challengeRequest/.test(src), 'challengeRequest is back')
+    // THE STATUS STAYS DECIDABLE. Dropping it from the CHECK would cost a
+    // migration and a row nobody can read; leaving it undecidable would strand
+    // any row that ever carried it.
     assert.ok(
-      !/roleOfRequester|assignTo: 'store'/.test(body),
-      'challengeRequest routes to the raiser — the argument is not theirs to hold',
+      /from: \['pending', 'challenged'\]/.test(src),
+      'challenged is no longer decidable — a row carrying it would be stranded',
     )
-    console.log('      returned → owner · challenged → owner · only a refusal goes back to the raiser')
+    const { tsql } = await import('../src/lib/db')
+    const [ck] = await tsql<{ def: string }[]>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_status_check'`
+    assert.ok(/'challenged'/.test(ck.def), 'the status was dropped from the schema, not just from the app')
+    console.log('      one send-back (returned) · challenged still decidable and still in the CHECK')
   })
 
   await check('a finished request is in nobody’s queue', async () => {
@@ -9859,6 +9888,70 @@ async function run() {
       'nothing reads as unreadable — the third state is unreachable and proves nothing',
     )
     console.log(`      ${cases.length} shapes · absent, unreadable and ok stay distinct`)
+  })
+
+  await check('a gap is only claimed where a vendor numbers in sequence', async () => {
+    // AN ALERT THAT FIRES ON NORMAL DATA teaches the reader to dismiss the one
+    // that matters — the cross-vendor price chip, paid for once already. So
+    // the threshold came from the data rather than from a guess, and this
+    // asserts the shape of the answer rather than today's figures.
+    const { billNumbers } = await import('../src/lib/bill-gaps')
+    const { tsql } = await import('../src/lib/db')
+
+    // BY VALUE FIRST, on the case the whole check exists for. The span is the
+    // WRONG test: these numbers run 79–100 and then jump to 3822, so
+    // min-to-max is 3972 wide and any density over it calls the most obviously
+    // sequential vendor in the book "not sequential".
+    const sv = '79 81 82 83 84 85 87 89 90 91 92 93 94 95 97 97 98 99 99 100 3822 4023 4050'.split(' ')
+    const g = billNumbers(sv)
+    assert.ok(g.sequential, 'the clustered run was not recognised — a span test would fail exactly here')
+    if (g.sequential) {
+      assert.deepEqual(g.missing, [80, 86, 88, 96])
+      assert.deepEqual(g.duplicates, [97, 99])
+      assert.deepEqual(g.outliers, [3822, 4023, 4050], 'a different series was counted as gaps')
+    }
+    // AND THE REFUSALS, so "sequential" is a claim and not a default.
+    assert.equal(billNumbers([]).sequential, false)
+    assert.equal(billNumbers(['1', '2', '3']).sequential, false, 'three numbers is not a sequence')
+    assert.equal(billNumbers([null, null, null, null, null, null]).sequential, false)
+    assert.equal(
+      billNumbers(['1', '40', '900', '2200', '5000', '9000']).sequential,
+      false,
+      'scattered numbers read as a sequence — every vendor would be flagged',
+    )
+    // THE DENSITY FLOOR, EXERCISED ON ITS OWN. The case above is rejected by
+    // the run-length rule before density is ever consulted, so dropping the
+    // floor to 0.05 passed every assertion here — the first version of this
+    // check never tested the number it exists to defend. These six sit in ONE
+    // cluster (steps of 8, under the break) and are still far too sparse to
+    // call a sequence: 6 present across a span of 41.
+    assert.equal(
+      billNumbers(['10', '18', '26', '34', '42', '50']).sequential,
+      false,
+      'a sparse single run reads as a sequence — the density floor is not holding',
+    )
+    assert.equal(billNumbers(['10', '11', '12', '13', '14']).sequential, true, 'a clean run is not recognised')
+    const clean = billNumbers(['10', '11', '12', '13', '14'])
+    if (clean.sequential) assert.deepEqual(clean.missing, [], 'a clean run reports gaps')
+
+    // AND ON LIVE DATA: it must be silent for most vendors, or it is noise.
+    const rows = await tsql<{ code: string; nos: (string | null)[] }[]>`
+      select v.code, array_agg(p.bill_no) as nos
+      from vendors v left join purchases p
+        on p.vendor_id = v.id and p.restaurant_id = v.restaurant_id and p.reverses_id is null
+      where v.restaurant_id = ${liveTenant} and v.status = 'active'
+      group by v.code`
+    const seq = rows.map((r) => billNumbers(r.nos ?? [])).filter((x) => x.sequential)
+    const flagged = seq.filter((x) => x.sequential && (x.missing.length > 0 || x.duplicates.length > 0))
+    assert.ok(seq.length > 0, 'no vendor numbers sequentially — the check is never reachable on this data')
+    assert.ok(
+      seq.length < rows.length / 2,
+      `${seq.length} of ${rows.length} vendors read as sequential — the threshold is too loose to mean anything`,
+    )
+    assert.ok(flagged.length > 0, 'nothing is flagged — the finding path was not exercised')
+    console.log(
+      `      ${seq.length} of ${rows.length} vendors number sequentially · ${flagged.length} have a gap or a duplicate · ${seq.length - flagged.length} clean and silent`,
+    )
   })
 
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */

@@ -10951,3 +10951,140 @@ transaction timestamp and ordered by `seq`) and nothing moving: no payment
 rows, no balances touched. Three screens were wrong about data that was right,
 and **the badge was the only part telling the truth** — which is what the
 single source was for, even while it was being handed two arguments.
+
+## THE ACCOUNTANT'S SCREEN — and what he is actually reviewing
+
+Put in the code because it decides the shape of everything on it:
+
+> **HE CANNOT CHECK WHETHER THE GOODS ARRIVED.** The store manager stood at the
+> door and received them; that is settled and not his to re-open. He CAN check
+> arithmetic, duplicates, anomalies in a vendor's numbering, and whether our
+> figure agrees with the vendor's own statement.
+
+That is a **RECONCILIATION check, not a receipt check**, and it is why the
+composition is a DISCLOSURE rather than an approval step — and why there are
+**no per-bill checkboxes.** Ticking bills would turn a reconciliation glance
+into a second approval, and the owner has already approved: the accountant is
+executing a decision, not re-taking it.
+
+### THE ROW IS THE CONTROL, LIFTED THREE WAYS
+
+*"Pay it, or send it back →"* was one button carrying two verbs, and it made
+the row itself un-openable — the same fault as an action clipped into the last
+column, arrived at from the other direction.
+
+The open row is **tinted, barred down its left edge, and the others dimmed.**
+Any one of the three is missable on a long queue; together it is unmistakable
+which is open. That is the same reasoning as *red and green never carry meaning
+alone*, applied to focus rather than to a figure.
+
+### TWO PANELS, BECAUSE THEY ANSWER DIFFERENT QUESTIONS
+
+**Where it goes** — bank, account number, IFSC, each with a copy button. He is
+typing these into a banking app under time pressure, so the machine does the
+copying. A vendor missing a detail says WHICH is missing rather than showing a
+blank: *"no IFSC on record"* is a thing somebody can go and fix.
+
+**What this settles** — the composition from `bills_outstanding`, FIFO, five
+rows and *"show the other 18 →"*. Twenty-three rows inside an expanded row
+inside a queue is too much page; five is enough to spot an anomaly, and the
+rest are there when a vendor's statement disagrees.
+
+Merging them gives a block nobody reads.
+
+### A PART PAYMENT MUST SHOW WHERE THE MONEY RUNS OUT
+
+Which bills clear, which one clears **partially**, which are untouched. That is
+the thing a list shows and a total cannot, and it is not a display detail:
+payments here are ON ACCOUNT and tied to no bill, so FIFO is not a preference
+— it is what happens to the money. `applyFifo` is pure and asserted by value.
+
+## A GAP IN A VENDOR'S BILL NUMBERS — and why the span is the wrong test
+
+Sri Vyshnavi bills daily: `79 81 82 83 84 85 87 89 … 100`. **80, 86, 88 and 96
+were never entered**, and `97` and `99` are each on two bills. Invisible from a
+total, and worth asking before ₹64,815 leaves.
+
+**BOTH READINGS, NEITHER ASSERTED.** A missing number is either a bill that
+never reached us — so what they are owed is understated — or a number that
+vendor used for somebody else, in which case there is nothing to find. A
+duplicate is either a reused number or a delivery entered twice, and the second
+reading means the balance is OVERSTATED. This app cannot tell which, and
+guessing would turn a question worth asking into an accusation.
+
+### THE SPAN IS THE WRONG TEST, AND LIVE DATA IS WHAT SAID SO
+
+The brief named the first three gaps. Measuring first found two more things and
+changed the algorithm:
+
+    79 81 82 83 84 85 87 89 90 91 92 93 94 95 97 97 98 99 99 100 3822 4023 4050
+
+Three numbers sit four thousand away. Min-to-max is therefore **3972 wide,
+density 0.01** — so any span-based rule calls the most obviously sequential
+vendor in the book *not sequential*, and the case the control exists for is the
+one it drops.
+
+**A vendor numbers sequentially over a RUN, not over their whole history.** A
+series gets reset, a different book gets used, one bill carries a reference
+from somewhere else. So the numbers are CLUSTERED first, the check runs inside
+the dominant cluster, and everything outside it is reported as what it is —
+outliers, not gaps.
+
+### THE THRESHOLD CAME FROM THE DATA, AND THE GATE HELD THE WRONG HALF
+
+**5 of 39 vendors number sequentially; 4 have something to ask about; 1 is
+clean and silent.** Seven carry no bill number at all — a gap check over nulls
+is noise, and an alert that fires on normal data teaches the reader to dismiss
+the one that matters, which this file has already paid for once with the
+cross-vendor price chip.
+
+**The first version of the gate could not see a loose threshold.** Dropping
+`MIN_DENSITY` from 0.7 to 0.05 took it from 5 vendors to 12 and stayed GREEN —
+because the scattered-numbers case it relied on is rejected by the RUN-LENGTH
+rule before density is ever consulted. *A by-value case must exercise the
+constant it is defending*, so there is now a single sparse cluster
+(`10 18 26 34 42 50`, steps of 8, six across a span of 41) that only the
+density floor can reject.
+
+It is a CONTROL, not a payment-time nicety, so it is on the vendor's own page
+as well.
+
+## HE STATES THE FACT; THE OWNER CLASSIFIES IT
+
+`challenged` is collapsed into `returned`, and not because the distinction was
+wrong. *"I cannot pay it this way"* and *"I do not think we should pay this"*
+are genuinely different — and **the accountant is the wrong person to draw the
+line.** Three buttons made him classify WHY before he could act, and the
+paragraph explaining the difference is a paragraph nobody reads at four in the
+afternoon.
+
+Both come back as a RETURN with a reason. The owner has the information to tell
+them apart and decides whether to route it differently or drop it.
+
+> **Where one party observes and another decides, the observer's screen should
+> ask for the OBSERVATION, not for the classification.** A form that demands a
+> category first is asking somebody to do the deciding part before they are
+> allowed to report.
+
+**AND THE SECOND BUTTON IS NOT "REFUSE".** He cannot refuse the payment — the
+owner decided it should be made. He is declining to EXECUTE and handing the
+decision back, and the label says that. The sentence under the buttons carries
+the whole control model and must stay: *"You are not approving these bills —
+the owner did. Sending it back returns it to him with your note; he decides
+whether to route it differently or drop it."*
+
+**THE STATUS STAYS IN THE SCHEMA.** A status nothing writes costs nothing; one
+dropped from a CHECK that history might reference costs a migration and a row
+nobody can read. `decideApproval` still accepts it. The app CONSTANT does not
+stay — a constant with no reader is dead vocabulary the next person wires up
+without the argument — and the gate's exemption for the unwritten action names
+the condition that expires it: bring `challengeRequest` back and it is gone.
+
+### AND THAT GATE WAS PASSING ON THE WRONG EVIDENCE
+
+The no-dead-vocabulary check matched any quoted occurrence of an action name,
+so `challenged` counted as written on the strength of
+`from: ['pending', 'challenged']` — **a STATUS literal satisfying an ACTION
+check.** Same shape as a comment satisfying the search for the statement it
+explains, one more time. It reads the `action:` property and the two raise
+sites' SQL now, and nothing else.
