@@ -86,6 +86,21 @@ check, did not think the file's prose was in scope, and was wrong. A rule
 applied unconditionally costs one line of `.replace()`; a rule applied when it
 seems necessary costs a red gate on correct code, and then the reverse.
 
+**AND IT IS NOT THE ONLY VIRTUE THAT HIDES THINGS.** The other is the one this
+whole project is built on — *never a confident zero, always say when something
+is absent* — and it does the same job for a different fault: **AN HONEST EMPTY
+STATE CAN ABSORB A BROKEN READ.** A corrupted `snapshot` and a missing one both
+render *"no snapshot recorded"*, so a silent corruption looked exactly like a
+correctly reported gap, on every screen, for the life of the feature. See the
+rule of that name below.
+
+Two entries, one shape: **the two things this codebase does best — documenting
+carefully, and reporting absence honestly — are the two that hid these
+faults.** Neither is a reason to do less of either. Both are reasons to hold
+the discipline somewhere a screen cannot: strip the prose before matching, and
+assert that an empty state is reachable only when the thing is genuinely
+empty.
+
 ## HOW MUCH PROOF IS WORTH THE WALL CLOCK
 
 The corollary above is not a licence to prove everything. It has a cost, and the
@@ -10792,6 +10807,70 @@ sites, all fixed; removing one `::text` names the file and the fragment.
 why `::text` is needed contains `::jsonb`. That is recorded in the PREAMBLE
 rather than here: it is not a rule about gates, it is the file's strongest
 evidence that written down was not enough.
+
+## AN HONEST EMPTY STATE CAN ABSORB A BROKEN READ
+
+The most expensive thing in the jsonb entry above, and it is not about jsonb.
+
+`snapshot` was corrupted on every request ever made, and **no screen ever said
+so** — because the sentence for a snapshot that will not read is the same
+sentence as for a snapshot that was never taken:
+
+    askedRefs === null ? 'no snapshot recorded' : `${askedRefs} row(s) pointed at it`
+
+A broken read and an absent one produce identical output **by construction**.
+The fallback was written with care, it is honest about what it knows, and it is
+exactly what made the corruption invisible.
+
+The one place the fault did surface had **no graceful fallback to fall into**:
+a merge sentence naming two fields, which interpolated both and printed
+*"undefined points at undefined"*. It showed only because nobody had written an
+empty state for it.
+
+> **A FALLBACK FOR ABSENT DATA IS A PLACE A BROKEN READ CAN HIDE.** The better
+> the empty state, the better the hiding place.
+
+### THE COST IS PAID BY THE DISCIPLINE ITSELF
+
+This is the uncomfortable part and the reason it belongs beside *"this file's
+own thoroughness is what exposes it"* in the preamble. This project's defining
+virtue is that it never prints a confident zero — *a sum over no rows is not a
+zero*, *"pending closing" not 0%*, *"no POS day has been fetched"* rather than
+clean bills of health. That discipline is what turned a silent corruption into
+a well-phrased, entirely wrong reassurance.
+
+The answer is not to report absence less carefully. It is that **the honesty of
+the sentence has to be earned by the read behind it**, and the read is the half
+nothing was checking.
+
+### THE PRACTICAL CONSEQUENCE, AND IT IS CHEAP
+
+> **WHERE A FALLBACK EXISTS FOR ABSENT DATA, THE READ THAT FEEDS IT NEEDS ITS
+> OWN ASSERTION.**
+
+*"No snapshot recorded"* must be reachable only where there is genuinely no
+snapshot — so assert that a row WITH one never renders it. **That distinction
+is invisible on screen by construction**, which is precisely why it has to be
+held somewhere else.
+
+### THE SWEEP, AND WHAT IT COUNTS
+
+Eleven sites, by the criterion that makes the sweep finite: **an empty state is
+at risk when the read behind it has a predicate beyond the tenant** — a parse,
+a map key, a role argument, or a view whose filter is not visible at the call
+site. A nullable COLUMN is not at risk: absence is the only thing that can
+produce it.
+
+| | |
+|---|---|
+| 4 | a jsonb read — `snapshot` ×2, `applied_result` ×2 |
+| 4 | an id-keyed map lookup, where a missing key reads as a vendor with no details |
+| 3 | a count whose zero depends on an argument or a view's own filter |
+
+**Both of this session's faults are in that third row**, which is what makes it
+the important one: `awaiting_me` filtering a column nothing wrote, and a panel
+handed the reader's role instead of the screen's. Each produced a correct,
+honest, empty screen.
 
 ## ONE SOURCE IS NOT ONE ANSWER IF TWO CALLERS PASS IT DIFFERENT ARGUMENTS
 
