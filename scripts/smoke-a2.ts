@@ -11367,6 +11367,299 @@ async function run() {
     console.log(`      ${closed.length} closed code(s) still found by search: ${closed.map((c) => `${c.code} (${c.status})`).join(', ')}`)
   })
 
+  /* ── the range a payment request is about ─────────────────────────── */
+  console.log('\na payment request names the bills it is about')
+
+  await check('the default range is EVERYTHING, and its total is the balance', async () => {
+    const { listBillsOutstanding } = await import('../src/server/aging-queries')
+    const { defaultRange, inRange, totalPaise } = await import('../src/lib/bill-range')
+    const { decimalStringToPaise } = await import('../src/lib/money')
+    const { withTenant } = await import('../src/lib/tenant')
+
+    const { aging, today, sample } = await withTenant(liveTenant, async () => {
+      const [{ d: today }] = await tsql<{ d: string }[]>`select business_date(now())::text as d`
+      const aging = await tsql<
+        { vendor_id: string; vendor_code: string; outstanding: string; open_bills: number }[]
+      >`select vendor_id, vendor_code, outstanding::text as outstanding, open_bills::int as open_bills
+        from vendor_aging where restaurant_id = ${liveTenant}`
+      let sample = ''
+      for (const v of aging) {
+        const bills = await listBillsOutstanding(liveTenant, v.vendor_id)
+        const d = defaultRange(bills, today)
+        assert.ok(d !== null, `${v.vendor_code} is owed ${v.outstanding} and has no bills to derive a range from`)
+        const r = d as { from: string; to: string }
+
+        // FROM is the vendor's OWN oldest unpaid bill date — never the ageing
+        // row, which publishes latest_unpaid_bill and no oldest.
+        const oldest = bills.reduce((m, b) => (b.bill_date < m ? b.bill_date : m), bills[0].bill_date)
+        assert.equal(r.from, oldest, `${v.vendor_code} default range starts at ${r.from}, oldest bill is ${oldest}`)
+        assert.ok(r.to >= today, `${v.vendor_code} default range ends ${r.to}, before the business day ${today}`)
+
+        // EVERYTHING, and this is the invariant rather than the example: the
+        // default covers every unpaid bill, so its total IS the balance and
+        // its count IS open_bills. A default that quietly dropped a bill would
+        // put a figure on screen that disagrees with the queue beside it.
+        const scoped = inRange(bills, r)
+        assert.equal(scoped.length, bills.length, `${v.vendor_code}: the default range dropped ${bills.length - scoped.length} of its own bills`)
+        assert.equal(scoped.length, v.open_bills, `${v.vendor_code}: ${scoped.length} bills in range, ageing says ${v.open_bills}`)
+        assert.equal(
+          totalPaise(scoped),
+          decimalStringToPaise(v.outstanding),
+          `${v.vendor_code}: the default range totals ${totalPaise(scoped)}p and the balance is ${decimalStringToPaise(v.outstanding)}p`,
+        )
+        if (v.vendor_code === 'V-DAR-01') sample = `${v.vendor_code} ${r.from}..${r.to} · ${scoped.length} bills · ${v.outstanding}`
+      }
+      return { aging, today, sample }
+    })
+    assert.ok(aging.length > 0, 'nothing is outstanding — this check is looking at nothing')
+    assert.ok(sample !== '', 'V-DAR-01 has nothing outstanding — the by-value case named in the brief is gone')
+    console.log(`      ${aging.length} vendors · business day ${today} · ${sample}`)
+  })
+
+  await check('the range total the screen shows is the one SQL agrees with', async () => {
+    // The form prefills and refuses on a figure computed IN THE BROWSER from
+    // the rows it was sent; the server refuses on one computed in SQL. Two
+    // routes to one number, so they are held against each other — a second
+    // source that agrees 99% of the time is worse than no second source.
+    const { listBillsOutstanding } = await import('../src/server/aging-queries')
+    const { inRange, totalPaise } = await import('../src/lib/bill-range')
+    const { decimalStringToPaise } = await import('../src/lib/money')
+    const { withTenant } = await import('../src/lib/tenant')
+    const n = await withTenant(liveTenant, async () => {
+      const vendors = await tsql<{ vendor_id: string; vendor_code: string }[]>`
+        select vendor_id, vendor_code from vendor_aging where restaurant_id = ${liveTenant}`
+      let narrowed = 0
+      for (const v of vendors) {
+        const bills = await listBillsOutstanding(liveTenant, v.vendor_id)
+        const dates = [...new Set(bills.map((b) => b.bill_date))].sort()
+        // A NARROWED range, not the default — the two agree trivially over
+        // everything, and the question is whether they agree over a subset.
+        const r = { from: dates[0], to: dates[Math.floor((dates.length - 1) / 2)] }
+        if (r.to === dates[dates.length - 1]) continue
+        narrowed++
+        const js = totalPaise(inRange(bills, r))
+        const [sqlRow] = await tsql<{ total: string; bills: number }[]>`
+          select coalesce(sum(unpaid), 0)::text as total, count(*)::int as bills
+          from bills_outstanding
+          where restaurant_id = ${liveTenant} and vendor_id = ${v.vendor_id} and unpaid > 0
+            and bill_date >= ${r.from}::date and bill_date <= ${r.to}::date`
+        assert.equal(
+          js,
+          decimalStringToPaise(sqlRow.total),
+          `${v.vendor_code} ${r.from}..${r.to}: the screen would show ${js}p and SQL says ${decimalStringToPaise(sqlRow.total)}p`,
+        )
+        assert.equal(inRange(bills, r).length, sqlRow.bills, `${v.vendor_code}: row counts differ`)
+      }
+      return narrowed
+    })
+    assert.ok(n > 0, 'no vendor has bills on more than one date — no range could be narrowed, so this asserted nothing')
+    console.log(`      ${n} vendors narrowed to a real subrange, JS and SQL agree to the paise`)
+  })
+
+  await check('every range refusal names the figure or the request it refuses on', async () => {
+    // THE APP'S OWN GUARD on a lent handle — `requestVendorPayment` cannot be
+    // called here (it opens with a role gate and getSessionUser returns null
+    // outside a request, so the front door would refuse for the WRONG reason
+    // and this would pass while proving nothing). The guard is where every
+    // rule lives, which is why it sits in approvals-queries rather than in the
+    // action: a guard is not something to publish as an endpoint.
+    const { assertPayableRange, ApprovalRefusal } = await import('../src/server/approvals-queries')
+    const { listBillsOutstanding } = await import('../src/server/aging-queries')
+    const { defaultRange, totalPaise } = await import('../src/lib/bill-range')
+    const { formatPaise } = await import('../src/lib/money')
+    const { withTenant } = await import('../src/lib/tenant')
+    const said: string[] = []
+
+    const out = await withTenant(liveTenant, async () => {
+      const [{ d: today }] = await tsql<{ d: string }[]>`select business_date(now())::text as d`
+      // TWO FIXTURES, DERIVED ON THE PROPERTY UNDER TEST rather than named: a
+      // vendor WITH an open request (every refusal about overlap needs one)
+      // and a vendor WITHOUT (or "accepted" could never be observed).
+      const rows = await tsql<{ vendor_id: string; name: string; code: string; open: number }[]>`
+        select a.vendor_id, a.vendor_name as name, a.vendor_code as code,
+               (select count(*)::int from approval_requests r
+                where r.restaurant_id = a.restaurant_id and r.entity_id = a.vendor_id
+                  and r.status not in ('applied','refused','cancelled')) as open
+        from vendor_aging a where a.restaurant_id = ${liveTenant} order by a.vendor_code`
+      const busy = rows.find((r) => r.open > 0)
+      const free = rows.find((r) => r.open === 0)
+      assert.ok(busy !== undefined, 'no vendor has an open request — the overlap refusal could not fire')
+      assert.ok(free !== undefined, 'every vendor has an open request — "accepted" could not be observed')
+
+      const catch_ = async (
+        tx: Parameters<typeof assertPayableRange>[0],
+        v: { vendor_id: string; name: string },
+        range: { from: string; to: string },
+        paise: number,
+        advanceIntent = false,
+      ) => {
+        try {
+          const ok = await assertPayableRange(tx, liveTenant, {
+            vendorId: v.vendor_id,
+            vendorName: v.name,
+            range,
+            paise,
+            advanceIntent,
+          })
+          return { refused: null as string | null, scope: ok }
+        } catch (e) {
+          if (!(e instanceof ApprovalRefusal)) throw e
+          said.push(e.message)
+          return { refused: e.message, scope: null }
+        }
+      }
+
+      let result: Record<string, string | null> = {}
+      try {
+        await txn(async (tx) => {
+          const bills = await listBillsOutstanding(liveTenant, (free as { vendor_id: string }).vendor_id)
+          const d = defaultRange(bills, today) as { from: string; to: string }
+          const total = totalPaise(bills)
+
+          // 1. a range with nothing in it
+          const empty = await catch_(tx, free as never, { from: '1990-01-01', to: '1990-12-31' }, 100)
+          // 2. backwards
+          const back = await catch_(tx, free as never, { from: d.to, to: d.from }, 100)
+          // 3. more than the bills can support
+          const overAsk = await catch_(tx, free as never, d, total + 100_000)
+          // 4. the same ask with the advance tick — the override still works
+          const advance = await catch_(tx, free as never, d, total + 100_000, true)
+          // 5. a clean ask on a vendor nobody is holding
+          const clean = await catch_(tx, free as never, d, total)
+          // 6. the pre-range claim on the whole balance
+          const whole = await catch_(tx, busy as never, d, 100)
+
+          result = {
+            empty: empty.refused,
+            back: back.refused,
+            overAsk: overAsk.refused,
+            advance: advance.refused,
+            clean: clean.refused,
+            whole: whole.refused,
+            total: formatPaise(total),
+            code: (free as { code: string }).code,
+            busyCode: (busy as { code: string }).code,
+          }
+          throw new Error('KB_ROLLBACK')
+        })
+      } catch (e) {
+        if ((e as Error).message !== 'KB_ROLLBACK') throw e
+      }
+      return result
+    })
+
+    assert.match(String(out.empty), /No unpaid bills/, 'an empty range was not refused by name')
+    assert.match(String(out.back), /starts after it ends/, 'a backwards range was not refused by name')
+    assert.ok(out.overAsk !== null, 'asking for more than the range holds was accepted')
+    assert.ok(
+      String(out.overAsk).includes(String(out.total)),
+      `the over-ask refusal must name the range total ${out.total} — it said "${out.overAsk}"`,
+    )
+    assert.equal(out.advance, null, 'the advance tick no longer overrides the range total — an advance became impossible')
+    assert.equal(out.clean, null, `a clean ask on ${out.code} was refused: ${out.clean}`)
+    assert.ok(out.whole !== null, `${out.busyCode} has an open request and a second ask was accepted`)
+    assert.match(String(out.whole), /whole balance/, 'a pre-range request must refuse as a claim on the whole balance')
+
+    // NOTHING RENDERS "undefined". Every one of these sentences reaches a
+    // person, and a missing field would read as a fact about their vendor.
+    for (const m of said) assert.ok(!m.includes('undefined'), `a refusal rendered "undefined": ${m}`)
+    console.log(`      ${said.length} refusals, each naming its figure or its holder · clean ask on ${out.code} accepted`)
+  })
+
+  await check('the constraint refuses the overlapping range the app refuses in words', async () => {
+    // THE APP CHECKS FIRST so the refusal is readable; this is the backstop for
+    // two store managers saving in the same instant, where both pass the read
+    // and one must still lose. PROVED WITH TWO INSERTS rather than asserted
+    // from the catalogue — a constraint that has never rejected anything has
+    // not been tested.
+    const { withTenant } = await import('../src/lib/tenant')
+    const out = await withTenant(liveTenant, async () => {
+      let overlapping: string | null = null
+      let disjoint: string | null = null
+      let code = ''
+      try {
+        await txn(async (tx) => {
+          const [v] = await tx<{ id: string; code: string }[]>`
+            select v.id, v.code from vendors v
+            where v.restaurant_id = ${liveTenant} and v.status = 'active'
+              and not exists (
+                select 1 from approval_requests r
+                where r.restaurant_id = ${liveTenant} and r.entity_id = v.id
+                  and r.status not in ('applied','refused','cancelled'))
+            order by v.code limit 1`
+          assert.ok(v !== undefined, 'every active vendor has an open request — no clean fixture')
+          code = v.code
+          const ins = (from: string, to: string) => tx`
+            insert into approval_requests
+              (restaurant_id, kind, entity_type, entity_id, reason, amount, suggested_mode,
+               bills_from, bills_to, status, assigned_to, requested_by)
+            values (${liveTenant}, 'payment', 'vendor', ${v.id}, 'Zz gate probe', 100, 'Bank transfer',
+                    ${from}::date, ${to}::date, 'pending', 'owner', 'gate')`
+
+          await ins('2026-08-01', '2026-08-14')
+          // DISJOINT — the whole reason the unique index was dropped. If this
+          // raises, the migration bought nothing.
+          try {
+            await ins('2026-08-15', '2026-08-31')
+          } catch (e) {
+            disjoint = (e as Error).message
+          }
+          // OVERLAPPING — one day of shared range is enough.
+          try {
+            await ins('2026-08-14', '2026-08-20')
+          } catch (e) {
+            overlapping = (e as Error).message
+          }
+          throw new Error('KB_ROLLBACK')
+        })
+      } catch (e) {
+        if ((e as Error).message !== 'KB_ROLLBACK') throw e
+      }
+      return { overlapping, disjoint, code }
+    })
+
+    assert.equal(out.disjoint, null, `two disjoint ranges for ${out.code} were refused — the exclusion constraint is too wide: ${out.disjoint}`)
+    assert.ok(out.overlapping !== null, `two OVERLAPPING ranges for ${out.code} were both accepted — the exclusion constraint is not doing anything`)
+    assert.match(
+      String(out.overlapping),
+      /approval_requests_no_overlapping_open_ranges/,
+      `the race was refused by something other than the exclusion constraint: ${out.overlapping}`,
+    )
+    console.log(`      ${out.code}: 1–14 Aug then 15–31 Aug accepted · 14–20 Aug refused by the constraint`)
+  })
+
+  await check('the raise writes the range it checked', async () => {
+    // A COLUMN/VALUE MISMATCH IS FOUND BY COUNTING, NOT READING. The two lists
+    // sit twenty lines apart and each is individually plausible.
+    const { readFileSync } = await import('node:fs')
+    const whole = readFileSync('src/server/approvals-actions.ts', 'utf8')
+    // SLICE THE FUNCTION FIRST. Two functions in this file insert into
+    // approval_requests, and matching the first occurrence read requestApproval
+    // — which correctly names no range — and reported the payment insert as
+    // broken. Anchor on the structure, never on the first occurrence of a
+    // string the file also carries elsewhere.
+    const at = whole.indexOf('export async function requestVendorPayment')
+    assert.ok(at > 0, 'requestVendorPayment is gone')
+    const src = whole.slice(at)
+    const m = src.match(/insert into approval_requests\n(?:\s*--[^\n]*\n)*\s*\(([^)]*)\)/)
+    assert.ok(m !== null, 'requestVendorPayment no longer inserts into approval_requests')
+    const cols = (m as RegExpMatchArray)[1].split(',').map((c) => c.trim()).filter(Boolean)
+    for (const want of ['bills_from', 'bills_to', 'amount', 'assigned_to']) {
+      assert.ok(cols.includes(want), `the payment insert does not name ${want}`)
+    }
+    const real = await tsql<{ column_name: string }[]>`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'approval_requests'`
+    const have = new Set(real.map((r) => r.column_name))
+    for (const c of cols) assert.ok(have.has(c), `the insert names ${c}, which approval_requests does not have`)
+
+    // AND THE GUARD IS CALLED rather than reimplemented in the action.
+    assert.match(src, /assertPayableRange\(tx, rid, \{/, 'the raise no longer runs the range guard inside its lock')
+    const q = readFileSync('src/server/approvals-queries.ts', 'utf8')
+    assert.ok(!/^'use server'/m.test(q), 'the guard moved into a file whose every export is a public endpoint')
+    console.log(`      ${cols.length} columns named, all real · the guard runs inside the lock`)
+  })
+
   if (only !== null) {
     console.log(`\nFILTERED RUN — ${ran} check(s) matching "${only}", ${skipped} skipped. THIS IS NOT THE SUITE.`)
     if (ran === 0) {

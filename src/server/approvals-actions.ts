@@ -24,6 +24,7 @@ import {
   getApproval,
   getPreview,
   recordAct,
+  assertPayableRange,
   assertAssignee,
   assertPayer,
   PAYERS,
@@ -35,7 +36,10 @@ import {
 
 import { AccountRefusal, assertAccount, getAccountBalances } from '@/server/accounts-queries'
 import { insertPayment } from '@/server/payment-write'
-import { getVendorAging } from '@/server/aging-queries'
+import { getVendorAging, listBillsOutstanding } from '@/server/aging-queries'
+import type { DateRange } from '@/lib/bill-range'
+import { fmtRange } from '@/lib/format'
+import type { BillOutstandingRow } from '@/lib/types'
 import { decimalStringToPaise, formatPaise, parseMoney } from '@/lib/money'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -497,9 +501,58 @@ const PaymentRequestSchema = z.object({
    *  difference is whether somebody meant it, so it is asked as a plain
    *  question rather than inferred, the `is_stock_purchase` precedent. */
   advanceIntent: z.boolean().optional(),
+  /** WHICH BILLS THIS IS ABOUT. Required on every new request and defaulted to
+   *  everything, so it is never a field somebody has to think about to get the
+   *  ordinary case right — but it is never absent either, because "pay them
+   *  ₹64,815" and "pay them ₹64,815 for the first fortnight of August" are
+   *  different asks and only one of them can be checked against anything.
+   *
+   *  SHAPE ONLY here. A `.refine()` message cannot reach the user — `fail()`
+   *  collapses every ZodError to one sentence — so every rule that has
+   *  something to say is thrown below instead. */
+  billsFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  billsTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 })
 
 export type PaymentRequestInput = z.infer<typeof PaymentRequestSchema>
+
+/**
+ * THE BILLS A RANGE IS CHOSEN FROM — one round trip, and none after it.
+ *
+ * The queue ships the oldest THREE bills per vendor and that cap is in SQL on
+ * purpose: a row expands in place, and shipping 250 bills so that three can be
+ * shown is how a payload starts growing with the ledger. Choosing a range
+ * needs all of them for ONE vendor, so they are fetched when the request
+ * branch opens rather than when the row does — the expand still costs nothing,
+ * and every date change after this is arithmetic in the browser.
+ *
+ * A READ, so it writes nothing and acknowledges nothing. It is still gated:
+ * every export from a `'use server'` file is a public endpoint, and this one
+ * would otherwise answer any signed-in reader who guesses a vendor id.
+ */
+export async function loadVendorBills(
+  vendorId: string,
+): Promise<{ ok: true; bills: BillOutstandingRow[] } | { ok: false; error: string }> {
+  try {
+    if (!UUID.test(vendorId)) throw new ApprovalRefusal('Malformed vendor id')
+    await assertRequester()
+    const restaurant = await getRestaurant()
+    return { ok: true, bills: await listBillsOutstanding(restaurant.id, vendorId) }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/** What was asked for, read back rather than echoed, so the acknowledgement
+ *  can say "23 bills" without the screen counting its own preview. */
+export type PaymentRequestResult =
+  | {
+      ok: true
+      id: string
+      message: string
+      range: { from: string; to: string; bills: number; total: string }
+    }
+  | { ok: false; error: string }
 
 /**
  * THE STORE MANAGER ASKS; HE DOES NOT PAY.
@@ -518,7 +571,7 @@ export type PaymentRequestInput = z.infer<typeof PaymentRequestSchema>
  * outstanding when this was asked and ₹1,41,000 is now" is a fact neither
  * number states alone.
  */
-export async function requestVendorPayment(raw: PaymentRequestInput): Promise<ApprovalResult> {
+export async function requestVendorPayment(raw: PaymentRequestInput): Promise<PaymentRequestResult> {
   try {
     const input = PaymentRequestSchema.parse(raw)
     const by = await assertRequester()
@@ -545,32 +598,29 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
       )
     }
 
-    const owed = decimalStringToPaise(aging.outstanding)
-    if (paise > owed && input.advanceIntent !== true) {
-      throw new ApprovalRefusal(
-        `That is ${formatPaise(paise - owed)} more than ${vendor.name} is owed (${formatPaise(owed)}). An advance is legitimate and a typo is not — tick the advance box to say you meant it.`,
-      )
-    }
+    const range: DateRange = { from: input.billsFrom, to: input.billsTo }
 
+    // EVERYTHING THAT DECIDES THIS REQUEST IS READ INSIDE THE LOCK — the range
+    // total, the zero-bills refusal and the overlap check all describe a state
+    // another save can move, and a check that passed before the lock has not
+    // passed inside it.
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
-      // ONE OPEN REQUEST PER VENDOR, re-read inside the lock. Two pending asks
-      // for the same vendor would both look approvable and the second would
-      // pay a balance the first had already cleared.
-      const [open] = await tx<{ id: string; kind: string }[]>`
-        select id, kind from approval_requests
-        where restaurant_id = ${rid} and entity_id = ${input.vendorId}
-          and status in ('pending', 'approved')
-        limit 1`
-      if (open) {
-        throw new ApprovalRefusal(
-          `There is already a ${open.kind} request open on ${vendor.name} — the owner has it`,
-        )
-      }
+      const scope = await assertPayableRange(tx, rid, {
+        vendorId: input.vendorId,
+        vendorName: vendor.name,
+        range,
+        paise,
+        advanceIntent: input.advanceIntent === true,
+      })
+
       const [row] = await tx<{ id: string }[]>`
         insert into approval_requests
+          -- 14 columns, 14 values. Counted rather than read: the two lists sit
+          -- twenty lines apart, each is individually plausible, and the eye
+          -- pairs them by position without ever holding both orders at once.
           (restaurant_id, kind, entity_type, entity_id, target_entity_id, reason, amount,
-           suggested_mode, snapshot, status, assigned_to, requested_by)
+           suggested_mode, bills_from, bills_to, snapshot, status, assigned_to, requested_by)
         -- THE AMOUNT IS A COLUMN, not only a snapshot field. The snapshot is
         -- the ageing AS IT STOOD AT ASKING, kept to be COMPARED with the live
         -- figure; the amount is what is being asked for, which anything
@@ -581,6 +631,7 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
         -- refusal above is the app's job, not the constraint's.
         values (${rid}, 'payment', 'vendor', ${input.vendorId}, null, ${input.reason},
                 ${(paise / 100).toFixed(2)}, ${input.mode},
+                ${range.from}::date, ${range.to}::date,
                 ${JSON.stringify({
                   amount: input.amount,
                   // SUGGESTED, NOT DECIDED. He says how he expected it to go;
@@ -595,6 +646,12 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
                   askedOpenBills: aging.open_bills,
                   askedOldestDue: aging.oldest_due,
                   askedTerms: aging.payment_terms,
+                  // AS IT STOOD AT ASKING, which is the whole job of a
+                  // snapshot. Part 3 compares the request's amount against the
+                  // range total LIVE; these two are what make the difference
+                  // explicable rather than merely visible.
+                  askedRangeBills: scope.bills,
+                  askedRangeTotal: scope.total,
                 })}::text::jsonb, 'pending', 'owner', ${by})
         returning id`
 
@@ -607,22 +664,41 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
       //
       // Written in the SAME transaction as the request, so a row can never
       // exist without the event that created it.
+      // THE NOTE CARRIES THE RANGE so the trail reads without a join. The
+      // raised note is never rendered as a quote — every reader skips it when
+      // `last_action === 'raised'` — so it can afford to say more than the
+      // reason alone.
       await tx`
         insert into approval_events (restaurant_id, request_id, action, note, mode, acted_by)
-        values (${rid}, ${row.id}, 'raised', ${input.reason}, ${input.mode}, ${by})`
-      return row.id
+        values (${rid}, ${row.id}, 'raised',
+                ${`${input.reason} — bills ${fmtRange(range.from, range.to)} (${scope.bills} ${scope.bills === 1 ? 'bill' : 'bills'})`},
+                ${input.mode}, ${by})`
+      return { id: row.id, bills: scope.bills, total: scope.total }
     })
 
     return {
       ok: true,
-      id: saved,
+      id: saved.id,
       message: `${formatPaise(paise)} to ${vendor.name} — sent to the owner to pay and record`,
+      range: { from: range.from, to: range.to, bills: saved.bills, total: saved.total },
     }
   } catch (e) {
     // THE MIGRATION IS NAMED RATHER THAN THE CONSTRAINT. Until
     // approval_requests_payment_kind is applied the CHECK refuses this row,
     // and "violates check constraint approval_requests_kind_check" tells the
     // store manager nothing he can act on.
+    // THE BACKSTOP SPEAKS IN THE APP'S WORDS. Two store managers saving at the
+    // same instant both pass the overlap read and the constraint refuses the
+    // second — correctly, and with an index name nobody can act on. The
+    // sentence is deliberately the same one the in-app check gives, because
+    // the person meets one situation, not two.
+    if (e instanceof Error && e.message.includes('approval_requests_no_overlapping_open_ranges')) {
+      return {
+        ok: false,
+        error:
+          'Somebody asked for an overlapping range for this vendor a moment ago. Reload the queue and pick a range that does not overlap it.',
+      }
+    }
     if (e instanceof Error && e.message.includes('approval_requests_kind_check')) {
       return {
         ok: false,

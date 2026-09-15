@@ -24,6 +24,9 @@ import type postgres from 'postgres'
 import { tsql } from '@/lib/db'
 import { getSessionUser } from '@/server/current-user'
 import type { Role } from '@/lib/roles'
+import { overlaps, type DateRange } from '@/lib/bill-range'
+import { fmtDayDate, fmtRange } from '@/lib/format'
+import { decimalStringToPaise, formatPaise } from '@/lib/money'
 
 export class ApprovalRefusal extends Error {}
 
@@ -1581,4 +1584,134 @@ export async function countWaiting(restaurantId: string, tx?: postgres.Transacti
          + (select count(*) from payroll_runs where restaurant_id = ${restaurantId} and status = 'draft')::int
       as n`
   return row?.n ?? 0
+}
+
+// ─────────────────────────────── the range a payment request is about ─────
+
+/**
+ * IS THIS RANGE ASKABLE, AND WHAT DOES IT COME TO — every rule that decides a
+ * payment request, on the caller's handle, under the caller's lock.
+ *
+ * IT LIVES HERE RATHER THAN IN THE ACTION for the reason `assertOneRowPerItem`
+ * does: every export from a `'use server'` file is a public HTTP endpoint, and
+ * a guard is not something to publish. The other half of that is what makes it
+ * worth the move — a gate can call this on a lent transaction and exercise the
+ * app's own rules against real vendors, where a probe writing its own SQL
+ * would test the database and not the app.
+ *
+ * ON THE CALLER'S HANDLE, and not optionally. Every figure here describes a
+ * state another save can move, so a check that passed before the lock has not
+ * passed inside it — the purchase-order freeze and `closePeriod` both reached
+ * the same conclusion from different directions.
+ *
+ * Returns the scope it validated, so the caller writes the figure that was
+ * checked rather than reading it a second time and hoping.
+ */
+export async function assertPayableRange(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+  input: {
+    vendorId: string
+    vendorName: string
+    range: DateRange
+    paise: number
+    advanceIntent: boolean
+  },
+): Promise<{ bills: number; total: string }> {
+  const { range, vendorName } = input
+
+  // The CHECK says this too, and says it as a constraint name.
+  if (range.from > range.to) {
+    throw new ApprovalRefusal(
+      `That range starts after it ends — ${fmtRange(range.from, range.from)} is later than ${fmtRange(range.to, range.to)}. Swap the two dates.`,
+    )
+  }
+
+  // THE AUTHORITATIVE FIGURE, IN SQL. The screen computed the same number from
+  // the same rows to prefill the field; this is the one a refusal names,
+  // because it is the one that was true at the instant of writing.
+  const [scope] = await tx<{ bills: number; total: string }[]>`
+    select count(*)::int as bills, coalesce(sum(unpaid), 0)::text as total
+    from bills_outstanding
+    where restaurant_id = ${restaurantId} and vendor_id = ${input.vendorId} and unpaid > 0
+      and bill_date >= ${range.from}::date and bill_date <= ${range.to}::date`
+  const inRangePaise = decimalStringToPaise(scope.total)
+
+  // A RANGE WITH NOTHING IN IT IS NOT A REQUEST. It is almost always a
+  // mistyped month, and approving one would hand the owner a figure with no
+  // bills behind it at all.
+  if (scope.bills === 0) {
+    throw new ApprovalRefusal(
+      `No unpaid bills for ${vendorName} between ${fmtRange(range.from, range.to)} — there is nothing in that range to settle.`,
+    )
+  }
+
+  // THE BOUND IS THE RANGE, NOT THE BALANCE. Asking for more than the bills
+  // named can support is what a typo looks like — and an ADVANCE is the one
+  // thing it legitimately looks like too, so the tick stays the deliberate
+  // override it already was rather than becoming impossible the day a range
+  // was added.
+  if (input.paise > inRangePaise && !input.advanceIntent) {
+    throw new ApprovalRefusal(
+      `The bills in this range total ${formatPaise(inRangePaise)} and this asks for ${formatPaise(input.paise)}. An advance is legitimate and a typo is not — tick the advance box to say you meant it, or lower the amount.`,
+    )
+  }
+
+  // OVERLAP, NOT ONE-PER-VENDOR. Two disjoint fortnights for one vendor are
+  // two honest asks and the old rule refused the second; the exclusion
+  // constraint is what made relaxing it safe. Checked HERE so the refusal
+  // names the other request, its range, who holds it and since when — the
+  // constraint is the backstop for a race and says only an index name.
+  const open = await tx<
+    {
+      id: string
+      kind: string
+      assigned_to: string | null
+      bills_from: string | null
+      bills_to: string | null
+      since: string
+    }[]
+  >`
+    select a.id, a.kind, a.assigned_to,
+           a.bills_from::text as bills_from, a.bills_to::text as bills_to,
+           coalesce(e.acted_at, a.requested_at)::text as since
+    from approval_requests a
+    left join lateral (
+      select acted_at from approval_events e
+      where e.restaurant_id = a.restaurant_id and e.request_id = a.id
+      -- acted_at leads because it is the truth across transactions; seq only
+      -- decides a tie inside one, and routed/forwarded are written together so
+      -- they DO tie.
+      order by e.acted_at desc, e.seq desc
+      limit 1
+    ) e on true
+    where a.restaurant_id = ${restaurantId} and a.entity_id = ${input.vendorId}
+      -- The same set the exclusion constraint's WHERE names, so the app and the
+      -- database cannot come to disagree about what "open" means.
+      and a.status not in ('applied', 'refused', 'cancelled')`
+
+  for (const other of open) {
+    const held = `with the ${other.assigned_to ?? 'owner'} since ${fmtDayDate(other.since)}`
+    if (other.kind !== 'payment') {
+      throw new ApprovalRefusal(
+        `There is already a ${other.kind} request open on ${vendorName} — it is ${held}.`,
+      )
+    }
+    // A PRE-RANGE REQUEST IS A CLAIM ON THE WHOLE BALANCE, so it overlaps every
+    // range there is. The exclusion constraint cannot see it — its WHERE
+    // requires bills_from IS NOT NULL — which is exactly why this check is
+    // here and not left to the database.
+    if (other.bills_from === null || other.bills_to === null) {
+      throw new ApprovalRefusal(
+        `The whole balance for ${vendorName} is already asked for — that request names no range, so it covers every unpaid bill and overlaps this one. It is ${held}.`,
+      )
+    }
+    if (overlaps(range, { from: other.bills_from, to: other.bills_to })) {
+      throw new ApprovalRefusal(
+        `Bills ${fmtRange(other.bills_from, other.bills_to)} for ${vendorName} are already asked for — ${held}. Pick a range that does not overlap it, or wait for that one to be settled.`,
+      )
+    }
+  }
+
+  return scope
 }

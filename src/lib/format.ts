@@ -33,3 +33,20 @@ export function fmtRange(from: string, to: string): string {
   }
   return `${fmtDate(from)} – ${fmtDate(to)}`
 }
+
+/**
+ * 'Mon 14 Sep' — a weekday beside the date, for a sentence about how long
+ * something has been sitting with somebody.
+ *
+ * The weekday is what a person says out loud ("it has been with the owner
+ * since Monday") and the date is what stops that being ambiguous a fortnight
+ * later. Both, always, rather than branching on how recent it is: a rule that
+ * switches wording at seven days reads as two different facts.
+ */
+export const fmtDayDate = (ts: string): string =>
+  new Date(ts.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')).toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'Asia/Kolkata',
+  })

@@ -1,0 +1,65 @@
+-- btree_gist LANDED IN public AND BROUGHT 188 FUNCTIONS WITH IT
+--
+-- WRITTEN, NOT APPLIED. kb_app cannot move an extension; every migration in
+-- this project is authored and applied by Rajesh.
+--
+-- WHAT HAPPENED, measured rather than inferred. `payment_requests_carry_a_bill_range`
+-- needed btree_gist for the exclusion constraint — correctly, an EXCLUDE on
+-- (restaurant_id =, entity_id =, daterange &&) cannot be built without it. The
+-- extension was created in `public`, and Postgres grants EXECUTE on a new
+-- function to PUBLIC by default, so:
+--
+--     anon           188 functions   EXECUTE
+--     authenticated  188 functions   EXECUTE
+--     service_role   188 functions   EXECUTE
+--
+-- `anon` is the role behind the project's PUBLISHED api key. This is the third
+-- time this file's own recorded rule has been earned: EXECUTE on a new
+-- function is granted to PUBLIC by default, and on Supabase there are explicit
+-- grants beside it that a revoke from PUBLIC does not touch.
+--
+-- WHAT IT IS NOT. These are GiST support functions — gbt_*_consistent,
+-- gbt_*_penalty, *_dist — over opaque internal types. They read no table, none
+-- is SECURITY DEFINER, and none can be made to return anybody's data. Nothing
+-- leaked. The gate is absolute on purpose: the DEFAULT GRANT SURFACE is the
+-- danger, not any particular function, and an exception list is how that stops
+-- being true.
+--
+-- WHY A SCHEMA MOVE RATHER THAN A REVOKE.
+--
+--   1. Every other extension here already lives outside public —
+--      pg_stat_statements@extensions, pgcrypto@extensions, uuid-ossp@extensions.
+--      btree_gist@public was the only one that did not. This restores the
+--      pattern rather than inventing one.
+--   2. A revoke fixes these 188 and nothing about the next extension. The
+--      schema is where the rule lives.
+--   3. This file already records a `revoke all on all tables in schema public`
+--      that reported success and changed no relacl at all. Bulk revokes here
+--      have to be read back, never trusted.
+--
+-- The revoke is kept as well, and named EXPLICITLY rather than `from public` —
+-- an explicit grant survives a revoke from PUBLIC, which is exactly how
+-- tenant_for_username was once callable with the anon key.
+
+alter extension btree_gist set schema extensions;
+
+revoke execute on all functions in schema extensions from anon, authenticated, service_role;
+
+-- AFTERWARDS, READ THE STATE BACK. A statement that succeeds is not a
+-- statement that did something, and this file has three instances of exactly
+-- that. Expect 0 rows:
+--
+--   select a.grantee::regrole::text, count(*)
+--   from pg_proc p
+--   join pg_namespace n on n.oid = p.pronamespace
+--   cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+--   where n.nspname = 'public' and a.privilege_type = 'EXECUTE'
+--     and a.grantee::regrole::text in ('anon','authenticated','service_role')
+--   group by 1;
+--
+-- AND CHECK THE CONSTRAINT STILL BITES. An index stores its operator-class
+-- OIDs, so moving the extension's schema does not invalidate the existing
+-- exclusion constraint — but that is a claim to verify, not to assume. The
+-- gate "the constraint refuses the overlapping range the app refuses in words"
+-- in smoke:a2 proves it with two real inserts inside a rolled-back
+-- transaction; run it after applying this.
