@@ -134,6 +134,15 @@ function Row({
           {row.last_by ?? 'the owner'}: “{row.last_note}”
         </p>
       )}
+      {/* A MISSING KEY IS NOT A VENDOR WITHOUT DETAILS — see RouteControl. The
+          map is keyed by these rows' own entity_ids, so an absent one is a
+          failed lookup and must not render as an absence of bank details. */}
+      {vendor === undefined && (
+        <p className="mt-1 text-[13px] text-red-800">
+          Nothing came back for this vendor — where the money would go and what is owed are both unknown.
+          That is a failed lookup, not a vendor with no details.
+        </p>
+      )}
       {vendor !== undefined && vendor.outstanding !== null && (
         <p className="mt-0.5 text-xs text-stone-500">
           Owed now: {formatMoneyString(vendor.outstanding)}

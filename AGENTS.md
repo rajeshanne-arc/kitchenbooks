@@ -10872,6 +10872,40 @@ the important one: `awaiting_me` filtering a column nothing wrote, and a panel
 handed the reader's role instead of the screen's. Each produced a correct,
 honest, empty screen.
 
+### ALL ELEVEN, AND WHAT EACH ONE NEEDED
+
+The three rows want three different fixes, and only one of them is a sentence.
+
+**The four jsonb reads needed a THIRD STATE.** `readObject` returns `absent`,
+`unreadable` or `ok`, and the empty sentence is reachable only from the first;
+`unreadable` says *"stored in a shape this screen cannot read — the figures are
+unavailable, not absent"*, which is a fault rather than a gap. It is in
+`src/lib` and not in the component, because a distinction with nothing holding
+it is a distinction that will be collapsed — **and it was**: folding
+`unreadable` back into `absent` passed every gate in the suite until it was
+asserted by value. Eleven shapes, including the legacy double-encoded string
+(read, because it is losslessly recoverable) and a jsonb SCALAR (unreadable,
+because `5` and `"x"` parse perfectly and are still the wrong shape).
+
+**The four map lookups needed the contradiction said out loud.** A missing key
+in `vendors[entity_id]` renders exactly like a vendor with no bank details — so
+an absent one now says the LOOKUP failed, which is not a fact about the vendor.
+For bills there is a second source already on the row: `open_bills` says how
+many there should be, so an empty composition beside a non-zero count is a
+failed read and the screen says so rather than looking complete.
+
+**The three counts needed no UI change at all** — silent at zero is right, and
+making them noisy would undo the thing this project is for. They needed the
+ASSERTION: `awaiting_me` and the `assigned_to` column must agree exactly, per
+role, so a predicate creeping back into that view fails here before anybody
+meets an empty screen. With a vacuity guard, because `0 === 0` holds under
+every implementation and today only one role carries work.
+
+> **The fix for an empty state that can absorb a broken read is almost never a
+> louder empty state.** It is a third state where the value can be wrong, a
+> second source where one exists, and an assertion where the screen is right to
+> stay quiet.
+
 ## ONE SOURCE IS NOT ONE ANSWER IF TWO CALLERS PASS IT DIFFERENT ARGUMENTS
 
 **An ADDITION to the single-source rule, not an instance of it**, and the

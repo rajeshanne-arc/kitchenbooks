@@ -24,6 +24,7 @@ import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { btnCls, btnGhostCls, cardCls, codeCls, fieldLabelCls, inputCls } from '@/components/ui'
 import { fmtDateTime } from '@/lib/format'
+import { readObject } from '@/lib/read-object'
 
 export type QueueItem = {
   row: AwaitingRow
@@ -143,7 +144,7 @@ export default function ApprovalsClient({
                 {r.status === 'failed' && (
                   <p className="mt-1 text-[13px] text-red-800">
                     Approved, but it could not be applied:{' '}
-                    {(r.applied_result as { error?: string } | null)?.error ?? 'no reason recorded'}
+                    <FailureReason result={r.applied_result} />
                   </p>
                 )}
                 {r.status === 'applied' && <AppliedLine result={r.applied_result} />}
@@ -156,32 +157,29 @@ export default function ApprovalsClient({
   )
 }
 
+/** The sentence for a value that is present and will not read. Deliberately
+ *  NOT the empty state: it names a fault rather than a gap. */
+function Unreadable({ what }: { what: string }) {
+  return (
+    <span className="text-red-800">
+      the {what} is stored in a shape this screen cannot read — the figures are
+      unavailable, not absent
+    </span>
+  )
+}
+
 /**
- * A jsonb COLUMN THAT CAME BACK AS TEXT, read back into the object it meant.
- *
- * `${JSON.stringify(x)}::jsonb` double-encodes: postgres.js infers the
- * parameter's type from the cast, so a JS string heading for jsonb is
- * JSON-encoded AGAIN and the column holds the jsonb STRING `"{\"a\":1}"`.
- * The writes cast through ::text now, but four rows were stored before that
- * and `snapshot` has NO UPDATE GRANT — they cannot be repaired, only read.
- *
- * So this parses the legacy shape rather than guessing at it: the string IS
- * the object's JSON, so parsing recovers it exactly. Anything else returns
- * null, and every caller renders what it knows instead of interpolating
- * `undefined` into a sentence.
+ * WHY A YES DID NOTHING. The reason is the whole of what the owner gets from a
+ * failed apply, so "no reason recorded" must mean nobody recorded one — not
+ * that the record is there and will not read. This site was the one the jsonb
+ * fix missed: it still cast the column raw while the three reads beside it
+ * went through the parser.
  */
-function asObject<T>(v: unknown): T | null {
-  if (v === null || v === undefined) return null
-  if (typeof v === 'object') return v as T
-  if (typeof v === 'string') {
-    try {
-      const parsed: unknown = JSON.parse(v)
-      return typeof parsed === 'object' && parsed !== null ? (parsed as T) : null
-    } catch {
-      return null
-    }
-  }
-  return null
+function FailureReason({ result }: { result: unknown }) {
+  const read = readObject<{ error?: string }>(result)
+  if (read.state === 'unreadable') return <Unreadable what="reason" />
+  if (read.state === 'absent' || read.value.error === undefined) return <>no reason recorded</>
+  return <>{read.value.error}</>
 }
 
 function StatusChip({ status }: { status: string }) {
@@ -201,8 +199,16 @@ function StatusChip({ status }: { status: string }) {
 }
 
 function AppliedLine({ result }: { result: unknown }) {
-  const r = asObject<{ from?: string; to?: string; moved?: Record<string, number>; discarded?: string; reopened?: string; paid?: string }>(result)
-  if (r === null) return null
+  const read = readObject<{ from?: string; to?: string; moved?: Record<string, number>; discarded?: string; reopened?: string; paid?: string }>(result)
+  if (read.state === 'absent') return null
+  if (read.state === 'unreadable') {
+    return (
+      <p className="mt-1 text-[13px]">
+        <Unreadable what="result" />
+      </p>
+    )
+  }
+  const r = read.value
   if (r.discarded !== undefined) return <p className="mt-1 text-[13px] text-stone-600">{r.discarded} discarded.</p>
   if (r.reopened !== undefined) return <p className="mt-1 text-[13px] text-stone-600">{r.reopened} reopened.</p>
   if (r.paid !== undefined) return <p className="mt-1 text-[13px] text-stone-600">Paid — {r.paid}.</p>
@@ -242,11 +248,12 @@ function Request({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { row, fresh, freshError } = item
-  const snap = asObject<{
+  const snapRead = readObject<{
     refs?: RefCount[]
     totalRefs?: number
     cost?: { before: string | null; after: string | null } | null
   }>(row.snapshot)
+  const snap = snapRead.state === 'ok' ? snapRead.value : null
 
   const askedRefs = snap?.totalRefs ?? null
   const nowRefs = fresh?.totalRefs ?? null
@@ -350,7 +357,13 @@ function Request({
         <div className="rounded-xl border border-rule bg-white p-3">
           <div className="text-[11px] font-medium uppercase tracking-wide text-stone-500">When it was asked</div>
           <p className="mt-1 text-sm text-stone-700">
-            {askedRefs === null ? 'no snapshot recorded' : `${askedRefs} row(s) pointed at it`}
+            {snapRead.state === 'unreadable' ? (
+              <Unreadable what="snapshot" />
+            ) : askedRefs === null ? (
+              'no snapshot recorded'
+            ) : (
+              `${askedRefs} row(s) pointed at it`
+            )}
           </p>
           {snap?.cost != null && snap.cost.before !== null && (
             <p className="mt-0.5 font-mono text-[12px] text-stone-500">
@@ -474,7 +487,7 @@ function Request({
  * both the asked and the fresh figure.
  */
 function PaymentAsk({ row, balances }: { row: ApprovalRow; balances: AccountBalanceRow[] }) {
-  const snap = asObject<{
+  const snapRead = readObject<{
     amount?: string
     mode?: string
     urgency?: string
@@ -483,6 +496,7 @@ function PaymentAsk({ row, balances }: { row: ApprovalRow; balances: AccountBala
     askedOpenBills?: number
     askedOldestDue?: string | null
   }>(row.snapshot)
+  const snap = snapRead.state === 'ok' ? snapRead.value : null
   // A REQUEST WHOSE SNAPSHOT CANNOT BE READ still shows its live figures —
   // the "as it stood at asking" half is simply absent, which is the honest
   // state for the four rows written before the encoding was fixed.
@@ -495,6 +509,13 @@ function PaymentAsk({ row, balances }: { row: ApprovalRow; balances: AccountBala
         <span className="font-display text-2xl font-bold tabular-nums text-stone-900">
           {snap?.amount === undefined ? '\u2014' : formatMoneyString(snap.amount)}
         </span>
+        {/* AN EM-DASH MEANS "nobody asked for an amount"; it must not also
+            mean "the amount is there and will not read". */}
+        {snapRead.state === 'unreadable' && (
+          <span className="text-xs">
+            <Unreadable what="snapshot" />
+          </span>
+        )}
         {snap?.mode !== undefined && <span className="text-sm text-stone-500">by {snap.mode}</span>}
         {snap?.urgency !== undefined && snap.urgency !== 'normal' && (
           <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">

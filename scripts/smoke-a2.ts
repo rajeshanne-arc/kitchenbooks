@@ -9773,6 +9773,94 @@ async function run() {
     )
   })
 
+  await check('an empty queue is empty in the table too', async () => {
+    // AN HONEST EMPTY STATE CAN ABSORB A BROKEN READ. `AwaitingPanel` renders
+    // NOTHING at zero, `MyOutcomesPanel` renders nothing at zero, and the
+    // approvals page says "Nothing is waiting on you" — three correct, honest,
+    // silent-at-zero surfaces, and all three say exactly the same thing when
+    // the read behind them is wrong. That is not a reason to make them noisier:
+    // silent at zero is right. It is the reason the READ needs its own
+    // assertion, because the distinction is invisible on screen by
+    // construction.
+    //
+    // `awaiting_me` keys on `assigned_to IS NOT NULL` and nothing else, so the
+    // view and the column must agree exactly, per role. A status list creeping
+    // back into that WHERE — which is how `refused` went uncounted once
+    // already — makes them disagree here before anybody sees an empty screen.
+    const { tsql } = await import('../src/lib/db')
+    const { countAwaiting } = await import('../src/server/approvals-queries')
+    const [ck] = await tsql<{ def: string }[]>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_assigned_to_check'`
+    const roles = [...ck.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1])
+    assert.ok(roles.length >= 5, `only ${roles.length} roles read from the CHECK — the derivation sees nothing`)
+
+    const table = await tsql<{ role: string; n: number }[]>`
+      select assigned_to as role, count(*)::int as n from approval_requests
+      where restaurant_id = ${liveTenant} and assigned_to is not null
+      group by assigned_to`
+    const byRole = new Map(table.map((r) => [r.role, r.n]))
+
+    const seen: string[] = []
+    for (const role of roles) {
+      const view = await countAwaiting(liveTenant, role as never)
+      const raw = byRole.get(role) ?? 0
+      assert.equal(
+        view,
+        raw,
+        `${role}: the view counts ${view} and the column says ${raw} — an empty queue that is not empty is a silent screen`,
+      )
+      if (raw > 0) seen.push(`${role} ${raw}`)
+    }
+    // NOT VACUOUS: 0 === 0 holds under every implementation, so at least one
+    // role must actually carry work or this proved nothing.
+    assert.ok(
+      seen.length > 0,
+      'no role has anything assigned — every comparison was 0 === 0 and the check asserted nothing',
+    )
+    console.log(`      ${roles.length} roles, view and column agree on each · non-zero: ${seen.join(' · ')}`)
+  })
+
+  await check('an empty state is not reachable for a value that is merely unreadable', async () => {
+    // THE DISTINCTION THIS WHOLE ENTRY IS ABOUT, asserted by value — because
+    // it is invisible on screen by construction, and because collapsing
+    // `unreadable` back into `absent` passed every other gate in this suite.
+    const { readObject } = await import('../src/lib/read-object')
+    const cases: [string, unknown, 'ok' | 'absent' | 'unreadable'][] = [
+      ['null', null, 'absent'],
+      ['undefined', undefined, 'absent'],
+      ['an object', { a: 1 }, 'ok'],
+      // THE LEGACY DOUBLE-ENCODED SHAPE. Losslessly recoverable, so it is read
+      // rather than refused — four rows carry it and cannot be repaired.
+      ['a JSON string of an object', '{"discarded":"PLT-0012"}', 'ok'],
+      ['a JSON string of an array', '[1,2]', 'ok'],
+      // PRESENT AND THE WRONG SHAPE. These parse and are still not the object
+      // the reader wanted, so they are a fault rather than a gap.
+      ['a JSON string of a number', '5', 'unreadable'],
+      ['a JSON string of a string', '"x"', 'unreadable'],
+      ['a JSON string of null', 'null', 'unreadable'],
+      ['a bare string', 'not json at all', 'unreadable'],
+      ['a number', 7, 'unreadable'],
+      ['a boolean', true, 'unreadable'],
+    ]
+    for (const [label, input, want] of cases) {
+      assert.equal(readObject(input).state, want, `${label} should read as ${want}`)
+    }
+    // AND THE TWO MUST STAY DISTINCT. Every present-but-wrong value reporting
+    // `absent` is exactly the fault: the empty state becomes reachable for a
+    // broken read, and no screen can tell the difference.
+    const present = cases.filter(([, v]) => v !== null && v !== undefined)
+    assert.ok(
+      present.every(([, v]) => readObject(v).state !== 'absent'),
+      'a value that is present reads as absent — the empty state would absorb it',
+    )
+    assert.ok(
+      present.some(([, v]) => readObject(v).state === 'unreadable'),
+      'nothing reads as unreadable — the third state is unreachable and proves nothing',
+    )
+    console.log(`      ${cases.length} shapes · absent, unreadable and ok stay distinct`)
+  })
+
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */
   console.log('\nthe letterhead')
 

@@ -182,6 +182,23 @@ export default function PayOrAsk({
           composition is a figure nobody can check — and these are the bills
           this payment actually clears, because payments here are ON ACCOUNT
           and tied to no bill, so FIFO is what happens rather than a choice. */}
+      {/* AN EMPTY COMPOSITION IS ONLY HONEST IF THERE IS NOTHING TO COMPOSE.
+          `bills` is a map keyed by vendor id, so a missing key renders exactly
+          like a vendor with no open bills — and the ageing row already carries
+          the count, which is a second source that can contradict it. A figure
+          with no composition is a figure nobody can check; a figure whose
+          composition silently failed to arrive is worse, because the screen
+          looks complete. */}
+      {aging !== null && aging.open_bills > 0 && bills.length === 0 && (
+        <div className="pb-2">
+          <Honesty verdict="bills did not load" level="alarm">
+            {aging.vendor_name} has {aging.open_bills}{' '}
+            {aging.open_bills === 1 ? 'open bill' : 'open bills'} behind{' '}
+            {formatMoneyString(aging.outstanding)} and none of them came back, so nothing here can say what
+            this balance is made of. That is a failed read, not a settled account.
+          </Honesty>
+        </div>
+      )}
       {bills.length > 0 && (
         <ul className="space-y-0.5 border-b border-rule-soft pb-2">
           {bills.map((b) => (

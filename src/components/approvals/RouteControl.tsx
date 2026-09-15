@@ -102,6 +102,22 @@ export default function RouteControl({
     <div className="mt-3 rounded-xl border border-emerald-200 bg-white p-3">
       <h4 className="text-xs font-medium uppercase tracking-wide text-stone-400">How it will be paid</h4>
 
+      {/* A MISSING KEY IS NOT A VENDOR WITHOUT DETAILS. `vendors` is keyed by
+          the entity_id of these very rows, so an absent one means the lookup
+          failed — a discarded vendor, a cross-tenant id, a query that did not
+          return what it was asked for — and rendering the no-bank-details
+          state would report that as a fact about the vendor. */}
+      {vendor === undefined && (
+        <div className="mt-2">
+          <Honesty verdict="vendor could not be read" level="alarm">
+            Nothing came back for the vendor on this request, so where the money
+            would go and what is owed today are both unknown — that is a failed
+            lookup, not a vendor with no bank details. Do not pay it from here
+            until the vendor opens on their own page.
+          </Honesty>
+        </div>
+      )}
+
       {/* WHERE THE MONEY WOULD ACTUALLY GO. Read now, never from the snapshot:
           an account number frozen into a jsonb blob in June is what somebody
           would transfer money to in September. */}
