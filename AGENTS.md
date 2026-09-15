@@ -69,8 +69,22 @@ times, in the same file.
 
 The corollary, since it is the half that generalises: **the better documented a
 rule is, the more certainly its prose will satisfy a naive search for its
-implementation.** Careful explanation and a substring check are adversaries.
-Anchor on structure; strip the prose first.
+implementation.** Careful explanation and substring matching are adversaries.
+
+**AND THAT MEANS THIS FILE'S OWN THOROUGHNESS IS WHAT EXPOSES IT.** A project
+that documented nothing would never once hit this fault: there would be no
+prose for a check to find. Every instance above was paid for by a comment
+somebody wrote to make a rule clear — the migration explaining why
+`security_invoker` is needed, the gate explaining why `::text` is needed. The
+explanations were right, and they were the problem.
+
+**So the answer is never to explain less.** It is to STRIP COMMENTS BEFORE
+MATCHING, every time, as a reflex — not to decide case by case whether this
+particular check is likely to collide with this particular comment. That
+judgement is the thing that failed twice: both times the author looked at the
+check, did not think the file's prose was in scope, and was wrong. A rule
+applied unconditionally costs one line of `.replace()`; a rule applied when it
+seems necessary costs a red gate on correct code, and then the reverse.
 
 ## HOW MUCH PROOF IS WORTH THE WALL CLOCK
 
@@ -3345,7 +3359,7 @@ different shape every time and nobody learns where anything is. The ranking is
 served instead by a strip at the TOP that counts what cannot be assessed before
 any card claims anything.
 
-### Found while building it
+### Found while building the department page
 
 - **The only door from the kitchen dashboard to Departments rendered when there
   were no departments to visit.** The `<Link href="/kitchen/departments">` sat
@@ -6832,7 +6846,12 @@ rather than assumed — and the reorder tile now names the action rather than
 only the count. wa.me already tests whether vendors respond; the same evidence
 should decide whether push is worth paying for.
 
-## AN INSTRUMENT THAT LOCATES ITS SUBJECT BY THE DELIMITER IT IS HUNTING WILL BE DEFEATED BY IT
+## A BACKTICK IN A SQL COMMENT IS THE TERMINATOR — the instance
+
+*The general rule this turned into is* **"AN INSTRUMENT THAT LOCATES ITS
+SUBJECT BY THE DELIMITER IT IS HUNTING WILL BE DEFEATED BY IT"**, *below. This
+section is the case that produced it.*
+
 
 **A backtick inside a SQL comment inside a template literal, three times in one
 session, by the person who wrote that rule down.** It is not punctuation there,
@@ -7339,7 +7358,7 @@ on is a number you learn to ignore: LAW 1 applied to a count rather than a link.
 adjustments. It is a DISCARD, not a merge. `HKP-015` carries the one bill and
 survives. One exact-name duplicate in 359 items is a remarkably clean master.
 
-### Found while building it
+### Found while building the merge
 
 - **The applied migration's unit message printed a stray letter** — the `s`
   after the second `%` in the format string was literal, so it read *"PLT-011 is
@@ -10731,10 +10750,21 @@ asked"* half — reference count, cost move, amount, urgency, ageing at asking �
 and the screen rendered its "no snapshot recorded" fallback every time, which
 reads as missing data rather than as a broken read.
 
-For the next one: where a fault can only be seen where a template prints it,
-the absence of complaints is not evidence. Ask which surfaces would be CAPABLE
-of showing it — and if the answer is "one, by accident", assume the rest are
-wrong too and go and look.
+> **WHERE ONE SURFACE SHOWS A FAULT BY ACCIDENT, ASSUME THE REST ARE WRONG AND
+> GO AND LOOK.**
+
+That is the line to leave with, and it is what turned a cosmetic string into
+every request ever made. Where a fault can only be seen where a template prints
+it, the absence of complaints is not evidence of anything — it is a fact about
+which sentences happen to name which fields. So do not ask "what else is
+broken", which invites a shrug; ask **which surfaces would be CAPABLE of
+showing this**, and treat every one that is not in that set as unverified.
+
+Here the set had exactly one member, reached because a merge sentence names two
+fields and a discard sentence names one. `snapshot` had no member at all — its
+fallback reads "no snapshot recorded", which is a sentence for missing data,
+so a broken read was indistinguishable from an empty one on every screen that
+showed it.
 
 ### READING ROUND AN UNREPAIRABLE ROW, WITHOUT INVENTING ONE
 
