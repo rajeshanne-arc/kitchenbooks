@@ -113,6 +113,17 @@ export async function requestApproval(raw: RequestInput): Promise<ApprovalResult
           `There is already a ${open.kind} request open on ${preview.from.code} — the owner has it`,
         )
       }
+      // ::text::jsonb, AND THE ::text IS NOT DECORATION. postgres.js infers a
+      // parameter's type from the cast it is going into, so a JS STRING
+      // heading for ::jsonb is JSON-ENCODED AGAIN — `{"a":1}` became the jsonb
+      // STRING `"{\"a\":1}"`, and every read of it came back as text that no
+      // `.field` access could touch. Silent: the column is populated, the
+      // shape is valid jsonb, and every consumer reads undefined.
+      //
+      // Casting through ::text first removes the inference, exactly as it did
+      // for `at time zone` — a parameter's inferred type can change the
+      // MEANING of the value, not only its formatting.
+      //
       // 10 columns, 10 values. `assigned_to` is the one that is easy to leave
       // off and impossible to notice: `awaiting_me` filters it NOT NULL, so a
       // request that never names a role is a request no badge can ever see —
@@ -129,7 +140,7 @@ export async function requestApproval(raw: RequestInput): Promise<ApprovalResult
                   checks: preview.checks,
                   fromCode: preview.from.code,
                   toCode: preview.to?.code ?? null,
-                })}::jsonb, 'pending',
+                })}::text::jsonb, 'pending',
                 'owner', ${by})
         returning id`
 
@@ -299,7 +310,7 @@ export async function decideApproval(raw: {
         // vocabulary has no word for it. Same transaction either way.
         await tx`
           update approval_requests
-          set status = 'applied', applied_at = now(), applied_result = ${JSON.stringify(result)}::jsonb
+          set status = 'applied', applied_at = now(), applied_result = ${JSON.stringify(result)}::text::jsonb
           where id = ${input.id} and restaurant_id = ${rid}`
         return result
       })
@@ -327,7 +338,7 @@ export async function decideApproval(raw: {
         })
         await tx`
           update approval_requests
-          set applied_result = ${JSON.stringify({ error: failure })}::jsonb
+          set applied_result = ${JSON.stringify({ error: failure })}::text::jsonb
           where id = ${input.id} and restaurant_id = ${rid}`
       })
       return { ok: false, error: `Approved, but it could not be applied: ${failure}` }
@@ -584,7 +595,7 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Ap
                   askedOpenBills: aging.open_bills,
                   askedOldestDue: aging.oldest_due,
                   askedTerms: aging.payment_terms,
-                })}::jsonb, 'pending', 'owner', ${by})
+                })}::text::jsonb, 'pending', 'owner', ${by})
         returning id`
 
       // THE TRAIL IS THE HISTORY; THE COLUMNS ARE ONLY THE CURRENT POSITION.
@@ -980,7 +991,7 @@ export async function payApproval(raw: {
       await tx`
         update approval_requests
         set applied_at = now(),
-            applied_result = ${JSON.stringify({ paid: payment.doc_no, payment_id: payment.id, amount: payment.amount })}::jsonb
+            applied_result = ${JSON.stringify({ paid: payment.doc_no, payment_id: payment.id, amount: payment.amount })}::text::jsonb
         where id = ${input.id} and restaurant_id = ${rid}`
       return payment
     })

@@ -8853,6 +8853,24 @@ async function run() {
 
     const strip = readFileSync('src/components/GroupTabs.tsx', 'utf8')
     assert.ok(/countAwaiting\(/.test(strip), 'the tab strip does not read the shared count')
+
+    // A BADGE IS A CLAIM ABOUT A SCREEN, NOT ABOUT ITS READER. The Payments
+    // badge counted the GROUP's role while the panel it opens listed the
+    // SIGNED-IN reader's, so an owner saw 2 over an empty page. Both take the
+    // role from GROUP_QUEUE_ROLE now, and a literal in either is the drift.
+    assert.ok(
+      !/countAwaiting\([^)]*'(accountant|store|owner|manager|chef|cashier)'/.test(strip),
+      'the tab strip names a role literally — the panel reads GROUP_QUEUE_ROLE, so the two can disagree again',
+    )
+    for (const page of [
+      'src/app/accounts/payments/pay/page.tsx',
+      'src/app/store/purchasing/pay/page.tsx',
+    ]) {
+      assert.ok(
+        /<AwaitingPanel role=\{GROUP_QUEUE_ROLE\./.test(readFileSync(page, 'utf8')),
+        `${page} does not give the panel the same role the badge counted`,
+      )
+    }
     assert.ok(
       !/approval_requests/.test(strip),
       'the tab strip counts approvals with SQL of its own — that is the second source',
@@ -9672,6 +9690,87 @@ async function run() {
       'the panel does not know whether the reader decided it, so it tells him to stop chasing his own act',
     )
     console.log(`      ${kinds.length} kinds in the CHECK · ${kinds.length - missing.length} with their own sentence · default borrows nothing`)
+  })
+
+  await check('no jsonb column is written as a JSON string, and none renders undefined', async () => {
+    // `${JSON.stringify(x)}::jsonb` DOUBLE-ENCODES. postgres.js infers the
+    // parameter's type from the cast, so a JS string heading for jsonb is
+    // JSON-encoded again and the column holds the jsonb STRING `"{...}"`.
+    // Silent in every direction: the write succeeds, the column is populated,
+    // the value is valid jsonb, and every `.field` read comes back undefined —
+    // which reached a user as "undefined points at undefined. Nothing had to
+    // move." Same lesson as `at time zone`: a parameter's inferred type can
+    // change the MEANING of the value, not only its formatting.
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const walk = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = `${d}/${e.name}`
+        if (e.isDirectory()) walk(p, out)
+        else if (/\.tsx?$/.test(e.name)) out.push(p)
+      }
+      return out
+    }
+    const bad: string[] = []
+    let writes = 0
+    for (const f of walk('src/server').concat(walk('src/app'))) {
+      // COMMENTS STRIPPED FIRST — and the first version of THIS gate went red
+      // on correct code because the comment explaining why ::text is needed
+      // contains the string "::jsonb". Second time in three commits that a
+      // justification satisfied the search for the thing it justifies: the
+      // better documented a rule is, the more certainly its prose matches a
+      // naive search for its implementation.
+      const src = readFileSync(f, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '')
+      for (const m of src.matchAll(/(.{0,14})::jsonb/g)) {
+        writes++
+        if (!m[1].endsWith('::text')) bad.push(`${f.replace('src/', '')} … ${m[0].trim()}`)
+      }
+    }
+    assert.ok(writes > 0, 'no ::jsonb writes found — the sweep is looking at nothing')
+    assert.deepEqual(bad, [], `these cast a parameter straight to jsonb and will double-encode: ${bad.join(' · ')}`)
+
+    // AND NOTHING RENDERS `undefined`. The cheap check for the whole class:
+    // every field an "already decided" sentence interpolates must be present
+    // on the row it came from, legacy double-encoded rows included.
+    const { tsql } = await import('../src/lib/db')
+    const { listDecided } = await import('../src/server/approvals-queries')
+    const decided = await listDecided(liveTenant)
+    const parse = (v: unknown): Record<string, unknown> | null => {
+      if (v === null || v === undefined) return null
+      if (typeof v === 'object') return v as Record<string, unknown>
+      if (typeof v === 'string') {
+        try {
+          const p: unknown = JSON.parse(v)
+          return typeof p === 'object' && p !== null ? (p as Record<string, unknown>) : null
+        } catch {
+          return null
+        }
+      }
+      return null
+    }
+    for (const r of decided) {
+      const res = parse(r.applied_result)
+      if (res === null) continue
+      // A merge is the only kind with a survivor to point at. Any other kind
+      // reaching that sentence is the bug: `from`/`to` are absent and the
+      // string reads "undefined points at undefined".
+      const usesMergeSentence =
+        res.discarded === undefined && res.reopened === undefined && res.paid === undefined
+      if (usesMergeSentence) {
+        assert.ok(
+          res.from !== undefined && res.to !== undefined,
+          `a ${r.kind} would render the merge sentence with no codes: ${JSON.stringify(res)}`,
+        )
+      }
+    }
+    const [legacy] = await tsql<{ n: number }[]>`
+      select count(*)::int as n from approval_requests
+      where restaurant_id = ${liveTenant}
+        and (jsonb_typeof(snapshot) = 'string' or jsonb_typeof(applied_result) = 'string')`
+    console.log(
+      `      ${writes} ::jsonb writes, all cast through ::text · ${decided.length} decided rows, none renders undefined · ${legacy.n} legacy double-encoded row(s), read by parsing`,
+    )
   })
 
   /* ── the letterhead: a remount, and a picker that cannot drift ─────── */

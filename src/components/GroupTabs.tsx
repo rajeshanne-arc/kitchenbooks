@@ -8,7 +8,7 @@ import { tabsFor } from '@/server/settings'
 import { countOpenIndents, getStockBadge, stockBadgeHref } from '@/server/store-queries'
 import { listOpenQueries } from '@/server/accountant-queries'
 import { countMissingCloses } from '@/server/cashier-queries'
-import { countAwaiting, countWaiting } from '@/server/approvals-queries'
+import { countAwaiting, countWaiting, GROUP_QUEUE_ROLE } from '@/server/approvals-queries'
 import { canAccess, type Role } from '@/lib/roles'
 import { chipsOf, type TabBadges, type TabGroup, type TabHrefs } from '@/lib/tabs'
 import { chipHref } from '@/lib/routes'
@@ -55,7 +55,7 @@ async function badgesFor(
     // tab must open the thing it is complaining about.
     const [queries, forwarded] = await Promise.all([
       listOpenQueries(restaurantId),
-      countAwaiting(restaurantId, 'accountant'),
+      countAwaiting(restaurantId, GROUP_QUEUE_ROLE.accounts),
     ])
     return {
       badges: { review: queries.length, payments: forwarded },
@@ -78,7 +78,7 @@ async function badgesFor(
     getStockBadge(restaurantId),
     countOpenIndents(restaurantId),
     // A PAYMENT THE OWNER ROUTED BACK TO HIM. Same awaiting_me, same word.
-    countAwaiting(restaurantId, 'store'),
+    countAwaiting(restaurantId, GROUP_QUEUE_ROLE.store),
   ])
   const total = stock.negative + stock.unaccepted + stock.reorder
   const target = stockBadgeHref(stock)

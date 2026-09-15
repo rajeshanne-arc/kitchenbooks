@@ -156,6 +156,34 @@ export default function ApprovalsClient({
   )
 }
 
+/**
+ * A jsonb COLUMN THAT CAME BACK AS TEXT, read back into the object it meant.
+ *
+ * `${JSON.stringify(x)}::jsonb` double-encodes: postgres.js infers the
+ * parameter's type from the cast, so a JS string heading for jsonb is
+ * JSON-encoded AGAIN and the column holds the jsonb STRING `"{\"a\":1}"`.
+ * The writes cast through ::text now, but four rows were stored before that
+ * and `snapshot` has NO UPDATE GRANT — they cannot be repaired, only read.
+ *
+ * So this parses the legacy shape rather than guessing at it: the string IS
+ * the object's JSON, so parsing recovers it exactly. Anything else returns
+ * null, and every caller renders what it knows instead of interpolating
+ * `undefined` into a sentence.
+ */
+function asObject<T>(v: unknown): T | null {
+  if (v === null || v === undefined) return null
+  if (typeof v === 'object') return v as T
+  if (typeof v === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(v)
+      return typeof parsed === 'object' && parsed !== null ? (parsed as T) : null
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
 function StatusChip({ status }: { status: string }) {
   const tone =
     status === 'applied'
@@ -173,9 +201,16 @@ function StatusChip({ status }: { status: string }) {
 }
 
 function AppliedLine({ result }: { result: unknown }) {
-  const r = result as { from?: string; to?: string; moved?: Record<string, number>; discarded?: string } | null
+  const r = asObject<{ from?: string; to?: string; moved?: Record<string, number>; discarded?: string; reopened?: string; paid?: string }>(result)
   if (r === null) return null
   if (r.discarded !== undefined) return <p className="mt-1 text-[13px] text-stone-600">{r.discarded} discarded.</p>
+  if (r.reopened !== undefined) return <p className="mt-1 text-[13px] text-stone-600">{r.reopened} reopened.</p>
+  if (r.paid !== undefined) return <p className="mt-1 text-[13px] text-stone-600">Paid — {r.paid}.</p>
+  // A MERGE IS THE ONLY KIND WITH A SURVIVOR TO POINT AT, so it is the only
+  // one that may use this sentence. Reaching it without both codes means the
+  // result was not a merge — say nothing rather than interpolate `undefined`
+  // into a sentence somebody will read as a fact.
+  if (r.from === undefined || r.to === undefined) return null
   const moved = Object.entries(r.moved ?? {})
   const total = moved.reduce((a, [, n]) => a + n, 0)
   return (
@@ -207,11 +242,11 @@ function Request({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { row, fresh, freshError } = item
-  const snap = row.snapshot as {
+  const snap = asObject<{
     refs?: RefCount[]
     totalRefs?: number
     cost?: { before: string | null; after: string | null } | null
-  } | null
+  }>(row.snapshot)
 
   const askedRefs = snap?.totalRefs ?? null
   const nowRefs = fresh?.totalRefs ?? null
@@ -439,7 +474,7 @@ function Request({
  * both the asked and the fresh figure.
  */
 function PaymentAsk({ row, balances }: { row: ApprovalRow; balances: AccountBalanceRow[] }) {
-  const snap = (row.snapshot ?? {}) as {
+  const snap = asObject<{
     amount?: string
     mode?: string
     urgency?: string
@@ -447,34 +482,37 @@ function PaymentAsk({ row, balances }: { row: ApprovalRow; balances: AccountBala
     askedOutstanding?: string
     askedOpenBills?: number
     askedOldestDue?: string | null
-  }
-  const askPaise = snap.amount === undefined ? 0 : decimalStringToPaise(snap.amount)
+  }>(row.snapshot)
+  // A REQUEST WHOSE SNAPSHOT CANNOT BE READ still shows its live figures —
+  // the "as it stood at asking" half is simply absent, which is the honest
+  // state for the four rows written before the encoding was fixed.
+  const askPaise = snap?.amount === undefined ? 0 : decimalStringToPaise(snap.amount)
   const covering = balances.filter((b) => decimalStringToPaise(b.balance) >= askPaise)
 
   return (
     <div className="mt-3 space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="font-display text-2xl font-bold tabular-nums text-stone-900">
-          {snap.amount === undefined ? '\u2014' : formatMoneyString(snap.amount)}
+          {snap?.amount === undefined ? '\u2014' : formatMoneyString(snap.amount)}
         </span>
-        {snap.mode !== undefined && <span className="text-sm text-stone-500">by {snap.mode}</span>}
-        {snap.urgency !== undefined && snap.urgency !== 'normal' && (
+        {snap?.mode !== undefined && <span className="text-sm text-stone-500">by {snap.mode}</span>}
+        {snap?.urgency !== undefined && snap.urgency !== 'normal' && (
           <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
             {snap.urgency}
           </span>
         )}
-        {snap.advanceIntent === true && (
+        {snap?.advanceIntent === true && (
           <span className="rounded-full border border-stone-300 bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700">
             advance
           </span>
         )}
       </div>
 
-      {snap.askedOutstanding !== undefined && (
+      {snap?.askedOutstanding !== undefined && (
         <p className="text-xs text-stone-500">
           When this was asked: {formatMoneyString(snap.askedOutstanding)} outstanding
-          {snap.askedOpenBills !== undefined && <> across {snap.askedOpenBills} bills</>}
-          {snap.askedOldestDue !== undefined && snap.askedOldestDue !== null && (
+          {snap?.askedOpenBills !== undefined && <> across {snap.askedOpenBills} bills</>}
+          {snap?.askedOldestDue !== undefined && snap.askedOldestDue !== null && (
             <>, oldest due {fmtDate(snap.askedOldestDue)}</>
           )}
           .
@@ -515,7 +553,7 @@ function PaymentAsk({ row, balances }: { row: ApprovalRow; balances: AccountBala
         )}
         {balances.length > 0 && covering.length === 0 && askPaise > 0 && (
           <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
-            No single account holds {formatMoneyString(snap.amount ?? '0')}. This needs a transfer between
+            No single account holds {formatMoneyString(snap?.amount ?? '0')}. This needs a transfer between
             accounts first, or paying in parts \u2014 worth knowing before approving rather than after.
           </p>
         )}

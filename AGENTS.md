@@ -10665,3 +10665,79 @@ The panel's SCOPE was correct all along and worth stating, because the obvious
 diagnosis was a leak: `listMyOutcomes` filters `requested_by = <the reader>`,
 so it shows anyone their own requests and is not scoped to the store. The
 store-manager voice was in the COPY, not in the query.
+
+## A jsonb PARAMETER IS JSON-ENCODED AGAIN — five silent columns
+
+`"undefined points at undefined. Nothing had to move."` reached a user, on a
+discard, in the "already decided" list. The reported cause was the merge
+sentence being used for a discard. **It was not.** `AppliedLine` branches on
+`r.discarded` first and that branch is correct; the DATA never arrived as an
+object.
+
+    jsonb_typeof(applied_result) = 'string'
+    applied_result::text         = "{\"discarded\":\"PLT-0012\"}"
+
+`${JSON.stringify(x)}::jsonb` **double-encodes.** postgres.js infers a
+parameter's type from the cast it is going into, so a JS STRING heading for
+jsonb is JSON-encoded a second time and the column holds the jsonb *string*
+`"{…}"` rather than the object. Measured, all three spellings:
+
+| | |
+|---|---|
+| `${JSON.stringify(x)}::jsonb` | **string** |
+| `${JSON.stringify(x)}::text::jsonb` | object |
+| `${tx.json(x)}::jsonb` | object |
+
+Casting through `::text` removes the inference — **the same remedy, for the
+same reason, as the `at time zone` bug**: *a parameter's inferred type can
+change the MEANING of the value, not only its formatting.* That entry warned
+about a timezone; this is the general case.
+
+**IT IS SILENT IN EVERY DIRECTION.** The write succeeds. The column is
+populated. The value is valid jsonb. `audit:schema` is satisfied — the column
+exists and the type is right. Only a `.field` read comes back undefined, and
+only a template interpolating one shows it. Five write sites, and the one that
+produced a visible symptom was the least of them: **`snapshot` was
+double-encoded on all four requests**, so the approvals screen's entire "when
+it was asked" half — the reference count, the cost move, the amount, the
+urgency, the ageing at asking — has been reading undefined since it was built.
+That is the comparison the whole preview exists to make.
+
+**Four rows cannot be repaired**: `kb_app` has no UPDATE grant on `snapshot`.
+So the reader PARSES the legacy shape rather than guessing at it — the string
+IS the object's JSON, so parsing recovers it exactly — and anything that fails
+to parse renders nothing rather than `undefined`.
+
+The gate is two halves: no `::jsonb` in `src` without `::text` in front of it,
+and no decided row whose result would reach the merge sentence without both
+codes. **And its first version went red on correct code, because the comment
+explaining why `::text` is needed contains the string `::jsonb`.** Second time
+in three commits that a justification satisfied the search for the thing it
+justifies. Comments stripped first.
+
+## A BADGE IS A CLAIM ABOUT A SCREEN, NOT ABOUT ITS READER
+
+Seventh built-and-unreachable finding, and the second where a badge pointed at
+a screen that did not show its subject.
+
+The Payments badge counted `countAwaiting(rid, 'accountant')` — the GROUP's
+role, hardcoded. `AwaitingPanel` listed `listAwaiting(rid, user.role)` — the
+SIGNED-IN READER's. Those agree for an accountant and disagree for everybody
+else, and the owner can open `/accounts`: he saw **a badge of 2 over a screen
+with no panel at all**, because both payments were routed to the accountant and
+none was waiting on him.
+
+One source (`awaiting_me`) is not one answer if two callers pass it different
+arguments. `GROUP_QUEUE_ROLE` names the role once and the badge and the panel
+both read it; the heading says *"Routed to the accountant"* when the reader is
+not that role, because "Routed to you" would be a claim about the wrong person.
+
+Gated: a role LITERAL in the tab strip fails, and each payment page must hand
+the panel the same constant.
+
+**What worked, and it is the hard part:** the whole chain — raise, approve,
+route, forward — wrote correctly, in one transaction, with the trail intact
+(`raised → approved → routed → forwarded`, `routed` and `forwarded` sharing a
+timestamp and ordered by `seq`) and nothing moving. Three screens were wrong
+about data that was right. **The badge was the only part telling the truth**,
+which is what the single source was for.

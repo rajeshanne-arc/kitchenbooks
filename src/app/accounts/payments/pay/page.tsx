@@ -1,5 +1,6 @@
 import { getRestaurant } from '@/server/queries'
 import AwaitingPanel from '@/components/approvals/AwaitingPanel'
+import { GROUP_QUEUE_ROLE } from '@/server/approvals-queries'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { listVendorsWithDues } from '@/server/books-queries'
 import { getList } from '@/server/settings'
@@ -32,7 +33,7 @@ export default async function PayVendorPage() {
           {restaurant.name} — the transfer you make, against what is owed. The queue is worst first.
         </p>
       </header>
-      <AwaitingPanel />
+      <AwaitingPanel role={GROUP_QUEUE_ROLE.accounts} />
       <BankPayment vendors={vendors} accounts={accounts} modes={modes} />
     </>
   )

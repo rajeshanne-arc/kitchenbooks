@@ -1,5 +1,6 @@
 import { getRestaurant } from '@/server/queries'
 import AwaitingPanel, { MyOutcomesPanel } from '@/components/approvals/AwaitingPanel'
+import { GROUP_QUEUE_ROLE } from '@/server/approvals-queries'
 import { getList } from '@/server/settings'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getAgingCheck, listOldestBillsPerVendor, listVendorAging } from '@/server/aging-queries'
@@ -44,7 +45,7 @@ export default async function StorePaymentPage({
         <h1 className={pageTitleCls}>Pay a vendor</h1>
         <p className={pageSubCls}>{restaurant.name} — oldest due first, from bills_outstanding</p>
       </header>
-      <AwaitingPanel />
+      <AwaitingPanel role={GROUP_QUEUE_ROLE.store} />
       <MyOutcomesPanel />
       <PaymentClient
         modes={modes}

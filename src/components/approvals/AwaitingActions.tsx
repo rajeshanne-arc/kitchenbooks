@@ -44,11 +44,16 @@ export default function AwaitingActions({
   vendors,
   balances,
   today,
+  mine,
+  role,
 }: {
   rows: AwaitingRow[]
   vendors: Record<string, VendorRouting>
   balances: AccountBalanceRow[]
   today: string
+  /** the reader IS the role this was routed to */
+  mine: boolean
+  role: string
 }) {
   // THE ACKNOWLEDGEMENT CANNOT LIVE IN HERE, and finding out why is the point.
   // Paying the last routed request empties this panel, so the server renders
@@ -58,7 +63,7 @@ export default function AwaitingActions({
   // which is the same answer the three inline row controls already give.
   return (
     <section className={`${cardCls} mb-4 border-amber-300`}>
-      <h2 className={sectionHeadCls}>Routed to you</h2>
+      <h2 className={sectionHeadCls}>{mine ? 'Routed to you' : `Routed to the ${role}`}</h2>
       <ul className="mt-2 divide-y divide-rule-soft">
         {rows.map((r) => (
           <Row key={r.id} row={r} vendor={vendors[r.entity_id]} balances={balances} today={today} />

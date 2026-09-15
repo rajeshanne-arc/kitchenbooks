@@ -30,16 +30,21 @@ import {
 import MyOutcomes from '@/components/approvals/MyOutcomes'
 import { getAccountBalances } from '@/server/accounts-queries'
 import { businessToday } from '@/server/business-day'
+import type { Role } from '@/lib/roles'
 import AwaitingActions from '@/components/approvals/AwaitingActions'
 
-export default async function AwaitingPanel() {
+export default async function AwaitingPanel({ role }: { role: Role }) {
   const user = await getSessionUser()
   if (!user) return null
   const restaurant = await getRestaurant()
-  // Payments only. This panel is mounted on payment screens, and an owner
-  // standing on one should not be shown a discard request they cannot act on
-  // from here — the Approvals page is where those live.
-  const rows = (await listAwaiting(restaurant.id, user.role)).filter((r) => r.kind === 'payment')
+  // THE ROLE COMES FROM THE SCREEN, NOT FROM THE READER. It used to be
+  // `user.role`, which meant an owner opening the accountant's payment screen
+  // saw a badge of 2 over an empty page: the badge counts the GROUP's queue
+  // and the panel was listing his own. A badge is a claim about a screen.
+  //
+  // Payments only. A discard waiting on the same role belongs on Approvals,
+  // not on a screen for paying vendors.
+  const rows = (await listAwaiting(restaurant.id, role)).filter((r) => r.kind === 'payment')
   if (rows.length === 0) return null
 
   const [vendorRows, balances, today] = await Promise.all([
@@ -49,7 +54,19 @@ export default async function AwaitingPanel() {
   ])
   const vendors: Record<string, VendorRouting> = Object.fromEntries(vendorRows)
 
-  return <AwaitingActions rows={rows} vendors={vendors} balances={balances} today={today} />
+  return (
+    <AwaitingActions
+      rows={rows}
+      vendors={vendors}
+      balances={balances}
+      today={today}
+      // "Routed to you" is only true when the reader IS the role the work was
+      // routed to. An owner reading the accountant's queue is looking at
+      // somebody else's, and the heading says so rather than claiming it.
+      mine={user.role === role}
+      role={role}
+    />
+  )
 }
 
 /**

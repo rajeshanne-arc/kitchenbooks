@@ -710,6 +710,22 @@ export type TrailHead = {
 }
 export type AwaitingRow = ApprovalRow & TrailHead
 
+/**
+ * WHOSE QUEUE A GROUP'S PAYMENT SCREEN SHOWS — named once, read by the badge
+ * and by the panel it opens.
+ *
+ * They disagreed. The Payments badge counted `countAwaiting(rid,
+ * 'accountant')` — the GROUP's role — while `AwaitingPanel` listed
+ * `user.role`, the signed-in READER's. An owner can open /accounts, so he saw
+ * a badge of 2 over a screen showing nothing: two forwarded payments waiting
+ * on the accountant, and `listAwaiting(rid, 'owner')` returning none of them.
+ *
+ * A badge is a claim about a SCREEN, not about the person reading it. Both
+ * sides take the role from here now, so the count and the list cannot answer
+ * about different queues.
+ */
+export const GROUP_QUEUE_ROLE = { accounts: 'accountant', store: 'store' } as const
+
 export async function getAwaiting(
   restaurantId: string,
   role: Role,
