@@ -16,6 +16,8 @@ import { getStaffIdentity } from '@/server/payroll-queries'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { getStaffOwed } from '@/server/advances-queries'
+import AdvanceRequest from '@/components/approvals/AdvanceRequest'
+import { REQUESTERS } from '@/server/approvals-queries'
 import { exposureText, loanProgress, monthLabel } from '@/lib/advances'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
@@ -709,6 +711,24 @@ export default async function StaffProfilePage({
               )}
             </>
           )}
+
+          {/* OUTSIDE THE BRANCH ON PURPOSE. The empty state is "never been
+              advanced money", which is exactly the person somebody is most
+              likely to be about to lend to — a control that appears only once
+              a debt exists is a control nobody meets at the moment of the
+              first decision.
+
+              ASKED FOR WHERE WHAT THEY ALREADY OWE IS ON SCREEN. The thing
+              that goes wrong with lending to staff is lending more than can be
+              recovered before somebody leaves, and nobody opens a central list
+              before agreeing. */}
+          <AdvanceRequest
+            subject="staff"
+            subjectId={staff.id}
+            subjectName={staff.name}
+            canRequest={user !== null && REQUESTERS.includes(user.role)}
+            alreadyOwes={owed?.outstanding ?? null}
+          />
         </Card>
 
         {mayEdit && (

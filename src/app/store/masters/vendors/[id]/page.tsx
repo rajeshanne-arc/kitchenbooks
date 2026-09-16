@@ -10,6 +10,7 @@ import { getVendorAging, listBillNumbersFor } from '@/server/aging-queries'
 import { billNumbers } from '@/lib/bill-gaps'
 import { getVendorCredit } from '@/server/advances-queries'
 import { creditAge } from '@/lib/advances'
+import AdvanceRequest from '@/components/approvals/AdvanceRequest'
 import { businessToday } from '@/server/business-day'
 import BillNumberGap from '@/components/books/BillNumberGap'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
@@ -408,6 +409,18 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
         row={{ id: vendor.id, code: vendor.code, name: vendor.name, status: vendor.status }}
         open={open[0] ?? null}
         canRequest={user !== null && REQUESTERS.includes(user.role)}
+      />
+      {/* AN ADVANCE BELONGS WHERE ITS SUBJECT LIVES, the same rule the
+          outcomes panel follows. Paying a vendor ahead of their bills is a
+          decision about THIS vendor, and this is the page somebody is on when
+          they make it — with what the vendor already holds in credit right
+          above it. */}
+      <AdvanceRequest
+        subject="vendor"
+        subjectId={id}
+        subjectName={vendor.name}
+        canRequest={user !== null && REQUESTERS.includes(user.role)}
+        alreadyOwes={credit === null ? null : credit.credit}
       />
     </div>
   )

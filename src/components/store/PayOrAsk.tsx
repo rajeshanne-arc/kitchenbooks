@@ -505,8 +505,9 @@ export default function PayOrAsk({
           <Honesty verdict="more than the bills in range" level="alarm">
             The bills between {fmtRange(range.from, range.to)} come to{' '}
             {formatPaise(scopedPaise ?? 0)} and this asks for {formatPaise(parseMoney(amount) ?? 0)}. Lower
-            it, or widen the range. An advance is paid from Owner › Payments, where the account balance is
-            visible — it is not a request against bills.
+            it, or widen the range. If you mean to pay them ahead of their bills, ask for an ADVANCE
+            instead — it is its own kind of request, it needs no bills behind it, and the owner
+            decides it because he is the one who can see the cash.
           </Honesty>
         </div>
       )}

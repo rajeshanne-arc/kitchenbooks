@@ -11601,10 +11601,16 @@ async function run() {
     // same request at pay time and an approved advance could never be paid.
     // One rule now, and the refusal names where advances actually live.
     assert.ok(out.overByOne !== null, 'one rupee over the range total was accepted — the bound is not a bound')
+    // A ROUTE OUT, NOT A PARTICULAR SENTENCE. This pinned the exact wording —
+    // "An advance is paid from Owner › Payments" — and went red when that
+    // string was corrected, which is the pinned-literal fault in a gate
+    // written three commits earlier. The RULE is that a refusal names
+    // somewhere to go, because a dead end is worse than a no; the word that
+    // carries it is 'advance', and how the sentence reads around it is copy.
     assert.match(
       String(out.overAsk),
-      /An advance is paid from Owner › Payments/,
-      'the over-range refusal does not say where an advance belongs — a dead end is worse than a no',
+      /advance/i,
+      'the over-range refusal does not point at an advance — a dead end is worse than a no',
     )
     assert.equal(out.clean, null, `a clean ask on ${out.code} was refused: ${out.clean}`)
     assert.ok(out.whole !== null, `${out.busyCode} has an open request and a second ask was accepted`)
@@ -13444,6 +13450,152 @@ async function run() {
     console.log(
       `      ${allowed.size} in the CHECK · ${MASTER_SUBJECTS.length} declared · ${passed.size} as a bare literal (${[...passed.keys()].sort().join(', ')}) — the rest are typed, and all are accepted`,
     )
+  })
+
+  await check('an advance is its own kind, and applying one cannot close its subject', async () => {
+    const { txn, tsql } = await import('../src/lib/db')
+    const { applyRequest, APPROVAL_ENTITIES } = await import('../src/server/approvals-queries')
+    const { addMonths } = await import('../src/lib/advances')
+
+    // THE SCHEDULE, BY VALUE — including the month-length clamp, because an
+    // instalment is a MONTHLY event and 30-day arithmetic drifts a month every
+    // two years.
+    assert.equal(addMonths('2026-09-17', 7), '2027-04-17')
+    assert.equal(addMonths('2026-12-31', 2), '2027-02-28', 'the 31st must clamp, not roll into March')
+    assert.equal(addMonths('2024-01-31', 1), '2024-02-29', 'a leap February is 29 days')
+    assert.equal(addMonths('2026-01-15', 0), '2026-01-15')
+
+    // EVERY KIND IN THE CHECK IS EITHER APPLIABLE OR REFUSED BY NAME.
+    //
+    // applyRequest used to guard `payment` alone and then fall through reopen
+    // and merge into DISCARD — so a kind whose entity is a vendor or a person
+    // would try to CLOSE them. That was survivable only because the discard
+    // branch re-checks references and everything real has some, which is a
+    // rule holding by accident: the guard is about data, not about kind.
+    // 'advance' is exactly such a kind, so the dispatch is an allowlist now.
+    const [{ def }] = await tsql<{ def: string }[]>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_kind_check'`
+    const kinds = [...new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))]
+    assert.ok(kinds.includes('advance'), 'the CHECK no longer admits an advance')
+
+    const refusals: string[] = []
+    await txn(async (tx) => {
+      for (const kind of kinds) {
+        if (['reopen_period', 'merge', 'discard'].includes(kind)) continue
+        // A REAL VENDOR ID, so a refusal cannot be the id being wrong. This is
+        // the shape that would have closed a supplier.
+        const [v] = await tx<{ id: string }[]>`
+          select id from vendors where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+        assert.ok(v !== undefined, 'no active vendor to aim the probe at')
+        // REFUSED BY KIND, NOT MERELY REFUSED.
+        //
+        // `assert.rejects` alone is VACUOUS here and the perturbation proved
+        // it: with the old payment-only guard an advance falls into the
+        // DISCARD branch, where reference_counts refuses it because the vendor
+        // has bills — so it throws either way and the gate passed against the
+        // bug it was written for. What must be asserted is WHICH refusal.
+        let msg = ''
+        await assert.rejects(
+          applyRequest(tx, liveTenant, { kind, entity_type: 'vendor', entity_id: v.id, target_entity_id: null }),
+          (e: Error) => {
+            msg = e.message
+            return true
+          },
+          `applying a '${kind}' request was ACCEPTED`,
+        )
+        assert.ok(
+          /settled by recording|handing the money over|no way to apply/.test(msg),
+          `a '${kind}' request was refused, but by the DISCARD branch's reference guard rather than by kind — "${msg.slice(0, 90)}". That guard is about DATA: one bill-less subject and this would close a live vendor.`,
+        )
+        refusals.push(`${kind}: ${msg.slice(0, 48)}`)
+        // AND THE VENDOR IS UNTOUCHED, which is the thing that matters rather
+        // than the exception being thrown.
+        const [after] = await tx<{ status: string }[]>`
+          select status from vendors where id = ${v.id} and restaurant_id = ${liveTenant}`
+        assert.equal(after.status, 'active', `applying a '${kind}' request closed the vendor`)
+      }
+      throw new Error('KB_ROLLBACK')
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+    })
+    assert.ok(refusals.length > 0, 'every kind is appliable — the allowlist is looking at nothing')
+
+    // A SUBJECT THE COLUMN TAKES. An advance names a vendor or a person, and
+    // 'staff' had to join the CHECK before this kind could exist at all.
+    for (const e of ['vendor', 'staff']) {
+      assert.ok(
+        (APPROVAL_ENTITIES as readonly string[]).includes(e),
+        `an advance names a ${e} and the column will not take one`,
+      )
+    }
+    console.log(`      ${kinds.length} kinds · refused by name: ${refusals.join(' · ')}`)
+  })
+
+  await check('asking for an advance moves no money, and the form cannot pay', async () => {
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((f) => {
+        const full = `${d}/${f}`
+        return statSync(full).isDirectory()
+          ? walk(full)
+          : full.endsWith('.ts') || full.endsWith('.tsx') ? [full] : []
+      })
+    const strip = (t: string) =>
+      t.replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ')
+
+    const act = readFileSync('src/server/approvals-actions.ts', 'utf8')
+    const at = act.indexOf('export async function requestAdvance')
+    assert.ok(at > 0, 'requestAdvance is gone')
+    const body = strip(act.slice(at, act.indexOf('\n}\n', at)))
+
+    // IT WRITES A REQUEST AND NOTHING ELSE. The whole point is that the person
+    // who asks cannot pay: no payment, no voucher, no advance row, no account
+    // touched. The money moves when somebody hands it over and records it.
+    for (const banned of ['insert into payments', 'insert into cash_vouchers', 'insert into staff_advances', 'assertAccount']) {
+      assert.ok(!body.includes(banned), `requestAdvance does ${banned} — asking is not paying`)
+    }
+    assert.match(body, /insert into approval_requests/, 'it does not raise a request at all')
+    assert.match(body, /'advance'/, 'it does not raise it as an advance')
+    assert.match(body, /assignTo: 'owner'/, 'it does not go to the owner, who is the one who can see the cash')
+
+    // NO RANGE AND NO DRIFT GUARD — an advance is money against bills that do
+    // not exist, so there is nothing to check it against. Reintroducing either
+    // is how the carve-out comes back.
+    for (const banned of ['assertPayableRange', 'assertAmountStillCovered', 'bills_from', 'bills_to']) {
+      assert.ok(!body.includes(banned), `requestAdvance uses ${banned} — an advance has no bills behind it`)
+    }
+
+    // AND NO RATE, ANYWHERE. Interest is never charged; a loan here is an
+    // advance with an instalment.
+    const files = [...walk('src')]
+    const rateish = files.filter((f) => {
+      const src = strip(readFileSync(f, 'utf8'))
+      return /\binterest\b/i.test(src) && /rate|percent|%/i.test(src) && /advance|loan/i.test(src)
+    })
+    assert.deepEqual(rateish, [], `these price an advance: ${rateish.join(', ')}`)
+
+    // THE FORM IS MOUNTED WHERE ITS SUBJECT LIVES, both of them.
+    const mounts = files.filter((f) => /<AdvanceRequest[\s/>]/.test(readFileSync(f, 'utf8')))
+    const subjects = new Set<string>()
+    for (const f of mounts) {
+      for (const m of readFileSync(f, 'utf8').matchAll(/subject="([a-z]+)"/g)) subjects.add(m[1])
+    }
+    assert.deepEqual([...subjects].sort(), ['staff', 'vendor'], 'an advance can be asked for about only some of its subjects')
+    // AND IT GATES ON WHO MAY ASK. An accountant reads a staff profile and is
+    // not a requester.
+    for (const f of mounts) {
+      assert.match(readFileSync(f, 'utf8'), /canRequest=\{/, `${f} mounts the form without gating on who may ask`)
+    }
+
+    // THE PAYMENT REFUSAL POINTS AT IT, and no longer at a route that does not
+    // exist: it said "Owner › Payments", and the accountant's group is where
+    // payments live — but naming a door the store manager cannot open is LAW 1
+    // broken, so it names the REQUEST instead.
+    const q = readFileSync('src/server/approvals-queries.ts', 'utf8')
+    assert.ok(!/Owner › Payments/.test(q), 'the over-range refusal still names a route that does not exist')
+    assert.match(q, /ask for it as one/, 'the over-range refusal does not point at the advance request')
+    console.log(`      ${mounts.length} mount(s) · subjects ${[...subjects].sort().join(', ')} · no payment, no account, no range, no rate`)
   })
 
   if (only !== null) {

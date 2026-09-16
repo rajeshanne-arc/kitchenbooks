@@ -873,7 +873,8 @@ export async function listAwaiting(
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
            a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
-           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(fi.code, fv.code, fs.code) as from_code,
+           coalesce(fi.name, fv.name, fs.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
            ev.action as last_action, ev.note as last_note,
            ev.acted_by as last_by, ev.acted_at::text as last_at
@@ -883,6 +884,10 @@ export async function listAwaiting(
      and w.kind = a.kind and w.status = a.status
     left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
     left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    -- A STAFF SUBJECT HAS A NAME TOO. An advance names a person, and without
+    -- this the outcome read "the person or vendor it was for" — honest, and
+    -- still nobody's name on a screen about somebody's pay.
+    left join staff   fs on a.entity_type = 'staff'  and fs.id = a.entity_id
     left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
     left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
     left join lateral (
@@ -921,7 +926,8 @@ export async function listElsewhere(
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
            a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
-           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(fi.code, fv.code, fs.code) as from_code,
+           coalesce(fi.name, fv.name, fs.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
            ev.action as last_action, ev.note as last_note,
            ev.acted_by as last_by, ev.acted_at::text as last_at
@@ -931,6 +937,10 @@ export async function listElsewhere(
      and w.kind = a.kind and w.status = a.status
     left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
     left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    -- A STAFF SUBJECT HAS A NAME TOO. An advance names a person, and without
+    -- this the outcome read "the person or vendor it was for" — honest, and
+    -- still nobody's name on a screen about somebody's pay.
+    left join staff   fs on a.entity_type = 'staff'  and fs.id = a.entity_id
     left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
     left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
     left join lateral (
@@ -965,13 +975,18 @@ export async function listDecided(restaurantId: string, limit = 20): Promise<Awa
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
            a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
-           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(fi.code, fv.code, fs.code) as from_code,
+           coalesce(fi.name, fv.name, fs.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
            ev.action as last_action, ev.note as last_note,
            ev.acted_by as last_by, ev.acted_at::text as last_at
     from approval_requests a
     left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
     left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    -- A STAFF SUBJECT HAS A NAME TOO. An advance names a person, and without
+    -- this the outcome read "the person or vendor it was for" — honest, and
+    -- still nobody's name on a screen about somebody's pay.
+    left join staff   fs on a.entity_type = 'staff'  and fs.id = a.entity_id
     left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
     left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
     left join lateral (
@@ -1014,11 +1029,16 @@ export async function getApproval(restaurantId: string, id: string): Promise<App
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
            a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
-           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(fi.code, fv.code, fs.code) as from_code,
+           coalesce(fi.name, fv.name, fs.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name
     from approval_requests a
     left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
     left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    -- A STAFF SUBJECT HAS A NAME TOO. An advance names a person, and without
+    -- this the outcome read "the person or vendor it was for" — honest, and
+    -- still nobody's name on a screen about somebody's pay.
+    left join staff   fs on a.entity_type = 'staff'  and fs.id = a.entity_id
     left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
     left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
     where a.restaurant_id = ${restaurantId} and a.id = ${id}`
@@ -1086,8 +1106,23 @@ export async function applyRequest(
   //
   // A payment is applied by `payApproval`, which writes the payments row and
   // the `paid` event in one transaction. Nothing here can do that.
-  if (req.kind === 'payment') {
-    throw new Error('a payment request is settled by recording the payment, not by applying it')
+  //
+  // AN ALLOWLIST, NOT ONE REFUSAL PER KIND. The guard above was written for
+  // `payment` and would have been written again for `advance` — which arrives
+  // with entity_type 'vendor' or 'staff' and would otherwise fall into the
+  // DISCARD branch and try to close a supplier or a person. Every kind added
+  // to the CHECK from here lands on this refusal until somebody decides what
+  // applying it means, which is the opposite of falling through to whatever
+  // branch happens to be last.
+  const APPLIABLE = ['reopen_period', 'merge', 'discard']
+  if (!APPLIABLE.includes(req.kind)) {
+    throw new Error(
+      req.kind === 'payment'
+        ? 'a payment request is settled by recording the payment, not by applying it'
+        : req.kind === 'advance'
+          ? 'an advance is settled by handing the money over and recording it, not by applying the request'
+          : `there is no way to apply a ${req.kind} request — approving one decides it, and something else has to carry it out`,
+    )
   }
 
   if (req.kind === 'reopen_period') {
@@ -1630,7 +1665,8 @@ export async function listMyWaiting(
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
            a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
-           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(fi.code, fv.code, fs.code) as from_code,
+           coalesce(fi.name, fv.name, fs.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
            ev.action as last_action, ev.note as last_note,
            ev.acted_by as last_by, ev.acted_at::text as last_at,
@@ -1653,6 +1689,10 @@ export async function listMyWaiting(
     from approval_requests a
     left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
     left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    -- A STAFF SUBJECT HAS A NAME TOO. An advance names a person, and without
+    -- this the outcome read "the person or vendor it was for" — honest, and
+    -- still nobody's name on a screen about somebody's pay.
+    left join staff   fs on a.entity_type = 'staff'  and fs.id = a.entity_id
     left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
     left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
     left join lateral (
@@ -1712,7 +1752,8 @@ export async function listMyOutcomes(
            a.amount::text as amount, a.suggested_mode, a.routed_mode,
            a.bills_from::text as bills_from, a.bills_to::text as bills_to,
            a.routed_account_id::text as routed_account_id, a.assigned_to,
-           coalesce(fi.code, fv.code) as from_code, coalesce(fi.name, fv.name) as from_name,
+           coalesce(fi.code, fv.code, fs.code) as from_code,
+           coalesce(fi.name, fv.name, fs.name) as from_name,
            coalesce(ti.code, tv.code) as to_code,   coalesce(ti.name, tv.name) as to_name,
            ev.action as last_action, ev.note as last_note,
            ev.acted_by as last_by, ev.acted_at::text as last_at,
@@ -1727,6 +1768,10 @@ export async function listMyOutcomes(
     from approval_requests a
     left join items   fi on a.entity_type = 'item'   and fi.id = a.entity_id
     left join vendors fv on a.entity_type = 'vendor' and fv.id = a.entity_id
+    -- A STAFF SUBJECT HAS A NAME TOO. An advance names a person, and without
+    -- this the outcome read "the person or vendor it was for" — honest, and
+    -- still nobody's name on a screen about somebody's pay.
+    left join staff   fs on a.entity_type = 'staff'  and fs.id = a.entity_id
     left join items   ti on a.entity_type = 'item'   and ti.id = a.target_entity_id
     left join vendors tv on a.entity_type = 'vendor' and tv.id = a.target_entity_id
     left join lateral (
@@ -2015,7 +2060,7 @@ export async function assertPayableRange(
   // with no range and no approval, and it is where the balance is visible.
   if (input.paise > inRangePaise) {
     throw new ApprovalRefusal(
-      `The bills in this range total ${formatPaise(inRangePaise)} and this asks for ${formatPaise(input.paise)} — this is more than the bills in range. An advance is paid from Owner › Payments, where the account balance is visible.`,
+      `The bills in this range total ${formatPaise(inRangePaise)} and this asks for ${formatPaise(input.paise)} — this is more than the bills in range. If it is an advance, ask for it as one — an advance is its own kind of request and needs no bills behind it.`,
     )
   }
 

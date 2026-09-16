@@ -317,11 +317,12 @@ function words(row: OutcomeRow): { chip: string; what: string; nothingToDo: stri
     // lent: the whole point of an advance is that it comes BACK, so the
     // sentence has to say where from.
     //
-    // THE NAME MAY BE ABSENT AND THAT IS SAID RATHER THAN GUESSED. The
-    // outcomes query joins items and vendors; a staff-subject advance has no
-    // join yet, so `from_name` is null — and "a vendor" would be a confident
-    // wrong noun on somebody's pay. Fix the join when the advance REQUEST
-    // lands; until then this is honest about not knowing.
+    // THE NAME COMES FROM THE SUBJECT'S OWN TABLE. The query joined items and
+    // vendors only, so a staff-subject advance read as "the person or vendor
+    // it was for" — honest, and still nobody's name on a screen about
+    // somebody's pay. `staff` is joined now. The fallback stays for the case
+    // the join cannot cover: a subject row that will not read, which is a
+    // failed lookup rather than a request about nobody.
     case 'advance':
       return {
         chip: refused ? 'not advanced' : 'advanced',

@@ -179,3 +179,22 @@ export function payslipReason(
 
   return `${money(line.net_payable)} — ${money(lower)} less than earned, being ${list}.${tail}`
 }
+
+/**
+ * ISO date + N whole months, clamping the day to the shorter month.
+ *
+ * A loan's instalments are MONTHLY events, so its end is reached by counting
+ * months rather than by adding 30-day blocks — which drifts a month every two
+ * years. The 31st of a month plus one lands on the 28th, 29th or 30th rather
+ * than rolling into the following month, because a schedule that silently
+ * gains a month is worse than one that pays a day early.
+ */
+export function addMonths(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  const target = m - 1 + n
+  const ty = y + Math.floor(target / 12)
+  const tm = ((target % 12) + 12) % 12
+  const lastDay = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate()
+  const day = Math.min(d, lastDay)
+  return `${ty}-${String(tm + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}

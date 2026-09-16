@@ -43,6 +43,8 @@ import { AccountRefusal, assertAccount, getAccountBalances } from '@/server/acco
 import { getSessionUser } from '@/server/current-user'
 import { formatMoneyString } from '@/lib/money'
 import { withdrawnMessage } from '@/lib/waiting'
+import { addMonths } from '@/lib/advances'
+import { businessToday } from '@/server/business-day'
 import { insertPayment } from '@/server/payment-write'
 import { getVendorAging, listBillsOutstanding } from '@/server/aging-queries'
 import type { DateRange } from '@/lib/bill-range'
@@ -560,6 +562,144 @@ export async function requestReopen(raw: { periodCloseId: string; reason: string
       )
     }
     return res
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/* ── an advance: money out against nothing yet ─────────────────────────── */
+
+/** THE SAME LIMIT payroll-actions uses, deliberately rather than a third
+ *  number: a client stricter than its server is the worst of both, and that
+ *  fault has already cost this app once — parseMoney capped at five integer
+ *  digits while every server regex allowed seven or more, so a ₹1,00,000
+ *  payment left the save button disabled with nothing on screen saying why. */
+const MONEY = /^\d{1,11}(\.\d{1,2})?$/
+
+const AdvanceSchema = z.object({
+  subject: z.enum(['vendor', 'staff']),
+  subjectId: z.string().uuid(),
+  amount: z.string().regex(MONEY),
+  reason: z.string().min(1).max(500),
+  /** AN INSTALMENT IS WHAT MAKES IT A LOAN. Blank means the whole thing comes
+   *  off the next payroll; a figure means it comes off a slice at a time and
+   *  the request works out when it ends. */
+  instalment: z.string().optional(),
+})
+export type AdvanceInput = z.infer<typeof AdvanceSchema>
+
+/**
+ * ASKING FOR AN ADVANCE — the kind that replaced the payment carve-out.
+ *
+ * A payment request names a RANGE OF BILLS and is checked against what those
+ * bills come to, at raise and again under the lock at pay. An advance is money
+ * against bills that do not exist yet, so it has neither: no range, no drift
+ * guard, and nothing to reconcile it against but somebody's judgement. That is
+ * why it is a separate KIND rather than a tick on a payment — the tick made
+ * one form mean two things and could not survive its own pay-time check.
+ *
+ * WHOEVER ASKS CANNOT PAY. The store manager can raise all three kinds and
+ * settle none of them: he has no account to pay from, which is the whole
+ * reason the request exists. It goes to the owner, who can see the cash.
+ *
+ * INTEREST IS NEVER CHARGED AND THERE IS NO RATE TO SET. Rajesh confirmed it,
+ * and it is the withholding rule again: this app records what was agreed and
+ * does not price money. A loan here is an advance with an instalment.
+ *
+ * @scope not-a-figure
+ */
+export async function requestAdvance(raw: AdvanceInput): Promise<ApprovalResult> {
+  try {
+    const input = AdvanceSchema.parse(raw)
+    const by = await assertRequester()
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    const paise = parseMoney(input.amount)
+    if (paise === null || paise <= 0) throw new ApprovalRefusal('Say how much — an advance of nothing is not a request')
+
+    // A LOAN'S SHAPE IS WORKED OUT HERE, not left to whoever applies it.
+    let instalmentPaise: number | null = null
+    let months: number | null = null
+    if (input.instalment !== undefined && input.instalment.trim() !== '') {
+      instalmentPaise = parseMoney(input.instalment)
+      if (instalmentPaise === null || instalmentPaise <= 0) {
+        throw new ApprovalRefusal('An instalment of nothing is not an instalment — leave it blank for a one-off advance')
+      }
+      if (instalmentPaise > paise) {
+        throw new ApprovalRefusal(
+          `The instalment (${formatPaise(instalmentPaise)}) is more than the advance (${formatPaise(paise)}) — that is a one-off, so leave the instalment blank.`,
+        )
+      }
+      months = Math.ceil(paise / instalmentPaise)
+    }
+
+    const today = await businessToday()
+    // THE LAST INSTALMENT, not the month after it: a loan of eight starting
+    // this month ends seven months from now. The fencepost the ledger's
+    // by-value gate already caught once.
+    const expectedEnd =
+      months === null ? null : addMonths(today, months - 1)
+
+    return await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+
+      // THE SUBJECT IS CHECKED, AND THE REFUSAL NAMES IT. A uuid from another
+      // restaurant is refused by the composite FK anyway; this is so the
+      // person reads a sentence rather than a constraint name.
+      const who =
+        input.subject === 'vendor'
+          ? await tx<{ name: string; status: string }[]>`
+              select name, status from vendors where restaurant_id = ${rid} and id = ${input.subjectId}`
+          : await tx<{ name: string; status: string }[]>`
+              select name, status from staff where restaurant_id = ${rid} and id = ${input.subjectId}`
+      if (!who[0]) {
+        throw new ApprovalRefusal(
+          input.subject === 'vendor'
+            ? 'That vendor is not on this restaurant’s books'
+            : 'That person is not on this restaurant’s books',
+        )
+      }
+      if (who[0].status !== 'active') {
+        throw new ApprovalRefusal(
+          `${who[0].name} is ${who[0].status} — lending to somebody who has left is a decision nobody should make through a form.`,
+        )
+      }
+
+      const [req] = await tx<{ id: string }[]>`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, reason, amount,
+           snapshot, status, assigned_to, requested_by)
+        values (${rid}, 'advance', ${input.subject}, ${input.subjectId}, ${input.reason},
+                ${(paise / 100).toFixed(2)},
+                ${JSON.stringify({
+                  instalment: instalmentPaise === null ? null : (instalmentPaise / 100).toFixed(2),
+                  months,
+                  expectedEnd,
+                  askedOn: today,
+                })}::text::jsonb,
+                'pending', 'owner', ${by})
+        returning id`
+
+      await recordAct(tx, rid, {
+        id: req.id,
+        action: 'raised',
+        from: ['pending'],
+        status: 'pending',
+        by,
+        note: input.reason,
+        assignTo: 'owner',
+      })
+
+      return {
+        ok: true as const,
+        id: req.id,
+        message:
+          months === null
+            ? `Asked the owner for ${formatPaise(paise)} for ${who[0].name}. No money has moved — it moves when somebody hands it over and records it.`
+            : `Asked the owner for ${formatPaise(paise)} for ${who[0].name}, at ${formatPaise(instalmentPaise as number)} a month over ${months} months${expectedEnd === null ? '' : `, ending ${expectedEnd}`}. No money has moved yet.`,
+      }
+    })
   } catch (e) {
     return fail(e)
   }
