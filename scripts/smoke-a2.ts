@@ -104,6 +104,14 @@ const EVENT_TABLES = [
   // table would have counted every tenant's rows and read a probe write as a
   // write to the live books.
   'meter_readings',
+  // AND THE TWO THE APPROVALS MACHINE WRITES, which were absent while every
+  // other event table was covered. The census is what stands between a probe
+  // and the live books, and a probe that raised a request against the live
+  // tenant would have moved neither a counted table nor anything else that
+  // fails — it would simply have appeared in somebody's queue. Found by
+  // tracing a `requested_by = 'gate'` row that turned out to be correctly on
+  // the probe tenant; the row was where it belonged and the guard was not.
+  'approval_requests', 'approval_events',
 ]
 
 async function census(tenant: string): Promise<Record<string, number>> {
@@ -9124,6 +9132,8 @@ async function run() {
     // or kept promising against one that had been refused.
     const { txn } = await import('../src/lib/db')
     const { recordAct, roleOfRequester, listMyOutcomes } = await import('../src/server/approvals-queries')
+    const { businessToday } = await import('../src/server/business-day')
+    const today = await businessToday()
     const out: string[] = []
 
     await txn(async (tx) => {
@@ -9165,7 +9175,7 @@ async function run() {
       assert.equal(refused.decision_note, 'we paid them last week', 'the reason he is owed was not kept')
 
       // IT IS ON HIS LIST, AND IT IS ASKING SOMETHING OF HIM.
-      const mine = (await listMyOutcomes(liveTenant, raiser.username, tx)).filter((r) => r.id === req.id)
+      const mine = (await listMyOutcomes(liveTenant, raiser.username, ['vendor'], today, tx)).filter((r) => r.id === req.id)
       assert.equal(mine.length, 1, 'a refusal he raised is not on his own list')
       assert.equal(mine[0].needs_noting, true, 'a refusal nobody has told him about reads as already noted')
       out.push(`refused → assigned ${refused.assigned_to}, on his list, needs noting`)
@@ -9185,7 +9195,7 @@ async function run() {
       // it, and a column that records who did something cannot be reused.
       assert.equal(noted.decided_by, 'rajeshanne', 'the raiser’s acknowledgement overwrote who refused it')
 
-      const after = (await listMyOutcomes(liveTenant, raiser.username, tx)).filter((r) => r.id === req.id)
+      const after = (await listMyOutcomes(liveTenant, raiser.username, ['vendor'], today, tx)).filter((r) => r.id === req.id)
       assert.equal(after.length, 1, 'noting it took the record off his list entirely — only the badge should clear')
       assert.equal(after[0].needs_noting, false, 'it still reads as unnoted')
 
@@ -11376,13 +11386,14 @@ async function run() {
     const { decimalStringToPaise } = await import('../src/lib/money')
     const { withTenant } = await import('../src/lib/tenant')
 
-    const { aging, today, sample } = await withTenant(liveTenant, async () => {
+    const { aging, today, sample, widest } = await withTenant(liveTenant, async () => {
       const [{ d: today }] = await tsql<{ d: string }[]>`select business_date(now())::text as d`
       const aging = await tsql<
         { vendor_id: string; vendor_code: string; outstanding: string; open_bills: number }[]
       >`select vendor_id, vendor_code, outstanding::text as outstanding, open_bills::int as open_bills
         from vendor_aging where restaurant_id = ${liveTenant}`
       let sample = ''
+      let widest = { bills: 0, span: -1, dates: 0 }
       for (const v of aging) {
         const bills = await listBillsOutstanding(liveTenant, v.vendor_id)
         const d = defaultRange(bills, today)
@@ -11407,13 +11418,36 @@ async function run() {
           decimalStringToPaise(v.outstanding),
           `${v.vendor_code}: the default range totals ${totalPaise(scoped)}p and the balance is ${decimalStringToPaise(v.outstanding)}p`,
         )
-        if (v.vendor_code === 'V-DAR-01') sample = `${v.vendor_code} ${r.from}..${r.to} · ${scoped.length} bills · ${v.outstanding}`
+        // THE SAMPLE IS DERIVED ON THE PROPERTY, NEVER PINNED TO A VENDOR.
+        // It used to name V-DAR-01 and assert the name still had a balance —
+        // so paying that vendor off, which is the ordinary thing to do with a
+        // dairy supplier billed daily, turned this red for a reason unrelated
+        // to what it tests. A gate that goes red on ordinary use is the same
+        // failure as one that is always red: people learn to skip it, which is
+        // how the lint rule stayed out of the chain for months.
+        //
+        // WIDEST SPAN WINS, because that is the case the rule is about: a
+        // vendor with one bill cannot tell a working range from a broken one,
+        // and `inRange` filtering nothing would pass every assertion above.
+        const span = Number(new Date(r.to)) - Number(new Date(oldest))
+        if (scoped.length > widest.bills || (scoped.length === widest.bills && span > widest.span)) {
+          widest = { bills: scoped.length, span, dates: new Set(bills.map((b) => b.bill_date)).size }
+          sample = `${v.vendor_code} ${r.from}..${r.to} · ${scoped.length} bills · ${v.outstanding}`
+        }
       }
-      return { aging, today, sample }
+      return { aging, today, sample, widest }
     })
     assert.ok(aging.length > 0, 'nothing is outstanding — this check is looking at nothing')
-    assert.ok(sample !== '', 'V-DAR-01 has nothing outstanding — the by-value case named in the brief is gone')
-    console.log(`      ${aging.length} vendors · business day ${today} · ${sample}`)
+    // AND THE CASE IT EXERCISED WAS A REAL ONE. Every assertion above holds
+    // trivially for a vendor with a single bill on a single date — the range
+    // covers it whatever the arithmetic does — so the run has to have met at
+    // least one vendor whose bills span more than one day, or it proved
+    // nothing about ranges at all.
+    assert.ok(
+      widest.bills >= 2 && widest.dates >= 2,
+      `the widest vendor met had ${widest.bills} bill(s) on ${widest.dates} date(s) — a range cannot be told from a no-op on that, so this run asserted nothing`,
+    )
+    console.log(`      ${aging.length} vendors · business day ${today} · widest: ${sample}`)
   })
 
   await check('the range total the screen shows is the one SQL agrees with', async () => {
@@ -12209,10 +12243,35 @@ async function run() {
     assert.match(code, /'keydown'/, 'Escape does not close the sheet')
     assert.match(code, /'mousedown'/, 'clicking outside does not close the sheet')
     assert.match(code, /removeEventListener/, 'the sheet leaves its document listeners behind')
-    console.log(`      read-only · z-50 over a z-${navZ} nav · Escape + outside click, both removed on unmount`)
+
+    // ARIA-MODAL IS A CLAIM THE BEHAVIOUR HAS TO KEEP. Declaring it while a
+    // keyboard can Tab out into the pay form underneath tells a screen-reader
+    // user the rest of the page is inert when it is not — and the claim is
+    // exactly what stops them checking. Three parts, each asserted, because
+    // any two without the third still strands somebody.
+    assert.match(code, /aria-modal="true"/, 'the sheet no longer declares itself modal')
+    assert.ok(
+      /e\.key !== 'Tab'|e\.key === 'Tab'/.test(code),
+      'the sheet claims aria-modal and does not trap Tab — focus leaves into the form underneath',
+    )
+    assert.match(code, /e\.preventDefault\(\)/, 'Tab is inspected and never prevented, so the trap cannot hold')
+    assert.match(
+      code,
+      /document\.activeElement as HTMLElement \| null/,
+      'nothing captures what opened the sheet, so focus cannot be returned to it',
+    )
+    assert.match(
+      code,
+      /document\.contains\(opener\)\) opener\.focus\(\)/,
+      'focus is not returned to the row on close — a keyboard reader lands on body with their place gone',
+    )
+    assert.match(code, /shiftKey/, 'Tab wraps forward only — shift-Tab at the first control still escapes')
+    console.log(
+      `      read-only · z-50 over a z-${navZ} nav · Escape + outside click · Tab trapped both ways, focus returned`,
+    )
   })
 
-  await check('the sheet is mounted twice and reads the bill in ONE statement', async () => {
+  await check('every sheet mount can aim at a bill, and the read is ONE statement', async () => {
     const { readFileSync, readdirSync, statSync } = await import('node:fs')
     const walk = (d: string): string[] =>
       readdirSync(d).flatMap((f) => {
@@ -12225,7 +12284,36 @@ async function run() {
       .map((f) => ({ f, n: (readFileSync(f, 'utf8').match(/<BillSheet[\s/>]/g) ?? []).length }))
       .filter((x) => x.n > 0)
     const total = mounts.reduce((n, m) => n + m.n, 0)
-    assert.equal(total, 2, `BillSheet is mounted ${total} times, not 2: ${mounts.map((m) => m.f).join(', ')}`)
+
+    // NOT A PINNED TOTAL. It asserted exactly 2, which goes red the day a
+    // third screen opens the paper for the same reason the first two do —
+    // ordinary use, failing for a reason unrelated to the rule. The same
+    // commit that added this argued at length that a pinned mount count is the
+    // wrong assertion, and then pinned one.
+    //
+    // THE PROPERTY IS: EVERY MOUNT IS INSIDE SOMETHING THAT CAN OPEN ONE.
+    // The sheet takes a purchase id and a close handler, so a mount is only
+    // meaningful where a bill row exists to supply the id — and it must be
+    // keyed on that id, or a second bill shows the first one's lines under the
+    // second one's name. A file mounting it with no way to choose a bill is
+    // the fault this replaces the count with.
+    assert.ok(total > 0, 'nothing opens the bill sheet — it is built and unreachable')
+    for (const m of mounts) {
+      const src = readFileSync(m.f, 'utf8')
+      assert.match(
+        src,
+        /<BillSheet key=\{/,
+        `${m.f} mounts the sheet without keying it on the bill id — a second bill would show the first one's lines`,
+      )
+      // THE ID COMES FROM A ROW THE READER PICKED. `setOpenBill` is wired to a
+      // per-bill control; a mount whose id is a constant or a prop from
+      // nowhere is a sheet nobody can aim.
+      assert.match(
+        src,
+        /onOpenBill|setOpenBill/,
+        `${m.f} mounts the sheet with no control that chooses which bill — the id cannot come from a row`,
+      )
+    }
     for (const want of ['src/components/store/PayOrAsk.tsx', 'src/components/approvals/AwaitingActions.tsx']) {
       assert.ok(mounts.some((m) => m.f === want), `${want} does not open the sheet`)
     }
@@ -12434,9 +12522,9 @@ async function run() {
         return r.id
       }
       const waitingIds = async () =>
-        (await listMyWaiting(liveTenant, raiser.username, today, tx)).map((r) => r.id)
+        (await listMyWaiting(liveTenant, raiser.username, ['vendor'], today, tx)).map((r) => r.id)
       const decidedIds = async () =>
-        (await listMyOutcomes(liveTenant, raiser.username, tx)).map((r) => r.id)
+        (await listMyOutcomes(liveTenant, raiser.username, ['vendor'], today, tx)).map((r) => r.id)
 
       // ── PENDING: on the waiting list, held by the owner ────────────────
       const pending = await mk('pending', 'owner')
@@ -12451,7 +12539,7 @@ async function run() {
         insert into approval_events (restaurant_id, request_id, action, acted_by, acted_at)
         values (${liveTenant}, ${pending}, 'raised', ${raiser.username},
                 (${today}::date - 4)::timestamptz + interval '10 hours')`
-      const aged = (await listMyWaiting(liveTenant, raiser.username, today, tx)).find((r) => r.id === pending)
+      const aged = (await listMyWaiting(liveTenant, raiser.username, ['vendor'], today, tx)).find((r) => r.id === pending)
       assert.ok(aged !== undefined)
       assert.equal(aged.held_days, 4, `an act four days old reads as ${aged.held_days} days`)
       assert.equal(aged.assigned_to, 'owner')
@@ -12622,7 +12710,24 @@ async function run() {
       t.replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ')
 
     // THE PANEL FEEDS BOTH HALVES, and goes quiet only when BOTH are empty.
-    assert.match(panel, /listMyWaiting\(restaurant\.id, user\.username, today\)/, 'the waiting list is not fetched')
+    // THE CALL IS ASSERTED BY ITS PROPERTY, NOT BY ITS TEXT. This pinned the
+    // exact argument list and went red the day the call correctly GAINED one —
+    // the subject filter — which is a hand-maintained copy of a signature and
+    // the same fault as a pinned mount total. What matters is that the waiting
+    // list is fetched for the SAME reader and the SAME subject as the decided
+    // one: two calls that disagree about either would put a request in one
+    // list and not the other.
+    const waitCall = panel.match(/listMyWaiting\(([^)]*)\)/)
+    const outCall = panel.match(/listMyOutcomes\(([^)]*)\)/)
+    assert.ok(waitCall !== null, 'the waiting list is not fetched at all')
+    assert.ok(outCall !== null, 'the decided list is not fetched at all')
+    for (const arg of ['restaurant.id', 'user.username', 'entityTypes']) {
+      assert.ok(
+        waitCall[1].includes(arg) && outCall[1].includes(arg),
+        `the two lists disagree about ${arg} — a request would sit in one and not the other`,
+      )
+    }
+    assert.ok(waitCall[1].includes('today'), 'the waiting list is not given the business day, so held_days is unanchored')
     assert.match(
       panel,
       /waiting\.length === 0 && rows\.length === 0/,
@@ -12646,6 +12751,181 @@ async function run() {
     // inside it — it goes to the bottom-anchored toast, which survives.
     assert.match(code, /toast\(r\.ok \? r\.message : r\.error/, 'the withdrawal says nothing')
     console.log('      panel feeds both · Withdraw on pending only · owner’s on RouteControl · toast carries it')
+  })
+
+  await check('no gate fixture is standing in the live books', async () => {
+    // THE CENSUS CATCHES A ROW WRITTEN DURING THIS RUN. This catches one that
+    // PREDATES it — a fixture committed by an older suite, or by a probe that
+    // has since been fixed, which no before/after comparison can see because
+    // it never moves again.
+    //
+    // BY NAME, because every probe in this file writes as `gate` and no person
+    // does. Cheap, and it catches the class rather than the instance.
+    const { tsql } = await import('../src/lib/db')
+    const { withTenant } = await import('../src/lib/tenant')
+    const rows = await withTenant(liveTenant, () =>
+      tsql<{ what: string; n: number }[]>`
+        select 'approval_requests' as what, count(*)::int as n
+          from approval_requests where requested_by = 'gate'
+        union all
+        select 'approval_events', count(*)::int
+          from approval_events where acted_by = 'gate'
+        union all
+        select 'payments', count(*)::int
+          from payments where entered_by = 'gate'`,
+    )
+    const dirty = [...rows].filter((r) => r.n > 0)
+    assert.deepEqual(
+      dirty.map((r) => `${r.what}:${r.n}`),
+      [],
+      'a gate fixture is committed in the LIVE tenant — probes write to KB_PROBE_TENANT, or inside a transaction that rolls back',
+    )
+    // NOT VACUOUS: the same query against the probe tenant must FIND some, or
+    // this is matching a name nothing writes and would pass on a typo.
+    const probe = process.env.KB_PROBE_TENANT
+    if (probe === undefined || probe === '') {
+      console.log('      live is clean · KB_PROBE_TENANT unset, so the matcher is UNVERIFIED')
+      return
+    }
+    const onProbeRows = await withTenant(probe, () =>
+      tsql<{ n: number }[]>`select count(*)::int as n from approval_requests where requested_by = 'gate'`,
+    )
+    assert.ok(
+      onProbeRows[0].n > 0,
+      'nothing on the probe tenant is written by `gate` either — this check is matching a name nothing uses',
+    )
+    console.log(`      live clean · ${onProbeRows[0].n} gate row(s) on the probe tenant, which is where they belong`)
+  })
+
+  await check('an outcome shows where its subject lives, and stops being an archive', async () => {
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const { txn } = await import('../src/lib/db')
+    const { listMyOutcomes, listMyWaiting, OUTCOME_DAYS } = await import('../src/server/approvals-queries')
+    const { businessToday } = await import('../src/server/business-day')
+    const today = await businessToday()
+
+    // EVERY MOUNT NAMES ITS SUBJECT, and the prop is required with no default
+    // — a default would put every kind on whichever screen forgot to say,
+    // which is the bug: two item discards decided three weeks ago were
+    // rendering on a vendor-payment page.
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((f) => {
+        const full = `${d}/${f}`
+        return statSync(full).isDirectory() ? walk(full) : full.endsWith('.tsx') ? [full] : []
+      })
+    const files = [...walk('src/app'), ...walk('src/components')]
+    const mounts = files.filter((f) => /<MyOutcomesPanel[\s/>]/.test(readFileSync(f, 'utf8')))
+    assert.ok(mounts.length > 0, 'nothing mounts the outcomes panel — it is built and unreachable')
+    const seen = new Set<string>()
+    for (const f of mounts) {
+      const m = readFileSync(f, 'utf8').match(/<MyOutcomesPanel entityTypes=\{\[([^\]]*)\]\}/)
+      assert.ok(m !== null, `${f} mounts the outcomes panel without saying whose subject the screen is about`)
+      for (const t of m[1].split(',')) seen.add(t.trim().replace(/['"]/g, ''))
+    }
+    const panel = readFileSync('src/components/approvals/AwaitingPanel.tsx', 'utf8')
+    assert.ok(
+      !/entityTypes = \[/.test(panel),
+      'entityTypes has a default — the screen that forgets to say would show every kind again',
+    )
+
+    // EVERY SUBJECT THAT EXISTS IN THE BOOKS HAS A HOME.
+    //
+    // `entity_type` has NO CHECK constraint, so the database cannot say what
+    // kinds there are — APPROVAL_ENTITIES is the only list, which is why it is
+    // a runtime constant rather than a bare type union.
+    //
+    // AND THE EXEMPTION IS A CONDITION, NOT A NAME. Seven subjects are
+    // declared and three have screens; demanding a panel for a meter discard
+    // nobody has ever raised would be ceremony. So a subject is exempt WHILE
+    // no request of that type exists — and the day somebody raises one, this
+    // fails until its outcome has somewhere to read. Printed, so a reader can
+    // see the exemption was considered rather than wonder if it was missed.
+    const { tsql } = await import('../src/lib/db')
+    const { APPROVAL_ENTITIES } = await import('../src/server/approvals-queries')
+    const live = await tsql<{ entity_type: string; n: number }[]>`
+      select entity_type, count(*)::int as n from approval_requests
+      where restaurant_id = ${liveTenant} group by entity_type`
+    const raised = new Map([...live].map((r) => [r.entity_type, r.n]))
+    const homeless = [...APPROVAL_ENTITIES].filter((e) => !seen.has(e) && (raised.get(e) ?? 0) > 0)
+    assert.deepEqual(
+      homeless,
+      [],
+      `these subjects have requests in the books and no screen showing their outcomes: ${homeless.join(', ')}`,
+    )
+    const exempt = [...APPROVAL_ENTITIES].filter((e) => !seen.has(e))
+    if (exempt.length > 0) {
+      console.log(`      exempt, and only while nothing of the type is raised: ${exempt.join(', ')}`)
+    }
+    const entities = [...APPROVAL_ENTITIES]
+
+    // AND THE WINDOW, BY VALUE, on rows built to straddle it.
+    const out = await txn(async (tx) => {
+      const [vendor] = await tx<{ id: string }[]>`
+        select id from vendors where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+      const [item] = await tx<{ id: string }[]>`
+        select id from items where restaurant_id = ${liveTenant} and status = 'active' order by code limit 1`
+      const [raiser] = await tx<{ username: string }[]>`
+        select username from app_users where restaurant_id = ${liveTenant} and role = 'store' and status = 'active' limit 1`
+      assert.ok(vendor !== undefined && item !== undefined && raiser !== undefined, 'fixture sources missing')
+
+      const mk = async (kind: string, entity: string, entityId: string, status: string,
+                        assigned: string | null, daysAgo: number) => {
+        const [r] = await tx<{ id: string }[]>`
+          insert into approval_requests
+            (restaurant_id, kind, entity_type, entity_id, reason, amount, status,
+             assigned_to, requested_by, requested_at, decided_at, decided_by)
+          values (${liveTenant}, ${kind}, ${entity}, ${entityId}, 'Zz window probe',
+                  ${kind === 'payment' ? 500 : null}, ${status}, ${assigned}, ${raiser.username},
+                  -- ::int ON THE PARAMETER, because the driver infers a
+                  -- parameter's type from the cast it sits inside and was
+                  -- reading this one as timestamptz. Same family as the
+                  -- ::text::jsonb rule and the at-time-zone double convert.
+                  (${today}::date - ${daysAgo}::int)::timestamptz,
+                  (${today}::date - ${daysAgo}::int)::timestamptz, 'rajeshanne')
+          returning id`
+        return r.id
+      }
+
+      // a payment applied LONG ago, a payment applied today, a refusal long
+      // ago that still asks something, and an ITEM discard applied today.
+      const oldPaid = await mk('payment', 'vendor', vendor.id, 'applied', null, OUTCOME_DAYS + 13)
+      const newPaid = await mk('payment', 'vendor', vendor.id, 'applied', null, 0)
+      const oldRefused = await mk('payment', 'vendor', vendor.id, 'refused', 'store', OUTCOME_DAYS + 13)
+      const itemToday = await mk('discard', 'item', item.id, 'applied', null, 0)
+
+      const vend = (await listMyOutcomes(liveTenant, raiser.username, ['vendor'], today, tx)).map((r) => r.id)
+      const items = (await listMyOutcomes(liveTenant, raiser.username, ['item'], today, tx)).map((r) => r.id)
+      const waiting = (await listMyWaiting(liveTenant, raiser.username, ['vendor'], today, tx)).map((r) => r.id)
+      const res = {
+        oldPaidOnVendor: vend.includes(oldPaid),
+        newPaidOnVendor: vend.includes(newPaid),
+        oldRefusedOnVendor: vend.includes(oldRefused),
+        itemOnVendor: vend.includes(itemToday),
+        itemOnItems: items.includes(itemToday),
+        paymentOnItems: items.includes(newPaid),
+        refusedInWaiting: waiting.includes(oldRefused),
+      }
+      throw Object.assign(new Error('KB_ROLLBACK'), { res })
+    }).catch((e: unknown) => {
+      if ((e as Error).message !== 'KB_ROLLBACK') throw e
+      return (e as { res: Record<string, boolean> }).res
+    })
+
+    // THE SUBJECT SPLIT — the actual bug, both directions.
+    assert.equal(out.itemOnVendor, false, 'an ITEM discard still renders on the vendor-payment screen')
+    assert.equal(out.itemOnItems, true, 'an item discard reaches no screen at all — worse than the wrong one')
+    assert.equal(out.paymentOnItems, false, 'a vendor payment renders on the item master')
+
+    // THE WINDOW — and the exception, which is the half that matters. A
+    // refusal asks something of the raiser and clears when they tap Noted, not
+    // when a week passes; a payment asks nothing and is news that goes stale.
+    assert.equal(out.newPaidOnVendor, true, `a decision from today is not shown — the window is not ${OUTCOME_DAYS} days`)
+    assert.equal(out.oldPaidOnVendor, false, 'a payment decided three weeks ago is still shown — this is an archive, not a panel')
+    assert.equal(out.oldRefusedOnVendor, true, 'an unacknowledged refusal aged out — it asks something and nobody would ever be told')
+    assert.equal(out.refusedInWaiting, false, 'a refusal is in the waiting list as well as the decided one — it would render twice')
+    console.log(
+      `      ${entities.length} subjects · ${seen.size} with a screen (${[...seen].sort().join(', ')}) · ${OUTCOME_DAYS}-day window, refusals exempt from it`,
+    )
   })
 
   if (only !== null) {

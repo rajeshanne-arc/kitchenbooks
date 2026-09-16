@@ -46,7 +46,7 @@ export default async function StorePaymentPage({
         <p className={pageSubCls}>{restaurant.name} — oldest due first, from bills_outstanding</p>
       </header>
       <AwaitingPanel role={GROUP_QUEUE_ROLE.store} />
-      <MyOutcomesPanel />
+      <MyOutcomesPanel entityTypes={['vendor']} />
       <PaymentClient
         modes={modes}
         accounts={accounts}

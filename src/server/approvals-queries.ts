@@ -35,14 +35,22 @@ export class ApprovalRefusal extends Error {}
  *  raised by a future phase but this app will not try to apply one. */
 export const APPLIABLE_KINDS = ['discard', 'merge', 'reopen_period'] as const
 export type ApprovalKind = (typeof APPLIABLE_KINDS)[number]
-export type ApprovalEntity =
-  | 'item'
-  | 'vendor'
-  | 'recipe'
-  | 'account'
-  | 'meter'
-  | 'location'
-  | 'list_value'
+/** THE SUBJECTS A REQUEST CAN BE ABOUT. A runtime constant rather than a bare
+ *  union, so a gate can read it: `entity_type` has no CHECK constraint, so the
+ *  database cannot answer "what kinds are there" and this is the only list.
+ *  Every one of these needs a screen where its outcomes read — see the
+ *  outcomes panel — and one with nowhere to read is exempt only while nothing
+ *  of that type has ever been raised. */
+export const APPROVAL_ENTITIES = [
+  'item',
+  'vendor',
+  'recipe',
+  'account',
+  'meter',
+  'location',
+  'list_value',
+] as const
+export type ApprovalEntity = (typeof APPROVAL_ENTITIES)[number]
   | 'period'
 
 /**
@@ -1536,11 +1544,22 @@ export async function getVendorStanding(
  */
 export const WAITING_STATUSES = ASSIGNABLE_STATUSES.filter((s) => s !== 'refused')
 
+/** HOW RECENT A DECIDED OUTCOME STAYS WORTH SHOWING. A week: long enough that
+ *  somebody off for a few days still sees what happened while they were away,
+ *  short enough that the panel is about this week rather than the year. A
+ *  refusal ignores it — see listMyOutcomes. */
+export const OUTCOME_DAYS = 7
+
 export type WaitingRow = AwaitingRow & { held_since: string; held_days: number }
 
 export async function listMyWaiting(
   restaurantId: string,
   username: string,
+  /** Same split as the outcomes below it: a request in flight belongs on the
+   *  screen its subject lives on. NO recency window here — something still
+   *  waiting is waiting however long it has been, and hiding it after a week
+   *  would hide exactly the one worth chasing. */
+  entityTypes: readonly ApprovalEntity[],
   /** THE BUSINESS DAY, PASSED IN. The browser says tomorrow at 00:30, and a
    *  screen that reports how long somebody has been sitting on a request must
    *  not add a day to it for two hours a night. */
@@ -1590,6 +1609,7 @@ export async function listMyWaiting(
     ) ev on true
     where a.restaurant_id = ${restaurantId}
       and a.requested_by = ${username}
+      and a.entity_type = any(${[...entityTypes]})
       and a.status = any(${[...WAITING_STATUSES]})
     order by coalesce(ev.acted_at, a.requested_at) asc
     limit 20`
@@ -1618,6 +1638,14 @@ export type OutcomeRow = AwaitingRow & { needs_noting: boolean; decided_it_himse
 export async function listMyOutcomes(
   restaurantId: string,
   username: string,
+  /** WHOSE SUBJECT THIS SCREEN IS ABOUT. An outcome belongs where its subject
+   *  lives — payments on the pay screens, items on the item master, recipes on
+   *  recipes. Without it this filtered on `requested_by` alone and rendered
+   *  ITEM DISCARDS on a vendor-payment page, which is a fact about a code
+   *  nobody standing at that screen is thinking about. */
+  entityTypes: readonly ApprovalEntity[],
+  /** the business day, for the recency window below */
+  today: string,
   tx?: postgres.TransactionSql,
 ): Promise<OutcomeRow[]> {
   const q = (tx ?? tsql) as typeof tsql
@@ -1655,7 +1683,22 @@ export async function listMyOutcomes(
     ) ev on true
     where a.restaurant_id = ${restaurantId}
       and a.requested_by = ${username}
+      and a.entity_type = any(${[...entityTypes]})
       and a.status in ('refused', 'applied')
+      -- AN ARCHIVE IS NOT A NOTIFICATION. This showed every decision ever
+      -- made, so two discards settled twenty days ago still sat on a screen
+      -- somebody opens to see what changed. A panel that never empties is a
+      -- panel nobody reads.
+      --
+      -- REFUSALS ARE THE EXCEPTION AND STAY, however old: a refusal asks
+      -- something of the person who raised it — it changes what they have to
+      -- say to a vendor — and it clears when they tap Noted rather than when
+      -- a week passes. The assigned_to column IS that obligation, which is
+      -- why the two columns exist separately.
+      and (
+        a.assigned_to is not null
+        or coalesce(a.applied_at, a.decided_at, a.requested_at) >= (${today}::date - ${OUTCOME_DAYS}::int)
+      )
     order by (a.assigned_to is not null) desc,
              coalesce(a.applied_at, a.decided_at, a.requested_at) desc
     limit 20`

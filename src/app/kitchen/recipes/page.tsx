@@ -15,6 +15,7 @@ import ViewToggle from '@/components/ViewToggle'
 import { readView, VIEW_KEYS } from '@/lib/views'
 import type { DishCostRow } from '@/lib/types'
 import { businessMonthStart } from '@/server/business-day'
+import { MyOutcomesPanel } from '@/components/approvals/AwaitingPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -127,6 +128,10 @@ export default async function RecipesPage({
 
   return (
     <section className="mt-4 space-y-5">
+      {/* A recipe outcome belongs on the recipe list, for the same reason an
+          item one belongs on the item list: the subject is a card, and this is
+          where somebody is looking at cards. */}
+      <MyOutcomesPanel entityTypes={['recipe']} />
       <div className="flex flex-wrap gap-3">
         <Link
           href="/kitchen/recipes/new?kind=dish"

@@ -6,6 +6,7 @@ import ShowClosed from '@/components/books/ShowClosed'
 import { getRestaurant } from '@/server/queries'
 import { listItems } from '@/server/books-queries'
 import { formatMoneyString } from '@/lib/money'
+import { MyOutcomesPanel } from '@/components/approvals/AwaitingPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +22,12 @@ export default async function ItemsPage({
 
   return (
     <section>
+      {/* WHERE AN ITEM OUTCOME BELONGS. A discard or a merge is a fact about a
+          CODE, and this is the screen somebody is looking at codes on — it was
+          rendering on the vendor-payment page, where nobody is thinking about
+          item codes at all. Silent unless something of theirs is waiting or was
+          decided this week. */}
+      <MyOutcomesPanel entityTypes={['item']} />
       <div className="mt-3 flex items-center justify-end">
         <Link
           href="/store/masters/items/new"

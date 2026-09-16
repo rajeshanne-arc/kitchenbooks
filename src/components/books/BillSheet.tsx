@@ -80,18 +80,79 @@ export default function BillSheet({
     }
   }, [purchaseId])
 
+  // ARIA-MODAL IS A PROMISE, AND THE MARKUP WAS MAKING ONE THE BEHAVIOUR DID
+  // NOT KEEP.
+  //
+  // `aria-modal="true"` tells a screen reader that everything outside this
+  // panel is inert. A keyboard could still Tab straight out of it — into the
+  // pay form, the mode picker and the money-writing buttons underneath, which
+  // a screen-reader user had just been told were not there. Saying a thing is
+  // modal and leaving it traversable is worse than not claiming it: the claim
+  // is what stops somebody looking.
+  //
+  // THREE PARTS, and the third is the one people forget. Trap Tab inside the
+  // panel; close on Escape; and RETURN FOCUS to whatever opened it, because a
+  // sheet that closes leaving focus on `document.body` drops a keyboard reader
+  // at the top of the page with their place in the bill list gone.
   useEffect(() => {
+    // The bill row that opened this. Captured before focus moves, restored on
+    // the way out — and only if it is still in the document, since a row can
+    // legitimately disappear while the sheet is open.
+    const opener = document.activeElement as HTMLElement | null
+
+    const focusable = (): HTMLElement[] =>
+      Array.from(
+        panel.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((el) => el.offsetParent !== null || el === document.activeElement)
+
+    // FOCUS MOVES IN. Without this the first Tab goes to whatever followed the
+    // opener in the document, which is outside the panel.
+    const first = focusable()[0]
+    if (first !== undefined) first.focus()
+    else panel.current?.focus()
+
     const away = (e: MouseEvent) => {
       if (panel.current && !panel.current.contains(e.target as Node)) onClose()
     }
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+    const keys = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const items = focusable()
+      if (items.length === 0) {
+        // NOTHING TO TAB TO, so Tab must not escape either — the panel itself
+        // holds focus rather than handing it to the form underneath.
+        e.preventDefault()
+        panel.current?.focus()
+        return
+      }
+      const firstEl = items[0]
+      const lastEl = items[items.length - 1]
+      const active = document.activeElement
+      // WRAP AT BOTH ENDS, and also catch focus that is already outside — a
+      // click on the overlay, or a browser restoring focus elsewhere.
+      if (panel.current !== null && !panel.current.contains(active)) {
+        e.preventDefault()
+        firstEl.focus()
+      } else if (e.shiftKey && active === firstEl) {
+        e.preventDefault()
+        lastEl.focus()
+      } else if (!e.shiftKey && active === lastEl) {
+        e.preventDefault()
+        firstEl.focus()
+      }
     }
+
     document.addEventListener('mousedown', away)
-    document.addEventListener('keydown', esc)
+    document.addEventListener('keydown', keys)
     return () => {
       document.removeEventListener('mousedown', away)
-      document.removeEventListener('keydown', esc)
+      document.removeEventListener('keydown', keys)
+      if (opener !== null && document.contains(opener)) opener.focus()
     }
   }, [onClose])
 
@@ -104,6 +165,9 @@ export default function BillSheet({
         role="dialog"
         aria-modal="true"
         aria-label="Bill"
+        /* -1 so it never enters the Tab order itself, but CAN hold focus when
+           there is nothing inside to hold it. */
+        tabIndex={-1}
         className="h-full w-full max-w-md overflow-y-auto bg-white shadow-xl sm:max-w-lg"
       >
         <div className="sticky top-0 flex items-baseline justify-between gap-3 border-b border-rule bg-white px-4 py-3">

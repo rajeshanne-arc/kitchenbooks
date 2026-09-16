@@ -27,6 +27,7 @@ import {
   listAwaiting,
   listMyOutcomes,
   listMyWaiting,
+  type ApprovalEntity,
   type VendorRouting,
 } from '@/server/approvals-queries'
 import { listBillNumbersFor, listBillsOutstandingFor } from '@/server/aging-queries'
@@ -110,14 +111,23 @@ export default async function AwaitingPanel({ role }: { role: Role }) {
  * Silent when he has nothing in flight and nothing decided. A permanent empty
  * card is a thing to read and dismiss every morning.
  */
-export async function MyOutcomesPanel() {
+export async function MyOutcomesPanel({
+  /** WHOSE SUBJECT THIS SCREEN IS ABOUT — payments on the pay screens, items
+   *  on the item master, recipes on recipes. Required, with no default: a
+   *  default would put every kind on whichever screen forgot to say, which is
+   *  what this fixes. Two item discards settled three weeks ago were rendering
+   *  on a vendor-payment page. */
+  entityTypes,
+}: {
+  entityTypes: readonly ApprovalEntity[]
+}) {
   const user = await getSessionUser()
   if (!user) return null
   const restaurant = await getRestaurant()
   const today = await businessToday()
   const [waiting, rows] = await Promise.all([
-    listMyWaiting(restaurant.id, user.username, today),
-    listMyOutcomes(restaurant.id, user.username),
+    listMyWaiting(restaurant.id, user.username, entityTypes, today),
+    listMyOutcomes(restaurant.id, user.username, entityTypes, today),
   ])
   if (waiting.length === 0 && rows.length === 0) return null
   return <MyOutcomes waiting={waiting} rows={rows} />

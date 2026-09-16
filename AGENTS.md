@@ -4398,6 +4398,31 @@ discards leaves the counts where it found them — and it caught the live write
 on its first run (`attendance: 32 → 33`). Proved able to fail by pointing the
 probe back at the live tenant.
 
+**AND THE LIST HAD A HOLE IN IT: 33 tables, and neither `approval_requests` nor
+`approval_events`.** Every event table in the app was covered and the two the
+whole approvals machine writes were not — so a probe that raised a request
+against the LIVE books would have moved nothing the census counts, failed
+nothing, and simply turned up in somebody's queue as work. Both are on the list
+now.
+
+**It was found by chasing a wrong premise, which is worth keeping.** A
+`requested_by = 'gate'` row was reported as a leak into the live books. It was
+not: it is on the probe tenant, written by the lock probe, correctly. The row
+was where it belonged — **and the guard that should have been able to say so
+was not there at all.** Chasing a false alarm to its source found a real gap
+that no true alarm had ever fired on.
+
+**A CENSUS CANNOT SEE A FIXTURE THAT PREDATES THE RUN**, because it never moves
+again, so a second check reads the live tenant for anything written by `gate` —
+the name every probe in this file writes under and no person does. Cheap, and
+it catches the class rather than the instance.
+
+That check has a vacuity guard of its own, and it is the half worth copying:
+the same query is run against the PROBE tenant and must FIND something. A
+matcher looking for a username nothing writes would otherwise pass forever on a
+typo, which is precisely how a check for the ABSENCE of something reports
+silence as success.
+
 **The precondition, shipped one commit earlier:** `getRestaurant()` refuses
 with no session once more than one restaurant exists — by design, and in
 those words. Creating any second tenant would have taken down every gate that
@@ -5550,6 +5575,55 @@ a tool somebody drives deliberately, one statement at a time, watching the
 result. That one is a credential whose entire danger is that it can be
 published or leaked and then used by somebody who is not watching anything.
 Deciding about one says nothing about the other.
+
+### THE `set local` WAS DECORATION — and it looked exactly like scoping
+
+**Rajesh's finding, recorded as his, because the correction is worth more than
+the incident:**
+
+> *"My Supabase connection bypasses RLS. `current_user` has `rolbypassrls`, so
+> every `set local app.restaurant_id` I have written in this project has been
+> decoration — I have been reading ALL tenants and believing I was scoped."*
+
+It surfaced on a real reading: a probe row was reported as a leak into the live
+books, and `approval_requests` in fact holds 5 rows for `baf2da0f` and 1 for
+`bc34da3a`. The row was on the probe tenant, where it belonged.
+
+**THE SECTION ABOVE ALREADY SAID THIS** — *"it bypasses RLS"*, *"nothing you do
+through the MCP is subject to the guarantees the rest of this file describes"* —
+so this is not a missing rule. It is the preamble's own argument again: the rule
+was correct, recorded, recent, and read by the person who then worked around it
+without noticing.
+
+**AND THE REASON IT WAS EASY TO MISS IS THE ONLY NEW PART, so it is the part to
+keep.** Writing `set local app.restaurant_id` does not fail. The GUC is set.
+The statement succeeds, the syntax is the app's own, and the session now looks
+exactly like a scoped one from the inside. What is missing is invisible: no
+policy consults the value, because policies are not applied to this role at
+all. **The ceremony that looks like scoping and is not.**
+
+It is the third instance of a shape this file already holds twice:
+
+| | The obvious signal | What it could not say |
+|---|---|---|
+| `revoke … from PUBLIC` | the statement succeeded | the explicit grants survived it |
+| `information_schema` | the grant was absent | `relacl` said it was on all 147 relations |
+| **`set local app.restaurant_id`** | **the GUC was set** | **nothing was reading it** |
+
+Each time the fix is the same and it is not a better rule: **read back the
+thing you meant to change, from the authority, not from the instrument.** Here
+that is one query — `select current_user, rolbypassrls from pg_roles where
+rolname = current_user` — and it answers before any amount of scoping ceremony
+does.
+
+**THE PRACTICAL RULE, which holds whether or not anyone remembers the cause:
+filter with an explicit `where restaurant_id = …` on every ad-hoc read, and
+never let a `set local` stand in for one.** That is what the app's own queries
+do — `audit:tenancy` tier 2 requires it of every read in `src/server` — and the
+reason given there applies exactly here: *a read that is correct solely because a
+policy is switched on is invisible in review.* On this connection the policy is
+not switched on at all.
+
 
 If write access ever stops being wanted, Supabase's MCP takes
 `&read_only=true` in that URL — a one-line change to `.mcp.json`.
@@ -6895,6 +6969,20 @@ The rewrite parses no structure at all. `--` is SQL (TypeScript comments are
 139 SQL comment lines scanned; proved by injecting one and watching it name the
 file and the line.
 
+**FIFTH AND SIXTH INSTANCES, both mine, both inside a comment explaining the
+very rule the comment sat beside.** One wrote `` `business_date` `` while
+explaining why a duration is computed in SQL; the other wrote
+`` `assigned_to is not null` `` while explaining why a refusal is exempt from a
+recency window. The gate named the first by file and line. The second was
+caught by `tsc` instead — the template terminated mid-comment and the rest
+parsed as TypeScript, which here produced a syntax error rather than a silent
+break, and the gate confirmed it afterwards.
+
+That the author of an entry keeps breaking it inside prose about it is no
+longer surprising and is not the lesson. **The lesson is that the gate catches
+it every time and a reader does not** — which is the preamble's argument, now
+with six data points.
+
 ## THE CROSS-VENDOR COMPARISON WAS LIVE
 
 Not a hypothetical avoided during design — a warning that had been shipped and
@@ -7593,6 +7681,55 @@ A fixture has to satisfy every PRECONDITION of the thing it exercises, which
 makes it one query rather than two: "the item with the most history **and** an
 active same-units partner", found together. Deriving on the wrong property is
 how a probe ends up testing a different rule than the one it names.
+
+### AND ONE THAT WOULD HAVE BEEN CONSUMED BY A VENDOR BEING PAID
+
+Same family, found by asking what ordinary use would do to each pinned fixture
+rather than waiting for it to happen.
+
+The default-range check looped every vendor with a balance and asserted the
+invariant on each — the range covers every unpaid bill, its total IS the
+balance, its count IS `open_bills`. Then it named **V-DAR-01** to build a log
+line and asserted that name still had something outstanding. Paying that vendor
+off — the ordinary thing to do with a dairy supplier billed daily — would have
+turned it red for a reason unrelated to anything it tests.
+
+**THE PIN WAS NOT ADDING COVERAGE. IT WAS ADDING A WAY TO FAIL.** The loop
+already held the rule for every vendor; the code contributed nothing but its
+own fragility.
+
+**WHAT WAS GENUINELY MISSING IS THE OTHER HALF, and it is the better find:
+every assertion in that loop holds TRIVIALLY for a vendor with one bill on one
+date.** The range covers it whatever the arithmetic does, the total matches
+whatever `inRange` returns, and a filter that dropped everything or nothing
+would pass identically. So the run now has to have met a vendor whose bills
+span more than one day, or it asserted nothing about ranges at all — and the
+sample is the widest span rather than a named code, which is the same
+derived-on-the-property fix the merge fixture took.
+
+**The general form, and it is cheap to apply:** for every literal in a gate,
+ask what ORDINARY use of the product does to it. A gate that goes red on
+ordinary use is the same failure as one that is always red — it fails for a
+reason unrelated to what it tests, and people learn to skip it. That is how a
+correct, enabled, firing lint rule stayed out of the chain for months.
+
+**THREE VARIETIES OF IT TURNED UP IN ONE SESSION**, which is what makes it a
+family rather than three incidents — and the third was found by the chain going
+red on a change that was correct:
+
+| pinned | went red because |
+|---|---|
+| a vendor CODE | somebody paid that vendor |
+| a mount COUNT | a third screen opened the sheet, which the rule requires |
+| a call SIGNATURE | the call gained an argument it needed |
+
+The last is the easiest to write and the hardest to see, because a regex over
+an argument list looks like it is checking the call. It is checking the
+punctuation. **Assert what the arguments MEAN** — here, that the waiting list
+and the decided list are fetched for the same reader and the same subject,
+since two calls disagreeing about either would put a request in one list and
+not the other. That survives a signature change and catches the fault the text
+match never could.
 
 ## DRIFT FOUND BY USE, NOT BY SWEEP
 
@@ -9847,6 +9984,27 @@ The raise sets it now and every act moves it: a refusal, a cancel and a
 completed payment CLEAR it, because a request nobody is waiting on has to leave
 the queue or the badge stops meaning anything.
 
+### COMMITTED OR NOT IS A CHOICE BETWEEN TWO PROPERTIES — and they are opposites
+
+The two techniques are the same fact read from either end, and which one you
+want decides which you use. Neither is the safer default.
+
+| | What it buys | What it costs |
+|---|---|---|
+| **uncommitted** | a row invisible to every other connection, so any write that opens its own handle RAISES — proving transaction membership for free, with no assertion about transactions at all | no second connection can see it, so a race is impossible |
+| **committed** | two transactions on two connections can contend for one row | it survives the run, so it needs a tenant that can absorb it |
+
+**THE SECOND IS NOT A WEAKER VERSION OF THE FIRST.** Proving a `FOR UPDATE`
+race needs both transactions to see the row; an uncommitted fixture makes the
+contention impossible and the probe then passes by never being a race — a
+member of the vacuous family wearing the safer-looking technique. The lock
+probe in `smoke:a2` commits for exactly that reason, on `KB_PROBE_TENANT`, with
+a fixed uuid reset at the start of each run because `approval_requests` has no
+DELETE grant.
+
+So: **an uncommitted fixture PROVES transaction membership and PREVENTS a race.
+Ask which of the two the assertion is about before choosing.**
+
 ### AN UNCOMMITTED FIXTURE PROVES TRANSACTION MEMBERSHIP WITHOUT ASSERTING IT
 
 **A technique, not an incident — the general form first, because it is reusable
@@ -10816,6 +10974,25 @@ sites, all fixed; removing one `::text` names the file and the fragment.
 why `::text` is needed contains `::jsonb`. That is recorded in the PREAMBLE
 rather than here: it is not a rule about gates, it is the file's strongest
 evidence that written down was not enough.
+
+**TWO MORE, AND THEY ARE ARITHMETIC RATHER THAN ENCODING — which is why they
+raise instead of lying.** `(${today}::date - ${days})::timestamptz` had the
+driver read `days` as a timestamptz because of the cast it sits inside; and
+`${today}::date - ${OUTCOME_DAYS}` had it read the interval as a DATE, making
+the expression `date - date`, which in Postgres is an INTEGER — so a
+`timestamptz >= integer` comparison that no amount of reading the line reveals.
+
+**Both were loud, and that is the only comfort available.** The jsonb case was
+silent and corrupted every row it touched; these two threw
+`cannot cast type integer to timestamp with time zone` and
+`operator does not exist: timestamp with time zone >= integer`. Same cause,
+opposite visibility — and which one you get is luck, not care.
+
+The remedy is unchanged and is now worth stating as a reflex rather than a
+judgement: **pin the parameter's own type at the parameter** — `${days}::int`,
+`${x}::text::jsonb` — rather than trusting the cast around it. A cast is an
+instruction to the driver as well as to Postgres, and the driver reads it
+first.
 
 ## AN HONEST EMPTY STATE CAN ABSORB A BROKEN READ
 
