@@ -6543,9 +6543,18 @@ the first hypothesis, not the last.
 
 ### The diagnostic order, which worked and should be reused
 
-1. **What SHA is the host serving?** From the provider's deployment metadata,
-   never from `git log` — `git log` describes a laptop. Here: production was
-   `f4a74d0`, four days old, with **five** commits local-only.
+1. **What SHA is the host serving?** `./scripts/deployed-sha.sh` — one command,
+   from the provider's deployment metadata, never from `git log`, which
+   describes a laptop. Here: production was `f4a74d0`, four days old, with
+   **five** commits local-only.
+
+   **THE CLI CANNOT ANSWER THIS AND UPGRADING IT DOES NOT HELP.** `vercel
+   inspect` omits the commit SHA at 58.9.0 AND at 59.19.0, with or without
+   `--json`; the upgrade was made specifically to restore this and did not.
+   The REST API does answer it — `/v13/deployments/<id>` → `meta.
+   githubCommitSha` — which is all the script is. Step 1 had rested on a
+   deployment's timestamp and its `git-main` alias three times before it
+   existed, and both of those are inferences.
 2. **CONFIRM THE DEPLOYED TREE PRODUCES THE EXACT SYMPTOM.** The metadata alone
    is an inference; `git show f4a74d0:src/lib/tabs.ts` emitting the exact nine
    labels the user reported, in the exact order, makes it a fact. Also

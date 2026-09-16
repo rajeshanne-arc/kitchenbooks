@@ -16,7 +16,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { MoneyAccount, PaymentResult, VendorDueRow } from '@/lib/types'
 import { recordPayment } from '@/server/books-actions'
-import { formatMoneyString, parseMoney } from '@/lib/money'
+import { decimalStringToPaise, formatMoneyString, parseMoney } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import SaveAck from '@/components/SaveAck'
@@ -53,6 +53,19 @@ export default function BankPayment({
   const [done, setDone] = useState<Extract<PaymentResult, { ok: true }> | null>(null)
 
   const chosen = vendors.find((v) => v.id === vendorId) ?? null
+  // WHAT THE TYPED AMOUNT WOULD LEAVE BEHIND. Null unless it genuinely goes
+  // past the debt, so the note is silent on every ordinary payment — a strip
+  // that is always there is one people learn to look past.
+  const typedPaise = parseMoney(amount.trim())
+  const owedPaise = chosen === null ? null : decimalStringToPaise(chosen.balance)
+  const willCredit =
+    chosen !== null && typedPaise !== null && owedPaise !== null && typedPaise > owedPaise
+      ? {
+          name: chosen.name,
+          owed: chosen.balance,
+          credit: ((typedPaise - owedPaise) / 100).toFixed(2),
+        }
+      : null
   const canSave =
     !busy &&
     vendorId !== '' &&
@@ -113,8 +126,29 @@ export default function BankPayment({
             onDismiss={() => setDone(null)}
             headline={
               <>
-                <span className="tabular-nums">{formatMoneyString(done.payment.amount)}</span> paid — they are now
-                owed <span className="tabular-nums">{formatMoneyString(done.dues.balance)}</span>
+                {/* A NEGATIVE BALANCE IS CREDIT, NOT A NEGATIVE DEBT. This
+                    read "they are now owed −₹500" when a payment went past
+                    what was owed — the same fault this file records for an
+                    over-recovered advance reading as "already owes −₹500".
+                    Paying past the debt is exactly what an ADVANCE is, and
+                    this is the screen advances are made from, so the case is
+                    the normal one here rather than an edge. */}
+                <span className="tabular-nums">{formatMoneyString(done.payment.amount)}</span> paid —{' '}
+                {Number(done.dues.balance) < 0 ? (
+                  <>
+                    they are now <strong>in credit</strong>{' '}
+                    <span className="tabular-nums">
+                      {formatMoneyString(String(Math.abs(Number(done.dues.balance))))}
+                    </span>
+                  </>
+                ) : Number(done.dues.balance) === 0 ? (
+                  <>their account is clear</>
+                ) : (
+                  <>
+                    they are now owed{' '}
+                    <span className="tabular-nums">{formatMoneyString(done.dues.balance)}</span>
+                  </>
+                )}
               </>
             }
             sub={
@@ -203,6 +237,18 @@ export default function BankPayment({
           />
         </label>
 
+        {/* SAID BEFORE THE BUTTON, because this is the advance path and
+            paying past the debt is the point of it rather than a slip. It is
+            a note, never a refusal: the store's request flow refuses an amount
+            above the bills in range and names this screen, so refusing here
+            too would leave advances with nowhere to go at all. */}
+        {willCredit !== null && (
+          <p className="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+            That is more than {willCredit.name} is owed ({formatMoneyString(willCredit.owed)}). It will go
+            through and leave them in credit {formatMoneyString(willCredit.credit)} — which is what an
+            advance looks like on the books.
+          </p>
+        )}
         <button type="button" disabled={!canSave} onClick={() => void save()} className={btnCls}>
           {busy ? 'Recording…' : 'Record payment'}
         </button>

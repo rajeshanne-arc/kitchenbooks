@@ -548,11 +548,6 @@ const PaymentRequestSchema = z.object({
   mode: z.string().trim().min(1).max(40),
   urgency: z.enum(['normal', 'overdue', 'urgent']),
   reason: z.string().trim().min(1).max(300),
-  /** A DELIBERATE ACT, not a guessed default. Paying more than is outstanding
-   *  is legitimate — an advance — and is also what a typo looks like. The
-   *  difference is whether somebody meant it, so it is asked as a plain
-   *  question rather than inferred, the `is_stock_purchase` precedent. */
-  advanceIntent: z.boolean().optional(),
   /** WHICH BILLS THIS IS ABOUT. Required on every new request and defaulted to
    *  everything, so it is never a field somebody has to think about to get the
    *  ordinary case right — but it is never absent either, because "pay them
@@ -663,7 +658,6 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Pa
         vendorName: vendor.name,
         range,
         paise,
-        advanceIntent: input.advanceIntent === true,
       })
 
       const [row] = await tx<{ id: string }[]>`
@@ -692,7 +686,6 @@ export async function requestVendorPayment(raw: PaymentRequestInput): Promise<Pa
                   // fact worth keeping, not a correction to make silently.
                   mode: input.mode,
                   urgency: input.urgency,
-                  advanceIntent: input.advanceIntent === true,
                   vendorName: vendor.name,
                   askedOutstanding: aging.outstanding,
                   askedOpenBills: aging.open_bills,

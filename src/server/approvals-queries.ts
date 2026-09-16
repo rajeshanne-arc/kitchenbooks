@@ -1861,7 +1861,6 @@ export async function assertPayableRange(
     vendorName: string
     range: DateRange
     paise: number
-    advanceIntent: boolean
   },
 ): Promise<{ bills: number; total: string }> {
   const { range, vendorName } = input
@@ -1892,14 +1891,33 @@ export async function assertPayableRange(
     )
   }
 
-  // THE BOUND IS THE RANGE, NOT THE BALANCE. Asking for more than the bills
-  // named can support is what a typo looks like — and an ADVANCE is the one
-  // thing it legitimately looks like too, so the tick stays the deliberate
-  // override it already was rather than becoming impossible the day a range
-  // was added.
-  if (input.paise > inRangePaise && !input.advanceIntent) {
+  // THE BOUND IS THE RANGE, AND THERE IS NO OVERRIDE.
+  //
+  // There used to be one: an advance tick that let the amount exceed the
+  // bills named. It had to go, and removing it is smaller than the column that
+  // would have been needed to keep it.
+  //
+  //   AN ADVANCE IS AN OWNER DECISION ABOUT CASH, not a store request about
+  //   bills. The store manager cannot see the cash position, and whether to
+  //   pay somebody before they have billed is entirely a question about cash.
+  //
+  //   A BILL RANGE IS MEANINGLESS FOR IT. Money against bills that do not
+  //   exist yet has no dates to name, so the request would carry a range that
+  //   describes nothing.
+  //
+  //   AND THE PAY-TIME GUARD COULD NOT HONOUR IT. `assertAmountStillCovered`
+  //   re-checks the amount against the range total under the row lock, and
+  //   the tick was never persisted — there is no advance_intent column. So an
+  //   advance passed at raise and was refused at pay, every time, with
+  //   "pay the lower figure by raising it again". Approved and unpayable.
+  //
+  // One rule now, at both ends: the amount may not exceed what the range
+  // holds. The refusal NAMES WHERE ADVANCES LIVE rather than just saying no —
+  // /accounts/payments/pay takes a vendor, an amount, a mode and an account
+  // with no range and no approval, and it is where the balance is visible.
+  if (input.paise > inRangePaise) {
     throw new ApprovalRefusal(
-      `The bills in this range total ${formatPaise(inRangePaise)} and this asks for ${formatPaise(input.paise)}. An advance is legitimate and a typo is not — tick the advance box to say you meant it, or lower the amount.`,
+      `The bills in this range total ${formatPaise(inRangePaise)} and this asks for ${formatPaise(input.paise)} — this is more than the bills in range. An advance is paid from Owner › Payments, where the account balance is visible.`,
     )
   }
 

@@ -91,7 +91,6 @@ export default function PayOrAsk({
   const [accountId, setAccountId] = useState('')
   const [note, setNote] = useState('')
   const [urgency, setUrgency] = useState<'normal' | 'overdue' | 'urgent'>('normal')
-  const [advanceIntent, setAdvanceIntent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -125,7 +124,6 @@ export default function PayOrAsk({
   // navigation to the bill page could never have promised.
   const [openBill, setOpenBill] = useState<string | null>(null)
 
-  const requestBranch = mode !== '' && !isCashMode(mode)
   const billsBusy = vendorBills === null && billsError === null
   const scopedBills = vendorBills === null ? null : inRange(vendorBills, range)
   const scopedPaise = scopedBills === null ? null : totalPaise(scopedBills)
@@ -221,7 +219,7 @@ export default function PayOrAsk({
       ordered(range) &&
       scopedBills !== null &&
       scopedBills.length > 0 &&
-      (!over || advanceIntent)
+      !over
 
   async function submit() {
     if (!canSave) return
@@ -257,7 +255,6 @@ export default function PayOrAsk({
           mode,
           urgency,
           reason: note.trim(),
-          advanceIntent,
           billsFrom: range.from,
           billsTo: range.to,
         })
@@ -281,7 +278,6 @@ export default function PayOrAsk({
       setAmountTouched(false)
       setAccountId('')
       setNote('')
-      setAdvanceIntent(false)
       // The next ask for this vendor is a different range over the same bills,
       // and one of them has just been claimed — so the list is re-read rather
       // than reused. Nulling it is what the mount effect watches, so the
@@ -314,12 +310,24 @@ export default function PayOrAsk({
           with no composition is a figure nobody can check; a figure whose
           composition silently failed to arrive is worse, because the screen
           looks complete. */}
-      {/* THE READ FAILED, AND AN EMPTY LIST WOULD LOOK IDENTICAL. `vendor_aging`
-          already says how many bills are open, which is a second source that
-          can contradict a composition that came back empty — and without it
-          "no unpaid bills" is what a broken read renders too. Kept from the
-          summary this replaced, because BillRange's own empty state cannot
-          tell the two apart. */}
+      {/* AN HONEST EMPTY STATE CAN ABSORB A BROKEN READ, and this is the one
+          place on this form where it could.
+          BillRange's own empty state says "{vendor} has no unpaid bills, so
+          there is no range to ask about" — which is the right sentence for a
+          vendor who genuinely owes nothing, and the SAME sentence for a read
+          that failed and came back with none. Identical on screen, by
+          construction. That is the fault recorded on 15 Sept: `snapshot` was
+          corrupted on every request ever made and every surface rendered "no
+          snapshot recorded", so a silent corruption looked exactly like a
+          correctly reported gap for the life of the feature.
+          WHAT BREAKS THE TIE IS A SECOND SOURCE. `vendor_aging.open_bills` is
+          counted independently of this read, so a non-zero count beside an
+          empty composition is a contradiction rather than a gap — and it is
+          the only thing here that can tell the two apart.
+          IT CAME FROM THE SUMMARY THIS COMMIT DELETED. Noticing it while
+          removing the block that provided it is the good case; the bad one is
+          deleting the block, keeping the honest empty state, and shipping a
+          screen that cannot distinguish an empty read from an empty account. */}
       {aging !== null && aging.open_bills > 0 && vendorBills !== null && vendorBills.length === 0 && (
         <div className="pb-2">
           <Honesty verdict="bills did not load" level="alarm">
@@ -487,19 +495,20 @@ export default function PayOrAsk({
         </div>
       )}
 
-      {over && requestBranch && (
-        <label className="mt-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5">
-          <input
-            type="checkbox"
-            checked={advanceIntent}
-            onChange={(e) => setAdvanceIntent(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span className="text-xs text-amber-900">
-            This is {formatPaise((amountPaise ?? 0) - (scopedPaise ?? 0))} more than the bills in this range
-            come to ({formatPaise(scopedPaise ?? 0)}) — I mean it as an advance.
-          </span>
-        </label>
+      {/* OVER THE RANGE IS NOW A REFUSAL, NOT A TICK. It used to offer an
+          advance override here; the server refuses it outright, so an amount
+          above the bills in range is said BEFORE the button rather than at
+          save — a refusal at save is a refusal after the work. Where advances
+          live is named, because a dead end is worse than a no. */}
+      {over && (
+        <div className="mt-3">
+          <Honesty verdict="more than the bills in range" level="alarm">
+            The bills between {fmtRange(range.from, range.to)} come to{' '}
+            {formatPaise(scopedPaise ?? 0)} and this asks for {formatPaise(parseMoney(amount) ?? 0)}. Lower
+            it, or widen the range. An advance is paid from Owner › Payments, where the account balance is
+            visible — it is not a request against bills.
+          </Honesty>
+        </div>
       )}
 
       {/* THE BRANCH, IN THE WORDS OF THE ACT, BEFORE THE BUTTON. */}

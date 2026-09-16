@@ -11491,7 +11491,6 @@ async function run() {
         v: { vendor_id: string; name: string },
         range: { from: string; to: string },
         paise: number,
-        advanceIntent = false,
       ) => {
         try {
           const ok = await assertPayableRange(tx, liveTenant, {
@@ -11499,7 +11498,6 @@ async function run() {
             vendorName: v.name,
             range,
             paise,
-            advanceIntent,
           })
           return { refused: null as string | null, scope: ok }
         } catch (e) {
@@ -11522,8 +11520,11 @@ async function run() {
           const back = await catch_(tx, free as never, { from: d.to, to: d.from }, 100)
           // 3. more than the bills can support
           const overAsk = await catch_(tx, free as never, d, total + 100_000)
-          // 4. the same ask with the advance tick — the override still works
-          const advance = await catch_(tx, free as never, d, total + 100_000, true)
+          // 4. ONE RUPEE OVER, which is the boundary the rule actually turns
+          //    on. There used to be an advance tick here that let the amount
+          //    exceed the range; it is gone, and the case that replaces it is
+          //    the one a typo actually looks like.
+          const overByOne = await catch_(tx, free as never, d, total + 100)
           // 5. a clean ask on a vendor nobody is holding
           const clean = await catch_(tx, free as never, d, total)
           // 6. the pre-range claim on the whole balance
@@ -11533,7 +11534,7 @@ async function run() {
             empty: empty.refused,
             back: back.refused,
             overAsk: overAsk.refused,
-            advance: advance.refused,
+            overByOne: overByOne.refused,
             clean: clean.refused,
             whole: whole.refused,
             total: formatPaise(total),
@@ -11555,7 +11556,16 @@ async function run() {
       String(out.overAsk).includes(String(out.total)),
       `the over-ask refusal must name the range total ${out.total} — it said "${out.overAsk}"`,
     )
-    assert.equal(out.advance, null, 'the advance tick no longer overrides the range total — an advance became impossible')
+    // NO OVERRIDE, AT EITHER END. The tick used to let an amount exceed the
+    // range; it was never persisted, so `assertAmountStillCovered` refused the
+    // same request at pay time and an approved advance could never be paid.
+    // One rule now, and the refusal names where advances actually live.
+    assert.ok(out.overByOne !== null, 'one rupee over the range total was accepted — the bound is not a bound')
+    assert.match(
+      String(out.overAsk),
+      /An advance is paid from Owner › Payments/,
+      'the over-range refusal does not say where an advance belongs — a dead end is worse than a no',
+    )
     assert.equal(out.clean, null, `a clean ask on ${out.code} was refused: ${out.clean}`)
     assert.ok(out.whole !== null, `${out.busyCode} has an open request and a second ask was accepted`)
     assert.match(String(out.whole), /whole balance/, 'a pre-range request must refuse as a claim on the whole balance')
