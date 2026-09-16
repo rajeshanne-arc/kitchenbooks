@@ -25,7 +25,7 @@ import {
   searchMergeTargets,
   cancelApproval,
 } from '@/server/approvals-actions'
-import type { ApprovalEntity, Preview } from '@/server/approvals-queries'
+import type { MasterSubject, Preview } from '@/server/approvals-queries'
 import {
   btnCls,
   btnGhostCls,
@@ -50,7 +50,7 @@ type Target = { id: string; code: string; name: string; units: string }
 /** The word each kind of row goes by in the sentences. Mirrors ENTITIES on the
  *  server; kept here rather than passed as a prop so a new entity type is one
  *  edit that a reviewer sees beside the copy it changes. */
-const ENTITY_NOUN: Record<ApprovalEntity, string> = {
+const ENTITY_NOUN: Record<MasterSubject | 'staff', string> = {
   item: 'item',
   vendor: 'vendor',
   recipe: 'recipe',
@@ -58,6 +58,7 @@ const ENTITY_NOUN: Record<ApprovalEntity, string> = {
   meter: 'meter',
   location: 'storage location',
   list_value: 'list value',
+  staff: 'staff member',
   period: 'period',
 }
 
@@ -69,7 +70,7 @@ export default function MasterActions({
   open,
   canRequest,
 }: {
-  entity: ApprovalEntity
+  entity: MasterSubject
   row: Row
   open: OpenRequest | null
   /** LAW 1 on a control rather than a link: a reader who cannot raise one is

@@ -120,3 +120,62 @@ export function creditAge(days: number | null): { stale: boolean; text: string }
     text: `no bill for ${days} days — this will not absorb itself, it has to be asked for`,
   }
 }
+
+/**
+ * WHY THE NUMBER IS LOWER THAN WHAT THEY EARNED.
+ *
+ * A payslip showing ₹8,200 against ₹18,200 earned, with the difference sitting
+ * in three unlabelled columns, is the shape every wage dispute starts from.
+ * The sentence names each deduction and what is still owed afterwards.
+ *
+ * IT SAYS NOTHING WHEN NOTHING WAS DEDUCTED. A line that reads "₹18,200 — no
+ * deductions" is a sentence to read and dismiss on every row of every run.
+ *
+ * PURE, AND IN PAISE. The parts are summed as integers and compared against
+ * the stored net, because adding rounded rupee strings is the associativity
+ * fault this codebase has met four times — and here it would put a sentence on
+ * a payslip that disagrees with the figure beside it by a paisa.
+ */
+export function payslipReason(
+  line: {
+    earned: string
+    overtime: string
+    advance_recovered: string
+    other_deduction: string
+    withholding: string
+    net_payable: string
+  },
+  toPaise: (s: string) => number,
+  money: (s: string) => string,
+  /** what they still owe AFTER this run — null where this screen cannot say */
+  leftOwing: string | null,
+): string | null {
+  const adv = toPaise(line.advance_recovered)
+  const oth = toPaise(line.other_deduction)
+  const wth = toPaise(line.withholding)
+  const cut = adv + oth + wth
+  if (cut <= 0) return null
+
+  const parts: string[] = []
+  if (adv > 0) parts.push(`${money(line.advance_recovered)} recovered against what they owe`)
+  if (oth > 0) parts.push(`${money(line.other_deduction)} other deduction`)
+  if (wth > 0) parts.push(`${money(line.withholding)} withheld`)
+  const list =
+    parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+
+  // THE GAP IS SUMMED IN PAISE, never by subtracting two rupee strings: the
+  // deductions are what make the number lower, so the sentence is built from
+  // them rather than from a second arithmetic on the total.
+  const lower = (cut / 100).toFixed(2)
+
+  const tail =
+    adv <= 0
+      ? ''
+      : leftOwing === null
+        ? ''
+        : Number(leftOwing) > 0
+          ? ` ${money(leftOwing)} is still owed.`
+          : ' Nothing is left owing.'
+
+  return `${money(line.net_payable)} — ${money(lower)} less than earned, being ${list}.${tail}`
+}

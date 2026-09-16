@@ -10,7 +10,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
-import { getPayrollLines, getPayrollRun } from '@/server/payroll-queries'
+import { outstandingTodayByStaff, getPayrollLines, getPayrollRun } from '@/server/payroll-queries'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getSessionUser } from '@/server/current-user'
 import { getList } from '@/server/settings'
@@ -47,10 +47,16 @@ export default async function PayrollRunPage({ params }: { params: Promise<{ id:
   // the account and the mode are asked for only where they are asked for —
   // an approved run waiting to be paid
   const paying = run.status === 'approved'
-  const [lines, accounts, modes] = await Promise.all([
+  const [lines, accounts, modes, owed] = await Promise.all([
     getPayrollLines(run.id),
     paying ? listMoneyAccounts(restaurant.id) : Promise.resolve<MoneyAccount[]>([]),
     paying ? getList(restaurant.id, 'payment_mode') : Promise.resolve<string[]>([]),
+    // WHAT EACH PERSON STILL OWES, so the payslip line can end with it. It is
+    // the balance as it stands TODAY, not as at the run — the run froze what
+    // it recovered and nothing froze the remainder, so this is the only
+    // honest source and the sentence reads "is still owed" rather than
+    // claiming to be historic.
+    outstandingTodayByStaff(restaurant.id),
   ])
 
   const isOwner = user?.role === 'owner'
@@ -135,7 +141,7 @@ export default async function PayrollRunPage({ params }: { params: Promise<{ id:
             the run and preparing another, and both stay on the record.
           </p>
           <div className="mt-2">
-            <PayrollLinesTable lines={lines} />
+            <PayrollLinesTable lines={lines} owed={owed} />
           </div>
         </section>
 

@@ -23,7 +23,13 @@ import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
 import { assertAccount, AccountRefusal } from '@/server/accounts-queries'
-import { getOutstandingAdvances, getPayrollRun } from '@/server/payroll-queries'
+import {
+  getOutstandingAdvances,
+  getPayrollRun,
+  outstandingByStaff,
+  recoveryDrift,
+} from '@/server/payroll-queries'
+import { formatMoneyString } from '@/lib/money'
 import { IdentitySchema, writeIdentity } from '@/server/staff-identity'
 import type {
   MarkPaidInput,
@@ -126,6 +132,28 @@ export async function preparePayrollRun(raw: PreparePayrollInput): Promise<Payro
         )
       }
 
+      // MORE THAN IS OWED IS REFUSED BY NAME, and it is checked HERE rather
+      // than on the form: a form is never the check, and this one is reachable
+      // by anybody who can post to a server action.
+      //
+      // INSIDE THE LOCK, against what is owed NOW. The draft was computed when
+      // the screen loaded; an advance reversed since would make a recovery
+      // that looked right then too large now, and taking money off somebody's
+      // pay that they do not owe is the one error here that cannot be argued
+      // back afterwards.
+      const owedNow = await outstandingByStaff(tx, rid)
+      const over = input.lines
+        .map((l) => ({ l, owed: owedNow.get(l.staffId) ?? 0 }))
+        .filter((x) => Number(x.l.advanceRecovered) > x.owed + 0.005)
+      if (over.length > 0) {
+        const [{ l, owed }] = over
+        const [who] = await tx<{ name: string }[]>`
+          select name from staff where restaurant_id = ${rid} and id = ${l.staffId}`
+        throw new PayrollError(
+          `${who?.name ?? 'Somebody'} owes ${formatMoneyString(owed.toFixed(2))} and this run recovers ${formatMoneyString(l.advanceRecovered)} — a run cannot take back more than was lent.`,
+        )
+      }
+
       const docNo = await nextDocNo(tx, rid, 'RUN', input.periodEnd)
       const [run] = await tx<{ id: string }[]>`
         insert into payroll_runs (restaurant_id, period_start, period_end, doc_no, status, prepared_by, note)
@@ -185,11 +213,32 @@ export async function approvePayrollRun(id: string): Promise<PayrollResult> {
     const by = await actor(['owner'], 'Approving a payroll run')
     const restaurant = await getRestaurant()
 
-    const [row] = await tsql<{ id: string }[]>`
-      update payroll_runs
-      set status = 'approved', approved_by = ${by}, approved_at = now()
-      where id = ${id} and restaurant_id = ${restaurant.id} and status = 'draft'
-      returning id`
+    // THE WORLD MOVES BETWEEN PREPARING AND APPROVING, and an advance taken
+    // in that gap is missed by a run that was computed before it existed.
+    //
+    // IT REFUSES RATHER THAN ADJUSTS, and that is the GRANT speaking rather
+    // than a preference: kb_app holds UPDATE on payroll_lines for exactly
+    // account_id, note, paid_on and pay_mode. No amount is updatable by
+    // anybody, ever — so a run whose recovery is wrong is cancelled and
+    // prepared again, and both stay on the record. Same shape as the payment
+    // drift guard, for the same reason.
+    const [row] = await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${restaurant.id}, 0))`
+      const drift = await recoveryDrift(tx, restaurant.id, id)
+      if (drift.length > 0) {
+        const d = drift[0]
+        throw new PayrollError(
+          drift.length === 1
+            ? `${d.name} owes ${formatMoneyString(d.owed)} now and this run recovers ${formatMoneyString(d.recovering)}. It was prepared before that changed — cancel it and prepare again.`
+            : `${drift.length} people owe something different from what this run recovers — ${d.name} owes ${formatMoneyString(d.owed)} against ${formatMoneyString(d.recovering)}. Cancel it and prepare again.`,
+        )
+      }
+      return tx<{ id: string }[]>`
+        update payroll_runs
+        set status = 'approved', approved_by = ${by}, approved_at = now()
+        where id = ${id} and restaurant_id = ${restaurant.id} and status = 'draft'
+        returning id`
+    })
     if (!row) throw new PayrollError('Only a draft run can be approved — reload and check its status')
 
     const run = await getPayrollRun(restaurant.id, id)

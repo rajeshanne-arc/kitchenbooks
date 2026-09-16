@@ -79,9 +79,21 @@ export default function PrepareRun({
         d.staff_id,
         {
           ...BLANK,
-          // offered, and editable down: a person may not be able to repay the
-          // whole advance out of one month
-          advance: decimalStringToPaise(d.advance_outstanding) > 0 ? d.advance_outstanding : '',
+          // FILLED FROM WHAT IS OWED, not typed. `advance_recovered` has been
+          // keyed in by hand, so a manager who forgets it pays somebody twice
+          // — which is the dispute this exists to stop.
+          //
+          // IT OFFERS THE INSTALMENT ON A LOAN, not the whole balance: it used
+          // to offer `advance_outstanding` for both, which on a ₹40,000 loan
+          // would take the lot out of one month's wages from somebody who
+          // agreed to eight. The server works out which — the full balance for
+          // an advance, one instalment for a loan, and never more than is
+          // outstanding, so a final instalment is whatever is left.
+          //
+          // EDITABLE, AND A WAIVED MONTH STAYS OWED. The balance is given less
+          // recovered, so recovering less simply leaves more of it — there is
+          // no waiver flag to forget and nothing that clears a debt quietly.
+          advance: decimalStringToPaise(d.advance_suggested) > 0 ? d.advance_suggested : '',
         },
       ]),
     ),
@@ -319,6 +331,18 @@ export default function PrepareRun({
                               <PersonLink code={d.staff_code} name={d.staff_name} />
                               {d.unsalaried && <HonestyPill>no salary</HonestyPill>}
                             </span>
+                            {/* WHY THE ADVANCE COLUMN IS FILLED. A figure that
+                                appears in a box somebody did not type needs to
+                                say where it came from, or it gets cleared by
+                                whoever cannot account for it. */}
+                            {decimalStringToPaise(d.advance_outstanding) > 0 && (
+                              <span className="mt-0.5 block text-[11px] text-stone-500">
+                                owes {formatMoneyString(d.advance_outstanding)}
+                                {d.instalment === null
+                                  ? ' — an advance, recovered in full'
+                                  : ` — loan, ${formatMoneyString(d.instalment)} a month`}
+                              </span>
+                            )}
                           </td>
                           <td className={`${tdNumCls} whitespace-nowrap text-stone-500`}>
                             {d.days_paid} / {d.days_in_period}

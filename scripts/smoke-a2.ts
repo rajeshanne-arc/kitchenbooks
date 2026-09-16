@@ -13141,6 +13141,311 @@ async function run() {
     console.log('      since is not read anywhere — the dates come from the columns named for them')
   })
 
+  await check('payroll recovers what is owed, and refuses to take more', async () => {
+    const { payslipReason } = await import('../src/lib/advances')
+    const { decimalStringToPaise, formatMoneyString } = await import('../src/lib/money')
+
+    // THE PAYSLIP SENTENCE, BY VALUE. Three unlabelled deduction columns and a
+    // smaller total is the shape a wage dispute starts from.
+    const say = (l: Parameters<typeof payslipReason>[0], left: string | null) =>
+      payslipReason(l, decimalStringToPaise, formatMoneyString, left)
+    const full = say(
+      { earned: '18000', overtime: '200', advance_recovered: '5000', other_deduction: '0',
+        withholding: '0', net_payable: '13200' },
+      '25000',
+    )
+    assert.ok(full !== null)
+    assert.match(full, /less than earned/)
+    assert.ok(full.includes('5,000'), `the deduction must be named: ${full}`)
+    assert.ok(full.includes('25,000'), `what is still owed must be named: ${full}`)
+    // SILENT WHERE NOTHING WAS DEDUCTED — a row saying "no deductions" is a
+    // thing to read and dismiss on every line of every run.
+    assert.equal(
+      say({ earned: '18000', overtime: '0', advance_recovered: '0', other_deduction: '0',
+            withholding: '0', net_payable: '18000' }, null),
+      null,
+    )
+    // AND IT DOES NOT CLAIM A BALANCE IT WAS NOT GIVEN.
+    const noLeft = say(
+      { earned: '18000', overtime: '0', advance_recovered: '5000', other_deduction: '0',
+        withholding: '0', net_payable: '13000' },
+      null,
+    )
+    assert.ok(noLeft !== null && !/still owed|left owing/.test(noLeft), `it invented a balance: ${noLeft}`)
+
+    // THE FREEZE IS A GRANT, and it is what makes "refuse, never adjust" the
+    // only available answer at approval.
+    const { tsql } = await import('../src/lib/db')
+    const grants = await tsql<{ column_name: string }[]>`
+      select column_name from information_schema.column_privileges
+      where grantee = 'kb_app' and privilege_type = 'UPDATE' and table_name = 'payroll_lines'
+      order by column_name`
+    assert.deepEqual(
+      grants.map((g) => g.column_name),
+      ['account_id', 'note', 'paid_on', 'pay_mode'],
+      'payroll_lines gained an updatable column — if an amount is updatable a decided run can be quietly edited',
+    )
+
+    // ── THE MACHINE, ON THE PROBE TENANT, ROLLED BACK ──────────────────
+    // The live books hold no advance and no run at all, so every branch below
+    // would examine nothing there. The probe tenant exists for exactly this.
+    const { txn } = await import('../src/lib/db')
+    const { withTenant } = await import('../src/lib/tenant')
+    const { outstandingByStaff, recoveryDrift, getPayrollDraft } = await import(
+      '../src/server/payroll-queries'
+    )
+    const probe = process.env.KB_PROBE_TENANT
+    if (probe === undefined || probe === '') {
+      console.log('      KB_PROBE_TENANT unset — the recovery machine is UNTESTED')
+      return
+    }
+
+    const out = await withTenant(probe, () =>
+      txn(async (tx) => {
+        const [st] = await tx<{ id: string; code: string }[]>`
+          select id, code from staff where restaurant_id = ${probe} and status = 'active'
+            and employment_type <> 'contract' order by code limit 1`
+        assert.ok(st !== undefined, 'the probe tenant has no salaried staff to lend to')
+
+        // A LOAN: 40,000 at 5,000 a month, taken TWO HOURS AGO.
+        //
+        // THE WHOLE FIXTURE IS A SEQUENCE and one transaction has only one
+        // clock: `created_at` defaults to now(), which is the TRANSACTION
+        // timestamp and does not advance within one. So every row is stamped
+        // explicitly — loan, then run, then the advance taken after it — or
+        // they all tie and the guard cannot tell any of them apart.
+        await tx`
+          insert into staff_advances (restaurant_id, staff_id, adv_date, amount, instalment, expected_end, entered_by, created_at)
+          values (${probe}, ${st.id}, current_date, 40000, 5000, (current_date + 210)::date, 'gate',
+                  now() - interval '2 hours')`
+
+        const owed = await outstandingByStaff(tx, probe)
+        const draft = await getPayrollDraft(probe, '2001-06-01', '2001-06-30', tx)
+        const line = draft.find((d) => d.staff_id === st.id)
+
+        // A RUN THAT RECOVERS THE INSTALMENT, not the whole balance.
+        // PREPARED AN HOUR AGO, DELIBERATELY. The drift guard asks whether an
+        // advance was taken AFTER the run was prepared, and `created_at`
+        // defaults to now() — the TRANSACTION timestamp, which does not
+        // advance within one. A run and an advance written in the same
+        // transaction carry the identical instant and tie, so the guard would
+        // read "nothing taken since" and the probe would pass while testing
+        // nothing. That is the created_at tie for the sixth time in this file.
+        //
+        // Stamping the run as older is not a trick: it is the only way one
+        // transaction can represent a sequence that in production spans two.
+        const [run] = await tx<{ id: string }[]>`
+          insert into payroll_runs (restaurant_id, period_start, period_end, status, prepared_by, prepared_at)
+          values (${probe}, '2001-06-01', '2001-06-30', 'draft', 'gate', now() - interval '1 hour') returning id`
+        await tx`
+          insert into payroll_lines (restaurant_id, run_id, staff_id, days_in_period, days_paid,
+                                     base_salary, earned, overtime, advance_recovered,
+                                     other_deduction, withholding, net_payable)
+          values (${probe}, ${run.id}, ${st.id}, 30, 30, 20000, 20000, 0, 5000, 0, 0, 15000)`
+
+        const clean = await recoveryDrift(tx, probe, run.id)
+
+        // AN ADVANCE TAKEN BETWEEN PREPARING AND APPROVING must not be missed
+        // — the gap that pays somebody twice.
+        await tx`
+          insert into staff_advances (restaurant_id, staff_id, adv_date, amount, entered_by)
+          values (${probe}, ${st.id}, current_date, 3000, 'gate')`
+        const after = await recoveryDrift(tx, probe, run.id)
+
+        const res = {
+          owed: owed.get(st.id) ?? 0,
+          suggested: line?.advance_suggested ?? null,
+          outstanding: line?.advance_outstanding ?? null,
+          instalment: line?.instalment ?? null,
+          cleanDrift: clean.length,
+          afterDrift: after.length,
+          afterName: after[0]?.name ?? null,
+        }
+        throw Object.assign(new Error('KB_ROLLBACK'), { res })
+      }).catch((e: unknown) => {
+        if ((e as Error).message !== 'KB_ROLLBACK') throw e
+        return (e as { res: Record<string, unknown> }).res
+      }),
+    )
+
+    assert.equal(out.owed, 40000, `the loan is not seen as owed: ${out.owed}`)
+    // COMPARED AS NUMBERS. Postgres preserves scale, so the same value arrives
+    // as '40000' here and '40000.00' elsewhere — trailing zeros are a
+    // difference in spelling and pinning one is a formatting assertion wearing
+    // a value one.
+    assert.equal(Number(out.outstanding), 40000, 'the draft does not see the whole balance')
+    assert.equal(Number(out.instalment), 5000, 'the draft does not carry the instalment')
+    // THE POINT OF THE WHOLE THING: a loan offers ONE instalment, not the lot.
+    // Offering the balance would take a month's wages off somebody who agreed
+    // to eight.
+    assert.equal(
+      Number(out.suggested),
+      5000,
+      `a loan must offer one instalment and it offered ${out.suggested}`,
+    )
+    assert.equal(out.cleanDrift, 0, 'a run recovering exactly the instalment was reported as drifted')
+    assert.equal(
+      out.afterDrift,
+      1,
+      'an advance taken between preparing and approving was NOT caught — that is the run that pays somebody twice',
+    )
+    console.log(
+      `      loan 40,000 @ 5,000 → offers ${out.suggested} not ${out.outstanding} · clean run no drift · advance taken after preparing caught (${out.afterName}) · freeze grant intact`,
+    )
+  })
+
+  await check('a cancelled run does not count as money recovered', async () => {
+    // THE DEFECT, STATED: `staff_owes.recovered` filters `r.status <> 'void'`
+    // and `payroll_runs.status` is draft | approved | paid | cancelled. There
+    // is no 'void' in that CHECK, so the filter excludes NOTHING — a CANCELLED
+    // run's advance_recovered still counts as recovered, which understates
+    // what somebody owes and under-recovers them permanently, with nothing on
+    // any screen looking wrong.
+    //
+    // THE APP DOES NOT READ IT. `outstandingByStaff`, `getPayrollDraft` and
+    // `outstandingTodayByStaff` all filter `<> 'cancelled'` themselves, so
+    // nothing that decides money goes through the broken leg.
+    //
+    // AND THIS IS NOT PERMANENTLY RED, because a gate that always fails is one
+    // people stop reading. The view is exempt WHILE nothing can exercise the
+    // fault — no cancelled run has ever recovered anything — and the day one
+    // does, this fails and names the migration. The condition that makes it
+    // exempt is the thing that expires.
+    const { tsql } = await import('../src/lib/db')
+    const { withTenant } = await import('../src/lib/tenant')
+
+    const [{ def }] = await tsql<{ def: string }[]>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'payroll_runs'::regclass and conname like '%status%'`
+    const statuses = [...new Set([...def.matchAll(/'([a-z]+)'::text/g)].map((m) => m[1]))]
+    const viewDef = await tsql<{ d: string }[]>`select pg_get_viewdef('staff_owes'::regclass, true) as d`
+    const filtersOn = (viewDef[0].d.match(/status <> '([a-z]+)'::text/) ?? [])[1] ?? null
+    const dead = filtersOn !== null && !statuses.includes(filtersOn)
+
+    // CAN IT BITE YET? Only where a cancelled run actually recovered money.
+    const exposed = await withTenant(liveTenant, () =>
+      tsql<{ n: number; v: string }[]>`
+        select count(*)::int as n, coalesce(sum(pl.advance_recovered), 0)::text as v
+        from payroll_lines pl
+        join payroll_runs r on r.id = pl.run_id
+        where r.restaurant_id = ${liveTenant} and r.status = 'cancelled' and pl.advance_recovered > 0`,
+    )
+    const bites = exposed[0].n > 0
+
+    assert.ok(
+      !(dead && bites),
+      `staff_owes excludes runs with status '${filtersOn}', which is not one of ${statuses.join(' | ')} — and ${exposed[0].n} cancelled line(s) worth ${exposed[0].v} are now counted as recovered. That under-recovers those people. The view needs a migration: filter <> 'cancelled'.`,
+    )
+
+    // THE APP'S OWN READS MUST NOT GO THROUGH IT, whatever the view says.
+    const { readFileSync } = await import('node:fs')
+    const q = readFileSync('src/server/payroll-queries.ts', 'utf8')
+    for (const fn of ['outstandingByStaff', 'recoveryDrift', 'outstandingTodayByStaff']) {
+      const at = q.indexOf(`export async function ${fn}`)
+      assert.ok(at > 0, `${fn} is gone`)
+      const body = q.slice(at, q.indexOf('\n}', at))
+      assert.ok(!body.includes('staff_owes'), `${fn} reads staff_owes, whose recovered leg counts cancelled runs`)
+      assert.ok(
+        body.includes("status <> 'cancelled'"),
+        `${fn} does not exclude cancelled runs — a cancelled run's recovery would count as recovered`,
+      )
+    }
+
+    console.log(
+      dead
+        ? bites
+          ? `      staff_owes excludes '${filtersOn}', which is not a real status — AND IT BITES NOW`
+          : `      staff_owes excludes '${filtersOn}', which is not one of ${statuses.join(' | ')} — LATENT: no cancelled run has recovered anything, and the app reads its own arithmetic. Needs a migration before one does.`
+        : `      staff_owes filters on a real status`,
+    )
+  })
+
+  await check('every subject the code can pass is one the column will take', async () => {
+    // A SET THAT CANNOT BE DERIVED FROM CANNOT BE GATED. `entity_type` was free
+    // text until a CHECK was added, so nothing could fire on a subject the
+    // database would refuse — and the first run of this found one:
+    // `requestReopen` had always sent 'period', which the first CHECK omitted,
+    // so reopening a month died on a 23514.
+    //
+    // WHY IT WAS INVISIBLE, and this is the lesson rather than the incident:
+    // the CHECK was enumerated from what the TABLE HELD — item and vendor —
+    // and 'period' had never been raised. AN ENUM DERIVED FROM EXISTING DATA
+    // IS DERIVED FROM WHAT HAS HAPPENED, NOT FROM WHAT IS POSSIBLE.
+    //
+    // SO THIS READS THE CODE, NOT A REGISTRY. MASTER_SUBJECTS is what the app
+    // DECLARES it can send; this is what it actually PASSES, swept out of the
+    // call sites — and the two are different questions. A literal typed at one
+    // call site that no registry mentions is exactly the shape that broke.
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const { tsql } = await import('../src/lib/db')
+    const { MASTER_SUBJECTS, APPROVAL_ENTITIES } = await import('../src/server/approvals-queries')
+
+    const [{ def }] = await tsql<{ def: string }[]>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_entity_type_check'`
+    const allowed = new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))
+    assert.ok(allowed.size >= 5, `only ${allowed.size} subjects parsed from the CHECK — the parse is wrong`)
+
+    // THE TYPE MIRRORS THE COLUMN. A copy that drifts is worse than none.
+    assert.deepEqual(
+      [...APPROVAL_ENTITIES].sort(),
+      [...allowed].sort(),
+      'APPROVAL_ENTITIES and the CHECK disagree about what a subject can be',
+    )
+
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((f) => {
+        const full = `${d}/${f}`
+        return statSync(full).isDirectory()
+          ? walk(full)
+          : full.endsWith('.ts') || full.endsWith('.tsx') ? [full] : []
+      })
+    const strip = (t: string) =>
+      t.replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ')
+
+    // EVERY `entity: '...'` LITERAL IN THE APP, wherever it is written.
+    const passed = new Map<string, string>()
+    for (const f of [...walk('src')]) {
+      for (const m of strip(readFileSync(f, 'utf8')).matchAll(/\bentity:\s*'([a-z_]+)'/g)) {
+        if (!passed.has(m[1])) passed.set(m[1], f)
+      }
+    }
+    assert.ok(passed.size > 0, 'no entity literal found anywhere — the sweep is looking at nothing')
+    // A SMALL COUNT HERE IS CORRECT, and worth saying so nobody reads it as a
+    // broken sweep. Most subjects reach requestApproval through the `entity`
+    // PROP on the master controls, which is typed `MasterSubject` — the
+    // compiler covers those. What it cannot cover is a literal typed at one
+    // call site that no registry mentions, which is exactly what 'period' was
+    // and exactly what this finds.
+
+    const refused = [...passed].filter(([e]) => !allowed.has(e))
+    assert.deepEqual(
+      refused.map(([e, f]) => `${e} (${f})`),
+      [],
+      'these subjects are passed in code and the column refuses them — the insert dies on a 23514 the user cannot act on',
+    )
+
+    // AND WHAT THE APP DECLARES IT CAN SEND, which is the other half: a
+    // registry value nothing passes is dead vocabulary, and a passed value the
+    // registry omits is how the screen and the server drift.
+    const undeclared = [...passed.keys()].filter(
+      (e) => !(MASTER_SUBJECTS as readonly string[]).includes(e) && e !== 'staff',
+    )
+    assert.deepEqual(undeclared, [], `these are passed in code and are in no registry: ${undeclared.join(', ')}`)
+
+    // THE REFUSAL STAYS READABLE FOR THE NEXT UNKNOWN VALUE. The break is
+    // fixed; the class is not — a 23514 stops the work AND says nothing.
+    const act = readFileSync('src/server/approvals-actions.ts', 'utf8')
+    assert.match(
+      act,
+      /entity_type_check/,
+      'nothing catches the entity CHECK by name — the next unknown subject surfaces as a database error',
+    )
+    console.log(
+      `      ${allowed.size} in the CHECK · ${MASTER_SUBJECTS.length} declared · ${passed.size} as a bare literal (${[...passed.keys()].sort().join(', ')}) — the rest are typed, and all are accepted`,
+    )
+  })
+
   if (only !== null) {
     console.log(`\nFILTERED RUN — ${ran} check(s) matching "${only}", ${skipped} skipped. THIS IS NOT THE SUITE.`)
     if (ran === 0) {

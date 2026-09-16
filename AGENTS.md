@@ -5785,6 +5785,43 @@ its column test at a name that does not exist made it name all 99 and exit 1,
 and scoping it to an empty schema made the vacuity guard fire rather than
 passing on nothing.
 
+## AN ENUM DERIVED FROM EXISTING DATA IS DERIVED FROM WHAT HAS HAPPENED
+
+**Rajesh's finding, recorded as his:**
+
+> *"I enumerated `entity_type` from WHAT THE TABLE HELD — item and vendor —
+> when the right source was every value the CODE PASSES. 'period' had never
+> been exercised, so it was invisible in the data."*
+
+`approval_requests.entity_type` was free text and a CHECK was added to close
+that. The CHECK was built from the values in the column, and `requestReopen`
+had been passing `'period'` since that path existed — never stored, because no
+reopen had ever been raised. The constraint landed, and asking to reopen a
+month began dying on a raw 23514.
+
+**THE TWO SOURCES ANSWER DIFFERENT QUESTIONS, and only one of them is about
+the future.** What a column HOLDS is a history of what has been done with it.
+What the code PASSES is the set of things that can happen. Constraining the
+first to fit the second is how a constraint refuses a path nobody has walked
+yet — and the paths nobody has walked are exactly the ones with no test.
+
+**Same family as a stress case drawn from live data**, which stresses only what
+live data happens to contain: the longest vendor name on the books is not the
+longest name the form accepts. Two instances in a week.
+
+**AND THE CHECK WAS STILL WORTH ADDING — it found this on its first run.** That
+is the argument for a derivable set rather than against it: free text could
+never have failed, so the fault would have waited for the first accountant who
+needed a month reopened. A constraint that is briefly wrong and loudly wrong
+beats a column that is permanently unopinionated.
+
+**WHAT HOLDS IT NOW** is a sweep that reads the CODE rather than the registry:
+every `entity: '...'` literal anywhere in `src`, asserted against the CHECK.
+Most subjects reach the action through a typed prop and the compiler covers
+those; what it cannot cover is a literal typed at one call site that no
+registry mentions, which is precisely what `'period'` was. It sits beside the
+kinds gate, because the two are the same mechanism on two columns.
+
 ## A FIXTURE THAT CANNOT TELL TWO ANSWERS APART IS NOT A FIXTURE
 
 The walking-order gate **passed with the ordering deliberately reversed**. Every
@@ -7725,6 +7762,29 @@ ordinary use is the same failure as one that is always red — it fails for a
 reason unrelated to what it tests, and people learn to skip it. That is how a
 correct, enabled, firing lint rule stayed out of the chain for months.
 
+### TWO DIFFERENT RESPONSES TO A RED, AND THE TELL BETWEEN THEM
+
+Both are correct and the next person will reach for one rule. They are not one
+rule.
+
+> **A COUNT THAT DUPLICATES A BY-NAME CHECK IS DELETED, NOT BUMPED.**
+> `TAB_DEFAULTS.accounts.length === 7` could not see a rename, a reorder OR an
+> addition, and its own comment already said the by-name assertion beside it
+> was the real check. Bumping it to 8 would have kept a thing that checks
+> nothing and fails on correct work.
+>
+> **A GOLDEN THAT RECORDS A DELIBERATE DECISION IS UPDATED, NOT WIDENED.** The
+> strip order encodes the reading/writing split — Registers, Parties, Advances
+> and Cash & bank read; Payments, Payroll and Close write. A change to it is a
+> change to the decision, so the expected value moves and the assertion stays
+> exact. Loosening it to a subset check would delete the decision.
+
+**THE TELL IS WHETHER THE PINNED VALUE CARRIES INFORMATION THE OTHER
+ASSERTIONS DO NOT.** A count beside a by-name list carries none — it is
+strictly weaker than the thing next to it. An ordered list of keys carries the
+order, which nothing else asserts. Ask what would stop being checked if the
+literal were deleted: if the answer is "nothing", delete it.
+
 **THREE VARIETIES OF IT TURNED UP IN ONE SESSION**, which is what makes it a
 family rather than three incidents — and the third was found by the chain going
 red on a change that was correct:
@@ -7818,6 +7878,45 @@ because it names the rule in a comment — *a checker that reads source is part 
 the source it reads*, for the second time in this file. It matches the directive
 now.
 
+
+### IT HAPPENED AGAIN, THREE WEEKS ON, WITH A DIFFERENT CHECK
+
+`npm run gates` ran lint, three audits and two smokes — and **not `tsc`**. Two
+type errors sat in the tree and the chain passed clean: adding a member to one
+union broke an exhaustive `Record` and a narrower prop type, and only the build
+would ever have said so.
+
+That is the entry above, repeated, with the roles swapped. Last time the check
+was correct, enabled, firing eleven times and not in the chain. This time it
+was correct, available, reporting two errors and not in the chain. **The fault
+is never the check — it is the list of what gets run.**
+
+`typecheck` leads the chain now, and it landed GREEN: zero errors, so there was
+no backlog to clear. Worth recording, because a chain that starts red teaches
+skipping, and the honest count is what decides whether to add it or fix first.
+
+### WHAT THE CHAIN ACTUALLY RUNS — so the next omission is visible
+
+    npm run gates
+      typecheck      tsc --noEmit
+      lint           eslint src scripts
+      audit:schema   every column the server reads still exists
+      audit:tenancy  writes name a tenant, reads are scoped or keyed, RLS on,
+                     views security_invoker, FKs composite
+      audit:matrix   every role x every route, every literal href
+      smoke:phase-a  nav lists by value, Indian grouping, retired URLs, chips
+      smoke:a2       the suite — period maths by value, then every query
+                     against the real database
+
+**THE LIST IS THE THING THAT ROTS, NOT THE CHECKS.** Both times a gate went
+missing it was because nobody could see what the chain contained without
+reading package.json. Anything added here belongs in that line, and anything in
+that line belongs here — and if the two ever disagree, the line is the truth
+and this paragraph is the stale copy.
+
+`npm run smoke:tenancy` is deliberately NOT in it: it needs a second tenant and
+proves isolation as kb_app with BYPASSRLS off, which is a different question
+from "is this change sound" and is run when tenancy changes.
 ## THE STYLE PICKER RENDERS THE TEMPLATE, NEVER A PICTURE OF IT
 
 Zoho, QuickBooks, Xero and Wave all show thumbnails, and a list of style names

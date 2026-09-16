@@ -4,6 +4,7 @@
 import type { PayrollLineRow } from '@/lib/types'
 import PersonLink from '@/components/labour/PersonLink'
 import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/money'
+import { payslipReason } from '@/lib/advances'
 import Honesty, { HonestyPill } from '@/components/Honesty'
 import {
   dataTableCls,
@@ -27,7 +28,16 @@ type MoneyCol =
 const sum = (rows: PayrollLineRow[], col: MoneyCol): number =>
   rows.reduce((a, r) => a + decimalStringToPaise(r[col]), 0)
 
-export default function PayrollLinesTable({ lines }: { lines: PayrollLineRow[] }) {
+export default function PayrollLinesTable({
+  /** what each person still owes, keyed by staff id — omitted where the screen
+   *  cannot source it, and the sentence then says nothing about a balance
+   *  rather than implying there is none. */
+  owed,
+  lines,
+}: {
+  owed?: Record<string, string>
+  lines: PayrollLineRow[]
+}) {
   // A sum over no rows is not a zero, and the footer below would print six of
   // them — six confident ₹0.00 totals for a run nobody is in.
   if (lines.length === 0) {
@@ -70,6 +80,20 @@ export default function PayrollLinesTable({ lines }: { lines: PayrollLineRow[] }
                       <HonestyPill>no salary</HonestyPill>
                     )}
                   </span>
+                  {/* WHY THE NUMBER IS LOWER THAN WHAT THEY EARNED. Three
+                      unlabelled deduction columns and a smaller total is the
+                      shape every wage dispute starts from — this names each
+                      one and what is still owed after it. Silent where nothing
+                      was deducted, because a row saying "no deductions" is a
+                      thing to read and dismiss on every line of every run. */}
+                  {(() => {
+                    const why = payslipReason(l, decimalStringToPaise, formatMoneyString, owed?.[l.staff_id] ?? null)
+                    return why === null ? null : (
+                      <span className="mt-0.5 block max-w-[38ch] text-[11px] leading-snug text-stone-500">
+                        {why}
+                      </span>
+                    )
+                  })()}
                 </td>
                 <td className={`${tdCls} whitespace-nowrap text-stone-500`}>
                   {l.section_name ?? <span className="text-stone-300">unassigned</span>}

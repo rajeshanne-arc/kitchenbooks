@@ -45,6 +45,17 @@ export const APPROVAL_ENTITIES = [
   'item',
   'vendor',
   'recipe',
+  // TWO SUBJECTS THE CHECK NOW HOLDS. `entity_type` was free text, which is
+  // why nothing could fire on a missing one — A SET THAT CANNOT BE DERIVED
+  // FROM CANNOT BE GATED. It lists all nine now, so the mechanism that caught
+  // kind='advance' without a sentence covers subjects too.
+  'staff',
+  // 'period' was sent by requestReopen from the day that path existed and was
+  // absent from the first CHECK, so reopening a month died on a 23514. It was
+  // invisible because no reopen had ever been raised: AN ENUM DERIVED FROM
+  // EXISTING DATA IS DERIVED FROM WHAT HAS HAPPENED, NOT FROM WHAT IS
+  // POSSIBLE.
+  'period',
   'account',
   'meter',
   'location',
@@ -63,6 +74,46 @@ export type ApprovalEntity = (typeof APPROVAL_ENTITIES)[number]
  * which needs nothing but a status, and offering them a merge would be
  * offering a button whose action does not exist.
  */
+/**
+ * THE TWO SETS, AND WHY THEY ARE STILL TWO.
+ *
+ * `APPROVAL_ENTITIES` is what the column may hold, asserted equal to the
+ * CHECK. `MASTER_SUBJECTS` is what a row on a master screen can be CLOSED as,
+ * and it is smaller for a reason rather than by accident.
+ *
+ * There was briefly a third — `RequestSubject`, naming the gap while the CHECK
+ * refused 'period'. The migration closed that gap, so the type went with it: a
+ * name kept to remember a fixed fault is dead scaffolding, the same conclusion
+ * as the vendor-return refusal flag.
+ */
+
+/**
+ * WHAT A MASTER ACTION CAN DISCARD OR MERGE — a third set, and it is genuinely
+ * a third rather than a tidier version of the other two.
+ *
+ *   APPROVAL_ENTITIES  what the column may hold (the CHECK).
+ *   MASTER_SUBJECTS    what a row on a master screen can be closed as.
+ *
+ * STAFF IS deliberately NOT HERE. A person is RETIRED, never discarded or
+ * merged: their attendance, advances and payroll lines are history that must
+ * keep resolving, and `staff.status` is the only removal path there has ever
+ * been. They appear as a SUBJECT of an advance request and nowhere else.
+ *
+ * The zod enum on `requestApproval` reads this, so the screen and the server
+ * cannot drift about which rows offer the control.
+ */
+export const MASTER_SUBJECTS = [
+  'item',
+  'vendor',
+  'recipe',
+  'account',
+  'meter',
+  'location',
+  'list_value',
+  'period',
+] as const
+export type MasterSubject = (typeof MASTER_SUBJECTS)[number]
+
 export const ENTITIES: Record<ApprovalEntity, { table: string; noun: string; mergeable: boolean }> = {
   item: { table: 'items', noun: 'item', mergeable: true },
   vendor: { table: 'vendors', noun: 'vendor', mergeable: true },
@@ -71,6 +122,10 @@ export const ENTITIES: Record<ApprovalEntity, { table: string; noun: string; mer
   meter: { table: 'meters', noun: 'meter', mergeable: false },
   location: { table: 'storage_locations', noun: 'storage location', mergeable: false },
   list_value: { table: 'list_options', noun: 'list value', mergeable: false },
+  // NOT MERGEABLE AND NOT DISCARDABLE — a person is retired, never closed, and
+  // an advance request names them as its subject. It is here because the CHECK
+  // allows it, not because a master action offers it.
+  staff: { table: 'staff', noun: 'staff member', mergeable: false },
   period: { table: 'period_closes', noun: 'period', mergeable: false },
 }
 

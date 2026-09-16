@@ -13,6 +13,7 @@
 // applied exactly that since phase 5; the draft below reproduces it
 // verbatim rather than inventing a second arithmetic that could drift.
 import 'server-only'
+import type postgres from 'postgres'
 import { sql, tsql } from '@/lib/db'
 import type {
   AdvanceOutstanding,
@@ -110,8 +111,15 @@ export async function getPayrollDraft(
   restaurantId: string,
   from: string,
   to: string,
+  /** THE CALLER MAY LEND ITS TRANSACTION. A gate that writes an advance and
+   *  then asks what the draft offers must be asking on the SAME handle — an
+   *  uncommitted row is invisible to a second connection, so `tsql` here would
+   *  see no advance, offer nothing, and the probe would pass by testing a
+   *  person who owes nothing. The `getClosePrefill` shape, for its reason. */
+  tx?: postgres.TransactionSql,
 ): Promise<PayrollDraftLine[]> {
-  return tsql<PayrollDraftLine[]>`
+  const q = (tx ?? tsql) as typeof tsql
+  return q<PayrollDraftLine[]>`
     with days as (
       select (${to}::date - ${from}::date + 1)::numeric as n
     ),
@@ -127,7 +135,13 @@ export async function getPayrollDraft(
     -- recovery already frozen onto an earlier run. Reversal rows carry a
     -- negative amount, so they net themselves out of the first sum.
     advanced as (
-      select staff_id, sum(amount) as total
+      select staff_id, sum(amount) as total,
+             -- THE INSTALMENT MAKES IT A LOAN. An advance is recovered in
+             -- full from the next run; a loan is recovered a slice at a time,
+             -- and offering the whole balance on one would take a month's
+             -- wages off somebody who agreed to eight.
+             max(instalment) as instalment,
+             max(expected_end) as expected_end
       from staff_advances
       where restaurant_id = ${restaurantId}
       group by staff_id
@@ -150,7 +164,20 @@ export async function getPayrollDraft(
            round(coalesce(s.base_salary, 0)
                  * least(coalesce(m.days_paid, 0), (select n from days))
                  / (select n from days), 2)::text as earned,
-           greatest(coalesce(adv.total, 0) - coalesce(rc.total, 0), 0)::text as advance_outstanding
+           greatest(coalesce(adv.total, 0) - coalesce(rc.total, 0), 0)::text as advance_outstanding,
+           adv.instalment::text as instalment,
+           adv.expected_end::text as expected_end,
+           -- WHAT THIS RUN SHOULD TAKE, computed rather than typed.
+           --
+           -- advance_recovered exists and has been keyed in by hand, so a
+           -- manager who forgets it pays somebody twice — which is the dispute
+           -- this whole thing is for. The full balance for an advance, one
+           -- instalment for a loan, and never more than is outstanding: a
+           -- final instalment is whatever is left, not the round number.
+           least(
+             coalesce(adv.instalment, greatest(coalesce(adv.total, 0) - coalesce(rc.total, 0), 0)),
+             greatest(coalesce(adv.total, 0) - coalesce(rc.total, 0), 0)
+           )::text as advance_suggested
     from staff s
     left join sections sec on sec.id = s.section_id
     left join marks m on m.staff_id = s.id
@@ -229,4 +256,141 @@ export async function listStaffIdentities(restaurantId: string): Promise<StaffId
     left join sections sec on sec.id = s.section_id
     where s.restaurant_id = ${restaurantId} and s.status = 'active'
     order by s.code asc`
+}
+
+/**
+ * WHAT EACH PERSON OWES RIGHT NOW, keyed by staff id.
+ *
+ * IT DOES NOT READ `staff_owes`, AND THAT IS NOT A PREFERENCE. That view's
+ * recovered leg filters `r.status <> 'void'` — and `payroll_runs.status` is
+ * draft | approved | paid | cancelled, with no 'void' in the CHECK at all. So
+ * the filter excludes nothing and a CANCELLED run's recovery still counts as
+ * recovered, which understates what somebody owes and under-recovers them
+ * permanently, with nothing on any screen looking wrong. Reported; it needs a
+ * migration. `getPayrollDraft` has always had this right, and this is the same
+ * arithmetic on the same handle so the two cannot drift.
+ *
+ * ON THE CALLER'S TRANSACTION, because it is read under the advisory lock the
+ * write already holds: what somebody owes must be read in the same breath as
+ * the decision that acts on it.
+ */
+export async function outstandingByStaff(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+): Promise<Map<string, number>> {
+  const rows = await tx<{ staff_id: string; owed: string }[]>`
+    with advanced as (
+      select staff_id, sum(amount) as total from staff_advances
+      where restaurant_id = ${restaurantId} group by staff_id
+    ),
+    recovered as (
+      select pl.staff_id, sum(pl.advance_recovered) as total
+      from payroll_lines pl
+      join payroll_runs r on r.id = pl.run_id
+      where r.restaurant_id = ${restaurantId} and r.status <> 'cancelled'
+      group by pl.staff_id
+    )
+    select a.staff_id::text as staff_id,
+           greatest(coalesce(a.total, 0) - coalesce(rc.total, 0), 0)::text as owed
+    from advanced a
+    left join recovered rc on rc.staff_id = a.staff_id`
+  return new Map(rows.map((r) => [r.staff_id, Number(r.owed)]))
+}
+
+export type RecoveryDrift = { staff_id: string; name: string; owed: string; recovering: string }
+
+/**
+ * WHERE A DRAFT RUN NO LONGER MATCHES WHAT IS OWED.
+ *
+ * BOTH DIRECTIONS ARE DRIFT, and they are different failures:
+ *
+ *   RECOVERING MORE THAN IS OWED takes money off somebody's pay that they do
+ *   not owe — an advance reversed after the run was prepared.
+ *
+ *   RECOVERING LESS THAN IS OWED misses an advance taken between preparing
+ *   and approving, which is the gap that pays somebody twice and is the whole
+ *   reason this runs at approval rather than only at preparation.
+ *
+ * A WAIVED MONTH IS NOT DRIFT. The owner may deliberately recover less, and
+ * this cannot tell that apart from a missed advance — so it compares against
+ * what was OWED WHEN THE RUN WAS PREPARED, not against the suggestion. A
+ * waiver leaves the balance owed and changes nothing here; a new advance
+ * changes the balance and is caught.
+ */
+export async function recoveryDrift(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+  runId: string,
+): Promise<RecoveryDrift[]> {
+  return tx<RecoveryDrift[]>`
+    with advanced_now as (
+      select staff_id, sum(amount) as total from staff_advances
+      where restaurant_id = ${restaurantId} group by staff_id
+    ),
+    -- EVERY OTHER RUN'S recoveries, so this run's own line is not counted as
+    -- already recovered against itself.
+    recovered_elsewhere as (
+      select pl.staff_id, sum(pl.advance_recovered) as total
+      from payroll_lines pl
+      join payroll_runs r on r.id = pl.run_id
+      where r.restaurant_id = ${restaurantId} and r.status <> 'cancelled' and pl.run_id <> ${runId}
+      group by pl.staff_id
+    ),
+    -- WHAT WAS TRUE WHEN IT WAS PREPARED: the balance the line was written
+    -- against, reconstructed as owed-now minus advances taken since.
+    taken_since as (
+      select a.staff_id, sum(a.amount) as total
+      from staff_advances a
+      join payroll_runs r on r.id = ${runId}
+      where a.restaurant_id = ${restaurantId} and a.created_at > r.prepared_at
+      group by a.staff_id
+    )
+    select pl.staff_id::text as staff_id, st.name,
+           greatest(coalesce(an.total, 0) - coalesce(re.total, 0), 0)::text as owed,
+           pl.advance_recovered::text as recovering
+    from payroll_lines pl
+    join staff st on st.id = pl.staff_id
+    left join advanced_now an on an.staff_id = pl.staff_id
+    left join recovered_elsewhere re on re.staff_id = pl.staff_id
+    left join taken_since ts on ts.staff_id = pl.staff_id
+    where pl.run_id = ${runId} and pl.restaurant_id = ${restaurantId}
+      and (
+        -- recovering more than is owed: always wrong
+        pl.advance_recovered > greatest(coalesce(an.total, 0) - coalesce(re.total, 0), 0) + 0.005
+        -- or an advance appeared after this run was prepared
+        or coalesce(ts.total, 0) > 0
+      )
+    order by st.code`
+}
+
+/**
+ * WHAT EACH PERSON OWES TODAY, for a screen rather than a write.
+ *
+ * `outstandingByStaff` takes a transaction because it is read under the lock a
+ * write already holds. This is the same arithmetic for a page, on its own
+ * statement — and it returns rupee STRINGS because that is what the payslip
+ * sentence formats, and converting twice is where a paisa goes missing.
+ *
+ * @scope now
+ */
+export async function outstandingTodayByStaff(
+  restaurantId: string,
+): Promise<Record<string, string>> {
+  const rows = await tsql<{ staff_id: string; owed: string }[]>`
+    with advanced as (
+      select staff_id, sum(amount) as total from staff_advances
+      where restaurant_id = ${restaurantId} group by staff_id
+    ),
+    recovered as (
+      select pl.staff_id, sum(pl.advance_recovered) as total
+      from payroll_lines pl
+      join payroll_runs r on r.id = pl.run_id
+      where r.restaurant_id = ${restaurantId} and r.status <> 'cancelled'
+      group by pl.staff_id
+    )
+    select a.staff_id::text as staff_id,
+           greatest(coalesce(a.total, 0) - coalesce(rc.total, 0), 0)::text as owed
+    from advanced a
+    left join recovered rc on rc.staff_id = a.staff_id`
+  return Object.fromEntries(rows.map((r) => [r.staff_id, r.owed]))
 }

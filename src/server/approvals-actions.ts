@@ -31,6 +31,7 @@ import {
   assertPayer,
   PAYERS,
   SEND_BACK,
+  MASTER_SUBJECTS,
   assertWithdrawable,
   getVendorStanding,
   roleOfRequester,
@@ -70,7 +71,10 @@ function fail(e: unknown): { ok: false; error: string } {
 
 const RequestSchema = z.object({
   kind: z.enum(['discard', 'merge', 'reopen_period']),
-  entity: z.enum(['item', 'vendor', 'recipe', 'account', 'meter', 'location', 'list_value', 'period']),
+  // READ FROM THE REGISTRY, never listed again here: the screen offering
+  // the control and the server accepting it must agree about which rows
+  // can be closed, and two hand-written lists is how they stop agreeing.
+  entity: z.enum(MASTER_SUBJECTS),
   fromId: z.string().regex(UUID),
   toId: z.union([z.literal(''), z.string().regex(UUID)]).optional(),
   reason: z.string().trim().min(1).max(300),
@@ -524,17 +528,38 @@ export async function searchMergeTargets(raw: { entity: ApprovalEntity; q: strin
  * nothing here knows that. The reason is the record of why it came back.
  */
 export async function requestReopen(raw: { periodCloseId: string; reason: string }): Promise<ApprovalResult> {
+  // THE SUBJECT OF A REOPEN IS A PERIOD, AND THE CHECK DOES NOT ALLOW ONE.
+  //
+  // `approval_requests_entity_type_check` lists item · vendor · recipe · staff
+  // · account · meter · location · list_value — and this path has always sent
+  // 'period'. Before the CHECK existed, entity_type was free text and took it;
+  // now the insert dies with a raw 23514 that reaches the accountant as a
+  // database error on a screen where they are trying to explain themselves.
+  //
+  // IT NEEDS ONE LINE OF MIGRATION — 'period' added to that CHECK — and until
+  // then the refusal is at least readable and names what is wrong. A raw
+  // constraint violation is the worst of both: it stops the work AND says
+  // nothing anybody can act on.
   try {
     if (!UUID.test(raw.periodCloseId)) throw new ApprovalRefusal('Malformed period')
     const reason = raw.reason.trim()
     if (reason === '') throw new ApprovalRefusal('Say why it needs reopening — that sentence is the record')
-    return await requestApproval({
+    const res = await requestApproval({
       kind: 'reopen_period',
       entity: 'period',
       fromId: raw.periodCloseId,
       toId: '',
       reason,
     })
+    // READ THE CONSTRAINT BY NAME, never the raw message. Postgres names the
+    // constraint and not the column, and a 23514 on screen is a stopped job
+    // with nothing anybody can do about it.
+    if (!res.ok && /entity_type_check/.test(res.error)) {
+      throw new ApprovalRefusal(
+        'Asking to reopen a month cannot be recorded yet: approval_requests_entity_type_check does not allow a period as a subject. It needs one line of migration — add \'period\' to that CHECK. Until then, ask the owner directly.',
+      )
+    }
+    return res
   } catch (e) {
     return fail(e)
   }

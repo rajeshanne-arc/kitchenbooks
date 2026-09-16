@@ -2904,6 +2904,17 @@ export type PayrollDraftLine = {
   unsalaried: boolean
   earned: string
   advance_outstanding: string
+  /** null unless this person's advance carries one — an instalment is what
+   *  makes it a LOAN rather than an advance, and decides whether a run takes
+   *  the whole balance or one slice. */
+  instalment: string | null
+  expected_end: string | null
+  /** What this run should recover, worked out rather than typed: the whole
+   *  balance for an advance, one instalment for a loan, never more than is
+   *  outstanding. Editable — the owner may waive a month, and a waived month
+   *  stays owed because the balance is given − recovered and a smaller
+   *  recovery simply leaves more of it. */
+  advance_suggested: string
 }
 
 export type PreparePayrollInput = {

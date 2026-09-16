@@ -17,7 +17,7 @@
 import { useState } from 'react'
 import Honesty from '@/components/Honesty'
 import { previewChange, requestApproval } from '@/server/approvals-actions'
-import type { ApprovalEntity, Preview } from '@/server/approvals-queries'
+import type { MasterSubject, Preview } from '@/server/approvals-queries'
 import { btnCls, btnGhostCls, fieldLabelCls, inputCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
 
@@ -28,7 +28,7 @@ export default function DiscardControl({
   noun,
   onDone,
 }: {
-  entity: ApprovalEntity
+  entity: MasterSubject
   id: string
   /** what to call this row in the sentences */
   label: string
