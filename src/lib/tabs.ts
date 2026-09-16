@@ -300,6 +300,15 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       ],
     },
     { key: 'parties', href: '/accounts/parties', label: 'Parties' },
+    // MONEY OUT THAT HAS NOT COME BACK — a READING screen, so it sits with
+    // Registers, Parties and Cash & bank rather than with the writing half.
+    //
+    // It is NOT the payroll chip of the same name. That one is where an
+    // advance is LENT, staff only, beside the payroll that recovers it. This
+    // is the whole exposure — salary advances, loans AND vendor credit, which
+    // is not a payroll fact at all — and it is the screen somebody reads
+    // before agreeing to lend more.
+    { key: 'advances', href: '/accounts/advances', label: 'Advances' },
     // "Money" beside "Payments" told nobody which was which. This one is
     // where the money SITS; the other is where it goes.
     { key: 'money', href: '/accounts/money', label: 'Cash & bank' },

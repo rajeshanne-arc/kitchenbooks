@@ -1855,10 +1855,12 @@ async function run() {
 
   await check('the tab strips shrank as agreed, and nothing lost its route', async () => {
     const { TAB_DEFAULTS } = await import('../src/lib/tabs')
-    // Seven now: Payments joined, and the count is asserted BY NAME in
-    // 'the three strips regrouped by subject' — a count cannot see a rename or
-    // a reorder, which is the whole reason PERIOD_KEYS.length was replaced too.
-    assert.equal(TAB_DEFAULTS.accounts.length, 7, 'accounts should be seven tabs')
+    // THE COUNT IS GONE AND ITS OWN COMMENT SAID WHY. It read "seven now" and
+    // noted that the keys are asserted BY NAME below, because a count cannot
+    // see a rename or a reorder. A count cannot see a legitimate ADDITION
+    // either: it went red when Advances joined, which is the same pinned-total
+    // fault this file now records in four varieties. The by-name assertion is
+    // the check; this was a second, weaker copy of it.
     const acc = TAB_DEFAULTS.accounts.map((t) => t.key)
     assert.ok(!acc.includes('tax') && !acc.includes('export'), 'tax and export folded into registers')
     const regs = TAB_DEFAULTS.accounts.find((t) => t.key === 'registers')
@@ -3642,8 +3644,12 @@ async function run() {
     const keys = (g: 'staff' | 'accounts' | 'sales') => TAB_DEFAULTS[g].map((t) => t.key)
 
     assert.deepEqual(keys('staff'), ['dashboard', 'employees', 'attendance', 'moneyout'])
+    // ADVANCES SITS WITH THE READING HALF — Registers, Parties, Cash & bank —
+    // rather than with Payments, Payroll and Close, which are for writing.
+    // This list is a GOLDEN: the order is the decision, so it is updated when
+    // the decision changes and never widened to make a failure go away.
     assert.deepEqual(keys('accounts'), [
-      'review', 'payments', 'registers', 'parties', 'money', 'payroll', 'close',
+      'review', 'payments', 'registers', 'parties', 'advances', 'money', 'payroll', 'close',
     ])
     assert.deepEqual(keys('sales'), ['dashboard', 'close', 'record', 'partners', 'catering', 'books'])
 
@@ -12926,6 +12932,213 @@ async function run() {
     console.log(
       `      ${entities.length} subjects · ${seen.size} with a screen (${[...seen].sort().join(', ')}) · ${OUTCOME_DAYS}-day window, refusals exempt from it`,
     )
+  })
+
+  /* ── money out that has not come back ──────────────────────────────── */
+  console.log('\nadvances — what has gone out and not returned')
+
+  await check('the advance arithmetic, by value — including what it refuses to say', async () => {
+    const { loanProgress, exposureText, creditAge, monthsBetween, monthLabel, STALE_CREDIT_DAYS } =
+      await import('../src/lib/advances')
+
+    assert.equal(monthsBetween('2026-09-16', '2027-04-16'), 7)
+    assert.equal(monthsBetween('2026-12-01', '2027-01-01'), 1, 'the year roll loses a month')
+    assert.equal(monthsBetween('2027-04-01', '2026-09-01'), -7, 'a future start does not go negative')
+    assert.equal(monthLabel('2027-04-30'), 'Apr 2027')
+
+    // A LOAN MIDWAY: ₹40,000 at ₹5,000 is eight instalments; ₹15,000 recovered
+    // is three of them, and ₹25,000 is left.
+    const mid = loanProgress(
+      { loans_given: '40000', advances_given: '0', instalment: '5000', recovered: '15000',
+        outstanding: '25000', expected_end: '2027-04-30' },
+      '2026-11-16',
+    )
+    assert.ok(mid.known)
+    assert.equal(mid.paid, 3)
+    assert.equal(mid.total, 8)
+    assert.equal(mid.left, '25000')
+    assert.equal(mid.behind, 0, 'a loan on schedule is reported as behind')
+
+    // A MONTH SKIPPED — the thing expected_end exists to make visible. Same
+    // loan, same recovery, but three months further on: five instalments
+    // should have been taken and three were.
+    const late = loanProgress(
+      { loans_given: '40000', advances_given: '0', instalment: '5000', recovered: '15000',
+        outstanding: '25000', expected_end: '2027-04-30' },
+      '2027-01-16',
+    )
+    assert.ok(late.known)
+    assert.equal(late.behind, 2, `two instalments were skipped and it says ${late.known ? late.behind : '?'}`)
+
+    // AND THE TWO IT REFUSES, which is the half that matters. `recovered` sums
+    // every payroll line for a person and is not attributed per advance, so
+    // where somebody holds BOTH the instalment count would be built from a
+    // recovery that partly paid something else.
+    const mixed = loanProgress(
+      { loans_given: '40000', advances_given: '5000', instalment: '5000', recovered: '15000',
+        outstanding: '30000', expected_end: '2027-04-30' },
+      '2026-11-16',
+    )
+    assert.equal(mixed.known, false, 'it reports instalments for somebody holding an advance as well as a loan')
+    assert.match(mixed.known === false ? mixed.why : '', /not split between the two/)
+    const noInst = loanProgress(
+      { loans_given: '0', advances_given: '5000', instalment: null, recovered: '0',
+        outstanding: '5000', expected_end: null },
+      '2026-11-16',
+    )
+    assert.equal(noInst.known, false, 'an advance with no instalment is reported as a loan')
+
+    // EXPOSURE — the unit the lending decision is actually made in.
+    assert.equal(exposureText('2.5'), '2.5 months of salary')
+    assert.equal(exposureText('1'), '1 month of salary')
+    assert.equal(exposureText(null), null, 'no base salary must withhold the figure, not print zero')
+    assert.equal(exposureText('0'), null)
+
+    // CREDIT AGE — never a bare number of days: which of the two it is comes
+    // first, because the rupees cannot say.
+    assert.equal(creditAge(STALE_CREDIT_DAYS).stale, false)
+    assert.equal(creditAge(STALE_CREDIT_DAYS + 1).stale, true, 'the staleness boundary is not where it says')
+    assert.match(creditAge(3).text, /comes off the next one/)
+    assert.match(creditAge(200).text, /has to be asked for/)
+    assert.equal(creditAge(null).stale, true, 'never having bought from them reads as fresh')
+    console.log(`      loan 3 of 8 · 2 skipped seen · both refusals named · stale after ${STALE_CREDIT_DAYS}d`)
+  })
+
+  await check('the three advance views read, and the ledger totals its own sections', async () => {
+    const { getAdvancesLedger, listStaffOwed, listVendorCredit, LEDGER_KINDS } = await import(
+      '../src/server/advances-queries'
+    )
+    const { businessToday } = await import('../src/server/business-day')
+    const today = await businessToday()
+    const [ledger, staff, credit] = await Promise.all([
+      getAdvancesLedger(liveTenant),
+      listStaffOwed(liveTenant),
+      listVendorCredit(liveTenant, today),
+    ])
+
+    // THE KINDS ARE THE VIEW'S. A fourth would land in no section on the page,
+    // silently, so it fails here instead.
+    const kinds = [...new Set(ledger.map((l) => l.kind))]
+    for (const k of kinds) {
+      assert.ok(
+        (LEDGER_KINDS as readonly string[]).includes(k),
+        `advances_ledger emits "${k}", which no section on the page renders — it would be invisible`,
+      )
+    }
+
+    // THE TOTAL IS THE SECTIONS. Summed in paise, because these are rupee
+    // strings and adding rounded subtotals is the associativity fault this
+    // file has now met four times.
+    const { decimalStringToPaise } = await import('../src/lib/money')
+    const whole = ledger.reduce((n, l) => n + decimalStringToPaise(l.amount), 0)
+    const parts = (LEDGER_KINDS as readonly string[])
+      .map((k) => ledger.filter((l) => l.kind === k).reduce((n, l) => n + decimalStringToPaise(l.amount), 0))
+      .reduce((a, b) => a + b, 0)
+    assert.equal(whole, parts, 'the headline total covers rows no section shows')
+
+    // THE STAFF SIDE AGREES WITH THE LEDGER'S STAFF ROWS.
+    const staffRows = ledger.filter((l) => l.kind !== 'vendor credit')
+    assert.equal(
+      staffRows.length,
+      staff.length,
+      `advances_ledger shows ${staffRows.length} staff row(s) and staff_owes ${staff.length} — two views over one fact disagreeing`,
+    )
+    const creditRows = ledger.filter((l) => l.kind === 'vendor credit')
+    assert.equal(creditRows.length, credit.length, 'the vendor sides disagree')
+
+    if (staff.length === 0) {
+      console.log(
+        `      ${ledger.length} ledger row(s) · staff side EMPTY — nothing has been recorded, which the page says is not the same as nothing owed`,
+      )
+    } else {
+      console.log(`      ${ledger.length} ledger row(s) · ${staff.length} staff · ${credit.length} vendor credit(s)`)
+    }
+  })
+
+  await check('an advance voucher never writes an expense — the one thing that double-counts', async () => {
+    // THE P&L IS SAFE FOR THREE REASONS AND ONLY ONE OF THEM IS THE APP'S TO
+    // KEEP. Wages accrue from attendance x base_salary rather than from
+    // net_payable, so a recovery does not touch it; a vendor advance is a
+    // payment, and payments never enter the P&L. Both of those are properties
+    // of views nobody here changes.
+    //
+    // THE THIRD IS THIS ONE: cash_vouchers reach the P&L only through
+    // is_stock_purchase and is_casual_labour, and an advance voucher carries
+    // neither — but nothing stops a future write path also inserting an
+    // expenses row for the same money, and then it is counted twice with
+    // nothing on any screen looking wrong.
+    const { tsql } = await import('../src/lib/db')
+    const { withTenant } = await import('../src/lib/tenant')
+    const rows = await withTenant(liveTenant, () =>
+      tsql<{ n: number }[]>`
+        select count(*)::int as n
+        from cash_vouchers v
+        where v.staff_advance_id is not null
+          and exists (
+            select 1 from expenses e
+            where e.restaurant_id = v.restaurant_id
+              and e.expense_date = v.voucher_date
+              and e.amount = v.amount
+          )`,
+    )
+    assert.equal(
+      rows[0].n,
+      0,
+      'an advance voucher has a matching expenses row — the same money is in the drawer AND the P&L',
+    )
+
+    // AND THE FLAGS IT MUST NOT CARRY, which are the only two routes a
+    // voucher has into the P&L at all.
+    const flagged = await withTenant(liveTenant, () =>
+      tsql<{ n: number }[]>`
+        select count(*)::int as n from cash_vouchers
+        where staff_advance_id is not null
+          and (is_stock_purchase or is_casual_labour)`,
+    )
+    assert.equal(flagged[0].n, 0, 'an advance voucher is flagged as stock or casual labour — it would reach the P&L')
+
+    const n = await withTenant(liveTenant, () =>
+      tsql<{ n: number }[]>`select count(*)::int as n from cash_vouchers where staff_advance_id is not null`,
+    )
+    console.log(
+      n[0].n === 0
+        ? '      0 advance vouchers exist — UNEXERCISED, and the guard is in place before the first one'
+        : `      ${n[0].n} advance voucher(s), none reaching the P&L by either route`,
+    )
+  })
+
+  await check('nothing reads advances_ledger.since, which means three different things', async () => {
+    // THE COLUMN IS POLYMORPHIC AND ITS NAME FITS ONE CASE OF THREE:
+    //   salary advance -> NULL
+    //   vendor credit  -> last_bill, a PAST date
+    //   loan           -> expected_end, a FUTURE one
+    // Rendered under one word it prints "since Apr 2027". The dates are taken
+    // from staff_owes.expected_end and vendor_credit.last_bill instead, where
+    // they are named for what they are — so this asserts the trap is not
+    // walked into rather than trusting somebody to remember it.
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((f) => {
+        const full = `${d}/${f}`
+        return statSync(full).isDirectory()
+          ? walk(full)
+          : full.endsWith('.ts') || full.endsWith('.tsx') ? [full] : []
+      })
+    const strip = (t: string) =>
+      t.replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ')
+    const guilty = [...walk('src')]
+      .filter((f) => {
+        const src = strip(readFileSync(f, 'utf8'))
+        if (!src.includes('advances_ledger')) return false
+        // the select list of the ledger query, and any `.since` read off a row
+        return /\bsince\b/.test(src)
+      })
+    assert.deepEqual(
+      guilty,
+      [],
+      `these read advances_ledger.since, which is expected_end on a loan and last_bill on a credit: ${guilty.join(', ')}`,
+    )
+    console.log('      since is not read anywhere — the dates come from the columns named for them')
   })
 
   if (only !== null) {

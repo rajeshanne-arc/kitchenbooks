@@ -312,6 +312,25 @@ function words(row: OutcomeRow): { chip: string; what: string; nothingToDo: stri
           ? 'You paid it yourself — this is the record.'
           : 'Paid — nothing for you to do. Stop chasing it.',
       }
+    // AN ADVANCE IS NOT A PAYMENT AND MUST NOT BORROW ITS WORDS. "Paid —
+    // stop chasing it" is true of a bill being settled and false of money
+    // lent: the whole point of an advance is that it comes BACK, so the
+    // sentence has to say where from.
+    //
+    // THE NAME MAY BE ABSENT AND THAT IS SAID RATHER THAN GUESSED. The
+    // outcomes query joins items and vendors; a staff-subject advance has no
+    // join yet, so `from_name` is null — and "a vendor" would be a confident
+    // wrong noun on somebody's pay. Fix the join when the advance REQUEST
+    // lands; until then this is honest about not knowing.
+    case 'advance':
+      return {
+        chip: refused ? 'not advanced' : 'advanced',
+        what: row.from_name ?? row.from_code ?? 'the person or vendor it was for',
+        nothingToDo:
+          row.entity_type === 'vendor'
+            ? `Paid as an advance${mine ? ' by you' : ''}. It sits as credit with them until they bill against it.`
+            : `Advanced${mine ? ' by you' : ''}. It comes back out of pay, not by being chased.`,
+      }
     case 'discard':
       return {
         chip: refused ? 'not discarded' : 'discarded',

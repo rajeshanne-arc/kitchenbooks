@@ -15,6 +15,8 @@ import {
 import { getStaffIdentity } from '@/server/payroll-queries'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
+import { getStaffOwed } from '@/server/advances-queries'
+import { exposureText, loanProgress, monthLabel } from '@/lib/advances'
 import PeriodControl from '@/components/dashboard/PeriodControl'
 import OutsidePeriod from '@/components/dashboard/OutsidePeriod'
 import Unassessed from '@/components/dashboard/Unassessed'
@@ -300,12 +302,16 @@ export default async function StaffProfilePage({
 
   // OVERLAP, not containment: a run spanning the boundary covers part of the
   // chosen dates and must count. Same test the settlement gap needed.
-  const [summary, days, payroll, advances, ledger, identity] = await Promise.all([
+  const [summary, days, payroll, advances, ledger, owed, identity] = await Promise.all([
     getAttendanceSummary(restaurant.id, staff.id, period.months),
     getAttendanceDays(restaurant.id, staff.id, period.from, period.to),
     getPayrollHistory(restaurant.id, staff.id),
     getAdvancesOutstanding(restaurant.id, staff.id),
     getAdvanceLedger(restaurant.id, staff.id),
+    // THE NEW VIEW, beside the one this card already read. staff_owes carries
+    // the instalment, the end date and the exposure in months; the older
+    // advances_outstanding carries none of those.
+    getStaffOwed(restaurant.id, staff.id),
     mayHoldIdentity ? getStaffIdentity(restaurant.id, staff.id) : Promise.resolve(null),
   ])
 
@@ -586,7 +592,17 @@ export default async function StaffProfilePage({
           )}
         </Card>
 
-        <Card title="Advances" source="advances_outstanding · staff_advances">
+        <Card title="Advances" source="advances_outstanding · staff_advances · staff_owes">
+          {/* WHAT IS OWED IS A FACT ABOUT NOW, not about the dates above it.
+              A balance does not move when a period control does, and a reader
+              looking at one under a date range is entitled to ask what it
+              would be for their dates — so it is answered rather than left to
+              be guessed. */}
+          <OutsidePeriod
+            basis="now"
+            what={`What ${staff.name} owes is the balance as it stands today — every advance ever given, less everything recovered. It does not move with the dates above.`}
+            className="mb-2"
+          />
           {advances === null && ledger.length === 0 ? (
             <NotApplicable>
               {staff.name} has never been advanced money against wages. Nothing is outstanding because nothing was
@@ -612,6 +628,48 @@ export default async function StaffProfilePage({
                   <Field label="Recovered" value={formatMoneyString(advances.recovered)} />
                 </div>
               )}
+              {/* EXPOSURE, IN THE UNIT THAT MATTERS. The thing that goes
+                  wrong with lending to staff is not the rupees — it is lending
+                  more than can be recovered before somebody leaves, and months
+                  of salary is the only figure that says so. It is the sentence
+                  somebody needs BEFORE agreeing to lend more, which is why it
+                  is on the person rather than only in a central list nobody
+                  opens first. */}
+              {owed !== null && Number(owed.outstanding) > 0 && (
+                <p className="mt-2 text-sm">
+                  {exposureText(owed.months_of_salary) === null ? (
+                    <span className="text-stone-500">
+                      No base salary is set for {staff.name}, so what this is worth in months cannot be
+                      worked out — the rupees are right, the exposure is unknown.
+                    </span>
+                  ) : (
+                    <span className="font-semibold text-amber-700">
+                      That is {exposureText(owed.months_of_salary)}.
+                    </span>
+                  )}
+                </p>
+              )}
+
+              {/* A LOAN IS AN ADVANCE WITH AN INSTALMENT, and the schedule is
+                  the part a total cannot show: whether a month was skipped. */}
+              {owed !== null &&
+                (() => {
+                  const p = loanProgress(owed, today)
+                  if (!p.known) return null
+                  return (
+                    <p className="mt-1 text-sm text-stone-700">
+                      Loan: {p.paid} of {p.total} instalments · {formatMoneyString(p.left)} left
+                      {p.ends !== null && <> · ends {monthLabel(p.ends)}</>}
+                      {p.behind > 0 && (
+                        <span className="font-semibold text-amber-700">
+                          {' '}
+                          · {p.behind} not taken, so it will run past {p.ends === null ? 'plan' : monthLabel(p.ends)}
+                        </span>
+                      )}
+                    </p>
+                  )
+                })()}
+
               {advances !== null && Number(advances.outstanding) < 0 && (
                 <div className="mt-3">
                   <Honesty level="alarm" verdict="over-recovered" compact>

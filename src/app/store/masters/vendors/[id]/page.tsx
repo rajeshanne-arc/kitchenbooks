@@ -8,6 +8,9 @@ import { getVendorReturnReasons } from '@/server/vendor-return-queries'
 import { getPoReadiness } from '@/server/po-queries'
 import { getVendorAging, listBillNumbersFor } from '@/server/aging-queries'
 import { billNumbers } from '@/lib/bill-gaps'
+import { getVendorCredit } from '@/server/advances-queries'
+import { creditAge } from '@/lib/advances'
+import { businessToday } from '@/server/business-day'
 import BillNumberGap from '@/components/books/BillNumberGap'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -49,7 +52,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
   const vendor = await getVendorDetail(restaurant.id, id)
   if (!vendor) notFound()
 
-  const [bills, payments, modes, accounts, returnReasons, open, user, poReady, aging, billNos] =
+  const [bills, payments, modes, accounts, returnReasons, open, user, poReady, aging, credit, billNos] =
     await Promise.all([
       getVendorBills(restaurant.id, id),
       getVendorPayments(id),
@@ -62,6 +65,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
       // The same ageing the pay screen uses, so the form on this page prefills
       // the balance and states its composition rather than opening blank.
       getVendorAging(restaurant.id, id),
+      getVendorCredit(restaurant.id, id, await businessToday()),
       listBillNumbersFor(restaurant.id, [id]),
     ])
   const balP = decimalStringToPaise(vendor.balance)
@@ -114,8 +118,22 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
                 balP > 0 ? 'text-stone-900' : balP < 0 ? 'text-emerald-700' : 'text-stone-400'
               }`}
             >
-              {formatMoneyString(vendor.balance)}
+              {/* NO MINUS UNDER A LABEL THAT ALREADY MEANS CREDIT. The
+                  heading says "Vendor holds advance"; printing −₹0.61 beneath
+                  it negates the direction twice and reads as a debt of minus
+                  something. The same fault the payment acknowledgement had. */}
+              {formatMoneyString(balP < 0 ? String(Math.abs(Number(vendor.balance))) : vendor.balance)}
             </div>
+            {/* WHETHER IT COMES BACK AS GOODS OR HAS TO BE ASKED FOR — the
+                whole signal on a credit, and the rupees cannot carry it. A
+                credit with a supplier we still buy from absorbs itself against
+                the next delivery; one with a supplier we have stopped using
+                never does. */}
+            {credit !== null && (
+              <div className={`mt-0.5 text-xs ${creditAge(credit.days_since_bill).stale ? 'font-semibold text-amber-700' : 'text-stone-500'}`}>
+                {creditAge(credit.days_since_bill).text}
+              </div>
+            )}
             <div className="mt-0.5 text-xs text-stone-500">
               opening {formatMoneyString(vendor.opening_balance)} + purchased{' '}
               {formatMoneyString(vendor.purchased)} − paid {formatMoneyString(vendor.paid)}
