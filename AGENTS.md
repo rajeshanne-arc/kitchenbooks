@@ -6629,6 +6629,18 @@ the first hypothesis, not the last.
    githubCommitSha` — which is all the script is. Step 1 had rested on a
    deployment's timestamp and its `git-main` alias three times before it
    existed, and both of those are inferences.
+
+   **AND THE SCRIPT ITSELF EARNED THE RULE IT EXISTS FOR.** It worked twice and
+   then returned 403 — the CLI's OAuth token had expired 34 minutes earlier,
+   and reading `auth.json` directly does not refresh it: the CLI holds a
+   refresh token and renews ON USE, so a script that only reads the file gets
+   whatever was last written. A `vercel whoami` now runs first purely for that
+   side effect. **A credential read from somebody else's cache is a credential
+   whose freshness is somebody else's business** — and the failure looked like
+   a permissions problem rather than an expiry, which is what made it worth a
+   line here. `curl -f` was added in the same pass, because without it a 403
+   error page was piped into a JSON parser and surfaced as a Python traceback
+   rather than as "the API refused".
 2. **CONFIRM THE DEPLOYED TREE PRODUCES THE EXACT SYMPTOM.** The metadata alone
    is an inference; `git show f4a74d0:src/lib/tabs.ts` emitting the exact nine
    labels the user reported, in the exact order, makes it a fact. Also

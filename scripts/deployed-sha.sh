@@ -16,18 +16,33 @@ set -euo pipefail
 
 AUTH="$HOME/Library/Application Support/com.vercel.cli/auth.json"
 [ -f "$AUTH" ] || { echo "No Vercel CLI credential at $AUTH — run: vercel login" >&2; exit 1; }
+
+# THE TOKEN EXPIRES, AND READING THE FILE DOES NOT REFRESH IT. The CLI holds a
+# refresh token and renews on use; a script that reads auth.json directly gets
+# whatever was last written, which 403s once the hour is up. So a cheap CLI
+# call goes first purely for its side effect. Found the honest way: this script
+# worked twice and then 403'd, 34 minutes after the expiry stamped in the file.
+vercel whoami >/dev/null 2>&1 || true
 TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['token'])" "$AUTH")
+
+api() {
+  # -f makes curl exit non-zero on 4xx/5xx instead of piping an error page into
+  # a JSON parser, which is how a 403 turned into a traceback.
+  curl -fsS -H "Authorization: Bearer $TOKEN" "$@" || {
+    echo "Vercel API refused the request — try: vercel login" >&2
+    exit 1
+  }
+}
 
 if [ $# -ge 1 ]; then
   ID="$1"
 else
-  ID=$(curl -fsS -H "Authorization: Bearer $TOKEN" \
-        "https://api.vercel.com/v6/deployments?app=kitchenbooks&target=production&limit=1" \
-       | python3 -c "import json,sys;d=json.load(sys.stdin)['deployments'];print(d[0]['uid'] if d else '')")
+  ID=$(api "https://api.vercel.com/v6/deployments?app=kitchenbooks&target=production&limit=1" \
+       | python3 -c "import json,sys;d=json.load(sys.stdin).get('deployments') or [];print(d[0]['uid'] if d else '')")
   [ -n "$ID" ] || { echo "No production deployment found" >&2; exit 1; }
 fi
 
-curl -fsS -H "Authorization: Bearer $TOKEN" "https://api.vercel.com/v13/deployments/$ID" \
+api "https://api.vercel.com/v13/deployments/$ID" \
  | python3 -c "
 import json, sys
 d = json.load(sys.stdin); m = d.get('meta') or {}
