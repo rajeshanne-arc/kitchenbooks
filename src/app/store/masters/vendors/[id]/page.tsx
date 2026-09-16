@@ -6,7 +6,7 @@ import { listMoneyAccounts } from '@/server/accounts-queries'
 import { getList } from '@/server/settings'
 import { getVendorReturnReasons } from '@/server/vendor-return-queries'
 import { getPoReadiness } from '@/server/po-queries'
-import { getVendorAging, listBillNumbersFor, listBillsOutstanding } from '@/server/aging-queries'
+import { getVendorAging, listBillNumbersFor } from '@/server/aging-queries'
 import { billNumbers } from '@/lib/bill-gaps'
 import BillNumberGap from '@/components/books/BillNumberGap'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
@@ -49,7 +49,7 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
   const vendor = await getVendorDetail(restaurant.id, id)
   if (!vendor) notFound()
 
-  const [bills, payments, modes, accounts, returnReasons, open, user, poReady, aging, unpaidBills, billNos] =
+  const [bills, payments, modes, accounts, returnReasons, open, user, poReady, aging, billNos] =
     await Promise.all([
       getVendorBills(restaurant.id, id),
       getVendorPayments(id),
@@ -62,7 +62,6 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
       // The same ageing the pay screen uses, so the form on this page prefills
       // the balance and states its composition rather than opening blank.
       getVendorAging(restaurant.id, id),
-      listBillsOutstanding(restaurant.id, id),
       listBillNumbersFor(restaurant.id, [id]),
     ])
   const balP = decimalStringToPaise(vendor.balance)
@@ -272,7 +271,6 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ i
           modes={modes}
           accounts={accounts}
           aging={aging}
-          bills={unpaidBills.slice(0, 3)}
         />
       </section>
 

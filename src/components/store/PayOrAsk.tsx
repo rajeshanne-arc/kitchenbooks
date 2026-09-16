@@ -22,7 +22,7 @@
 // any state held here would go with it. `onDone` hands the numbers to
 // something that survives — the queue above, or the vendor page.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { recordPayment } from '@/server/books-actions'
 import { loadVendorBills, requestVendorPayment } from '@/server/approvals-actions'
@@ -67,7 +67,6 @@ export default function PayOrAsk({
   vendorId,
   vendorName,
   aging,
-  bills,
   accounts,
   modes,
   onDone,
@@ -76,7 +75,6 @@ export default function PayOrAsk({
   vendorName: string
   /** null when nothing is outstanding — an advance, or a first payment */
   aging: VendorAgingRow | null
-  bills: BillOutstandingRow[]
   accounts: MoneyAccount[]
   modes: string[]
   onDone: (ack: PayAck) => void
@@ -101,13 +99,26 @@ export default function PayOrAsk({
   // fetched yet, which is a different state from "this vendor has none", and
   // the screen says which.
   const [vendorBills, setVendorBills] = useState<BillOutstandingRow[] | null>(null)
-  const [billsBusy, setBillsBusy] = useState(false)
+  // DERIVED, NOT STORED. Setting a busy flag synchronously at the top of an
+  // effect is `react-hooks/static-components`' sibling — the rule that caught
+  // the letterhead remount — and it is the same fix BillSheet took: nothing
+  // and no error IS reading. A `fetching` ref keeps one read in flight without
+  // a render-visible write.
+  // BUMPED AFTER A REQUEST IS SENT, which is what re-reads the list. Watching
+  // `vendorBills === null` instead would re-fire on every render that cleared
+  // it and is one condition away from a loop.
+  const [reloadKey, setReloadKey] = useState(0)
   const [billsError, setBillsError] = useState<string | null>(null)
   const [range, setRange] = useState<DateRange>({ from: '', to: businessToday })
   // Once he has typed a figure it is HIS. Narrowing the range after that
   // changes what is being asked about and not what he asked for, and
   // overwriting a typed number would be the app arguing with him.
   const [amountTouched, setAmountTouched] = useState(false)
+  // WHETHER THE DATES ARE STILL THE DEFAULT. They lead the form now, so a
+  // reader arriving at two filled-in dates has no way to tell a default from a
+  // narrowing somebody already applied — and those are different claims about
+  // what is being paid.
+  const [rangeTouched, setRangeTouched] = useState(false)
   const [showAllBills, setShowAllBills] = useState(false)
   // THE SHEET IS A SIBLING, NOT A ROUTE. Everything typed into this form —
   // the range, the amount, the reason — is still here when it closes, which a
@@ -115,38 +126,66 @@ export default function PayOrAsk({
   const [openBill, setOpenBill] = useState<string | null>(null)
 
   const requestBranch = mode !== '' && !isCashMode(mode)
+  const billsBusy = vendorBills === null && billsError === null
   const scopedBills = vendorBills === null ? null : inRange(vendorBills, range)
   const scopedPaise = scopedBills === null ? null : totalPaise(scopedBills)
 
-  /** ONE ROUND TRIP, when the request branch opens. The queue ships three
-   *  bills per vendor because a row expands in place and a payload must not
-   *  grow with the ledger; choosing a range needs all of them for ONE vendor,
-   *  so they are fetched here and every date change afterwards is arithmetic. */
-  async function fetchBills() {
-    setBillsBusy(true)
-    setBillsError(null)
-    try {
-      const res = await loadVendorBills(vendorId)
-      if (!res.ok) {
-        setBillsError(res.error)
-        return
-      }
-      setVendorBills(res.bills)
-      const d = defaultRange(res.bills, businessToday)
-      if (d !== null) {
-        setRange(d)
-        if (!amountTouched) setAmount((totalPaise(inRange(res.bills, d)) / 100).toFixed(2))
-      }
-    } catch {
-      setBillsError('Could not load this vendor’s bills — the range cannot be checked against anything.')
-    } finally {
-      setBillsBusy(false)
+  /** ONE ROUND TRIP, WHEN THE ROW OPENS.
+   *
+   *  It used to fire when the REQUEST branch opened, which meant the range and
+   *  the bills behind it appeared only after a non-cash mode was chosen — so
+   *  somebody opening a row to see which bills he was about to settle found
+   *  the old three-and-older summary instead, and cash never saw the
+   *  composition at all. The range is WHAT is being paid and the mode is HOW;
+   *  the first does not depend on the second, and a cash payment at the door
+   *  settles bills exactly as a transfer does.
+   *
+   *  The queue ships three bills per vendor because a row expands in place and
+   *  a payload must not grow with the ledger; choosing a range needs all of
+   *  them for ONE vendor, so they are fetched here and every date change
+   *  afterwards is arithmetic. */
+  // ON MOUNT, AND AGAIN AFTER A REQUEST IS SENT.
+  //
+  // THE SETSTATE CALLS LIVE IN THE `.then()`, not in a function called from
+  // the effect body. `react-hooks/set-state-in-effect` follows the call
+  // transitively, and it is right to: a synchronous write from an effect is
+  // the shape that caused the letterhead remount. This is the form BillSheet
+  // already uses for the same reason.
+  //
+  // `live` cancels a stale read, so a second row opening while the first is in
+  // flight cannot let the slower answer win.
+  useEffect(() => {
+    let live = true
+    loadVendorBills(vendorId)
+      .then((res) => {
+        if (!live) return
+        if (!res.ok) {
+          setBillsError(res.error)
+          return
+        }
+        setBillsError(null)
+        setVendorBills(res.bills)
+        const d = defaultRange(res.bills, businessToday)
+        if (d !== null) {
+          setRange(d)
+          if (!amountTouched) setAmount((totalPaise(inRange(res.bills, d)) / 100).toFixed(2))
+        }
+      })
+      .catch(() => {
+        if (live) {
+          setBillsError('Could not load this vendor’s bills — the range cannot be checked against anything.')
+        }
+      })
+    return () => {
+      live = false
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendorId, reloadKey])
 
   /** The amount follows the range until he takes it over. */
   function moveRange(next: DateRange) {
     setRange(next)
+    setRangeTouched(true)
     setShowAllBills(false)
     if (!amountTouched && vendorBills !== null) {
       setAmount((totalPaise(inRange(vendorBills, next)) / 100).toFixed(2))
@@ -245,8 +284,11 @@ export default function PayOrAsk({
       setAdvanceIntent(false)
       // The next ask for this vendor is a different range over the same bills,
       // and one of them has just been claimed — so the list is re-read rather
-      // than reused.
+      // than reused. Nulling it is what the mount effect watches, so the
+      // re-read happens rather than the form going dead.
+      setRangeTouched(false)
       setVendorBills(null)
+      setReloadKey((k) => k + 1)
       router.refresh()
     } catch {
       setError(
@@ -272,13 +314,13 @@ export default function PayOrAsk({
           with no composition is a figure nobody can check; a figure whose
           composition silently failed to arrive is worse, because the screen
           looks complete. */}
-      {/* ONE COMPOSITION, NEVER TWO. Before a mode is chosen this is the
-          capped preview the queue already shipped — what the balance is made
-          of. On the request branch it is replaced IN PLACE by the ranged one,
-          which is what is being ASKED for; showing both would put two lists of
-          the same bills on one screen and leave the reader to work out which
-          figure the button is about. The cash branch is untouched. */}
-      {!requestBranch && aging !== null && aging.open_bills > 0 && bills.length === 0 && (
+      {/* THE READ FAILED, AND AN EMPTY LIST WOULD LOOK IDENTICAL. `vendor_aging`
+          already says how many bills are open, which is a second source that
+          can contradict a composition that came back empty — and without it
+          "no unpaid bills" is what a broken read renders too. Kept from the
+          summary this replaced, because BillRange's own empty state cannot
+          tell the two apart. */}
+      {aging !== null && aging.open_bills > 0 && vendorBills !== null && vendorBills.length === 0 && (
         <div className="pb-2">
           <Honesty verdict="bills did not load" level="alarm">
             {aging.vendor_name} has {aging.open_bills}{' '}
@@ -288,28 +330,11 @@ export default function PayOrAsk({
           </Honesty>
         </div>
       )}
-      {!requestBranch && bills.length > 0 && (
-        <ul className="space-y-0.5 border-b border-rule-soft pb-2">
-          {bills.map((b) => (
-            <li key={b.purchase_id} className="flex justify-between gap-2 text-xs text-stone-500">
-              <span className="truncate">
-                {b.bill_no ?? 'no bill no'} · {fmtDate(b.bill_date)}
-                {b.due_date !== null && <span className="text-stone-400"> · due {fmtDate(b.due_date)}</span>}
-              </span>
-              <span className="shrink-0 tabular-nums">{formatMoneyString(b.unpaid)}</span>
-            </li>
-          ))}
-          {aging !== null && aging.open_bills > bills.length && (
-            <li className="text-xs text-stone-400">
-              and {aging.open_bills - bills.length} older{' '}
-              {aging.open_bills - bills.length === 1 ? 'bill' : 'bills'}
-            </li>
-          )}
-        </ul>
-      )}
 
-      {requestBranch && (
+      {/* ALWAYS, FROM THE MOMENT THE ROW OPENS — cash included. */}
+      {(
         <BillRange
+          untouched={!rangeTouched}
           vendorName={vendorName}
           loaded={vendorBills !== null}
           scoped={scopedBills}
@@ -370,12 +395,9 @@ export default function PayOrAsk({
               onChange={(e) => {
                 const next = e.target.value
                 setMode(next)
-                // FETCHED WHEN THE BRANCH OPENS, not when the row does. The
-                // expand still costs nothing, which is the property the
-                // capped-in-SQL payload exists to protect.
-                if (next !== '' && !isCashMode(next) && vendorBills === null && !billsBusy) {
-                  void fetchBills()
-                }
+                // NOTHING TO FETCH HERE ANY MORE. The bills arrive when the
+                // ROW opens, because the range is what is being paid and does
+                // not depend on how the money goes.
               }}
               className={selectCls}
             >
@@ -534,6 +556,7 @@ export default function PayOrAsk({
  * codebase has already paid for once.
  */
 function BillRange({
+  untouched,
   vendorName,
   loaded,
   scoped,
@@ -546,6 +569,7 @@ function BillRange({
   onShowAll,
   onOpenBill,
 }: {
+  untouched: boolean
   vendorName: string
   loaded: boolean
   scoped: BillOutstandingRow[] | null
@@ -586,6 +610,16 @@ function BillRange({
           />
         </label>
       </div>
+
+      {/* SAY THAT IT IS A DEFAULT. Two filled-in dates leading the form look
+          exactly like a narrowing somebody already applied, and those are
+          different claims about what is being paid. It goes quiet the moment
+          he moves either end, because then it IS a narrowing. */}
+      {untouched && loaded && !busy && range.from !== '' && (
+        <p className="mt-1.5 text-xs text-stone-500">
+          Every unpaid bill — the dates are a default, not a narrowing. Change either to ask about less.
+        </p>
+      )}
 
       {busy && <p className="mt-2 text-xs text-stone-400">Reading {vendorName}’s unpaid bills…</p>}
 

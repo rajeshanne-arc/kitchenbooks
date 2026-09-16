@@ -3,7 +3,7 @@ import AwaitingPanel, { MyOutcomesPanel } from '@/components/approvals/AwaitingP
 import { GROUP_QUEUE_ROLE } from '@/server/approvals-queries'
 import { getList } from '@/server/settings'
 import { listMoneyAccounts } from '@/server/accounts-queries'
-import { getAgingCheck, listOldestBillsPerVendor, listVendorAging } from '@/server/aging-queries'
+import { getAgingCheck, listVendorAging } from '@/server/aging-queries'
 import PaymentClient from '@/components/store/PaymentClient'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
 
@@ -27,16 +27,16 @@ export default async function StorePaymentPage({
   const restaurant = await getRestaurant()
   // EVERYTHING THE EXPANSION NEEDS TRAVELS WITH THE QUEUE. A row opens IN
   // PLACE, so the bills it is made of and the vendor's routing details are
-  // fetched once for the whole list rather than on expand — an expand that has
-  // to fetch is worse than a link that moves you. The bills are capped in SQL
-  // at the oldest three per vendor, so the payload does not grow with the
-  // ledger: 250 unpaid bills across 28 vendors today, 84 rows shipped.
-  const [modes, aging, accounts, check, bills] = await Promise.all([
+  // THE CAPPED PREVIEW IS GONE, AND WITH IT A QUERY. It shipped the oldest
+  // three unpaid bills per vendor so an expanded row could state a composition
+  // without fetching. The row now shows the RANGE and the bills inside it from
+  // the moment it opens — all of them for one vendor, fetched by the row
+  // itself — so the three-per-vendor payload had no reader left.
+  const [modes, aging, accounts, check] = await Promise.all([
     getList(restaurant.id, 'payment_mode'),
     listVendorAging(restaurant.id),
     listMoneyAccounts(restaurant.id),
     getAgingCheck(restaurant.id),
-    listOldestBillsPerVendor(restaurant.id),
   ])
 
   return (
@@ -52,7 +52,6 @@ export default async function StorePaymentPage({
         accounts={accounts}
         aging={aging}
         check={check}
-        bills={bills}
         preopenVendorId={preselect ?? null}
       />
     </>

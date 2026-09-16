@@ -12371,7 +12371,7 @@ async function run() {
     const m = (v: string) => `Rs ${v}`
     assert.equal(
       withdrawnMessage('payment', { vendor_name: 'SRI VYSHNAVI', balance: '64815.00', open_requests: 0 }, m),
-      'Withdrawn. SRI VYSHNAVI still owes Rs 64815.00 and nobody is holding a request for them.',
+      'Withdrawn. SRI VYSHNAVI is still owed Rs 64815.00 and nobody is holding a request for them.',
     )
     assert.match(
       withdrawnMessage('payment', { vendor_name: 'X', balance: '0', open_requests: 2 }, m),
@@ -12382,6 +12382,13 @@ async function run() {
     assert.ok(!/owed nothing/.test(broken), 'a failed vendor read renders as "owed nothing"')
     assert.match(broken, /would not read/)
     assert.equal(withdrawnMessage('discard', null, m), 'Withdrawn. Nothing was changed.')
+    // THE DIRECTION OF THE DEBT. vendor_dues.balance is what WE owe THEM, and
+    // the first wording said the vendor owed us — backwards, on the sentence
+    // somebody reads before deciding whether to keep chasing a supplier.
+    assert.ok(
+      !/still owes/.test(withdrawnMessage('payment', { vendor_name: 'V', balance: '1', open_requests: 0 }, m)),
+      'the acknowledgement says the vendor owes us — vendor_dues.balance is what we owe them',
+    )
     console.log(
       `      ${all.length} statuses · ${waiting.size} waiting / ${decided.size} decided / ${silent.size} silent · chase after ${CHASE_AFTER}d`,
     )
@@ -12555,13 +12562,41 @@ async function run() {
     assert.equal(tabHref('accounts', 'money'), '/accounts/money')
     assert.ok(tabLabel('accounts', 'money').length > 0)
 
+    // THE STRIP MUST NOT CLAIM A PERMANENCE THE GRANTS CONTRADICT.
+    //
+    // It first said those movements "can never be matched — they are not
+    // unmatched, they are unmatchable". That is an absence stated as a
+    // permanence, which is the exact overclaim this work was correcting
+    // elsewhere. `payments.account_id` carries an UPDATE grant — every one of
+    // the seven money-movement source tables does, and plainly on purpose:
+    // it is the grant that lets history acquire an account it predates. So
+    // they are matchable the moment somebody fills one in, and the sentence
+    // now says so AND admits there is no screen that does it.
+    //
+    // ASSERTED AS THE INVARIANT THE SENTENCE RESTS ON, not as copy: if that
+    // grant is ever revoked the sentence becomes a lie, and this says which.
+    const grant = await tsql<{ n: number }[]>`
+      select count(*)::int as n from information_schema.column_privileges
+      where grantee = 'kb_app' and privilege_type = 'UPDATE'
+        and table_name = 'payments' and column_name = 'account_id'`
+    assert.equal(
+      grant[0].n,
+      1,
+      'payments.account_id is no longer updatable, so "their account can still be filled in" is false',
+    )
+    assert.ok(
+      !/can never be matched|unmatchable/.test(src),
+      'the strip states a permanence the grant contradicts',
+    )
+    assert.match(src, /can still be filled in/, 'the strip no longer says the accountless ones are fixable')
+
     // NOT VACUOUS, AND HONEST ABOUT WHICH WAY. Today nothing has ever been
     // imported, so the strip is on screen; the day one is, this says so
     // instead of quietly testing nothing.
     if (r.statements === 0) {
       assert.equal(r.matches, 0, 'matches exist with no statement behind them')
       console.log(
-        `      no statement ever imported · ${r.unaccounted} of ${n} movements name no account (${r.unaccounted_value}) — UNMATCHABLE, not unmatched`,
+        `      no statement ever imported · ${r.unaccounted} of ${n} movements name no account (${r.unaccounted_value}) — no line can agree with them until one is filled in`,
       )
     } else {
       console.log(`      ${r.statements} statement(s), ${r.matches} matches — the strip is UNEXERCISED now`)

@@ -128,8 +128,9 @@ export default async function AccountsReviewPage() {
                 {' '}
                 And a statement will not reach all of it: {recon.unaccounted} of the{' '}
                 {recon.unaccounted + recon.reconcilable} movements on the books name no account at
-                all ({formatMoneyString(recon.unaccounted_value)}), so they can never be matched to
-                a line — they are not unmatched, they are unmatchable.
+                all ({formatMoneyString(recon.unaccounted_value)}). As they stand no statement line
+                can agree with them — reconciliation only ever sees a movement that names an
+                account. Their account can still be filled in; nothing in the app does that yet.
               </>
             )}
           </Honesty>

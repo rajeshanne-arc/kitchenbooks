@@ -24,7 +24,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import type { AgingCheck, BillOutstandingRow, MoneyAccount, VendorAgingRow, VendorHit } from '@/lib/types'
+import type { AgingCheck, MoneyAccount, VendorAgingRow, VendorHit } from '@/lib/types'
 import { useSearch } from '@/components/useSearch'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -49,16 +49,12 @@ export default function PaymentClient({
   accounts,
   aging,
   check,
-  bills,
   preopenVendorId = null,
 }: {
   modes: string[]
   accounts: MoneyAccount[]
   aging: VendorAgingRow[]
   check: AgingCheck
-  /** the oldest three unpaid bills per vendor, keyed by vendor id — capped in
-   *  SQL so the payload does not grow with the ledger */
-  bills: Record<string, BillOutstandingRow[]>
   /** a bookmarked ?vendor= still opens its row; it no longer navigates */
   preopenVendorId?: string | null
 }) {
@@ -176,7 +172,6 @@ export default function PaymentClient({
                       overdue={overdue}
                       isOpen={isOpen}
                       onToggle={() => setOpen(isOpen ? null : a.vendor_id)}
-                      bills={bills[a.vendor_id] ?? []}
                       accounts={accounts}
                       modes={modes}
                       onDone={done}
@@ -255,7 +250,6 @@ export default function PaymentClient({
               vendorId={other.id}
               vendorName={other.name}
               aging={aging.find((a) => a.vendor_id === other.id) ?? null}
-              bills={bills[other.id] ?? []}
               accounts={accounts}
               modes={modes}
               onDone={done}
@@ -272,7 +266,6 @@ function Row({
   overdue,
   isOpen,
   onToggle,
-  bills,
   accounts,
   modes,
   onDone,
@@ -281,7 +274,6 @@ function Row({
   overdue: boolean
   isOpen: boolean
   onToggle: () => void
-  bills: BillOutstandingRow[]
   accounts: MoneyAccount[]
   modes: string[]
   onDone: (ack: PayAck) => void
@@ -352,7 +344,6 @@ function Row({
               vendorId={a.vendor_id}
               vendorName={a.vendor_name}
               aging={a}
-              bills={bills}
               accounts={accounts}
               modes={modes}
               onDone={onDone}

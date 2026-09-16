@@ -95,10 +95,17 @@ export function withdrawnMessage(
   if (standing === null) {
     return 'Withdrawn. The vendor’s balance would not read, so check it before you promise anything.'
   }
+  // THE DIRECTION OF THE DEBT, AND THE FIRST WORDING HAD IT BACKWARDS.
+  // `vendor_dues.balance` is opening + purchased − paid: what WE owe THEM. It
+  // read "<vendor> still owes ₹X", which says the vendor is in debt to us —
+  // the opposite, on the one sentence somebody acts on before deciding
+  // whether to keep chasing a supplier. The app's own phrasing was two files
+  // away and already correct: PayOrAsk's pay acknowledgement says "They are
+  // now owed ₹X". Matching it rather than inventing a third form.
   const owed =
     Number(standing.balance) === 0
       ? `${standing.vendor_name} is owed nothing`
-      : `${standing.vendor_name} still owes ${money(standing.balance)}`
+      : `${standing.vendor_name} is still owed ${money(standing.balance)}`
   const held =
     standing.open_requests === 0
       ? 'nobody is holding a request for them'

@@ -231,11 +231,20 @@ export async function findUnmatchedMovement(
  *
  *   `reconcilable`  names an account, so a statement line could one day agree.
  *   `unaccounted`   names NONE. `unmatched_movements` requires `account_id is
- *                   not null`, so these are invisible to the whole control —
- *                   not unmatched, UNMATCHABLE — and importing a statement
- *                   will never reach them. They are the entries made before
- *                   money accounts existed, plus tax deposits, which carry a
- *                   null account by the view's own design.
+ *                   not null`, so these are invisible to the whole control and
+ *                   importing a statement does not reach them. They are the
+ *                   entries made before money accounts existed, plus tax
+ *                   deposits, which carry a null account by the view's design.
+ *
+ * NOT PERMANENT, AND THE FIRST WORDING SAID IT WAS. This read "not unmatched,
+ * UNMATCHABLE", which is an absence stated as a permanence — the overclaim the
+ * strip above it was written to correct in the brief, made again one file
+ * over. `payments.account_id` carries an UPDATE grant (so do all seven
+ * money-movement source tables, plainly on purpose: it is what lets history
+ * acquire an account it predates), so these become matchable the moment
+ * somebody fills one in. What is true is that NOTHING IN THE APP DOES THAT
+ * YET, and the strip says exactly that rather than either overclaiming or
+ * promising a screen that does not exist.
  *
  * ONE STATEMENT, five scalar subqueries. It renders on a queue somebody opens
  * every morning, and five round trips for five counts is the fan-out that
