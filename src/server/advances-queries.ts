@@ -195,3 +195,118 @@ export async function listAdvanceable(
       and employment_type <> 'contract'
     order by code asc`
 }
+
+export type FulfillableRequest = {
+  id: string
+  amount: string
+  reason: string
+  decided_at: string | null
+  decided_by: string | null
+  instalment: string | null
+  expected_end: string | null
+}
+
+/**
+ * APPROVED ADVANCE REQUESTS FOR ONE PERSON THAT NOTHING HAS FULFILLED YET.
+ *
+ * An approved request is a decision; the money moves when somebody records
+ * it. This is the list of decisions still waiting for that, so the person
+ * recording the advance can say WHICH one it settles rather than leaving an
+ * approval standing open forever beside a row that quietly satisfied it.
+ *
+ * UNFULFILLED IS DERIVED, NOT FLAGGED. A request is fulfilled exactly when a
+ * `staff_advances` row names it — there is no second column to keep in step,
+ * so the list cannot disagree with the ledger.
+ *
+ * The instalment and end date the REQUEST asked for come out of its snapshot,
+ * so choosing one can prefill the form with what was actually approved rather
+ * than making somebody retype it and get it wrong.
+ *
+ * @scope not-a-figure
+ */
+export async function listFulfillableRequests(
+  restaurantId: string,
+  staffId: string,
+  tx?: postgres.TransactionSql,
+): Promise<FulfillableRequest[]> {
+  const q = (tx ?? tsql) as typeof tsql
+  const rows = await q<
+    (Omit<FulfillableRequest, 'instalment' | 'expected_end'> & { snapshot: unknown })[]
+  >`
+    select a.id::text as id, a.amount::text as amount, a.reason,
+           a.decided_at::text as decided_at, a.decided_by, a.snapshot
+    from approval_requests a
+    where a.restaurant_id = ${restaurantId}
+      and a.kind = 'advance'
+      and a.entity_type = 'staff'
+      and a.entity_id = ${staffId}
+      and a.status = 'approved'
+      and not exists (
+        select 1 from staff_advances s
+        where s.restaurant_id = a.restaurant_id and s.approved_request_id = a.id
+      )
+    order by a.decided_at asc nulls last`
+  return rows.map((r) => {
+    // A SNAPSHOT THAT WILL NOT READ IS NOT AN EMPTY ONE. The request still
+    // stands and is still fulfillable; what is missing is the shape it asked
+    // for, so those come back null and the form asks rather than assuming a
+    // one-off.
+    const snap = r.snapshot
+    const obj = snap !== null && typeof snap === 'object' ? (snap as Record<string, unknown>) : null
+    const str = (k: string) => {
+      const v = obj?.[k]
+      return typeof v === 'string' && v !== '' ? v : null
+    }
+    return { ...r, instalment: str('instalment'), expected_end: str('expectedEnd') }
+  })
+}
+
+/** Refusals from the advance-fulfilment guard, in its own words. */
+export class AdvanceRefusal extends Error {}
+
+/**
+ * MAY THIS REQUEST BE SETTLED BY THIS ADVANCE, RIGHT NOW — read under the lock.
+ *
+ * IT LIVES HERE, NOT IN THE ACTION FILE, for the reason `applyRequest` and
+ * `assertWithdrawable` do: every export from a `'use server'` file is a public
+ * endpoint, and this decides whether money may be recorded against an approval
+ * on the strength of ids passed IN. Living here is also what lets a gate run
+ * the APP'S OWN rule rather than a copy of it.
+ *
+ * FOR UPDATE, because the whole point is that a second screen holding the same
+ * approved request must lose. There is NO unique index on
+ * `staff_advances.approved_request_id` — measured, not assumed — so this guard
+ * is the only thing standing between one approval and two debts.
+ */
+export async function assertFulfillable(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+  requestId: string,
+  staffId: string,
+): Promise<string> {
+  const [req] = await tx<{ amount: string; status: string; entity_id: string }[]>`
+    select amount::text as amount, status, entity_id::text as entity_id
+    from approval_requests
+    where id = ${requestId} and restaurant_id = ${restaurantId} and kind = 'advance'
+    for update`
+  if (!req) throw new AdvanceRefusal('That advance request is not on this restaurant’s books')
+  if (req.entity_id !== staffId) {
+    throw new AdvanceRefusal(
+      'That request was approved for somebody else — an advance cannot settle another person’s',
+    )
+  }
+  if (req.status !== 'approved') {
+    throw new AdvanceRefusal(
+      req.status === 'applied'
+        ? 'That request has already been recorded — an approval settles once, or the same debt is entered twice'
+        : `That request is ${req.status}, not approved — only an approved one can be recorded`,
+    )
+  }
+  const [already] = await tx<{ n: number }[]>`
+    select count(*)::int as n from staff_advances
+    where restaurant_id = ${restaurantId} and approved_request_id = ${requestId}`
+  if (already.n > 0) {
+    throw new AdvanceRefusal('An advance already names that request — it settles once')
+  }
+  return req.amount
+}

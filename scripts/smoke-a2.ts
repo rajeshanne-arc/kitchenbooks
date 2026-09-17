@@ -13746,6 +13746,175 @@ async function run() {
     )
   })
 
+  await check('a loan can be recorded, and an approved request settles exactly once', async () => {
+    const { txn } = await import('../src/lib/db')
+    const { withTenant } = await import('../src/lib/tenant')
+    const { assertFulfillable, getStaffOwed, listAdvanceable, listFulfillableRequests } = await import(
+      '../src/server/advances-queries'
+    )
+    const { loanProgress } = await import('../src/lib/advances')
+    const probe = process.env.KB_PROBE_TENANT
+    if (probe === undefined || probe === '') {
+      console.log('      KB_PROBE_TENANT unset — the fulfilment path is UNTESTED')
+      return
+    }
+
+    const out = await withTenant(probe, () =>
+      txn(async (tx) => {
+        const [who] = await listAdvanceable(probe, tx)
+        assert.ok(who !== undefined, 'the probe tenant has nobody who can be advanced money')
+        const [acct] =
+          (await tx<{ id: string }[]>`
+            select id from money_accounts where restaurant_id = ${probe} and status = 'active' limit 1`) ??
+          []
+        const account =
+          acct ??
+          (
+            await tx<{ id: string }[]>`
+              insert into money_accounts (restaurant_id, name, kind, status)
+              values (${probe}, 'Zz gate bank', 'bank', 'active') returning id`
+          )[0]
+
+        // AN APPROVED REQUEST, WAITING TO BE RECORDED.
+        const [req] = await tx<{ id: string }[]>`
+          insert into approval_requests
+            (restaurant_id, kind, entity_type, entity_id, reason, amount, snapshot,
+             status, assigned_to, requested_by, decided_by, decided_at)
+          values (${probe}, 'advance', 'staff', ${who.id}, 'Zz school fees', 40000,
+                  ${JSON.stringify({ instalment: '5000.00', months: 8, expectedEnd: '2027-04-30' })}::text::jsonb,
+                  'approved', null, 'gate', 'gate', now())
+          returning id`
+
+        const before = await listFulfillableRequests(probe, who.id, tx)
+
+        // RECORDING IT: the loan row, linked, and the request settled in the
+        // same transaction.
+        await tx`
+          insert into staff_advances
+            (restaurant_id, adv_date, staff_id, amount, account_id, entered_by,
+             instalment, expected_end, approved_request_id)
+          values (${probe}, current_date, ${who.id}, 40000, ${account.id}, 'gate',
+                  5000, '2027-04-30'::date, ${req.id})`
+        await tx`
+          update approval_requests set status = 'applied', assigned_to = null,
+                 decided_by = 'gate', decided_at = now()
+          where id = ${req.id} and restaurant_id = ${probe}`
+        await tx`
+          insert into approval_events (restaurant_id, request_id, action, acted_by)
+          values (${probe}, ${req.id}, 'paid', 'gate')`
+
+        const after = await listFulfillableRequests(probe, who.id, tx)
+        const owed = await getStaffOwed(probe, who.id, tx)
+
+        // A SECOND FULFILMENT IS REFUSED, AND BY WHICH RULE.
+        //
+        // `assert.rejects` alone would be satisfied by any throw, which is the
+        // coarse-assertion fault: this runs the APP'S OWN guard and reads the
+        // sentence, so a refusal that came from somewhere else fails here.
+        let appRefusal = ''
+        try {
+          await assertFulfillable(tx, probe, req.id, who.id)
+        } catch (e) {
+          appRefusal = (e as Error).message
+        }
+
+        // AND FOR SOMEBODY ELSE'S REQUEST, which is a different wrong and must
+        // say so rather than borrowing the already-recorded sentence.
+        const [other] = await tx<{ id: string }[]>`
+          insert into approval_requests
+            (restaurant_id, kind, entity_type, entity_id, reason, amount, status, requested_by)
+          values (${probe}, 'advance', 'staff', ${who.id}, 'Zz other', 100, 'pending', 'gate')
+          returning id`
+        let pendingRefusal = ''
+        try {
+          await assertFulfillable(tx, probe, other.id, who.id)
+        } catch (e) {
+          pendingRefusal = (e as Error).message
+        }
+
+        // Whether the DATABASE would also refuse — the app guard is under the
+        // advisory lock and is the only thing standing behind it today.
+        let dbRefused = false
+        try {
+          await tx`savepoint second_fulfilment`
+          await tx`
+            insert into staff_advances
+              (restaurant_id, adv_date, staff_id, amount, account_id, entered_by, approved_request_id)
+            values (${probe}, current_date, ${who.id}, 40000, ${account.id}, 'gate', ${req.id})`
+          await tx`rollback to savepoint second_fulfilment`
+        } catch {
+          dbRefused = true
+          await tx`rollback to savepoint second_fulfilment`
+        }
+
+        const res = {
+          beforeCount: before.length,
+          beforeInstalment: before[0]?.instalment ?? null,
+          beforeEnd: before[0]?.expected_end ?? null,
+          afterCount: after.length,
+          owed: owed === null ? null : owed,
+          dbRefused,
+          appRefusal,
+          pendingRefusal,
+        }
+        throw Object.assign(new Error('KB_ROLLBACK'), { res })
+      }).catch((e: unknown) => {
+        if ((e as Error).message !== 'KB_ROLLBACK') throw e
+        return (e as { res: Record<string, unknown> }).res
+      }),
+    )
+
+    // THE SNAPSHOT IS READ, so the form prefills what was APPROVED rather than
+    // making somebody retype it and get it wrong.
+    assert.equal(out.beforeCount, 1, 'an approved, unrecorded request is not offered for fulfilment')
+    assert.equal(out.beforeInstalment, '5000.00', 'the instalment the owner approved did not come back')
+    assert.equal(out.beforeEnd, '2027-04-30', 'the end date the owner approved did not come back')
+
+    // FULFILLED IS DERIVED FROM THE LEDGER, not a flag — so it cannot disagree.
+    assert.equal(out.afterCount, 0, 'a recorded request is still offered as unfulfilled — it would be recorded twice')
+
+    // AND IT IS A LOAN IN staff_owes, with its schedule.
+    const owed = out.owed as {
+      outstanding: string
+      instalment: string | null
+      expected_end: string | null
+      advances_given: string | null
+      loans_given: string | null
+      recovered: string
+    }
+    assert.ok(owed !== null, 'the loan does not appear in staff_owes at all')
+    assert.equal(Number(owed.outstanding), 40000)
+    assert.equal(Number(owed.instalment), 5000, 'staff_owes does not carry the instalment, so it reads as an advance')
+    assert.equal(owed.expected_end, '2027-04-30', 'staff_owes does not carry the end date')
+    assert.equal(Number(owed.loans_given), 40000, 'it is counted as an advance rather than a loan')
+    const p = loanProgress(owed, '2026-09-18')
+    assert.ok(p.known, `the schedule cannot be read back: ${p.known ? '' : p.why}`)
+    assert.equal(p.total, 8, `40,000 at 5,000 is eight instalments, not ${p.known ? p.total : '?'}`)
+
+    // REFUSED BY NAME. Two different wrongs, two different sentences — a
+    // request already recorded and a request not approved yet are not the
+    // same mistake, and one shared message would leave nobody able to tell
+    // which they hit.
+    assert.match(
+      String(out.appRefusal),
+      /already/i,
+      `a second fulfilment must be refused as already recorded — it said "${String(out.appRefusal).slice(0, 80)}"`,
+    )
+    assert.match(
+      String(out.pendingRefusal),
+      /not approved|is pending/i,
+      `recording against an unapproved request must say so — it said "${String(out.pendingRefusal).slice(0, 80)}"`,
+    )
+    assert.notEqual(out.appRefusal, out.pendingRefusal, 'two different wrongs share one sentence')
+    for (const m of [out.appRefusal, out.pendingRefusal]) {
+      assert.ok(!String(m).includes('undefined'), `a refusal rendered "undefined": ${m}`)
+    }
+
+    console.log(
+      `      loan 40,000 @ 5,000 → 8 instalments to Apr 2027 · offered once then never again · refused by name · database ${out.dbRefused ? 'also refuses' : 'does NOT refuse — the app guard is the only backstop'}`,
+    )
+  })
+
   if (only !== null) {
     console.log(`\nFILTERED RUN — ${ran} check(s) matching "${only}", ${skipped} skipped. THIS IS NOT THE SUITE.`)
     if (ran === 0) {

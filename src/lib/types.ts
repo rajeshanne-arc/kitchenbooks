@@ -2953,6 +2953,9 @@ export type SaveAdvanceInput = {
   amount: string
   accountId: string
   note: string
+  instalment: string
+  expectedEnd: string
+  approvedRequestId: string
 }
 
 export type AdvanceOutstanding = {
@@ -2993,7 +2996,18 @@ export type StaffIdentity = {
 /** What they owe AFTER this advance — read back from getOutstandingAdvances,
  *  the same figure the payroll draft offers as recovery. */
 export type SaveAdvanceResult =
-  | { ok: true; outstanding: string; staffName: string | null }
+  | {
+      ok: true
+      outstanding: string
+      staffName: string | null
+      /** null for a one-off advance; set makes it a loan, and these are what
+       *  the reveal says back rather than what somebody typed. */
+      instalment: string | null
+      months: number | null
+      expectedEnd: string | null
+      /** the approved request this settled, where it settled one */
+      fulfilled: boolean
+    }
   | { ok: false; error: string }
 
 export type UpdateStaffIdentityInput = {

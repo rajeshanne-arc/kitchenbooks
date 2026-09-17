@@ -29,7 +29,15 @@ import {
   outstandingByStaff,
   recoveryDrift,
 } from '@/server/payroll-queries'
-import { formatMoneyString } from '@/lib/money'
+import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
+import { addMonths } from '@/lib/advances'
+import { recordAct } from '@/server/approvals-queries'
+import {
+  assertFulfillable,
+  AdvanceRefusal,
+  listFulfillableRequests,
+  type FulfillableRequest,
+} from '@/server/advances-queries'
 import { IdentitySchema, writeIdentity } from '@/server/staff-identity'
 import type {
   MarkPaidInput,
@@ -50,6 +58,11 @@ class PayrollError extends Error {}
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof PayrollError) return { ok: false, error: e.message }
   if (e instanceof AccountRefusal) return { ok: false, error: e.message }
+  // A REFUSAL NOBODY CAN READ IS NOT A REFUSAL. Without this the fulfilment
+  // guard's sentences collapse into "Failed — nothing was written", and
+  // "somebody already recorded that approval" becomes indistinguishable from
+  // a server falling over. The same reason AccountRefusal is named above.
+  if (e instanceof AdvanceRefusal) return { ok: false, error: e.message }
   if (e instanceof z.ZodError) return { ok: false, error: 'Invalid input — nothing was saved' }
   console.error('payroll action failed', e)
   const detail = e instanceof Error ? e.message.slice(0, 200) : 'unknown error'
@@ -328,12 +341,44 @@ const AdvanceSchema = z.object({
   amount: z.string().regex(MONEY),
   accountId: z.string().trim(),
   note: z.string().trim().max(300),
+  /** SET MAKES IT A LOAN. There is no kind flag and there must not be one:
+   *  the column comment says the category is derived from this, so a second
+   *  field saying the same thing is one more place for the two to disagree. */
+  instalment: z.string().trim(),
+  /** COMPUTED AND SHOWN, not typed — but editable, because the owner may know
+   *  a different last date than the arithmetic implies. A mismatch between
+   *  this and amount/instalment is HIS to state and is not an error. */
+  expectedEnd: z.string().trim(),
+  /** Optional. An advance recorded with no request is legitimate: the owner
+   *  lending from his own account needs no approval from himself. */
+  approvedRequestId: z.string().trim(),
 })
 
 /** An advance is real money leaving a real account today, so it names one
  *  and takes an ADV number like every other payment. It comes back as
  *  `advance_recovered` on a later run, offered by the draft and editable
  *  until that run is prepared. */
+/**
+ * WHOSE APPROVED ADVANCE REQUESTS ARE STILL WAITING — for the picker.
+ *
+ * A READ, and still gated: every export from a 'use server' file is a public
+ * endpoint, and this one would otherwise hand any signed-in reader the reasons
+ * people asked for money and who approved them.
+ */
+export async function loadFulfillable(staffId: string): Promise<FulfillableRequest[]> {
+  try {
+    if (!UUID.test(staffId)) return []
+    await actor(['accountant', 'owner'], 'Reading advance requests')
+    const restaurant = await getRestaurant()
+    return await listFulfillableRequests(restaurant.id, staffId)
+  } catch {
+    // A PICKER THAT CANNOT READ OFFERS NOTHING rather than blocking the form:
+    // an advance with no request against it is legitimate, so a failed read
+    // must not stop the money being recorded.
+    return []
+  }
+}
+
 export async function saveAdvance(raw: SaveAdvanceInput): Promise<SaveAdvanceResult> {
   try {
     const input = AdvanceSchema.parse(raw)
@@ -344,18 +389,88 @@ export async function saveAdvance(raw: SaveAdvanceInput): Promise<SaveAdvanceRes
     const rid = restaurant.id
     const accountId = await assertAccount(rid, input.accountId, 'the account this advance was paid from')
 
-    await txn(async (tx) => {
+    // A LOAN IS AN ADVANCE WITH AN INSTALMENT, and the arithmetic is worked
+    // out here so nobody agrees to a number of months nobody counted.
+    const amountPaise = decimalStringToPaise(input.amount)
+    let instPaise: number | null = null
+    let months: number | null = null
+    if (input.instalment !== '') {
+      const p = decimalStringToPaise(input.instalment)
+      instPaise = p
+      if (!(p > 0)) {
+        throw new PayrollError('An instalment of nothing is not an instalment — leave it blank to recover the whole advance at the next payroll')
+      }
+      if (p > amountPaise) {
+        throw new PayrollError(
+          `The instalment (${formatMoneyString(input.instalment)}) is more than the advance (${formatMoneyString(input.amount)}). Leave it blank to take the whole thing back at once.`,
+        )
+      }
+      months = Math.ceil(amountPaise / p)
+    }
+    // THE LAST INSTALMENT, not the month after it — the fencepost the ledger's
+    // by-value gate already caught once.
+    const expectedEnd =
+      input.expectedEnd !== ''
+        ? input.expectedEnd
+        : months === null
+          ? null
+          : addMonths(input.date, months - 1)
+
+    const fulfilled = await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+
+      // A REQUEST CANNOT BE FULFILLED TWICE, and it is checked HERE rather
+      // than on the form: under the lock, against what is true now. Two
+      // screens open on the same approved request would otherwise write two
+      // advances and double somebody's debt, with both rows looking correct.
+      // THE GUARD LIVES IN advances-queries, not here: it decides on the
+      // strength of ids passed in, and every export from this file is a public
+      // endpoint. It is also what lets the gate run the app's own rule.
+      const reqAmount =
+        input.approvedRequestId === ''
+          ? null
+          : await assertFulfillable(tx, rid, input.approvedRequestId, input.staffId)
+
       const docNo = await nextDocNo(tx, rid, 'ADV', input.date)
       await tx`
-        insert into staff_advances (restaurant_id, adv_date, staff_id, amount, account_id, doc_no, note, entered_by)
+        insert into staff_advances (restaurant_id, adv_date, staff_id, amount, account_id, doc_no, note,
+                                    entered_by, instalment, expected_end, approved_request_id)
         values (${rid}, ${input.date}, ${input.staffId}, ${input.amount}::numeric,
-                ${accountId}, ${docNo}, ${input.note === '' ? null : input.note}, ${by})`
+                ${accountId}, ${docNo}, ${input.note === '' ? null : input.note}, ${by},
+                ${instPaise === null ? null : input.instalment}::numeric,
+                ${expectedEnd}::date,
+                ${input.approvedRequestId === '' ? null : input.approvedRequestId}::uuid)`
+
+      // THE REQUEST AND THE ROW THAT SETTLES IT ARE ONE WRITE. A recorded
+      // advance with an approval left standing is an owner asked twice; an
+      // applied request with no advance is a debt nobody can see.
+      if (input.approvedRequestId !== '') {
+        await recordAct(tx, rid, {
+          id: input.approvedRequestId,
+          action: 'paid',
+          from: ['approved'],
+          status: 'applied',
+          by,
+          note: `recorded as ${docNo}`,
+          decision: true,
+          assignTo: null,
+        })
+      }
+      return reqAmount
     })
     // What they now owe, read back from the same query the payroll draft
     // offers as recovery — never echoed from the amount just typed, because
     // this is rarely their first advance.
     const owed = (await getOutstandingAdvances(rid)).find((a) => a.staff_id === input.staffId) ?? null
-    return { ok: true, outstanding: owed?.outstanding ?? input.amount, staffName: owed?.staff_name ?? null }
+    return {
+      ok: true,
+      outstanding: owed?.outstanding ?? input.amount,
+      staffName: owed?.staff_name ?? null,
+      instalment: instPaise === null ? null : input.instalment,
+      months,
+      expectedEnd,
+      fulfilled: fulfilled !== null,
+    }
   } catch (e) {
     return fail(e)
   }
