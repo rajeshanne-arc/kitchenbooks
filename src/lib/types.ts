@@ -1532,8 +1532,16 @@ export type SaveVouchersInput = {
   date: string
   lines: VoucherLineInput[]
 }
+/** What somebody owes after a drawer advance — READ BACK from the ledger,
+ *  never the amount just handed over, because it is rarely their first. */
+export type AdvanceAck = {
+  staff_name: string
+  outstanding: string
+  months_of_salary: string | null
+}
+
 export type SaveVouchersResult =
-  | { ok: true; vouchers: VoucherRow[]; total: string }
+  | { ok: true; vouchers: VoucherRow[]; total: string; advances: AdvanceAck[] }
   | { ok: false; error: string }
 
 export type SaveVoucherInput = {

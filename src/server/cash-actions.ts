@@ -12,6 +12,7 @@
 import { z } from 'zod'
 import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { getStaffOwed } from '@/server/advances-queries'
 import { AccountRefusal, assertAccount } from '@/server/accounts-queries'
 import { enteredBy } from '@/server/current-user'
 import {
@@ -30,6 +31,7 @@ import type {
   SaveOtherIncomesResult,
   SaveVouchersInput,
   SaveVouchersResult,
+  AdvanceAck,
   VoucherRow,
   SetOpeningResult,
 } from '@/lib/types'
@@ -171,6 +173,11 @@ const VoucherLineSchema = z.object({
   note: z.string().trim().max(300),
   isStockPurchase: z.boolean(),
   isCasualLabour: z.boolean(),
+  /** THE FOURTH KIND. Set when the drawer money is an ADVANCE to somebody —
+   *  the voucher and the staff_advances row are then written together, linked,
+   *  and the money is owed back rather than spent. Empty for every other
+   *  kind. */
+  advanceToStaffId: z.string().trim(),
 })
 
 const VouchersSchema = z.object({
@@ -218,6 +225,17 @@ export async function saveVouchers(raw: SaveVouchersInput): Promise<SaveVouchers
           `${who}: a payment is either goods for the kitchen or a day hand's wages, not both — counting it twice would inflate food cost and labour together`,
         )
       }
+      // AND AN ADVANCE IS NONE OF THEM. It is the one kind that is not SPENT:
+      // the money is owed back, so it must not reach cost of goods or the
+      // labour line by either route. Those two flags are the only ways a
+      // voucher enters the P&L at all, which is why this is the whole of the
+      // guard rather than the start of one.
+      const isAdvance = l.advanceToStaffId !== ''
+      if (isAdvance && (l.isStockPurchase || l.isCasualLabour)) {
+        throw new CashError(
+          `${who}: an advance is money lent, not money spent — it cannot also be goods for the kitchen or a day hand's wages, or the same rupees would sit in the P&L and be owed back at the same time`,
+        )
+      }
 
       const category = (l.category === '' ? 'general' : l.category).toLowerCase().replace(/\s+/g, '_')
       if (l.paidBy === 'owner' && l.ownerName === '') {
@@ -250,11 +268,33 @@ export async function saveVouchers(raw: SaveVouchersInput): Promise<SaveVouchers
         // belongs to the financial year the money moved in. One draw per
         // line, on the tx, so a rollback consumes no number.
         const docNo = await nextDocNo(tx, rid, 'VCH', input.date)
+
+        // THE ADVANCE ROW FIRST, so the voucher can carry its id. One
+        // transaction, both rows, or neither: money handed over and no debt
+        // recorded is the failure this link exists to prevent, and it is the
+        // same rule as an event and the state it describes being one write.
+        //
+        // ITS OWN ADV NUMBER. The voucher is the drawer's record of the money
+        // leaving; the advance is the ledger's record of the debt. Two
+        // documents, two series — a reader chasing either has a number to
+        // name, and a void of one must not renumber the other.
+        let advanceId: string | null = null
+        if (l.advanceToStaffId !== '') {
+          const advNo = await nextDocNo(tx, rid, 'ADV', input.date)
+          const [adv] = await tx<{ id: string }[]>`
+            insert into staff_advances
+              (restaurant_id, adv_date, staff_id, amount, account_id, doc_no, note, entered_by)
+            values (${rid}, ${input.date}, ${l.advanceToStaffId}, ${l.amount}, ${accountIds[i]},
+                    ${advNo}, ${l.note === '' ? null : l.note}, ${by})
+            returning id`
+          advanceId = adv.id
+        }
+
         const [row] = await tx<{ id: string }[]>`
-          insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by, is_stock_purchase, is_casual_labour, account_id, doc_no)
+          insert into cash_vouchers (restaurant_id, voucher_date, amount, paid_to, paid_by, owner_name, category, note, entered_by, is_stock_purchase, is_casual_labour, account_id, doc_no, staff_advance_id)
           values (${rid}, ${input.date}, ${l.amount}, ${cleanName(l.paidTo)}, ${l.paidBy},
                   ${l.paidBy === 'owner' ? cleanName(l.ownerName) : null}, ${l.category},
-                  ${l.note === '' ? null : l.note}, ${by}, ${l.isStockPurchase}, ${l.isCasualLabour}, ${accountIds[i]}, ${docNo})
+                  ${l.note === '' ? null : l.note}, ${by}, ${l.isStockPurchase}, ${l.isCasualLabour}, ${accountIds[i]}, ${docNo}, ${advanceId})
           returning id`
         ids.push(row.id)
       }
@@ -268,7 +308,25 @@ export async function saveVouchers(raw: SaveVouchersInput): Promise<SaveVouchers
       vouchers.push(v)
     }
     const total = vouchers.reduce((n, v) => n + Number(v.amount), 0).toFixed(2)
-    return { ok: true, vouchers, total }
+
+    // WHAT THEY NOW OWE, READ BACK. Never the amount just handed over: this is
+    // rarely somebody's first advance, and the figure that matters is the one
+    // that comes off their pay. In MONTHS OF SALARY too, because the thing
+    // that goes wrong with lending to staff is lending more than can be
+    // recovered before somebody leaves, and rupees alone do not say that.
+    const advanceIds = [...new Set(prepared.map((l) => l.advanceToStaffId).filter((x) => x !== ''))]
+    const advances: AdvanceAck[] = []
+    for (const staffId of advanceIds) {
+      const owed = await getStaffOwed(rid, staffId)
+      if (owed !== null) {
+        advances.push({
+          staff_name: owed.name,
+          outstanding: owed.outstanding,
+          months_of_salary: owed.months_of_salary,
+        })
+      }
+    }
+    return { ok: true, vouchers, total, advances }
   } catch (e) {
     return fail(e)
   }

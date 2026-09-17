@@ -27,8 +27,9 @@ import { fmtDate } from '@/lib/format'
 import AccountPicker from '@/components/accounts/AccountPicker'
 import { cardCls, docNoCls, fieldLabelCls, inputCls, numCls, sectionHeadCls, selectCls } from '@/components/ui'
 import { useBusinessToday } from '@/components/BusinessDay'
+import { exposureText } from '@/lib/advances'
 
-type Kind = 'expense' | 'stock' | 'labour'
+type Kind = 'expense' | 'stock' | 'labour' | 'advance'
 type Line = {
   key: number
   accountId: string
@@ -39,15 +40,22 @@ type Line = {
   category: string
   note: string
   kind: Kind
+  /** who the advance is for — only ever set on an 'advance' line */
+  staffId: string
 }
 
 const KINDS = [
   { v: 'expense', label: 'An expense', hint: 'gas, repairs, a courier — anything the business spends on' },
   { v: 'stock', label: 'Goods for the kitchen', hint: 'vegetables, ice, a forgotten ingredient — it will be cooked' },
   { v: 'labour', label: "A day hand's wages", hint: 'unloading, dishwashing, an extra pair of hands tonight' },
+  // THE ONE KIND THAT IS NOT SPENT. The other three leave the business for
+  // good; this one is owed back and comes off the person's next payroll, so it
+  // reaches neither cost of goods nor the labour line.
+  { v: 'advance', label: 'An advance to somebody', hint: 'money lent against wages — it comes back out of their pay' },
 ] as const
 
 export default function VoucherForm({
+  advanceable = [],
   ownerNames,
   categories,
   paidToNames = [],
@@ -58,6 +66,11 @@ export default function VoucherForm({
   categories: string[]
   paidToNames?: string[]
   accounts: MoneyAccount[]
+  /** WHO CAN BE ADVANCED MONEY. Salaried staff only: an advance is recovered
+   *  from a payroll run, and a run excludes contract staff — so lending to one
+   *  through this form would create a debt the only recovery mechanism cannot
+   *  reach. Narrowed on the server, where the employment type lives. */
+  advanceable?: { id: string; name: string; code: string }[]
 }) {
   const businessToday = useBusinessToday()
   const newLine = (key: number): Line => ({
@@ -70,6 +83,7 @@ export default function VoucherForm({
     category: categories[0] ?? 'General',
     note: '',
     kind: 'expense',
+    staffId: '',
   })
 
   const [date, setDate] = useState(businessToday)
@@ -94,7 +108,11 @@ export default function VoucherForm({
     Number(l.amount.trim()) > 0 &&
     l.paidTo.trim() !== '' &&
     l.accountId !== '' &&
-    (l.paidBy === 'cashier' || l.ownerName.trim() !== '')
+    (l.paidBy === 'cashier' || l.ownerName.trim() !== '') &&
+    // AN ADVANCE MUST NAME A ROW IN `staff`. "Paid to" is free text and an
+    // advance has to be recoverable from somebody, so the server refuses a
+    // blank one — said before the button rather than after the work.
+    (l.kind !== 'advance' || l.staffId !== '')
   const canSave = !saving && lines.every(lineOk)
   const runningTotal = lines.reduce((n, l) => n + (Number(l.amount.trim()) || 0), 0).toFixed(2)
 
@@ -115,6 +133,7 @@ export default function VoucherForm({
           note: l.note.trim(),
           isStockPurchase: l.kind === 'stock',
           isCasualLabour: l.kind === 'labour',
+          advanceToStaffId: l.kind === 'advance' ? l.staffId : '',
         })),
       })
       if (res.ok) {
@@ -305,6 +324,52 @@ export default function VoucherForm({
                     </button>
                   ))}
                 </div>
+                {/* WHO IT IS FOR — required, and asked HERE rather than in the
+                    payee box above, because "paid to" is free text and an
+                    advance has to name a row in `staff` or there is nothing to
+                    recover it from. */}
+                {l.kind === 'advance' && (
+                  <div className="mt-2">
+                    {advanceable.length === 0 ? (
+                      <p className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+                        Nobody here can be advanced money. An advance is recovered from a payroll run
+                        and a run excludes contract staff, so there has to be somebody salaried on the
+                        books first.
+                      </p>
+                    ) : (
+                      <>
+                        <label className="block">
+                          <span className={fieldLabelCls}>Who it is for</span>
+                          <select
+                            value={l.staffId}
+                            onChange={(e) => {
+                              const id = e.target.value
+                              const who = advanceable.find((a) => a.id === id)
+                              // THE PAYEE FOLLOWS THE PERSON. The voucher's own
+                              // "paid to" is what the drawer record shows, and
+                              // leaving it blank while naming somebody in the
+                              // picker would put two different answers on one row.
+                              patch(l.key, { staffId: id, paidTo: who?.name ?? l.paidTo })
+                            }}
+                            className={selectCls}
+                          >
+                            <option value="">Choose who</option>
+                            {advanceable.map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.code} · {a.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <p className="mt-2 rounded-lg border border-rule bg-cell px-2.5 py-2 text-xs text-stone-600">
+                          <span className="font-medium">This is lent, not spent.</span> It reaches neither
+                          cost of goods nor the labour line, because it is owed back — it comes off their
+                          next payroll, and what they still owe is on their own page until it does.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
                 {l.kind === 'stock' && (
                   <p className="mt-2 rounded-lg border border-rule bg-cell px-2.5 py-2 text-xs text-stone-600">
                     <span className="font-medium">The money counts, the stock does not.</span> This reaches cost
@@ -409,6 +474,24 @@ function VoucherAck({
           : undefined
       }
     >
+      {/* WHAT THEY NOW OWE, AND IN MONTHS. The amount handed over is what the
+          cashier just typed; the figure that matters is the balance it has
+          grown to, read back from the ledger — this is rarely somebody's first
+          advance. Months of salary, because the thing that goes wrong with
+          lending to staff is lending more than can be recovered before
+          somebody leaves. */}
+      {saved.advances.length > 0 && (
+        <div className="mb-2">
+          {saved.advances.map((a) => (
+            <p key={a.staff_name} className="text-[13px] text-stone-700">
+              <span className="font-medium">{a.staff_name}</span> now owes{' '}
+              <span className="tabular-nums">{formatMoneyString(a.outstanding)}</span>
+              {exposureText(a.months_of_salary) === null ? null : <> — {exposureText(a.months_of_salary)}</>}
+              . It comes off their next payroll.
+            </p>
+          ))}
+        </div>
+      )}
       <ul className="divide-y divide-emerald-200/60 border-y border-emerald-200/60">
         {saved.vouchers.map((v) => (
           <li key={v.id} className="py-1.5 text-sm">

@@ -10075,6 +10075,52 @@ cases the guard had met were all one shape, and the first case of a new shape
 is where it breaks. The difference here is that the accident was doing the
 work of a guard that was never written.
 
+#### AND IT HAPPENED AGAIN, EXACTLY AS PREDICTED, TWO WEEKS LATER
+
+`kind = 'advance'` was added to the CHECK. An advance names a **vendor or a
+person** — so approving one fell past the `payment`, reopen and merge branches
+into DISCARD and tried to close the supplier or the staff member it was for.
+
+**THE ACCIDENT HELD A SECOND TIME**, which is the part worth keeping. It was
+survivable only because `reference_counts` refuses anything with history, and
+a real vendor and a real employee both have plenty. The prediction in the
+paragraph above was not merely right in principle; the same guard caught the
+same class of fault for the same wrong reason, twice.
+
+So the dispatch is an **ALLOWLIST** now — `reopen_period`, `merge`, `discard`,
+and everything else refused by name. A guard written per kind has to be written
+again for the next kind, by somebody who has to know it is needed; an allowlist
+refuses a kind nobody has thought about yet, which is the only kind that
+matters.
+
+### ASSERTING THAT SOMETHING FAILS IS NOT ASSERTING THAT IT FAILS FOR THE RIGHT REASON
+
+**A NEW SHAPE, and it must not be filed with the vacuous-gate family.** Those
+examined nothing, or examined data that could not have differed. This one had a
+real fixture, ran against a live vendor, and **could** fail — it passed because
+the assertion was too coarse to see WHICH refusal it got.
+
+The gate written for the fallthrough above did `assert.rejects(applyRequest(…))`
+and was proved by restoring the old payment-only guard. It stayed green. With
+that guard, an advance falls into the DISCARD branch and is refused there by
+the reference check — so it throws either way, and `rejects` cannot tell a
+refusal-by-kind from a refusal-by-data. **The gate passed against the exact bug
+it was written for.**
+
+Asserting the MESSAGE fixed it, and the re-perturbation caught
+`"5 row(s) now point at it"` — which is the discard branch running against a
+live vendor, in words.
+
+> **NAME THE REFUSAL, ALWAYS.** `assert.rejects` on its own asserts that
+> something went wrong, which is almost never the claim. The claim is that a
+> PARTICULAR thing went wrong, and a system with more than one reason to refuse
+> — which is every system with guards — will satisfy the weaker assertion by
+> accident.
+
+The tell: ask how many different reasons this call has to throw. If the answer
+is more than one, the test must say which, or it is testing that the code is
+not perfect rather than that it is correct.
+
 ### A VIEW THAT FILTERS ON A COLUMN IS A CLAIM THAT SOMETHING WRITES IT
 
 `awaiting_me` — the single badge source the next step is built on — ends

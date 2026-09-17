@@ -11601,17 +11601,40 @@ async function run() {
     // same request at pay time and an approved advance could never be paid.
     // One rule now, and the refusal names where advances actually live.
     assert.ok(out.overByOne !== null, 'one rupee over the range total was accepted — the bound is not a bound')
-    // A ROUTE OUT, NOT A PARTICULAR SENTENCE. This pinned the exact wording —
-    // "An advance is paid from Owner › Payments" — and went red when that
-    // string was corrected, which is the pinned-literal fault in a gate
-    // written three commits earlier. The RULE is that a refusal names
-    // somewhere to go, because a dead end is worse than a no; the word that
-    // carries it is 'advance', and how the sentence reads around it is copy.
+    // A ROUTE OUT THAT EXISTS — the PROPERTY, not the wording.
+    //
+    // This pinned the exact sentence, "An advance is paid from Owner ›
+    // Payments", and went red when that string was corrected. Twice wrong: the
+    // route named did not exist (it is Accounts › Payments) and it was a door
+    // the store manager cannot open anyway. Pinned literal, fourth variety
+    // after a code, a count and a signature — and the first where the gate's
+    // own pin was the thing that had to change.
+    //
+    // THE RULE IS THAT A REFUSAL NAMES SOMEWHERE TO GO AND THAT SOMEWHERE IS
+    // REAL. So two halves, neither of them copy: the refusal must name an
+    // advance, and an advance must actually be askable from the screen the
+    // refusal appears on. Reword it however you like and this stays green;
+    // point it at a door that does not exist and it does not.
     assert.match(
       String(out.overAsk),
       /advance/i,
       'the over-range refusal does not point at an advance — a dead end is worse than a no',
     )
+    {
+      const { readFileSync } = await import('node:fs')
+      const form = readFileSync('src/components/store/PayOrAsk.tsx', 'utf8')
+      assert.match(
+        form,
+        /advance/i,
+        'the form that shows this refusal never mentions an advance — the route named is not on the screen',
+      )
+      const vendorPage = readFileSync('src/app/store/masters/vendors/[id]/page.tsx', 'utf8')
+      assert.match(
+        vendorPage,
+        /<AdvanceRequest[\s/>]/,
+        'the refusal points at an advance and the vendor page offers no way to ask for one',
+      )
+    }
     assert.equal(out.clean, null, `a clean ask on ${out.code} was refused: ${out.clean}`)
     assert.ok(out.whole !== null, `${out.busyCode} has an open request and a second ask was accepted`)
     assert.match(String(out.whole), /whole balance/, 'a pre-range request must refuse as a claim on the whole balance')
@@ -13596,6 +13619,131 @@ async function run() {
     assert.ok(!/Owner › Payments/.test(q), 'the over-range refusal still names a route that does not exist')
     assert.match(q, /ask for it as one/, 'the over-range refusal does not point at the advance request')
     console.log(`      ${mounts.length} mount(s) · subjects ${[...subjects].sort().join(', ')} · no payment, no account, no range, no rate`)
+  })
+
+  await check('a drawer advance writes both rows or neither, and reaches no P&L line', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { txn } = await import('../src/lib/db')
+    const { withTenant } = await import('../src/lib/tenant')
+    const { getStaffOwed, listAdvanceable } = await import('../src/server/advances-queries')
+
+    // ── STRUCTURE, because saveVouchers reads the session and a gate has no
+    // one. What must hold is that the two rows are written TOGETHER: money
+    // handed over with no debt recorded is the failure the link exists to
+    // prevent, and it is the same rule as an event and its state being one
+    // write.
+    const src = readFileSync('src/server/cash-actions.ts', 'utf8')
+    const at = src.indexOf('export async function saveVouchers')
+    assert.ok(at > 0, 'saveVouchers is gone')
+    const body = src.slice(at, src.indexOf('\n}\n', at))
+    const txAt = body.indexOf('await txn(')
+    assert.ok(txAt > 0, 'saveVouchers no longer opens a transaction')
+    const inTx = body.slice(txAt)
+    const advAt = inTx.indexOf('insert into staff_advances')
+    const vchAt = inTx.indexOf('insert into cash_vouchers')
+    assert.ok(advAt > 0, 'a drawer advance no longer writes a staff_advances row')
+    assert.ok(vchAt > 0, 'the voucher insert is gone')
+    // THE ADVANCE FIRST, so the voucher can carry its id: there is no UPDATE
+    // grant on cash_vouchers to fill it in afterwards.
+    assert.ok(advAt < vchAt, 'the voucher is written before the advance it links to — it cannot carry an id that does not exist')
+    assert.match(inTx, /staff_advance_id/, 'the voucher does not carry the advance it paid for')
+    // AND THE FOUR-WAY QUESTION IS ENFORCED SERVER-SIDE. A form is never the
+    // check, and both P&L routes have to be shut.
+    assert.match(body, /advanceToStaffId !== ''/, 'nothing distinguishes an advance line')
+    assert.match(
+      body,
+      /isAdvance && \(l\.isStockPurchase \|\| l\.isCasualLabour\)/,
+      'an advance can also be flagged as stock or a day hand — the same rupees would sit in the P&L and be owed back',
+    )
+
+    // ── THE LINK, AT THE DATABASE, on the probe tenant and rolled back. The
+    // live books hold no advance at all, so every branch here would examine
+    // nothing there.
+    const probe = process.env.KB_PROBE_TENANT
+    if (probe === undefined || probe === '') {
+      console.log('      KB_PROBE_TENANT unset — the drawer-advance link is UNTESTED')
+      return
+    }
+    const out = await withTenant(probe, () =>
+      txn(async (tx) => {
+        const people = await listAdvanceable(probe, tx)
+        assert.ok(people.length > 0, 'the probe tenant has nobody who can be advanced money')
+        const who = people[0]
+        // THE FIXTURE BUILDS WHAT IT NEEDS. The probe tenant has no money
+        // account, and depending on seed data is how a gate starts failing for
+        // a reason unrelated to what it tests — the pinned-fixture fault in
+        // its data-shaped form.
+        const [existing] = await tx<{ id: string }[]>`
+          select id from money_accounts where restaurant_id = ${probe} and status = 'active' limit 1`
+        const acct =
+          existing ??
+          (
+            await tx<{ id: string }[]>`
+              insert into money_accounts (restaurant_id, name, kind, status)
+              values (${probe}, 'Zz gate drawer', 'cash', 'active') returning id`
+          )[0]
+
+        const before = await getStaffOwed(probe, who.id, tx)
+
+        const [adv] = await tx<{ id: string }[]>`
+          insert into staff_advances (restaurant_id, adv_date, staff_id, amount, account_id, entered_by)
+          values (${probe}, current_date, ${who.id}, 5000, ${acct.id}, 'gate')
+          returning id`
+        await tx`
+          insert into cash_vouchers
+            (restaurant_id, voucher_date, amount, paid_to, paid_by, category, entered_by,
+             is_stock_purchase, is_casual_labour, account_id, staff_advance_id)
+          values (${probe}, current_date, 5000, ${who.name}, 'cashier', 'advance', 'gate',
+                  false, false, ${acct.id}, ${adv.id})`
+
+        const after = await getStaffOwed(probe, who.id, tx)
+
+        // IT REACHES NEITHER P&L ROUTE. Those two flags are the only ways a
+        // voucher enters the P&L at all, so this is the whole of the guard.
+        const [flags] = await tx<{ n: number }[]>`
+          select count(*)::int as n from cash_vouchers
+          where restaurant_id = ${probe} and staff_advance_id = ${adv.id}
+            and (is_stock_purchase or is_casual_labour)`
+        // AND NO EXPENSES ROW, which is the other way the same money could be
+        // counted twice.
+        const [exp] = await tx<{ n: number }[]>`
+          select count(*)::int as n from expenses
+          where restaurant_id = ${probe} and expense_date = current_date and amount = 5000`
+
+        const res = {
+          linked: adv.id,
+          owedBefore: before === null ? '0' : before.outstanding,
+          owedAfter: after === null ? null : after.outstanding,
+          months: after === null ? null : after.months_of_salary,
+          flagged: flags.n,
+          expenses: exp.n,
+        }
+        throw Object.assign(new Error('KB_ROLLBACK'), { res })
+      }).catch((e: unknown) => {
+        if ((e as Error).message !== 'KB_ROLLBACK') throw e
+        return (e as { res: Record<string, unknown> }).res
+      }),
+    )
+
+    // THE DEBT IS VISIBLE THE MOMENT THE MONEY LEAVES. staff_owes reads
+    // staff_advances, so a voucher alone would leave the drawer short and the
+    // ledger silent — which is exactly what the app did before this.
+    assert.equal(
+      Number(out.owedAfter),
+      Number(out.owedBefore) + 5000,
+      `handing over 5,000 moved what they owe from ${out.owedBefore} to ${out.owedAfter}`,
+    )
+    assert.equal(out.flagged, 0, 'the advance voucher is flagged as stock or a day hand — it would reach the P&L')
+    assert.equal(out.expenses, 0, 'an expenses row was written for the same money — it is in the P&L and owed back')
+    // AND THE ACKNOWLEDGEMENT IS READ BACK RATHER THAN ECHOED: what they owe
+    // is the balance, not the 5,000 just handed over.
+    assert.ok(
+      out.months === null || Number(out.months) > 0,
+      'the exposure came back as zero on a real debt',
+    )
+    console.log(
+      `      both rows in one transaction, advance first · owed ${out.owedBefore} → ${out.owedAfter}${out.months === null ? '' : ` (${out.months} months)`} · neither P&L route`,
+    )
   })
 
   if (only !== null) {

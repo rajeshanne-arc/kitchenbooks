@@ -165,3 +165,33 @@ export async function getVendorCredit(
     where restaurant_id = ${restaurantId} and vendor_id = ${vendorId}`
   return row ?? null
 }
+
+/**
+ * WHO CAN BE ADVANCED MONEY FROM THE DRAWER.
+ *
+ * SALARIED, ACTIVE, AND NOT CONTRACT. An advance is recovered from a payroll
+ * run, and a run excludes contract staff — they are billed by their vendor —
+ * so lending to one through this form would open a debt the only recovery
+ * mechanism cannot reach. `getPayrollDraft` has excluded them since phase 5
+ * for the same reason; this mirrors it rather than restating why.
+ *
+ * NARROWED ON THE SERVER. `listStaffIdentities` carries bank account numbers,
+ * PAN and dates of birth, and a cashier picking somebody to hand ₹500 to needs
+ * none of them — so nothing on that screen is sent them. LAW 1 applied to a
+ * payload rather than to a link.
+ *
+ * @scope not-a-figure
+ */
+export async function listAdvanceable(
+  restaurantId: string,
+  tx?: postgres.TransactionSql,
+): Promise<{ id: string; name: string; code: string }[]> {
+  const q = (tx ?? tsql) as typeof tsql
+  return q<{ id: string; name: string; code: string }[]>`
+    select id::text as id, name, code
+    from staff
+    where restaurant_id = ${restaurantId}
+      and status = 'active'
+      and employment_type <> 'contract'
+    order by code asc`
+}
