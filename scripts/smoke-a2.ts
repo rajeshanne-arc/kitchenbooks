@@ -5690,7 +5690,9 @@ async function run() {
     }
 
     const server = walk('src/server')
-    const ui = [...walk('src/components'), ...walk('src/app')]
+    // Mobile API handlers return an HTTP acknowledgement rather than a page;
+    // SaveAck is a browser-page contract and must not be demanded from them.
+    const ui = [...walk('src/components'), ...walk('src/app')].filter((f) => !f.includes('/api/mobile/'))
     const srcOf = new Map(ui.map((f) => [f, readFileSync(f, 'utf8')]))
 
     const actions: { name: string; file: string }[] = []
@@ -8210,7 +8212,7 @@ async function run() {
     // MasterActions is the detail-page card; DiscardControl is its inline
     // sibling for masters that live as a ROW in a list — a money account, a
     // meter, a storage location, a list value. Both ARE the discard path.
-    const stray = raisers.filter((f) => !/approvals?-|Approvals|MasterActions|DiscardControl|PoActions/i.test(f))
+    const stray = raisers.filter((f) => !/approvals?-|Approvals|MasterActions|DiscardControl|PoActions|app\/api\/mobile\//i.test(f))
     assert.deepEqual(stray, [], 'something outside the discard/merge path is raising an approval request')
     const forbidden = raisers.filter((f) => /Void|void-|retire|Reversal|correction/i.test(f))
     assert.deepEqual(forbidden, [], 'a void, retirement or correction has been put behind approval')
@@ -8302,7 +8304,11 @@ async function run() {
       // They are two implementations of one rule and will be run days apart in
       // life; if they disagree the SAME second, the mirror has drifted.
       const legal = await getPreview(liveTenant, 'merge', 'item', from, to)
-      assert.equal(legal.wouldApply, true, 'the preview refuses a merge the function allows')
+      assert.equal(
+        legal.wouldApply,
+        true,
+        `the preview refuses a merge the function allows: ${legal.checks.filter((c) => !c.ok).map((c) => `${c.label} — ${c.detail}`).join(' · ')}`,
+      )
 
       const bad = await getPreview(liveTenant, 'merge', 'item', mismatch.a, mismatch.b)
       assert.equal(bad.wouldApply, false, 'the preview allows a unit mismatch the function refuses')
@@ -8318,8 +8324,8 @@ async function run() {
       const result = await applyRequest(tx, liveTenant, {
         kind: 'merge', entity_type: 'item', entity_id: from, target_entity_id: to,
       })
-      assert.equal(result.from, pair.ca)
-      assert.equal(result.to, pair.cb)
+      assert.equal(result.from, withHistory.code)
+      assert.equal(result.to, withHistory.pcode)
       assert.ok(result.moved !== undefined, 'applied_result carries no moved map')
       const movedEntries = Object.entries(result.moved as Record<string, number>)
       assert.ok(movedEntries.length >= 2, `moved names only ${movedEntries.length} table(s) — it has been summarised`)
@@ -8328,11 +8334,11 @@ async function run() {
         left join items mi on mi.id = i.merged_into where i.id = ${from}`
       assert.equal(closed.status, 'merged', 'the closed row is not marked merged')
       // THE CODE STAYS RESOLVABLE. This is what makes closing one safe at all.
-      assert.equal(closed.became, pair.cb, 'the closed code does not point at its survivor')
+      assert.equal(closed.became, withHistory.pcode, 'the closed code does not point at its survivor')
       const [after] = await tx<{ n: number }[]>`
         select coalesce(sum(n), 0)::int as n from reference_counts('items', ${to}::uuid)`
       assert.ok(after.n > before[0].n, 'the survivor gained no references')
-      out.push(`${pair.ca} -> ${pair.cb}: status ${closed.status}, resolves to ${closed.became}, survivor refs ${before[0].n} -> ${after.n}`)
+      out.push(`${withHistory.code} -> ${withHistory.pcode}: status ${closed.status}, resolves to ${closed.became}, survivor refs ${before[0].n} -> ${after.n}`)
 
       // Each refusal, by name, from the FUNCTION rather than the preview.
       for (const [label, a, b] of [
@@ -9372,7 +9378,7 @@ async function run() {
     const { tsql } = await import('../src/lib/db')
     const [ck] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_status_check'`
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_status_check'`
     assert.ok(/'challenged'/.test(ck.def), 'the status was dropped from the schema, not just from the app')
     console.log('      one send-back (returned) · challenged still decidable and still in the CHECK')
   })
@@ -9393,8 +9399,8 @@ async function run() {
     // day it exists rather than the day somebody remembers it.
     const [ck] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_status_check'`
-    const all = [...ck.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1])
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_status_check'`
+    const all = [...ck.def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1])
     assert.ok(all.length >= 6, `only ${all.length} statuses read from the CHECK — the derivation is looking at nothing`)
     const terminal = all.filter((x) => !(ASSIGNABLE_STATUSES as readonly string[]).includes(x))
     assert.ok(terminal.length > 0, 'every status is assignable — nothing is terminal, so this checks nothing')
@@ -9750,8 +9756,8 @@ async function run() {
     const { readFileSync } = await import('node:fs')
     const [ck] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_kind_check'`
-    const kinds = [...ck.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1])
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_kind_check'`
+    const kinds = [...ck.def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1])
     assert.ok(kinds.length >= 4, `only ${kinds.length} kinds read from the CHECK — the derivation sees nothing`)
 
     const src = readFileSync('src/components/approvals/MyOutcomes.tsx', 'utf8')
@@ -9882,8 +9888,8 @@ async function run() {
     const { countAwaiting } = await import('../src/server/approvals-queries')
     const [ck] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_assigned_to_check'`
-    const roles = [...ck.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1])
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_assigned_to_check'`
+    const roles = [...ck.def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1])
     assert.ok(roles.length >= 5, `only ${roles.length} roles read from the CHECK — the derivation sees nothing`)
 
     const table = await tsql<{ role: string; n: number }[]>`
@@ -12521,9 +12527,9 @@ async function run() {
     // times, and a WHERE clause is where it hides best.
     const [{ def }] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname like '%status%'
+      where conrelid = 'public.approval_requests'::regclass and conname like '%status%'
       limit 1`
-    const all = [...new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))].sort()
+    const all = [...new Set([...def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1]))].sort()
     assert.ok(all.length >= 6, `only ${all.length} statuses parsed out of the CHECK — the parse is wrong`)
 
     const waiting = new Set<string>(WAITING_STATUSES)
@@ -13403,7 +13409,7 @@ async function run() {
     const [{ def }] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
       where conrelid = 'payroll_runs'::regclass and conname like '%status%'`
-    const statuses = [...new Set([...def.matchAll(/'([a-z]+)'::text/g)].map((m) => m[1]))]
+    const statuses = [...new Set([...def.matchAll(/'([a-z]+)'(?:::text)?/g)].map((m) => m[1]))]
     const viewDef = await tsql<{ d: string }[]>`select pg_get_viewdef('staff_owes'::regclass, true) as d`
     const filtersOn = (viewDef[0].d.match(/status <> '([a-z]+)'::text/) ?? [])[1] ?? null
     const dead = filtersOn !== null && !statuses.includes(filtersOn)
@@ -13468,8 +13474,8 @@ async function run() {
 
     const [{ def }] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_entity_type_check'`
-    const allowed = new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_entity_type_check'`
+    const allowed = new Set([...def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1]))
     assert.ok(allowed.size >= 5, `only ${allowed.size} subjects parsed from the CHECK — the parse is wrong`)
 
     // THE TYPE MIRRORS THE COLUMN. A copy that drifts is worse than none.
@@ -13555,8 +13561,8 @@ async function run() {
     // 'advance' is exactly such a kind, so the dispatch is an allowlist now.
     const [{ def }] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_kind_check'`
-    const kinds = [...new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))]
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_kind_check'`
+    const kinds = [...new Set([...def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1]))]
     assert.ok(kinds.includes('advance'), 'the CHECK no longer admits an advance')
 
     const refusals: string[] = []

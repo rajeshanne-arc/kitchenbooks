@@ -182,7 +182,7 @@ export async function listRecipeVersions(restaurantId: string, recipeId: string)
   return tsql<RecipeVersionRow[]>`
     select id, version_no, effective_from::text as effective_from,
            effective_to::text as effective_to, recorded_by,
-           jsonb_array_length(coalesce(snapshot->'lines', '[]'::jsonb))::int as line_count
+           jsonb_array_length(coalesce(snapshot->'lines', jsonb_build_array()))::int as line_count
     from recipe_versions
     where restaurant_id = ${restaurantId} and recipe_id = ${recipeId}
     order by version_no desc`

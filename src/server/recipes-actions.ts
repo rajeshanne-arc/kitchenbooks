@@ -84,7 +84,7 @@ async function snapshotRecipe(tx: postgres.TransactionSql, restaurantId: string,
     insert into recipe_versions
       (restaurant_id, recipe_id, version_no, effective_from, snapshot, recorded_by)
     values (${restaurantId}, ${recipeId}, ${(previous?.version_no ?? 0) + 1}, now(),
-      ${JSON.stringify({ recipe, lines, substitutions })}::jsonb, ${by})
+      ${JSON.stringify({ recipe, lines, substitutions })}::text::jsonb, ${by})
   `
 }
 

@@ -213,6 +213,36 @@ export function HourlyLine({ points }: { points: { hour: number; revenue: string
    line is drawn solid and darker than the grid because it is the thing the
    reader compares against, and the bar's SIDE is the primary encoding. */
 
+function DivergingValueLabel({
+  x = 0,
+  y = 0,
+  width = 0,
+  height = 0,
+  value,
+}: {
+  x?: number | string
+  y?: number | string
+  width?: number | string
+  height?: number | string
+  value?: unknown
+}) {
+  const n = Number(value)
+  const text = labelSignedMoney(n)
+  const negative = n < 0
+  return (
+    <text
+      x={negative ? Number(x) + 8 : Number(x) + Number(width) + 8}
+      y={Number(y) + Number(height) / 2 + 4}
+      textAnchor="start"
+      fill={negative ? 'var(--color-cell)' : INK}
+      fontSize={10}
+      fontWeight={negative ? 600 : 400}
+    >
+      {text}
+    </text>
+  )
+}
+
 export function DivergingBars({
   rows,
   height = 176,
@@ -246,43 +276,6 @@ export function DivergingBars({
 }) {
   const fill = (v: number) =>
     polarity === 'higher-is-bad' ? (v > 0 ? RED : v < 0 ? GOLD : INK) : v < 0 ? RED : GREEN
-
-  /**
-   * Recharts' `position="right"` is correct for positive bars but wrong for
-   * negative bars: it places the label at the negative endpoint, which can
-   * spill into the category-axis column and collide with long section names.
-   * Negative labels belong inside their bar, where the sign and the bar side
-   * remain readable at every card width.
-   */
-  const DivergingValueLabel = ({
-    x = 0,
-    y = 0,
-    width = 0,
-    height = 0,
-    value,
-  }: {
-    x?: number | string
-    y?: number | string
-    width?: number | string
-    height?: number | string
-    value?: unknown
-  }) => {
-    const n = Number(value)
-    const text = labelSignedMoney(n)
-    const negative = n < 0
-    return (
-      <text
-        x={negative ? Number(x) + 8 : Number(x) + Number(width) + 8}
-        y={Number(y) + Number(height) / 2 + 4}
-        textAnchor="start"
-        fill={negative ? 'var(--color-cell)' : INK}
-        fontSize={10}
-        fontWeight={negative ? 600 : 400}
-      >
-        {text}
-      </text>
-    )
-  }
 
   return (
     <div className="min-w-0 w-full" style={{ height }}>

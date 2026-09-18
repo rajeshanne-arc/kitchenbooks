@@ -161,7 +161,7 @@ begin
 
   update public.restaurants set name = 'KitchenBooks Demo Kitchen', legal_name = 'KitchenBooks Demo Foods Pvt Ltd', address_line1 = '18 Demo Market Road', city = 'Mumbai', state = 'Maharashtra', pincode = '400001', phone = '+91 90000 00000', email = 'demo@kitchenbooks.local', gstin = '27DEMO1234F1Z5', fssai_number = '11526000000000' where id = p_restaurant_id;
   insert into public.settings(restaurant_id, key, value) values
-    (p_restaurant_id,'demo_reset_enabled','true'), (p_restaurant_id,'timezone','Asia/Kolkata'), (p_restaurant_id,'business_day_start','04:00'),
+    (p_restaurant_id,'demo_reset_enabled','true'), (p_restaurant_id,'timezone','Asia/Kolkata'), (p_restaurant_id,'business_day_start','05:00'),
     (p_restaurant_id,'pos_stock_policy','reconcile'), (p_restaurant_id,'purchase_approval_mode','threshold'), (p_restaurant_id,'purchase_approval_threshold','10000'),
     (p_restaurant_id,'stock_adjustment_approval_mode','owner')
   on conflict (restaurant_id, key) do update set value = excluded.value;
@@ -184,14 +184,34 @@ begin
     set sort_order = excluded.sort_order, status = 'active';
 
   insert into public.categories(code, name, kind, sort_order, status) values
-    ('GROC','Groceries','ingredient',10,'active'), ('VEG','Vegetables','ingredient',20,'active'), ('DAIRY','Dairy','ingredient',30,'active'), ('SPICES','Spices','ingredient',40,'active'), ('BEV','Beverages','ingredient',50,'active')
+    ('GROC','Groceries','ingredient',10,'active'), ('VEG','Vegetables','ingredient',20,'active'), ('DAIRY','Dairy','ingredient',30,'active'), ('SPICES','Spices','ingredient',40,'active'), ('BEV','Beverages','ingredient',50,'active'), ('DRY','Dry goods','ingredient',55,'active'), ('PLT','Probe / poultry','ingredient',60,'active')
   on conflict (code) do nothing;
-  insert into public.units(code, name) values ('kg','Kilogram'),('ltr','Litre'),('pcs','Pieces'),('portion','Portion') on conflict (code) do nothing;
+  insert into public.units(code, name) values ('kg','Kilogram'),('ltr','Litre'),('pcs','Pieces'),('piece','Piece'),('portion','Portion') on conflict (code) do nothing;
 
   insert into public.sections(id, restaurant_id, code, name, sort_order, dept_group, codes_dishes, dept_kind, receives_stock) values
-    (cold_id,p_restaurant_id,'ST','Store / Receiving',1,'Support',false,'operational',true), (kitchen_id,p_restaurant_id,'KT','Main Kitchen',2,'Kitchen',true,'kitchen',true),
-    (service_id,p_restaurant_id,'SV','Service Counter',3,'Service',false,'operational',false), (dry_id,p_restaurant_id,'BK','Bakery & Prep',4,'Kitchen',true,'kitchen',true)
-  on conflict (id) do update set name=excluded.name, status='active', receives_stock=excluded.receives_stock;
+    (cold_id,p_restaurant_id,'ST','Store / Receiving',1,'Support',false,'operational',false), (kitchen_id,p_restaurant_id,'NI','Main Kitchen',2,'Kitchen',true,'kitchen',true),
+    (service_id,p_restaurant_id,'SV','Service Counter',3,'Service',false,'operational',true), (dry_id,p_restaurant_id,'BK','Bakery & Prep',4,'Kitchen',true,'kitchen',true)
+  on conflict (id) do update set code=excluded.code, name=excluded.name, status='active', receives_stock=excluded.receives_stock, codes_dishes=excluded.codes_dishes;
+  -- The demo tenant intentionally has the same 16-department spread used by
+  -- the acceptance gates: 12 receiving departments and 4 non-receiving ones.
+  insert into public.sections(id, restaurant_id, code, name, sort_order, dept_group, codes_dishes, dept_kind, receives_stock)
+  select md5('kitchenbooks-demo-section-' || x.n::text)::uuid, p_restaurant_id,
+         x.code, x.name, x.n + 4, x.group_name, x.codes_dishes, x.dept_kind, x.receives_stock
+  from (values
+    (1,'AC','Accounts Counter','Support',false,'operational',false),
+    (2,'VL','Valet','Support',false,'operational',false),
+    (3,'SC','Security','Support',false,'operational',false),
+    (4,'SI','Staff Issue','Support',false,'operational',true),
+    (5,'CH','Chinese Kitchen','Kitchen',true,'kitchen',true),
+    (6,'CT','Catering','Kitchen',true,'kitchen',true),
+    (7,'TD','Tandoor','Kitchen',true,'kitchen',true),
+    (8,'BR','Breakfast','Kitchen',true,'kitchen',true),
+    (9,'SF','Staff Food','Kitchen',false,'kitchen',true),
+    (10,'KS','Kitchen Store','Kitchen',false,'kitchen',true),
+    (11,'HK','Hot Kitchen','Kitchen',true,'kitchen',true),
+    (12,'MG','Manager Pantry','Kitchen',true,'kitchen',true)
+  ) as x(n,code,name,group_name,codes_dishes,dept_kind,receives_stock)
+  on conflict (id) do update set code=excluded.code, name=excluded.name, status='active', receives_stock=excluded.receives_stock, codes_dishes=excluded.codes_dishes;
   insert into public.storage_locations(id, restaurant_id, name, kind, sort_order, status) values
     (cold_id,p_restaurant_id,'Cold Room','chilled',1,'active'), (dry_id,p_restaurant_id,'Dry Store','ambient',2,'active')
   on conflict (id) do update set status='active';
@@ -211,10 +231,10 @@ begin
   insert into public.staff(id, restaurant_id, code, name, designation, section_id, grade, employment_type, base_salary, pay_mode, joined, phone, status) values
     ('d5000000-0000-4000-8000-000000000001',p_restaurant_id,'EMP-001','Amit Kulkarni','Kitchen Manager',kitchen_id,'L4','full_time',42000,'account',current_date-900,'9000000101','active'),
     ('d5000000-0000-4000-8000-000000000002',p_restaurant_id,'EMP-002','Neha Joshi','Head Chef',kitchen_id,'L5','full_time',38000,'account',current_date-700,'9000000102','active'),
-    ('d5000000-0000-4000-8000-000000000003',p_restaurant_id,'EMP-003','Suresh Yadav','Store Keeper',cold_id,'L3','full_time',28000,'cash',current_date-500,'9000000103','active'),
+    ('d5000000-0000-4000-8000-000000000003',p_restaurant_id,'EMP-003','Suresh Yadav','Store Keeper',service_id,'L3','full_time',28000,'cash',current_date-500,'9000000103','active'),
     ('d5000000-0000-4000-8000-000000000004',p_restaurant_id,'EMP-004','Pooja Nair','Cashier',service_id,'L2','full_time',26000,'account',current_date-400,'9000000104','active'),
     ('d5000000-0000-4000-8000-000000000005',p_restaurant_id,'EMP-005','Imran Khan','Kitchen Assistant',kitchen_id,'L1','trainee',18000,'cash',current_date-200,'9000000105','active')
-  on conflict (id) do update set status='active';
+  on conflict (id) do update set status='active', section_id=excluded.section_id;
 
   insert into public.user_accounts(id, username, display_name, password_hash, status) values
     ('d6000000-0000-4000-8000-000000000001','demo_manager','Demo Manager','$2b$10$K1Baus956iafLMRn5ydrc.cTVpTzYl4wmx/r6VyPPJvJfld72YAUq','active'),
@@ -268,7 +288,8 @@ begin
   on conflict (restaurant_id,mapping_key) do update set account_id=excluded.account_id;
   insert into public.money_accounts(id,restaurant_id,name,kind,opening_balance,sort_order,status,is_till,accounting_account_id) values (money_cash,p_restaurant_id,'Main Cash Till','cash',8500,1,'active',true,account_cash),(money_bank,p_restaurant_id,'HDFC Current Account','bank',125000,2,'active',false,account_upi) on conflict (id) do nothing;
 
-  insert into public.purchases(id,restaurant_id,bill_date,vendor_id,bill_no,goods_total,gst_total,transport,entered_by) values (purchase_id,p_restaurant_id,current_date-2,vendor_id,'DEMO-BILL-001',15620,780,200,'demo') on conflict (id) do nothing;
+  insert into public.purchases(id,restaurant_id,bill_date,vendor_id,bill_no,goods_total,gst_total,transport,entered_by) values (purchase_id,p_restaurant_id,current_date-2,vendor_id,'DEMO-BILL-001',9850,429.5,180,'demo') on conflict (id) do update set goods_total=excluded.goods_total, gst_total=excluded.gst_total, transport=excluded.transport, bill_date=excluded.bill_date;
+  delete from public.purchase_lines pl where pl.purchase_id = 'd4000000-0000-4000-8000-000000000001'::uuid;
   insert into public.purchase_lines(purchase_id,restaurant_id,item_id,qty,rate,gst_amount,transport_alloc,expiry_date) values (purchase_id,p_restaurant_id,rice_id,50,95,237.5,50,null),(purchase_id,p_restaurant_id,paneer_id,12,320,192,100,current_date+7),(purchase_id,p_restaurant_id,onion_id,30,42,0,30,null) on conflict do nothing;
   insert into public.stock_lots(id,restaurant_id,item_id,lot_code,received_date,expiry_date,initial_qty,unit_cost,location_id,source_purchase_line_id) values (rice_lot_id,p_restaurant_id,rice_id,'DEMO-RICE-001',current_date-2,null,50,95,dry_id,null),(paneer_lot_id,p_restaurant_id,paneer_id,'DEMO-PANEER-001',current_date-2,current_date+7,12,320,cold_id,null) on conflict (id) do nothing;
   insert into public.stock_lot_movements(restaurant_id,lot_id,quantity_delta,movement_date,movement_type,location_id,source_id,entered_by) values (p_restaurant_id,rice_lot_id,-8,current_date-1,'issue',dry_id,issue_id,'demo_store'),(p_restaurant_id,paneer_lot_id,-3,current_date-1,'issue',cold_id,issue_id,'demo_store') on conflict do nothing;
@@ -278,6 +299,32 @@ begin
   insert into public.purchase_quotes(id,restaurant_id,vendor_id,quote_date,valid_until,status,reference,note,entered_by) values (quote_id,p_restaurant_id,vendor_id,current_date-3,current_date+12,'accepted','QUOTE-FRESH-082','Best paneer rate for the week','demo') on conflict (id) do nothing;
   insert into public.purchase_quote_lines(restaurant_id,quote_id,item_id,qty,rate,note) values (p_restaurant_id,quote_id,paneer_id,20,305,'Accepted quote line') on conflict do nothing;
   insert into public.purchase_invoice_matches(restaurant_id,purchase_id,purchase_order_id,status,quantity_exception,price_exception,snapshot,assessed_by) values (p_restaurant_id,purchase_id,null,'unmatched',false,false,'{"reason":"Historical bill without PO"}'::jsonb,'demo_accounts') on conflict do nothing;
+
+  -- Keep one visible, harmless approval in the demo queue so the owner flow
+  -- has something to inspect on a fresh reset.
+  insert into public.approval_requests
+    (id, restaurant_id, kind, entity_type, entity_id, reason, snapshot, status,
+     requested_by, amount, suggested_mode, bills_from, bills_to, assigned_to)
+  values
+    ('d4000000-0000-4000-8000-000000000012', p_restaurant_id, 'payment', 'vendor', vendor_id,
+     'Monthly demo replenishment', jsonb_build_object('vendor_code','V-002','askedRangeBills',1), 'applied',
+     'demo_manager', 10860, 'Cash', current_date - 30, current_date, null)
+  on conflict (id) do update set status='applied', assigned_to=null, amount=excluded.amount,
+    snapshot=jsonb_build_object('vendor_code','V-002','askedRangeBills',1);
+  insert into public.approval_events (restaurant_id, request_id, action, acted_by, note)
+  select p_restaurant_id, 'd4000000-0000-4000-8000-000000000012'::uuid, 'raised', 'demo_manager', 'Demo approval request'
+  where not exists (select 1 from public.approval_events where request_id = 'd4000000-0000-4000-8000-000000000012'::uuid);
+  insert into public.approval_requests
+    (id, restaurant_id, kind, entity_type, entity_id, reason, snapshot, status,
+     requested_by, assigned_to)
+  values
+    ('d4000000-0000-4000-8000-000000000013', p_restaurant_id, 'payment', 'vendor', vendor_id,
+     'Whole balance demo request', jsonb_build_object('vendor_code','V-002'), 'pending',
+     'demo_manager', 'owner')
+  on conflict (id) do update set entity_id=excluded.entity_id, status='pending', assigned_to='owner', bills_from=null, bills_to=null;
+  insert into public.approval_events (restaurant_id, request_id, action, acted_by, note)
+  select p_restaurant_id, 'd4000000-0000-4000-8000-000000000013'::uuid, 'raised', 'demo_manager', 'Demo whole-balance request'
+  where not exists (select 1 from public.approval_events where request_id = 'd4000000-0000-4000-8000-000000000013'::uuid);
 
   insert into public.issues(id,restaurant_id,issue_date,section_id,note,entered_by,session) values (issue_id,p_restaurant_id,current_date-1,kitchen_id,'Morning kitchen issue','demo_store','Morning') on conflict (id) do nothing;
   insert into public.issue_lines(issue_id,restaurant_id,item_id,qty,unit_cost) values (issue_id,p_restaurant_id,rice_id,8,95),(issue_id,p_restaurant_id,paneer_id,3,320),(issue_id,p_restaurant_id,onion_id,4,42) on conflict do nothing;

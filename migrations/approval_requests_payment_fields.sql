@@ -52,6 +52,10 @@ alter table staff_advances
   foreign key (restaurant_id, approved_request_id)
   references approval_requests (restaurant_id, id);
 
+create unique index if not exists staff_advances_one_per_request
+  on staff_advances (restaurant_id, approved_request_id)
+  where approved_request_id is not null;
+
 create index if not exists approval_requests_assigned_to
   on approval_requests (restaurant_id, assigned_to, status);
 create index if not exists approval_requests_routed_account

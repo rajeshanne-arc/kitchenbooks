@@ -4,7 +4,6 @@
 import GroupTabs from '@/components/GroupTabs'
 import { BusinessDayNote, BusinessDayProvider } from '@/components/BusinessDay'
 import { businessDayContext } from '@/server/business-day'
-import { pageShellCls } from '@/components/ui'
 
 export default async function OwnerGroupLayout({ children }: { children: React.ReactNode }) {
   // Resolved ONCE per request here, and handed to every form beneath. A form
@@ -19,7 +18,7 @@ export default async function OwnerGroupLayout({ children }: { children: React.R
   // sit under these six identical layouts, so the fix is here rather than in
   // any of them. Phone behaviour is unchanged — a max-width only caps.
   return (
-    <main className={`${pageShellCls} max-w-4xl`}>
+    <main className="mx-auto w-full max-w-4xl px-4 sm:px-6">
       <GroupTabs group="owner" />
       <BusinessDayProvider value={businessDay}>
         {/* Said once per group rather than per form: past midnight EVERY date on

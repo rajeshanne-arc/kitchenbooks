@@ -16,6 +16,10 @@ create table if not exists public.approval_events (
   account_id uuid,
   acted_by text,
   acted_at timestamptz not null default now(),
+  constraint approval_events_action_check check (action = any (array[
+    'raised', 'approved', 'routed', 'forwarded', 'returned', 'challenged',
+    'refused', 'paid', 'cancelled', 'reopened', 'acknowledged'
+  ])),
   unique (restaurant_id, seq),
   foreign key (restaurant_id, request_id)
     references public.approval_requests (restaurant_id, id),
@@ -30,6 +34,31 @@ alter table public.approval_requests add constraint approval_requests_status_che
   check (status = any (array[
     'pending', 'approved', 'refused', 'applied', 'failed', 'cancelled',
     'returned', 'challenged'
+  ]));
+
+-- Keep the database vocabulary aligned with the approval controls. These
+-- columns used to be free text, which meant a typo could create a request
+-- that no screen or queue could ever resolve.
+alter table public.approval_requests drop constraint if exists approval_requests_entity_type_check;
+alter table public.approval_requests add constraint approval_requests_entity_type_check
+  check (entity_type = any (array[
+    'item', 'vendor', 'recipe', 'staff', 'period', 'account', 'meter',
+    'location', 'list_value'
+  ]));
+
+alter table public.approval_requests drop constraint if exists approval_requests_assigned_to_check;
+alter table public.approval_requests add constraint approval_requests_assigned_to_check
+  check (assigned_to is null or assigned_to = any (array[
+    'owner', 'manager', 'chef', 'store', 'cashier', 'accountant'
+  ]));
+
+-- CREATE TABLE's inline constraint is not enough for an already-existing
+-- database; make the event vocabulary converge on every application.
+alter table public.approval_events drop constraint if exists approval_events_action_check;
+alter table public.approval_events add constraint approval_events_action_check
+  check (action = any (array[
+    'raised', 'approved', 'routed', 'forwarded', 'returned', 'challenged',
+    'refused', 'paid', 'cancelled', 'reopened', 'acknowledged'
   ]));
 
 create index if not exists approval_events_request
@@ -57,7 +86,6 @@ select restaurant_id,
        sum(amount) as total_amount
 from public.approval_requests
 where assigned_to is not null
-  and status in ('pending', 'approved', 'returned', 'challenged', 'refused', 'failed')
 group by restaurant_id, assigned_to, kind, status;
 
 grant select on public.awaiting_me to kb_app;

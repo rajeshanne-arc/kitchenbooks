@@ -334,14 +334,14 @@ export async function saveBill(rawInput: SaveBillInput): Promise<SaveBillResult>
                     when has_short then 'partial'::text
                     else 'exception'::text end as status,
                quantity_exception, price_exception,
-               jsonb_build_object('purchase_order_id', ${poId}::uuid, 'lines', coalesce((select jsonb_agg(to_jsonb(comparison)) from comparison), '[]'::jsonb)) as snapshot
+               jsonb_build_object('purchase_order_id', ${poId}::uuid, 'lines', coalesce((select jsonb_agg(to_jsonb(comparison)) from comparison), jsonb_build_array())) as snapshot
         from flags`
       if (!match) throw new BillError('Could not assess the purchase against its order')
       const matchSnapshot = typeof match.snapshot === 'string' ? match.snapshot : JSON.stringify(match.snapshot)
       await tx`
         insert into purchase_invoice_matches
           (restaurant_id, purchase_id, purchase_order_id, status, quantity_exception, price_exception, snapshot, assessed_by)
-        values (${rid}, ${purchase.id}, ${poId}, ${match.status}, ${match.quantity_exception}, ${match.price_exception}, ${matchSnapshot}::jsonb, ${by})`
+        values (${rid}, ${purchase.id}, ${poId}, ${match.status}, ${match.quantity_exception}, ${match.price_exception}, ${matchSnapshot}::text::jsonb, ${by})`
 
       const [taxSetting] = await tx<{ creditable: boolean }[]>`
         select coalesce((select value = 'true' from settings
