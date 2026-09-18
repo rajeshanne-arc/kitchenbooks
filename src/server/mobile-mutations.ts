@@ -19,9 +19,9 @@ export async function reserveMobileMutation(input: {
   if (existing[0]?.status === 'failed') {
     const retried = await tsql<{ id: string }[]>`
       update mobile_mutations
-      set operation = ${input.operation}, request_json = ${JSON.stringify(input.request)}::jsonb,
+      set operation = ${input.operation}, request_json = ${JSON.stringify(input.request)}::text::jsonb,
           status = 'processing', entered_by = ${input.enteredBy}, response_json = null, completed_at = null
-      where id = ${existing[0].id} and status = 'failed'
+      where restaurant_id = ${input.restaurantId} and id = ${existing[0].id} and status = 'failed'
       returning id`
     if (retried[0]) return { kind: 'reserved', id: retried[0].id }
   }
@@ -30,7 +30,7 @@ export async function reserveMobileMutation(input: {
     insert into mobile_mutations
       (restaurant_id, client_mutation_id, operation, request_json, status, entered_by)
     values
-      (${input.restaurantId}, ${input.clientMutationId}, ${input.operation}, ${JSON.stringify(input.request)}::jsonb, 'processing', ${input.enteredBy})
+      (${input.restaurantId}, ${input.clientMutationId}, ${input.operation}, ${JSON.stringify(input.request)}::text::jsonb, 'processing', ${input.enteredBy})
     on conflict (restaurant_id, client_mutation_id) do nothing
     returning id`
   if (inserted[0]) return { kind: 'reserved', id: inserted[0].id }
@@ -44,18 +44,18 @@ export async function reserveMobileMutation(input: {
   if (raced[0]?.status === 'failed') {
     const retried = await tsql<{ id: string }[]>`
       update mobile_mutations
-      set operation = ${input.operation}, request_json = ${JSON.stringify(input.request)}::jsonb,
+      set operation = ${input.operation}, request_json = ${JSON.stringify(input.request)}::text::jsonb,
           status = 'processing', entered_by = ${input.enteredBy}, response_json = null, completed_at = null
-      where id = ${raced[0].id} and status = 'failed'
+      where restaurant_id = ${input.restaurantId} and id = ${raced[0].id} and status = 'failed'
       returning id`
     if (retried[0]) return { kind: 'reserved', id: retried[0].id }
   }
   return { kind: 'processing' }
 }
 
-export async function finishMobileMutation(id: string, status: 'accepted' | 'failed', response: unknown) {
+export async function finishMobileMutation(restaurantId: string, id: string, status: 'accepted' | 'failed', response: unknown) {
   await tsql`
     update mobile_mutations
-    set status = ${status}, response_json = ${JSON.stringify(response)}::jsonb, completed_at = now()
-    where id = ${id}`
+    set status = ${status}, response_json = ${JSON.stringify(response)}::text::jsonb, completed_at = now()
+    where restaurant_id = ${restaurantId} and id = ${id}`
 }

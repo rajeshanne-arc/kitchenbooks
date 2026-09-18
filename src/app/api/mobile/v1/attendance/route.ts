@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     if (reservation.kind === 'replay') return NextResponse.json({ ...(reservation.response as object), replayed: true })
     if (reservation.kind === 'processing') return NextResponse.json({ error: 'This save is already being processed — retry shortly' }, { status: 409 })
     const result = await saveAttendance(payload as Parameters<typeof saveAttendance>[0])
-    await finishMobileMutation(reservation.id, result.ok ? 'accepted' : 'failed', result)
+    await finishMobileMutation(user.restaurantId, reservation.id, result.ok ? 'accepted' : 'failed', result)
     if (!result.ok) return NextResponse.json(result, { status: 400 })
     return NextResponse.json(result)
   } catch (error) {

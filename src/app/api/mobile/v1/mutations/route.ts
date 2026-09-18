@@ -73,11 +73,11 @@ export async function POST(request: Request) {
     reservationId = reservation.id
     const result = await handler(body.payload)
     const failed = typeof result === 'object' && result !== null && 'ok' in result && result.ok === false
-    await finishMobileMutation(reservation.id, failed ? 'failed' : 'accepted', result)
+    await finishMobileMutation(user.restaurantId, reservation.id, failed ? 'failed' : 'accepted', result)
     if (failed) return NextResponse.json({ result }, { status: 400 })
     return NextResponse.json({ result })
   } catch (error) {
-    if (reservationId !== null) await finishMobileMutation(reservationId, 'failed', { ok: false, error: 'Could not complete this mutation' })
+    if (reservationId !== null) await finishMobileMutation(user.restaurantId, reservationId, 'failed', { ok: false, error: 'Could not complete this mutation' })
     if (error instanceof z.ZodError) return NextResponse.json({ error: 'Invalid mobile mutation' }, { status: 400 })
     console.error('mobile mutation failed', error)
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Could not save mobile mutation' }, { status: 400 })

@@ -166,6 +166,23 @@ begin
     (p_restaurant_id,'stock_adjustment_approval_mode','owner')
   on conflict (restaurant_id, key) do update set value = excluded.value;
 
+  -- Keep every demo workflow selectable on first load. These are tenant-owned
+  -- managed lists, not hard-coded UI labels.
+  insert into public.list_options(restaurant_id, list_key, value, sort_order, status)
+  values
+    (p_restaurant_id, 'payment_mode', 'Cash', 10, 'active'),
+    (p_restaurant_id, 'payment_mode', 'UPI', 20, 'active'),
+    (p_restaurant_id, 'payment_mode', 'Bank transfer', 30, 'active'),
+    (p_restaurant_id, 'payment_mode', 'Card', 40, 'active'),
+    (p_restaurant_id, 'return_reason', 'Quality issue', 10, 'active'),
+    (p_restaurant_id, 'return_reason', 'Wrong item', 20, 'active'),
+    (p_restaurant_id, 'return_reason', 'Wastage', 30, 'active'),
+    (p_restaurant_id, 'vendor_return_reason', 'Damaged goods', 10, 'active'),
+    (p_restaurant_id, 'vendor_return_reason', 'Short expiry', 20, 'active'),
+    (p_restaurant_id, 'vendor_return_reason', 'Wrong delivery', 30, 'active')
+  on conflict (restaurant_id, list_key, value) do update
+    set sort_order = excluded.sort_order, status = 'active';
+
   insert into public.categories(code, name, kind, sort_order, status) values
     ('GROC','Groceries','ingredient',10,'active'), ('VEG','Vegetables','ingredient',20,'active'), ('DAIRY','Dairy','ingredient',30,'active'), ('SPICES','Spices','ingredient',40,'active'), ('BEV','Beverages','ingredient',50,'active')
   on conflict (code) do nothing;
