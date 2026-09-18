@@ -8,7 +8,7 @@ import 'server-only'
 import bcrypt from 'bcryptjs'
 import { sql, tsql, txn } from '@/lib/db'
 import { ALL_ROLES, type Role } from '@/lib/roles'
-import type { AppUserRow } from '@/lib/types'
+import type { AppUserRow, LoginMembershipChoice, RestaurantMembershipRow } from '@/lib/types'
 
 export class AuthError extends Error {}
 
@@ -79,6 +79,51 @@ export async function anyUsers(restaurantId: string): Promise<boolean> {
 const NO_TENANT = '00000000-0000-0000-0000-000000000000'
 
 const NO_SUCH_USER_HASH = '$2b$10$5niezRb/EV6yfW7C5RkKCuRvKl/dkTEcbP5Ok/6eVnFZr20Hgl9uG'
+
+export async function verifyGlobalCredentials(username: string, password: string): Promise<{
+  username: string
+  displayName: string
+  choices: LoginMembershipChoice[]
+} | null> {
+  const [account] = await tsql<{ username: string; display_name: string; password_hash: string; status: string }[]>`
+    select username, display_name, password_hash, status
+    from user_account_for_username(${username})`
+  const matched = await bcrypt.compare(password, account?.password_hash ?? NO_SUCH_USER_HASH)
+  if (!matched || !account || account.status !== 'active') {
+    await sleep(350)
+    return null
+  }
+  const choices = await tsql<LoginMembershipChoice[]>`
+    select restaurant_id as "restaurantId", restaurant_name as "restaurantName", role
+    from restaurant_memberships_for_username(${account.username})`
+  if (choices.length === 0) return null
+  return { username: account.username, displayName: account.display_name, choices }
+}
+
+export async function listRestaurantMemberships(
+  actorUsername: string,
+  restaurantId: string,
+): Promise<RestaurantMembershipRow[]> {
+  return tsql<RestaurantMembershipRow[]>`
+    select membership_id, username, display_name, role, staff_id, status
+    from restaurant_memberships_for_owner(${actorUsername}, ${restaurantId})`
+}
+
+export async function listAvailableRestaurants(username: string): Promise<LoginMembershipChoice[]> {
+  return tsql<LoginMembershipChoice[]>`
+    select restaurant_id as "restaurantId", restaurant_name as "restaurantName", role
+    from restaurant_memberships_for_username(${username})`
+}
+
+export async function setRestaurantMembershipStatus(
+  actorUsername: string,
+  restaurantId: string,
+  membershipId: string,
+  status: 'active' | 'inactive',
+): Promise<void> {
+  await tsql`
+    select set_restaurant_membership_status(${actorUsername}, ${restaurantId}, ${membershipId}::uuid, ${status})`
+}
 
 /** The tenant a username belongs to, or null. The ONLY call in the app that
  *  reaches across tenants, and it comes back with a uuid and nothing else. */
@@ -284,4 +329,33 @@ export async function resetPassword(
     where id = ${userId} and restaurant_id = ${restaurantId}
     returning id`
   if (!rows[0]) throw new AuthError('User not found')
+}
+
+/** A signed-in user may replace their own password after proving the current
+ * one. This is deliberately separate from owner reset: an owner reset does
+ * not need the old password, while self-service must never become an
+ * accidental password overwrite endpoint. */
+export async function changeOwnPassword(
+  restaurantId: string,
+  username: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  if (newPassword.length < 8) throw new AuthError('New password must be at least 8 characters')
+  if (currentPassword === newPassword) throw new AuthError('New password must be different from the current password')
+
+  const rows = await tsql<{ id: string; password_hash: string }[]>`
+    select id, password_hash from app_users
+    where restaurant_id = ${restaurantId} and lower(username) = lower(${username}) and status = 'active'`
+  const user = rows[0]
+  if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+    throw new AuthError('Current password is wrong')
+  }
+
+  const hash = await hashPassword(newPassword)
+  const changed = await tsql<{ id: string }[]>`
+    update app_users set password_hash = ${hash}
+    where id = ${user.id} and restaurant_id = ${restaurantId} and status = 'active'
+    returning id`
+  if (!changed[0]) throw new AuthError('Your account is no longer active')
 }

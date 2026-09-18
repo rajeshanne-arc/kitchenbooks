@@ -65,3 +65,9 @@ create or replace view section_frequent_items as
   WHERE i.reverses_id IS NULL
     AND i.issue_date >= (business_date(now()) - '30 days'::interval)
   GROUP BY i.restaurant_id, i.section_id, s.code, l.item_id, it.code, it.name, it.purchase_unit;
+
+-- CREATE OR REPLACE VIEW resets view options on PostgreSQL. Re-assert the
+-- tenant backstop here because this maintenance migration can run after the
+-- general security-invoker migration in the release order.
+alter view public.slow_moving_stock set (security_invoker = on);
+alter view public.section_frequent_items set (security_invoker = on);

@@ -1,7 +1,12 @@
 # Attachments: which storage, and what secret it costs
 
-**Status: a decision for Rajesh. Nothing is built.** The `attachments` table
-exists and no UI touches it.
+**Status: approved and implemented.** The `attachments` table is protected by
+forced tenant RLS in the current database, and the bill-photo UI, private
+storage adapter, authenticated read route, and scoped storage-key checks are
+present. Vercel Blob remains the hosted-platform adapter; the self-hosted
+deployment currently uses a mode-700 local filesystem directory at the same
+boundary, ready to be replaced by R2 later. `migrations/attachments_rls.sql`
+records the database boundary.
 
 ## What the app is today, so the cost of each option is real
 
@@ -24,7 +29,7 @@ attachments(id, restaurant_id, entity_type, entity_id, kind, storage_key,
   kb_app: INSERT, SELECT, UPDATE(caption).  NO DELETE.
   index:  (restaurant_id, entity_type, entity_id)
   kind:   photo | document | statement | other
-  RLS:    NOT ENABLED — see migrations/meters_attachments_rls.sql
+  RLS:    ENABLED + FORCED — see migrations/attachments_rls.sql
 ```
 
 `storage_key` holds a key, never bytes. `entity_id` is nullable, polymorphic
@@ -34,7 +39,7 @@ like `queries`.
 
 ## The options
 
-### A. Vercel Blob — **recommended**
+### A. Vercel Blob — **recommended for Vercel**
 
 `npm i @vercel/blob`. `put(key, file, { access: 'private' })`;
 `get(pathname, { access: 'private' })` returns a stream the app serves after
@@ -110,6 +115,15 @@ Most control, most work, and the worst secret story of the four: two static
 long-lived credentials, our own signing, no platform rotation. Nothing here
 needs it.
 
+### E. Self-hosted local filesystem — **temporary current deployment**
+
+The self-hosted server uses `KB_FILE_STORAGE_DIR`, which must be an absolute
+directory. The adapter rejects path traversal, keeps the root mode 0700, and
+writes objects mode 0600. The authenticated application route remains the
+only read path. This is suitable for the current single-server deployment;
+R2 is the planned durable replacement when its credentials and bucket policy
+are available.
+
 ---
 
 ## The design that follows, whichever backend is chosen
@@ -143,7 +157,7 @@ the shortest expiry that works, scoped to the one pathname.
 Structural, in code, never a managed list — a settings row must not be able to
 point an attachment at a table that does not exist.
 
-## The open question that must be answered before any UI
+## Retention and removal rule
 
 **`kb_app` has no DELETE on `attachments`, and that is deliberate — but it means
 a wrong attachment cannot be taken back, and a blob nobody references is a bill
@@ -163,10 +177,12 @@ the blob genuinely gone — and for a photo of someone's ID document he might �
 that is a separate, deliberate decision about *data*, not about bookkeeping, and
 it should be a named admin action rather than a delete button.
 
-That ruling is needed first, because it decides whether the UI has a remove
-button at all.
+The ruling is applied: there is no delete button and no DELETE grant. A future
+retirement/status migration may hide a mistaken link while preserving the
+evidence trail. Physical blob removal, if ever required for a legal/privacy
+request, remains a separately approved administrator operation.
 
-## What it should be built for, first
+## What is built first
 
 Two readers, both real, both named by Rajesh:
 
@@ -174,6 +190,6 @@ Two readers, both real, both named by Rajesh:
 - **a bill photo** — "show me the bill" is the single most common thing an
   accountant asks.
 
-Not a general uploader with no reader. A capability nobody reads is the
-`issues.session` mistake wearing a new hat, and this project has paid for that
-four times.
+Not a general uploader with no reader. The first readers are the bill-photo
+list/detail flow and the authenticated attachment route. Meter-reading UX is
+the next attachment consumer.

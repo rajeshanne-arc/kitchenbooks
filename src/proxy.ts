@@ -8,7 +8,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { SESSION_COOKIE, verifySession } from '@/lib/session'
 import { canAccess, type Role, ALL_ROLES } from '@/lib/roles'
 
-const PUBLIC_PATHS = ['/login', '/setup', '/manifest.webmanifest', '/icon.svg', '/apple-icon.svg']
+const PUBLIC_PATHS = ['/', '/login', '/setup', '/reset-password', '/invite', '/api/platform/provision', '/api/cron/pos-sync', '/api/cron/demo-reset', '/api/mobile/v1/auth/login', '/manifest.webmanifest', '/icon.svg', '/apple-icon.svg']
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -20,7 +20,11 @@ export async function proxy(request: NextRequest) {
     return new NextResponse('KB_SESSION_SECRET is not configured', { status: 503 })
   }
 
-  const payload = await verifySession(request.cookies.get(SESSION_COOKIE)?.value, secret)
+  const cookieToken = request.cookies.get(SESSION_COOKIE)?.value
+  const bearer = pathname.startsWith('/api/mobile/')
+    ? request.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]
+    : undefined
+  const payload = await verifySession(cookieToken ?? bearer, secret)
   if (!payload || !ALL_ROLES.includes(payload.r as Role)) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'not signed in' }, { status: 401 })
@@ -50,6 +54,11 @@ export async function proxy(request: NextRequest) {
   // out still means go and sign in. A destination this proxy can send someone
   // to must be a destination it will let them arrive at.
   if (pathname === '/denied') return NextResponse.next()
+
+  // Mobile handlers authenticate the bearer token above and enforce their own
+  // endpoint-specific role rules. The web matrix contains browser paths, not
+  // the versioned mobile namespace.
+  if (pathname.startsWith('/api/mobile/')) return NextResponse.next()
 
   if (!canAccess(payload.r as Role, pathname)) {
     if (pathname.startsWith('/api/')) {

@@ -41,6 +41,8 @@
 -- an explicit grant survives a revoke from PUBLIC, which is exactly how
 -- tenant_for_username was once callable with the anon key.
 
+create schema if not exists extensions;
+create extension if not exists btree_gist with schema extensions;
 alter extension btree_gist set schema extensions;
 
 revoke execute on all functions in schema extensions from anon, authenticated, service_role;

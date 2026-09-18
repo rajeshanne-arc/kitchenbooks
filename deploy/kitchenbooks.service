@@ -1,0 +1,19 @@
+[Unit]
+Description=KitchenBooks web application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/kitchenbooks
+Environment=NODE_ENV=production
+Environment=PATH=%h/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/apps/kitchenbooks/.env.production
+ExecStart=%h/.nvm/versions/node/v22.23.1/bin/npm run start -- --hostname 127.0.0.1 --port 3120
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target

@@ -385,9 +385,14 @@ const ProductionsSchema = z.object({
   sectionId: z.string().regex(UUID),
   note: z.string().trim().max(300),
   lines: z
-    .array(z.object({ recipeId: z.string().regex(UUID), outputQty: qtyStr }))
+    .array(z.object({ recipeId: z.string().regex(UUID), outputQty: qtyStr, wasteQty: qtyStr.optional() }))
     .min(1, 'A production needs at least one line')
     .max(60),
+})
+
+const SingleProductionSchema = z.object({
+  date: z.string().regex(DATE_RE), sectionId: z.string().regex(UUID), recipeId: z.string().regex(UUID),
+  outputQty: qtyStr, wasteQty: qtyStr.optional(), note: z.string().trim().max(300),
 })
 
 export async function saveProductions(raw: SaveProductionsInput): Promise<SaveProductionsResult> {
@@ -397,6 +402,8 @@ export async function saveProductions(raw: SaveProductionsInput): Promise<SavePr
     input.lines.forEach((l, i) => {
       const q = parseQty(l.outputQty)
       if (q === null || q <= 0) throw new KitchenError(`Line ${i + 1}: output quantity must be more than zero`)
+      const waste = parseQty(l.wasteQty ?? '0')
+      if (waste === null || waste < 0) throw new KitchenError(`Line ${i + 1}: waste quantity must be zero or more`)
     })
 
     const restaurant = await getRestaurant()
@@ -416,17 +423,25 @@ export async function saveProductions(raw: SaveProductionsInput): Promise<SavePr
         // becomes a portion cost. A dish has NO batch yield, so asking it for
         // one would freeze a number that looks fine and means nothing.
         const [recipe] = await tx<
-          { kind: string; name: string; cost: string | null; portions: string | null }[]
+          { kind: string; name: string; cost: string | null; portions: string | null; expected_output: string | null; version_id: string | null }[]
         >`
           select r.kind, r.name,
                  (case when r.kind = 'sub' then rc.cost_per_output_unit
                        else dc.cost_per_portion end)::text as cost,
-                 r.portions::text as portions
+                 r.portions::text as portions,
+                 (case when r.kind = 'sub' then r.output_qty else r.portions end)::text as expected_output,
+                 (select rv.id from recipe_versions rv
+                  where rv.restaurant_id = r.restaurant_id and rv.recipe_id = r.id
+                    and rv.effective_from::date <= ${input.date}::date
+                  order by rv.effective_from desc, rv.version_no desc limit 1) as version_id
           from recipes r
           left join recipe_costs rc on rc.recipe_id = r.id
           left join dish_costs dc on dc.recipe_id = r.id
           where r.id = ${l.recipeId} and r.restaurant_id = ${rid} and r.status = 'active'`
         if (!recipe) throw new KitchenError(`Line ${i + 1}: recipe not found`)
+        if (recipe.version_id === null) {
+          throw new KitchenError(`Line ${i + 1}: “${recipe.name}” has no recorded recipe version — apply the recipe history migration before recording production`)
+        }
         // NO PORTIONS, NO PRODUCTION. cost_per_portion divides by `portions`,
         // so a dish that has never been told how many it makes has nothing to
         // freeze — the line would silently be worth zero. Refused by name,
@@ -440,8 +455,8 @@ export async function saveProductions(raw: SaveProductionsInput): Promise<SavePr
           throw new KitchenError(`Line ${i + 1}: “${recipe.name}” cannot be costed yet — add its ingredient lines first`)
         }
         const [row] = await tx<{ id: string }[]>`
-          insert into productions (restaurant_id, section_id, prod_date, recipe_id, output_qty, unit_cost, note, entered_by)
-          values (${rid}, ${input.sectionId}, ${input.date}, ${l.recipeId}, ${l.outputQty.trim()},
+          insert into productions (restaurant_id, section_id, prod_date, recipe_id, recipe_version_id, output_qty, expected_output_qty, waste_qty, unit_cost, note, entered_by)
+          values (${rid}, ${input.sectionId}, ${input.date}, ${l.recipeId}, ${recipe.version_id}, ${l.outputQty.trim()}, ${recipe.expected_output}, ${l.wasteQty ?? '0'},
                   ${recipe.cost}, ${input.note === '' ? null : input.note}, ${by})
           returning id`
         ids.push(row.id)
@@ -785,20 +800,14 @@ export async function updateIndent(raw: UpdateIndentInput): Promise<UpdateIndent
 // recipe_costs.cost_per_output_unit at save; only subs are producible —
 // a dish is sold, not batched.
 
-const ProductionSchema = z.object({
-  date: z.string().regex(DATE_RE),
-  sectionId: z.string().regex(UUID),
-  recipeId: z.string().regex(UUID),
-  outputQty: qtyStr,
-  note: z.string().trim().max(300),
-})
-
 export async function saveProduction(raw: SaveProductionInput): Promise<SaveProductionResult> {
   try {
-    const input = ProductionSchema.parse(raw)
+    const input = SingleProductionSchema.parse(raw)
     assertRealDate(input.date, 'Production date')
     const q = parseQty(input.outputQty)
     if (q === null || q <= 0) throw new KitchenError('Output quantity must be more than zero')
+    const waste = parseQty(input.wasteQty ?? '0')
+    if (waste === null || waste < 0) throw new KitchenError('Waste quantity must be zero or more')
 
     const restaurant = await getRestaurant()
     const rid = restaurant.id
@@ -807,12 +816,20 @@ export async function saveProduction(raw: SaveProductionInput): Promise<SaveProd
 
     const saved = await txn(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
-      const [recipe] = await tx<{ kind: string; name: string; cost: string | null }[]>`
+      const [recipe] = await tx<{ kind: string; name: string; cost: string | null; expected_output: string | null; version_id: string | null }[]>`
         select r.kind, r.name, rc.cost_per_output_unit::text as cost
+             , r.output_qty::text as expected_output
+             , (select rv.id from recipe_versions rv
+                where rv.restaurant_id = r.restaurant_id and rv.recipe_id = r.id
+                  and rv.effective_from::date <= ${input.date}::date
+                order by rv.effective_from desc, rv.version_no desc limit 1) as version_id
         from recipes r
         left join recipe_costs rc on rc.recipe_id = r.id
         where r.id = ${input.recipeId} and r.restaurant_id = ${rid} and r.status = 'active'`
       if (!recipe) throw new KitchenError('Recipe not found')
+      if (recipe.version_id === null) {
+        throw new KitchenError(`“${recipe.name}” has no recorded recipe version — apply the recipe history migration before recording production`)
+      }
       if (recipe.kind !== 'sub') {
         throw new KitchenError(`“${recipe.name}” is a dish — production records batches of SUB-recipes only`)
       }
@@ -820,8 +837,8 @@ export async function saveProduction(raw: SaveProductionInput): Promise<SaveProd
         throw new KitchenError(`“${recipe.name}” cannot be costed yet — add its ingredient lines first`)
       }
       const [row] = await tx<{ id: string }[]>`
-        insert into productions (restaurant_id, section_id, prod_date, recipe_id, output_qty, unit_cost, note, entered_by)
-        values (${rid}, ${input.sectionId}, ${input.date}, ${input.recipeId}, ${input.outputQty.trim()},
+        insert into productions (restaurant_id, section_id, prod_date, recipe_id, recipe_version_id, output_qty, expected_output_qty, waste_qty, unit_cost, note, entered_by)
+        values (${rid}, ${input.sectionId}, ${input.date}, ${input.recipeId}, ${recipe.version_id}, ${input.outputQty.trim()}, ${recipe.expected_output}, ${input.wasteQty ?? '0'},
                 ${recipe.cost}, ${input.note === '' ? null : input.note}, ${by})
         returning id`
       return { id: row.id }
@@ -852,8 +869,8 @@ export async function voidProduction(id: string): Promise<VoidProductionResult> 
       if (already[0]) throw new KitchenError('This entry is already voided')
       // Negative twin: unit_cost copied EXACTLY — never re-snapshot.
       const [rev] = await tx<{ id: string }[]>`
-        insert into productions (restaurant_id, section_id, prod_date, recipe_id, output_qty, unit_cost, note, reverses_id, entered_by)
-        select restaurant_id, section_id, prod_date, recipe_id, -output_qty, unit_cost, 'void', id, ${by}
+        insert into productions (restaurant_id, section_id, prod_date, recipe_id, recipe_version_id, output_qty, expected_output_qty, waste_qty, unit_cost, note, reverses_id, entered_by)
+        select restaurant_id, section_id, prod_date, recipe_id, recipe_version_id, -output_qty, expected_output_qty, -waste_qty, unit_cost, 'void', id, ${by}
         from productions where id = ${id}
         returning id`
       const [check] = await tx<{ zeroed: boolean }[]>`

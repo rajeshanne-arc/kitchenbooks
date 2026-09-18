@@ -21,6 +21,8 @@ const ENDING_DATE = '2001-04-30'
 const SALES_DATE = '2001-04-10'
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
   const { getRestaurant } = await import('../src/server/queries')
   const { saveClosing, saveKitchenWastage, voidKitchenWastage } = await import('../src/server/kitchen-actions')
   const { getClosingChecklist, getFoodCost, getKitchenSections } = await import('../src/server/kitchen-queries')
@@ -226,6 +228,7 @@ async function main() {
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

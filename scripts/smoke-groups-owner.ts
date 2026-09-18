@@ -25,6 +25,8 @@ const OB_DATE = '2001-08-06'
 const MONTH = '2001-08-01'
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
   const { getRestaurant } = await import('../src/server/queries')
   const { createVendor, createItem } = await import('../src/server/books-actions')
   const { saveExpenses, voidExpense } = await import('../src/server/expenses-actions')
@@ -163,6 +165,7 @@ async function main() {
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

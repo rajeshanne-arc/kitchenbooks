@@ -1,71 +1,95 @@
 # KitchenBooks
 
-Purchase-bill bookkeeping for the Thrayam kitchen. One screen: enter a vendor
-bill fast enough that it actually gets entered — vendors and items are created
-inline the first time they appear on a bill, and rates pre-fill from history so
-re-entering a familiar bill takes under a minute.
+KitchenBooks is a restaurant operating system connecting purchasing, inventory,
+recipes, kitchen production, POS sales, staff/payroll, cash, and accounting
+around one auditable business-day ledger.
 
-Stack: Next.js (App Router) + Tailwind on Vercel, Supabase Postgres.
+Stack: Next.js App Router, Tailwind, Vercel Node runtime, and Supabase Postgres.
 
-## Architecture rules (non-negotiable)
+## Architecture rules
 
-1. **All database access is server-side** — server actions and route handlers
-   only. The client never holds any database credential. `src/lib/db.ts` is
-   guarded with `server-only`, so importing it from client code fails the build.
-2. **Events are never edited.** Purchases, purchase lines, and payments are
-   append-only; a correction is a reversal row (negative values,
-   `reverses_id` pointing at the original). There is no `UPDATE` in this
-   codebase — and none is possible: the app's DB role has no UPDATE/DELETE
-   grants (see below).
-3. **Masters are born inline.** There is no vendor- or item-management page.
-   A new vendor or item is created inside the bill flow, in the same
-   transaction as the purchase. Codes assign automatically:
-   vendors `V-<CAT>-<2-digit>`, items `<CAT>-<3-digit>`, per restaurant+category.
-4. **Every displayed derived number reads from a named view** —
-   `vendor_dues.balance`, `item_rates.prefill_rate` — never a client-side
-   recomputation. After a save, the reveal screen shows figures read back from
-   the database, not echoes of what was typed.
+1. Database access is server-side only. The browser receives no database
+   credential or Supabase service key.
+2. Financial and operational events are append-only. Corrections are reversals
+   or replacement records, never silent edits.
+3. Every tenant read and write is scoped to the active restaurant, with forced
+   RLS, composite tenant foreign keys, and server-side role checks.
+4. Derived figures come from named database views or read-back records; the
+   client does not recalculate accounting or stock truth.
+5. The six restaurant roles are `owner`, `manager`, `chef`, `store`, `cashier`,
+   and `accountant`. Platform administration is separate from those roles.
 
-## Database access
+## Local development
 
-The app connects as **`kb_app`**, a dedicated Postgres role, through the
-Supabase Supavisor pooler (transaction mode, port 6543):
+Copy `.env.example` to `.env.local`, then fill in the server-only values:
 
-- grants: `SELECT` on everything, `INSERT` on `vendors`, `items`, `purchases`,
-  `purchase_lines` — **no UPDATE, no DELETE, anywhere**. Rule 2 is enforced by
-  the database, not by convention.
-- `BYPASSRLS` is set so the app keeps working if RLS is enabled later.
-- The Supabase service-role/publishable keys are **not used at all**; there is
-  no supabase-js in the app. The single secret is `DATABASE_URL`.
-- Saving a bill is one `BEGIN … COMMIT`: vendor (if new) → items (if new) →
-  purchase → lines, under a per-restaurant advisory lock so code sequences
-  can't race. All money math is exact integer/bigint arithmetic
-  (`src/lib/money.ts`); Postgres `numeric` holds the truth.
+```text
+cp .env.example .env.local
+```
 
-To rotate the credential: `ALTER ROLE kb_app WITH PASSWORD '<new>'` (as
-postgres), then update `DATABASE_URL` locally and on Vercel.
-
-> Note: RLS is currently OFF on all tables (by design, phase 1). That means the
-> project's anon/publishable API keys would grant full access via PostgREST if
-> ever shipped — so they must never appear in any client. Longer-term, enabling
-> RLS with no policies would shut that door without affecting this app
-> (`kb_app` bypasses RLS).
-
-## Development
+Optional production capabilities are documented in
+[`docs/open-questions.md`](docs/open-questions.md): memberships,
+platform provisioning, POS credential encryption, cron authentication, and
+private Blob storage each have separate secrets and must not be substituted for
+the database password. `NEXT_PUBLIC_SUPABASE_URL` and a publishable key are not
+used by this application.
 
 ```bash
-cp .env.example .env.local   # fill in DATABASE_URL
 npm install
 npm run dev
 ```
 
-`npm run smoke` runs an end-to-end test against the real database through the
-same server modules the app uses (creates `Zz Smoke …` rows and prints their
-ids as JSON for cleanup — the app role itself cannot delete). It expects an
-events-empty database for its code-sequence assertions.
+The local app supports a demo POS adapter without live Petpooja credentials.
+Use the owner setup screens to configure a restaurant, users, mappings, and
+operational masters.
 
-## Deploy
+## Verification
 
-Vercel project `kitchenbooks`, deploys from this repo. `DATABASE_URL` must be
-set in the Vercel environment (production + preview). Everything runs on the
-default Node.js runtime — no edge, no extra config.
+```bash
+npx tsc --noEmit
+npm run lint -- --quiet
+npm run audit:tenancy
+npm run audit:matrix
+npm run smoke:phase-a
+npm run audit:schema
+# Complete disposable acceptance gate (requires explicit fixture tenants)
+npm run gates
+```
+
+The database-backed smoke suites require explicit `KB_LIVE_TENANT` and, for
+write probes, a different `KB_PROBE_TENANT`. Never point a write probe at a
+shared live restaurant. See [`docs/acceptance-tests.md`](docs/acceptance-tests.md)
+for the product acceptance contract.
+
+For one supplier bill use `/store/purchasing/import`. For a historical export
+containing several bills, use `/store/purchasing/import/batch`: preview the
+complete file first; commit is all-or-nothing and preserves each supplier
+invoice reference.
+
+## Database migrations
+
+The application runtime role is intentionally not a schema owner. Apply the
+ordered migrations from the Supabase SQL Editor using the database-owner
+credential, then run the gates above. The complete sequence, maintenance
+migrations, and live-data boundary are in
+[`docs/migration-runbook.md`](docs/migration-runbook.md).
+
+Do not reset the database password to make the application work. Rotate the
+dedicated `kb_app` credential only through the database owner and update the
+server environment in the same controlled change.
+
+## Deployment
+
+Vercel is pinned to the Mumbai region (`bom1`) and runs the hourly POS sync
+cron. Production deployment is not complete until migrations, environment
+secrets, Petpooja/provider access, Blob storage, and the explicitly named live
+acceptance tenant have all been verified. The remaining external dependencies
+and approval points are recorded in [`docs/open-questions.md`](docs/open-questions.md).
+
+The complete first-rollout go/no-go record is
+[`docs/production-release-checklist.md`](docs/production-release-checklist.md).
+
+Run `npm run preflight:production` in the deployment environment before
+releasing. It checks server-only secret presence, secret length, TLS, disabled
+demo mode, and private Blob authentication without printing secret values. It
+is expected to fail on a normal local `.env.local`.

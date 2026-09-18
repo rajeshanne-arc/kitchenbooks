@@ -4,7 +4,7 @@
 // month. Outside a request (the smoke suites) there are no cookies and the
 // answer is null; entered_by then stays null, which is honest.
 import 'server-only'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { tsql } from '@/lib/db'
 import { withTenant } from '@/lib/tenant'
 import { SESSION_COOKIE, verifySession } from '@/lib/session'
@@ -25,6 +25,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   let token: string | undefined
   try {
     token = (await cookies()).get(SESSION_COOKIE)?.value
+    if (!token) token = (await headers()).get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]
   } catch {
     return null // no request scope (smoke suites, build-time)
   }
@@ -32,6 +33,26 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!secret) return null
   const payload = await verifySession(token, secret)
   if (!payload) return null
+  if (process.env.KB_MEMBERSHIPS === 'true') {
+    // user_accounts is deliberately hidden by RLS. Resolve the identity
+    // through its narrow definer function, then resolve the tenant-scoped
+    // membership through the corresponding definer function; neither lookup
+    // grants kb_app direct cross-tenant access to the account table.
+    const [account] = await tsql<{ username: string; display_name: string; status: string }[]>`
+      select username, display_name, status
+      from user_account_for_username(${payload.u})`
+    const rows = await withTenant(payload.t, () => tsql<{ role: Role; restaurant_id: string; status: string }[]>`
+      select role, restaurant_id, status
+      from restaurant_memberships_for_username(${payload.u})
+      where restaurant_id = ${payload.t} and role = ${payload.r}`)
+    if (!account || account.status !== 'active' || rows.length !== 1 || rows[0].status !== 'active') return null
+    return {
+      username: account.username,
+      displayName: account.display_name,
+      role: rows[0].role,
+      restaurantId: rows[0].restaurant_id,
+    }
+  }
   // THE ONE READ THAT CANNOT ASK THE SESSION WHICH TENANT IT IS IN, because
   // it IS the session. Left on the bare pool it would return zero rows under
   // RLS and every user would appear signed out — the empty-database outage

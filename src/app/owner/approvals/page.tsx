@@ -12,6 +12,10 @@ import {
 import { getList } from '@/server/settings'
 import { businessToday } from '@/server/business-day'
 import { getListSuggestions } from '@/server/settings'
+import { listPendingPurchaseApprovals } from '@/server/po-queries'
+import PurchaseApprovalsQueue from '@/components/settings/PurchaseApprovalsQueue'
+import { listPendingStockAdjustmentApprovals } from '@/server/adjustment-queries'
+import StockAdjustmentApprovalsQueue from '@/components/settings/StockAdjustmentApprovalsQueue'
 import ApprovalsClient, { type QueueItem } from '@/components/settings/ApprovalsClient'
 import SuggestionsQueue from '@/components/settings/SuggestionsQueue'
 import { cardCls, codeCls, pageSubCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
@@ -23,7 +27,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function ApprovalsPage() {
   const restaurant = await getRestaurant()
-  const [waiting, suggestions, balances, modes, today] = await Promise.all([
+  const [waiting, suggestions, balances, modes, today, purchaseApprovals, adjustmentApprovals] = await Promise.all([
     getWaiting(restaurant.id),
     getListSuggestions(restaurant.id),
     // THE QUESTION IS NOT "APPROVE YES OR NO", IT IS "PAY FROM WHERE". A
@@ -32,6 +36,8 @@ export default async function ApprovalsPage() {
     getAccountBalances(restaurant.id),
     getList(restaurant.id, 'payment_mode'),
     businessToday(),
+    listPendingPurchaseApprovals(restaurant.id),
+    listPendingStockAdjustmentApprovals(restaurant.id),
   ])
 
   // WHERE THE MONEY WOULD ACTUALLY GO, read now rather than taken from the
@@ -79,7 +85,8 @@ export default async function ApprovalsPage() {
     }),
   )
 
-  const nothing = waiting.total === 0
+  const totalWaiting = waiting.total + adjustmentApprovals.length
+  const nothing = totalWaiting === 0
 
   return (
     <div className="mt-4 space-y-4">
@@ -88,7 +95,7 @@ export default async function ApprovalsPage() {
         <p className={pageSubCls}>
           {nothing
             ? 'Everything that needs you, in one place.'
-            : `${waiting.total} thing${waiting.total === 1 ? '' : 's'} waiting on you.`}
+            : `${totalWaiting} thing${totalWaiting === 1 ? '' : 's'} waiting on you.`}
         </p>
       </div>
 
@@ -97,7 +104,7 @@ export default async function ApprovalsPage() {
           pleased to find empty into four things to check and dismiss. So an
           empty queue is one sentence and nothing else — the same law as every
           badge in the app being silent at zero, applied to a whole screen. */}
-      {nothing && waiting.elsewhere.length === 0 && waiting.decided.length === 0 ? (
+      {nothing && purchaseApprovals.length === 0 && adjustmentApprovals.length === 0 && waiting.elsewhere.length === 0 && waiting.decided.length === 0 ? (
         <section className={cardCls}>
           <h2 className="font-display text-lg font-semibold text-emerald-800">Nothing is waiting on you.</h2>
           <p className="mt-1.5 text-sm text-stone-600">
@@ -121,6 +128,8 @@ export default async function ApprovalsPage() {
               today={today}
             />
           )}
+          {purchaseApprovals.length > 0 && <PurchaseApprovalsQueue rows={purchaseApprovals} />}
+          {adjustmentApprovals.length > 0 && <StockAdjustmentApprovalsQueue rows={adjustmentApprovals} />}
 
           {/* A POINTER, NEVER A COPY. Approving payroll means seeing the whole
               run — the people, the days, the withholdings, the account each

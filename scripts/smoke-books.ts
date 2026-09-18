@@ -15,17 +15,19 @@ process.loadEnvFile('.env.local')
 let ACCOUNT = ''
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
   const { saveBill } = await import('../src/server/save-bill')
   const { getRestaurant, searchItems } = await import('../src/server/queries')
   const { recordPayment, updateItem, updateVendor, voidBill } = await import('../src/server/books-actions')
   const { getBill, getItemDetail, getVendorBills, listBills } = await import('../src/server/books-queries')
-  const { sql } = await import('../src/lib/db')
+  const { sql, tsql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
   console.log('restaurant:', restaurant.name)
   ACCOUNT = await ensureSmokeAccount(restaurant.id)
 
-  const before = (await sql`
+  const before = (await tsql`
     select (select count(*)::int from vendors) as vendors,
            (select count(*)::int from items) as items,
            (select count(*)::int from purchases) as purchases,
@@ -33,9 +35,9 @@ async function main() {
   console.log('counts before:', JSON.stringify(before[0]))
 
   // -- 1. enter a bill (new vendor + starter item): 10 × 40 + gst 20 + transport 30 = 450
-  const tomatoHits = await searchItems(restaurant.id, 'tomato')
-  const starter = tomatoHits.find((h) => h.kind === 'starter')
-  assert.ok(starter && starter.kind === 'starter', 'starter tomato must be available')
+  const starterHits = await searchItems(restaurant.id, 'acceptance')
+  const starter = starterHits.find((h) => h.kind === 'starter')
+  assert.ok(starter && starter.kind === 'starter', 'the disposable tenant must expose a starter-library item')
   const bill = await saveBill({
     billDate: '2026-08-09',
     vendor: { kind: 'new', name: 'Zz Books Traders', category: 'VEG' },
@@ -144,6 +146,7 @@ async function main() {
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

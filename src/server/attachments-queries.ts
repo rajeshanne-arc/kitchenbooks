@@ -15,6 +15,8 @@ export type AttachmentRow = {
   filename: string | null
   mime_type: string | null
   byte_size: number | null
+  status: 'active' | 'archived'
+  retention_until: string | null
   uploaded_by: string | null
   created_at: string
 }
@@ -27,7 +29,7 @@ export async function listAttachments(
 ): Promise<AttachmentRow[]> {
   return tsql<AttachmentRow[]>`
     select id, storage_key, filename, mime_type, byte_size::int as byte_size,
-           uploaded_by, created_at::text as created_at
+           status, retention_until::text as retention_until, uploaded_by, created_at::text as created_at
     from attachments
     where restaurant_id = ${restaurantId}
       and entity_type = ${entity}
@@ -59,12 +61,12 @@ export async function readAttachment(
     handle === undefined
       ? await tsql<AttachmentRow[]>`
           select id, storage_key, filename, mime_type, byte_size::int as byte_size,
-                 uploaded_by, created_at::text as created_at
+                 status, retention_until::text as retention_until, uploaded_by, created_at::text as created_at
           from attachments
           where restaurant_id = ${restaurantId} and id = ${id}`
       : await handle<AttachmentRow[]>`
           select id, storage_key, filename, mime_type, byte_size::int as byte_size,
-                 uploaded_by, created_at::text as created_at
+                 status, retention_until::text as retention_until, uploaded_by, created_at::text as created_at
           from attachments
           where restaurant_id = ${restaurantId} and id = ${id}`
   const [row] = rows
