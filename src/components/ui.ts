@@ -29,7 +29,7 @@ export const pageSubCls = 'mt-1.5 text-sm text-stone-500'
  * gutters on smaller screens; individual focused forms can still opt into a
  * narrower max-width inside it. */
 export const pageShellCls =
-  'mx-auto w-full max-w-7xl px-4 pb-10 pt-6 sm:px-6 lg:px-8'
+  'mx-auto w-full max-w-4xl px-4 pb-10 pt-6 sm:px-6 lg:px-8'
 
 /** money and counts: mono in columns so the rupees line up, display face when a
  *  figure is the whole point of the screen */
