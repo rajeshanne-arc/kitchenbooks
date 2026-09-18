@@ -2,6 +2,7 @@ import { getRestaurant } from '@/server/queries'
 import { listWithholdings } from '@/server/register-queries'
 import { listMoneyAccounts } from '@/server/accounts-queries'
 import { businessToday } from '@/server/business-day'
+import WithholdingExport from '@/components/accountant/WithholdingExport'
 import WithholdingsPanel from '@/components/accountant/WithholdingsPanel'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
 
@@ -31,9 +32,12 @@ export default async function TaxDepositPage() {
     <>
       <header className="pb-4">
         <h1 className={pageTitleCls}>Tax deposit</h1>
+        <div className="flex flex-wrap items-end justify-between gap-3">
         <p className={pageSubCls}>
           {restaurant.name} — what was withheld from a payment, and when it reached the revenue authority
         </p>
+        <WithholdingExport today={today} />
+        </div>
       </header>
       <WithholdingsPanel rows={withholdings} today={today} accounts={accounts} />
     </>

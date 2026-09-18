@@ -21,7 +21,25 @@
 // `timezone` and `business_day_start`. A start of 00:00 makes the function a
 // no-op, which is correct for anywhere that closes before midnight.
 import 'server-only'
+import { cookies } from 'next/headers'
 import { tsql } from '@/lib/db'
+import { currentTenant, withTenant } from '@/lib/tenant'
+import { SESSION_COOKIE, verifySession } from '@/lib/session'
+
+/**
+ * Business-day helpers are called from group layouts before the page has
+ * loaded its restaurant record. Keep the tenant explicit even in that early
+ * render: an existing withTenant scope wins, otherwise the signed session
+ * supplies the only permitted restaurant id.
+ */
+async function inCurrentTenant<T>(fn: () => Promise<T>): Promise<T> {
+  if (currentTenant() !== null) return fn()
+  const secret = process.env.KB_SESSION_SECRET
+  if (!secret) return fn()
+  const token = (await cookies()).get(SESSION_COOKIE)?.value
+  const session = await verifySession(token, secret)
+  return session === null ? fn() : withTenant(session.t, fn)
+}
 
 /**
  * Today, as the restaurant counts days. THE default for every date this app
@@ -34,14 +52,14 @@ import { tsql } from '@/lib/db'
  * @scope not-a-figure
  */
 export async function businessToday(): Promise<string> {
-  const [row] = await tsql<{ d: string }[]>`select business_date(now())::text as d`
+  const [row] = await inCurrentTenant(() => tsql<{ d: string }[]>`select business_date(now())::text as d`)
   return row.d
 }
 
 /** The business day a given instant belongs to — for asking "which day was
  *  this", never for defaulting a form. */
 export async function businessDayOf(at: string): Promise<string> {
-  const [row] = await tsql<{ d: string }[]>`select business_date(${at}::timestamptz)::text as d`
+  const [row] = await inCurrentTenant(() => tsql<{ d: string }[]>`select business_date(${at}::timestamptz)::text as d`)
   return row.d
 }
 
@@ -128,15 +146,15 @@ export async function businessDayContext(): Promise<{
   // because a policy is switched on is the shape the tenancy gate exists to
   // refuse — and the gate is right: implicit scoping is invisible in review.
   // Using the GUC keeps it explicit at no extra round trip.
-  const [row] = await tsql<{ b: string; c: string; s: string | null }[]>`
+  const [row] = await inCurrentTenant(() => tsql<{ b: string; c: string; s: string | null }[]>`
     select business_date(now())::text as b,
            (now() at time zone coalesce(
              (select value from settings
                where key = 'timezone'
                  and restaurant_id = current_setting('app.restaurant_id')::uuid),
              'UTC'))::date::text as c,
-           (select value from settings
+             (select value from settings
              where key = 'business_day_start'
-               and restaurant_id = current_setting('app.restaurant_id')::uuid) as s`
+             and restaurant_id = current_setting('app.restaurant_id')::uuid) as s`)
   return { businessDate: row.b, calendarDate: row.c, dayStart: row.s ?? '00:00' }
 }

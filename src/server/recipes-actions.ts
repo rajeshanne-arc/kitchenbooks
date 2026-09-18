@@ -14,8 +14,10 @@
 // cap is blast-radius control, not the guard.
 
 import { z } from 'zod'
+import type postgres from 'postgres'
 import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { getSessionUser } from '@/server/current-user'
 import { getRecipeDetail, getRecipeLines } from '@/server/recipes-queries'
 import type {
   AddLineInput,
@@ -33,6 +35,58 @@ const moneyStr = z.string().regex(/^\d{1,5}(\.\d{1,2})?$/, 'plain amount, up to 
 class RecipeError extends Error {}
 
 const trimOrNull = (v: string): string | null => (v.trim() === '' ? null : v.trim())
+
+/** Record the complete recipe as it exists after one successful edit. The
+ * snapshot is the effective recipe at this instant; subsequent edits never
+ * mutate it. Keeping the live card as the editing surface avoids breaking the
+ * existing kitchen screens while giving production and review a durable
+ * version history. */
+async function snapshotRecipe(tx: postgres.TransactionSql, restaurantId: string, recipeId: string, by: string) {
+  const [recipe] = await tx<{
+    id: string; code: string; name: string; kind: string; section_id: string | null
+    output_qty: string; output_unit: string; selling_price: string | null
+    pos_code: string | null; course: string | null; diet: string | null
+    portions: string | null; portion_size: string | null; portion_unit: string | null
+    overhead_pct: string; photo_url: string | null; video_url: string | null
+  }[]>`
+    select id, code, name, kind, section_id, output_qty::text as output_qty,
+           output_unit, selling_price::text as selling_price, pos_code, course,
+           diet, portions::text as portions, portion_size::text as portion_size,
+           portion_unit, overhead_pct::text as overhead_pct, photo_url, video_url
+    from recipes where id = ${recipeId} and restaurant_id = ${restaurantId}
+  `
+  if (!recipe) throw new RecipeError('Recipe disappeared before its version was recorded')
+  const lines = await tx<{ component_item_id: string | null; component_recipe_id: string | null; qty: string; yield_pct: string; note: string | null }[]>`
+    select component_item_id, component_recipe_id, qty::text as qty,
+           yield_pct::text as yield_pct, note
+    from recipe_lines
+    where recipe_id = ${recipeId} and restaurant_id = ${restaurantId}
+    order by id
+  `
+  const substitutions = await tx<{ recipe_line_id: string; substitute_item_id: string; quantity_ratio: string; note: string | null }[]>`
+    select recipe_line_id, substitute_item_id, quantity_ratio::text, note
+    from recipe_line_substitutions
+    where restaurant_id = ${restaurantId} and recipe_line_id in (select id from recipe_lines where restaurant_id = ${restaurantId} and recipe_id = ${recipeId})
+    order by recipe_line_id, id`
+  const [previous] = await tx<{ version_no: number }[]>`
+    select version_no from recipe_versions
+    where restaurant_id = ${restaurantId} and recipe_id = ${recipeId}
+    order by version_no desc limit 1
+    for update
+  `
+  if (previous) {
+    await tx`
+      update recipe_versions set effective_to = now()
+      where restaurant_id = ${restaurantId} and recipe_id = ${recipeId} and effective_to is null
+    `
+  }
+  await tx`
+    insert into recipe_versions
+      (restaurant_id, recipe_id, version_no, effective_from, snapshot, recorded_by)
+    values (${restaurantId}, ${recipeId}, ${(previous?.version_no ?? 0) + 1}, now(),
+      ${JSON.stringify({ recipe, lines, substitutions })}::jsonb, ${by})
+  `
+}
 
 function fail(e: unknown): { ok: false; error: string } {
   if (e instanceof RecipeError) return { ok: false, error: e.message }
@@ -107,6 +161,7 @@ export async function createRecipe(raw: CreateRecipeInput): Promise<CreateRecipe
                 ${input.outputQty}::numeric, ${input.outputUnit},
                 ${input.sellingPrice === '' ? null : input.sellingPrice}::numeric)
         returning id, code`
+      await snapshotRecipe(tx, rid, r.id, (await getSessionUser())?.username ?? 'system')
       return r
     })
 
@@ -155,16 +210,19 @@ export async function updateRecipe(id: string, raw: UpdateRecipeInput): Promise<
     if (!unit[0]) throw new RecipeError(`Unknown unit “${input.outputUnit}”`)
 
     // Only the column-granted fields ever appear in this SET.
-    const updated = await tsql<{ id: string }[]>`
-      update recipes set
-        name = ${input.name},
-        output_qty = ${input.outputQty}::numeric,
-        output_unit = ${input.outputUnit},
-        selling_price = ${input.sellingPrice === '' ? null : input.sellingPrice}::numeric,
-        status = ${input.status}
-      where id = ${id} and restaurant_id = ${rid}
-      returning id`
-    if (!updated[0]) throw new RecipeError('Recipe not found — nothing was changed')
+    await txn(async (tx) => {
+      const rows = await tx<{ id: string }[]>`
+        update recipes set
+          name = ${input.name},
+          output_qty = ${input.outputQty}::numeric,
+          output_unit = ${input.outputUnit},
+          selling_price = ${input.sellingPrice === '' ? null : input.sellingPrice}::numeric,
+          status = ${input.status}
+        where id = ${id} and restaurant_id = ${rid}
+        returning id`
+      if (!rows[0]) throw new RecipeError('Recipe not found — nothing was changed')
+      await snapshotRecipe(tx, rid, id, (await getSessionUser())?.username ?? 'system')
+    })
 
     return await freshState(rid, id)
   } catch (e) {
@@ -232,6 +290,7 @@ export async function addLine(raw: AddLineInput): Promise<RecipeMutationResult> 
           insert into recipe_lines (restaurant_id, recipe_id, component_recipe_id, qty)
           values (${rid}, ${input.recipeId}, ${input.component.id}, ${input.qty}::numeric)`
       }
+      await snapshotRecipe(tx, rid, input.recipeId, (await getSessionUser())?.username ?? 'system')
     })
 
     return await freshState(rid, input.recipeId)
@@ -262,8 +321,12 @@ export async function updateLineYield(lineId: string, yieldPct: string): Promise
     if (line.is_sub) {
       throw new RecipeError('A sub-recipe line has no yield of its own — the trim inside it is already costed')
     }
-    await tsql`update recipe_lines set yield_pct = ${yieldPct}::numeric
-              where id = ${lineId} and restaurant_id = ${rid}`
+    await txn(async (tx) => {
+      const changed = await tx<{ id: string }[]>`update recipe_lines set yield_pct = ${yieldPct}::numeric
+                where id = ${lineId} and restaurant_id = ${rid} returning id`
+      if (!changed[0]) throw new RecipeError('Line not found — nothing was changed')
+      await snapshotRecipe(tx, rid, line.recipe_id, (await getSessionUser())?.username ?? 'system')
+    })
     return await freshState(rid, line.recipe_id)
   } catch (e) {
     return fail(e)
@@ -279,12 +342,16 @@ export async function updateLineQty(lineId: string, qty: string): Promise<Recipe
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const updated = await tsql<{ recipe_id: string }[]>`
-      update recipe_lines rl set qty = ${parsed}::numeric
-      from recipes r
-      where rl.id = ${lineId} and r.id = rl.recipe_id and r.restaurant_id = ${rid}
-      returning rl.recipe_id`
-    if (!updated[0]) throw new RecipeError('Line not found — nothing was changed')
+    const updated = await txn(async (tx) => {
+      const rows = await tx<{ recipe_id: string }[]>`
+        update recipe_lines rl set qty = ${parsed}::numeric
+        from recipes r
+        where rl.id = ${lineId} and r.id = rl.recipe_id and r.restaurant_id = ${rid}
+        returning rl.recipe_id`
+      if (!rows[0]) throw new RecipeError('Line not found — nothing was changed')
+      await snapshotRecipe(tx, rid, rows[0].recipe_id, (await getSessionUser())?.username ?? 'system')
+      return rows
+    })
 
     return await freshState(rid, updated[0].recipe_id)
   } catch (e) {
@@ -299,17 +366,59 @@ export async function deleteLine(lineId: string): Promise<RecipeMutationResult> 
     const rid = restaurant.id
 
     // The system's only DELETE: a recipe line is master detail, not an event.
-    const deleted = await tsql<{ recipe_id: string }[]>`
-      delete from recipe_lines rl
-      using recipes r
-      where rl.id = ${lineId} and r.id = rl.recipe_id and r.restaurant_id = ${rid}
-      returning rl.recipe_id`
-    if (!deleted[0]) throw new RecipeError('Line not found — nothing was removed')
+    const deleted = await txn(async (tx) => {
+      const rows = await tx<{ recipe_id: string }[]>`
+        delete from recipe_lines rl
+        using recipes r
+        where rl.id = ${lineId} and r.id = rl.recipe_id and r.restaurant_id = ${rid}
+        returning rl.recipe_id`
+      if (!rows[0]) throw new RecipeError('Line not found — nothing was removed')
+      await snapshotRecipe(tx, rid, rows[0].recipe_id, (await getSessionUser())?.username ?? 'system')
+      return rows
+    })
 
     return await freshState(rid, deleted[0].recipe_id)
   } catch (e) {
     return fail(e)
   }
+}
+
+const SubstitutionSchema = z.object({ lineId: z.string().regex(UUID), substituteItemId: z.string().regex(UUID), ratio: z.string().regex(/^\d{1,5}(\.\d{1,4})?$/), note: z.string().trim().max(200) })
+
+export async function addRecipeSubstitution(raw: { lineId: string; substituteItemId: string; ratio: string; note: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const input = SubstitutionSchema.parse(raw)
+    if (Number(input.ratio) <= 0) throw new RecipeError('The substitution ratio must be more than zero')
+    const user = await getSessionUser()
+    if (!user || !['chef', 'manager', 'owner'].includes(user.role)) throw new RecipeError('Only kitchen leads can record recipe substitutions')
+    const rid = (await getRestaurant()).id
+    await txn(async (tx) => {
+      const [line] = await tx<{ recipe_id: string; component_item_id: string | null }[]>`select recipe_id, component_item_id from recipe_lines where restaurant_id = ${rid} and id = ${input.lineId}`
+      if (!line || line.component_item_id === null) throw new RecipeError('Choose an ingredient line, not a sub-recipe line')
+      if (line.component_item_id === input.substituteItemId) throw new RecipeError('The substitute must differ from the primary ingredient')
+      const [item] = await tx`select id from items where restaurant_id = ${rid} and id = ${input.substituteItemId} and status = 'active'`
+      if (!item) throw new RecipeError('Substitute item not found')
+      await tx`insert into recipe_line_substitutions (restaurant_id, recipe_line_id, substitute_item_id, quantity_ratio, note, entered_by) values (${rid}, ${input.lineId}, ${input.substituteItemId}, ${input.ratio}, ${input.note.trim() || null}, ${user.username})`
+      await snapshotRecipe(tx, rid, line.recipe_id, user.username)
+    })
+    return { ok: true }
+  } catch (e) { return fail(e) }
+}
+
+export async function deleteRecipeSubstitution(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    if (!UUID.test(id)) throw new RecipeError('Malformed substitution id')
+    const user = await getSessionUser()
+    if (!user || !['chef', 'manager', 'owner'].includes(user.role)) throw new RecipeError('Only kitchen leads can remove recipe substitutions')
+    const rid = (await getRestaurant()).id
+    await txn(async (tx) => {
+      const [row] = await tx<{ recipe_id: string }[]>`select rl.recipe_id from recipe_line_substitutions s join recipe_lines rl on rl.restaurant_id = s.restaurant_id and rl.id = s.recipe_line_id where s.restaurant_id = ${rid} and s.id = ${id}`
+      if (!row) throw new RecipeError('Substitution not found')
+      await tx`delete from recipe_line_substitutions where restaurant_id = ${rid} and id = ${id}`
+      await snapshotRecipe(tx, rid, row.recipe_id, user.username)
+    })
+    return { ok: true }
+  } catch (e) { return fail(e) }
 }
 
 /** The dish card's header strip and inputs.
@@ -355,24 +464,27 @@ export async function updateDishCard(
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
-    const updated = await tsql<{ id: string }[]>`
-      update recipes set
-        pos_code = ${trimOrNull(input.posCode)},
-        course = ${trimOrNull(input.course)},
-        diet = ${trimOrNull(input.diet)},
-        photo_url = ${trimOrNull(input.photoUrl)},
-        video_url = ${trimOrNull(input.videoUrl)},
-        portions = ${input.portions === '' ? null : input.portions}::numeric,
-        portion_size = ${input.portionSize === '' ? null : input.portionSize}::numeric,
-        portion_unit = ${trimOrNull(input.portionUnit)},
-        -- NOT NULL DEFAULT 0. Blank means "no overhead applied", which is
-        -- 0 and not NULL; writing NULL here threw a not-null violation and
-        -- made the whole card unsaveable whenever the field was left empty.
-        overhead_pct = ${input.overheadPct === '' ? '0' : input.overheadPct}::numeric,
-        selling_price = ${input.sellingPrice === '' ? null : input.sellingPrice}::numeric
-      where id = ${recipeId} and restaurant_id = ${rid}
-      returning id`
-    if (!updated[0]) throw new RecipeError('Dish not found — nothing was changed')
+    await txn(async (tx) => {
+      const updated = await tx<{ id: string }[]>`
+        update recipes set
+          pos_code = ${trimOrNull(input.posCode)},
+          course = ${trimOrNull(input.course)},
+          diet = ${trimOrNull(input.diet)},
+          photo_url = ${trimOrNull(input.photoUrl)},
+          video_url = ${trimOrNull(input.videoUrl)},
+          portions = ${input.portions === '' ? null : input.portions}::numeric,
+          portion_size = ${input.portionSize === '' ? null : input.portionSize}::numeric,
+          portion_unit = ${trimOrNull(input.portionUnit)},
+          -- NOT NULL DEFAULT 0. Blank means "no overhead applied", which is
+          -- 0 and not NULL; writing NULL here threw a not-null violation and
+          -- made the whole card unsaveable whenever the field was left empty.
+          overhead_pct = ${input.overheadPct === '' ? '0' : input.overheadPct}::numeric,
+          selling_price = ${input.sellingPrice === '' ? null : input.sellingPrice}::numeric
+        where id = ${recipeId} and restaurant_id = ${rid}
+        returning id`
+      if (!updated[0]) throw new RecipeError('Dish not found — nothing was changed')
+      await snapshotRecipe(tx, rid, recipeId, (await getSessionUser())?.username ?? 'system')
+    })
 
     return await freshState(rid, recipeId)
   } catch (e) {

@@ -6,6 +6,7 @@ import { attachPhoto } from '@/server/attachments-actions'
 import { fmtDateTime } from '@/lib/format'
 import Honesty from '@/components/Honesty'
 import { btnGhostCls, sectionHeadCls } from '@/components/ui'
+import ArchiveAttachment from '@/components/documents/ArchiveAttachment'
 
 /**
  * THE PAPER. Bills run to several pages, so several photographs.
@@ -24,6 +25,8 @@ export type PhotoRow = {
   byte_size: number | null
   uploaded_by: string | null
   created_at: string
+  status?: 'active' | 'archived'
+  retention_until?: string | null
 }
 
 const kb = (n: number | null) => (n === null ? '—' : `${Math.max(1, Math.round(n / 1024))} KB`)
@@ -34,6 +37,7 @@ export default function BillPhotos({
   purchaseId,
   initial = [],
   compact = false,
+  canArchive = false,
 }: {
   /** null while the bill has not been saved yet — the button waits, the SAVE
    *  never does. See BillEntry: the bill is recorded first, always. */
@@ -41,6 +45,7 @@ export default function BillPhotos({
   initial?: PhotoRow[]
   /** the receive form's slimmer block, versus the bill document's section */
   compact?: boolean
+  canArchive?: boolean
 }) {
   const [rows, setRows] = useState<PhotoRow[]>(initial)
   const [pending, setPending] = useState<Pending[]>([])
@@ -117,9 +122,9 @@ export default function BillPhotos({
                 <span aria-hidden className="text-stone-400">▢</span>
                 <span className="truncate">Page {i + 1}</span>
               </a>
-              <span className="shrink-0 text-xs text-stone-400">
-                {kb(r.byte_size)}
-                {r.uploaded_by !== null && ` · ${r.uploaded_by}`} · {fmtDateTime(r.created_at)}
+              <span className="flex shrink-0 items-center gap-3 text-xs text-stone-400">
+                <span>{kb(r.byte_size)}{r.uploaded_by !== null && ` · ${r.uploaded_by}`} · {fmtDateTime(r.created_at)}</span>
+                <ArchiveAttachment id={r.id} archived={r.status === 'archived'} canArchive={canArchive} />
               </span>
             </li>
           ))}

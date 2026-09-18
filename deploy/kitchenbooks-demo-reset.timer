@@ -1,0 +1,10 @@
+[Unit]
+Description=Reset KitchenBooks demo tenant every midnight IST
+
+[Timer]
+OnCalendar=*-*-* 00:00:00 Asia/Kolkata
+Persistent=true
+Unit=kitchenbooks-demo-reset.service
+
+[Install]
+WantedBy=timers.target

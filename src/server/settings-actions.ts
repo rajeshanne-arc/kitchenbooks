@@ -10,9 +10,11 @@
 import { z } from 'zod'
 import { sql, tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
+import { getSessionUser } from '@/server/current-user'
 import { getAllListOptions, getSettingValue } from '@/server/settings'
 import { ALL_LIST_KEYS, type ListOptionRow } from '@/lib/lists'
 import { resolveTabs, TAB_DEFAULTS, TAB_GROUPS, type TabDef, type TabGroup } from '@/lib/tabs'
+import { parseMoney } from '@/lib/money'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -27,6 +29,61 @@ function fail(e: unknown): { ok: false; error: string } {
 }
 
 export type ListMutationResult = { ok: true; options: ListOptionRow[] } | { ok: false; error: string }
+
+export async function savePurchaseApprovalSettings(rawMode: string, rawThreshold: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const user = await getSessionUser()
+    if (!user || user.role !== 'owner') throw new SettingsError('Only an owner can change purchase approval settings')
+    const mode = z.enum(['none', 'threshold']).parse(rawMode)
+    const threshold = parseMoney(rawThreshold)
+    if (mode === 'threshold' && (threshold === null || threshold <= 0)) {
+      throw new SettingsError('Enter a threshold greater than zero')
+    }
+    const restaurant = await getRestaurant()
+    const value = mode === 'threshold' ? ((threshold ?? 0) / 100).toFixed(2) : '0.00'
+    await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${restaurant.id}, 0))`
+      await tx`
+        insert into settings (restaurant_id, key, value) values
+          (${restaurant.id}, 'purchase_approval_mode', ${mode}),
+          (${restaurant.id}, 'purchase_approval_threshold', ${value})
+        on conflict (restaurant_id, key) do update set value = excluded.value`
+    })
+    return { ok: true }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function saveStockAdjustmentApprovalMode(rawMode: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const user = await getSessionUser()
+    if (!user || user.role !== 'owner') throw new SettingsError('Only an owner can change stock approval settings')
+    const mode = z.enum(['none', 'owner']).parse(rawMode)
+    const restaurant = await getRestaurant()
+    await tsql`
+      insert into settings (restaurant_id, key, value)
+      values (${restaurant.id}, 'stock_adjustment_approval_mode', ${mode})
+      on conflict (restaurant_id, key) do update set value = excluded.value`
+    return { ok: true }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function savePosStockPolicy(rawPolicy: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const user = await getSessionUser()
+    if (!user || user.role !== 'owner') throw new SettingsError('Only an owner can change POS stock policy')
+    const policy = z.enum(['none', 'reconcile']).parse(rawPolicy)
+    const restaurant = await getRestaurant()
+    await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${restaurant.id}, 0))`
+      await tx`insert into settings (restaurant_id, key, value) values (${restaurant.id}, 'pos_stock_policy', ${policy}) on conflict (restaurant_id, key) do update set value = excluded.value`
+    })
+    return { ok: true }
+  } catch (e) { return fail(e) }
+}
 
 /**
  * A LIST KEY IS CHECKED IN CODE, NOT IN A REFINE MESSAGE.

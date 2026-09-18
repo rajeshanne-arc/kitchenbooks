@@ -18,6 +18,10 @@ import { chipsOf, TAB_DEFAULTS, TAB_GROUPS } from '../src/lib/tabs'
 import { BOOKS } from '../src/lib/books'
 import { legacyTarget, RETIRED_URLS } from '../src/lib/legacy'
 import { formatPaise, formatRate } from '../src/lib/money'
+import { calculateStatutoryAmounts } from '../src/lib/statutory'
+import { parseCsv } from '../src/lib/csv'
+import { SOP_MOMENTS } from '../src/lib/sops'
+import { assertPetpoojaOrdersResponse } from '../src/server/petpooja'
 
 let failures = 0
 const check = (name: string, fn: () => void) => {
@@ -29,6 +33,91 @@ const check = (name: string, fn: () => void) => {
     console.log(`  ✗ ${name}\n      ${(e as Error).message}`)
   }
 }
+
+/* ── configured statutory arithmetic ───────────────────────────────── */
+
+check('PF/ESI calculations use configured percentages and caps only', () => {
+  assert.deepEqual(calculateStatutoryAmounts({
+    earned: '25000', pfEmployeePct: '12', pfEmployerPct: '12', pfWageCap: '15000',
+    esiEmployeePct: '0.75', esiEmployerPct: '3.25', esiWageCap: '21000',
+  }), { pfEmployee: '1800.00', pfEmployer: '1800.00', esiEmployee: '157.50', esiEmployer: '682.50' })
+  assert.deepEqual(calculateStatutoryAmounts({
+    earned: '25000', pfEmployeePct: null, pfEmployerPct: null, pfWageCap: null,
+    esiEmployeePct: null, esiEmployerPct: null, esiWageCap: null,
+  }), { pfEmployee: '0.00', pfEmployer: '0.00', esiEmployee: '0.00', esiEmployer: '0.00' })
+})
+
+check('statutory configuration rejects out-of-range percentages and invalid dates before insert', () => {
+  const action = readFileSync('src/server/statutory-actions.ts', 'utf8')
+  assert.match(action, /const optionalPct = /)
+  assert.match(action, /Number\(value\) > 100/)
+  assert.match(action, /function assertRealDate/)
+  assert.match(action, /assertRealDate\(input\.effectiveFrom\)/)
+})
+
+check('shared CSV reader preserves quoted fields and rejects malformed quotes', () => {
+  assert.deepEqual(parseCsv('\uFEFFcode,name\r\nA-1,"Dal, Special"\r\n'), [['code', 'name'], ['A-1', 'Dal, Special']])
+  assert.throws(() => parseCsv('code,name\nA-1,"unclosed'), /unclosed quoted field/)
+})
+
+check('kitchen prep demand respects the owner stock policy', () => {
+  const page = readFileSync('src/app/kitchen/production/page.tsx', 'utf8')
+  const component = readFileSync('src/components/kitchen/PrepDemand.tsx', 'utf8')
+  assert.match(page, /posStockPolicy === 'none' \? \[\] : await getQtySold/)
+  assert.match(page, /<PrepDemand rows=\{prepDemand\}/)
+  assert.match(component, /not a stock issue/)
+})
+
+check('withholding export remains a provider-neutral handoff', () => {
+  const route = readFileSync('src/app/api/accounts/withholdings-export/route.ts', 'utf8')
+  assert.match(route, /toCsv\(/)
+  assert.match(route, /Rate \(derived\)/)
+  assert.match(route, /never applies a tax/)
+})
+
+check('Petpooja response envelope is validated before normalization', () => {
+  assert.doesNotThrow(() => assertPetpoojaOrdersResponse({ success: '1', order_json: [] }))
+  assert.throws(
+    () => assertPetpoojaOrdersResponse({ success: '1', orders: [] }),
+    /response shape changed.*order_json array/i,
+  )
+})
+
+check('every role SOP has reviewed Telugu prose and a cookie-backed renderer', () => {
+  const moments = ALL_ROLES.flatMap((role) => SOP_MOMENTS[role])
+  assert.equal(moments.length, 17)
+  for (const item of moments) {
+    for (const field of ['title', 'when', 'why', 'ifWrong'] as const) {
+      assert.match(item.te[field], /[\u0C00-\u0C7F]/, `${item.key}.${field} has no Telugu text`)
+    }
+  }
+  const page = readFileSync('src/app/sops/[role]/page.tsx', 'utf8')
+  assert.match(page, /LANG_COOKIE/)
+  assert.match(page, /cookies\(\)/)
+  assert.match(page, /moment\.te/)
+})
+
+check('POS statement import has an explicit write-free preview gate', () => {
+  const action = readFileSync('src/server/pos-statement-actions.ts', 'utf8')
+  const component = readFileSync('src/components/sales/PosStatementReconciliation.tsx', 'utf8')
+  assert.match(action, /export async function previewPosStatement/)
+  assert.match(action, /parseStatement\(input\.csv\)/)
+  assert.match(component, /Preview only/)
+  assert.match(component, /Import after preview/)
+  assert.match(component, /setPreview\(null\)/)
+})
+
+check('historical purchase batch import is grouped, previewed, and atomic', () => {
+  const action = readFileSync('src/server/purchase-import.ts', 'utf8')
+  const page = readFileSync('src/app/store/purchasing/import/batch/page.tsx', 'utf8')
+  assert.match(action, /export async function importPurchaseBatchCsv/)
+  assert.match(action, /grouped = new Map/)
+  assert.match(action, /groupKey = \`\$\{row\.vendorCode\}\|\$\{row\.billNo\}\`/)
+  assert.match(action, /if \(input\.dryRun\) return/)
+  assert.match(action, /await txn\(async \(\) =>/)
+  assert.match(action, /billNo: bill\.billNo/)
+  assert.match(page, /PurchaseBatchImport/)
+})
 
 /* ── 1. the nav list per role, by value ─────────────────────────────── */
 

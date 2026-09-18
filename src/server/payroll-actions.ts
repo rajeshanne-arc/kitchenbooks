@@ -39,6 +39,7 @@ import {
   type FulfillableRequest,
 } from '@/server/advances-queries'
 import { IdentitySchema, writeIdentity } from '@/server/staff-identity'
+import { postJournalEntryTx } from '@/server/journal'
 import type {
   MarkPaidInput,
   PayrollResult,
@@ -313,6 +314,52 @@ export async function markPayrollPaid(raw: MarkPaidInput): Promise<PayrollResult
     const accountId = await assertAccount(rid, input.accountId, 'the account the wages were paid from')
 
     await txn(async (tx) => {
+      const [totals] = await tx<{ gross: string; net: string; advances: string; deductions: string; withholding: string }[]>`
+        select coalesce(sum(earned + overtime), 0)::text as gross,
+               coalesce(sum(net_payable), 0)::text as net,
+               coalesce(sum(advance_recovered), 0)::text as advances,
+               coalesce(sum(other_deduction), 0)::text as deductions,
+               coalesce(sum(withholding), 0)::text as withholding
+        from payroll_lines where restaurant_id = ${rid} and run_id = ${input.runId}`
+      if (!totals || Number(totals.gross) <= 0 || Number(totals.net) <= 0) {
+        throw new PayrollError('This run has no positive wages to pay')
+      }
+      const [money] = await tx<{ accounting_account_id: string | null; account_type: string | null }[]>`
+        select ma.accounting_account_id, a.account_type
+        from money_accounts ma
+        left join accounting_accounts a on a.restaurant_id = ma.restaurant_id and a.id = ma.accounting_account_id
+        where ma.restaurant_id = ${rid} and ma.id = ${accountId} and ma.status = 'active'`
+      if (!money?.accounting_account_id || money.account_type !== 'asset') {
+        throw new PayrollError('Map the payment account to an active asset ledger account before paying wages')
+      }
+      const keys = ['labour_expense', 'staff_advance_asset', 'payroll_deduction_payable', 'withholding_payable']
+      const mappings = await tx<{ mapping_key: string; account_id: string; account_type: string }[]>`
+        select m.mapping_key, m.account_id, a.account_type
+        from accounting_posting_mappings m
+        join accounting_accounts a on a.restaurant_id = m.restaurant_id and a.id = m.account_id
+        where m.restaurant_id = ${rid} and m.mapping_key = any(${keys}) and a.status = 'active'`
+      const mapped = new Map(mappings.map((m) => [m.mapping_key, m]))
+      const labour = mapped.get('labour_expense')
+      if (!labour || labour.account_type !== 'expense') throw new PayrollError('Configure the labour-expense ledger mapping before paying wages')
+      const lines: { accountId: string; debit?: string; credit?: string; description: string }[] = [
+        { accountId: labour.account_id, debit: totals.gross, description: 'Gross wages' },
+      ]
+      lines.push({ accountId: money.accounting_account_id, credit: totals.net, description: 'Net wages paid' })
+      if (Number(totals.advances) > 0) {
+        const advance = mapped.get('staff_advance_asset')
+        if (!advance || advance.account_type !== 'asset') throw new PayrollError('Configure the staff-advance asset mapping before recovering an advance')
+        lines.push({ accountId: advance.account_id, credit: totals.advances, description: 'Advance recovered' })
+      }
+      if (Number(totals.deductions) > 0) {
+        const deduction = mapped.get('payroll_deduction_payable')
+        if (!deduction || deduction.account_type !== 'liability') throw new PayrollError('Configure the payroll-deduction liability mapping before recording a deduction')
+        lines.push({ accountId: deduction.account_id, credit: totals.deductions, description: 'Other deduction' })
+      }
+      if (Number(totals.withholding) > 0) {
+        const withholding = mapped.get('withholding_payable')
+        if (!withholding || withholding.account_type !== 'liability') throw new PayrollError('Configure the withholding liability mapping before paying wages')
+        lines.push({ accountId: withholding.account_id, credit: totals.withholding, description: 'Withholding' })
+      }
       const [run] = await tx<{ id: string }[]>`
         update payroll_runs set status = 'paid'
         where id = ${input.runId} and restaurant_id = ${rid} and status = 'approved'
@@ -323,6 +370,13 @@ export async function markPayrollPaid(raw: MarkPaidInput): Promise<PayrollResult
         set paid_on = ${input.paidOn}::date, account_id = ${accountId},
             pay_mode = ${input.payMode === '' ? null : input.payMode}
         where run_id = ${input.runId} and restaurant_id = ${rid}`
+      await postJournalEntryTx(tx, rid, {
+        date: input.paidOn,
+        sourceType: 'payroll_run',
+        sourceId: input.runId,
+        memo: `Payroll payment ${input.runId}`,
+        lines,
+      })
     })
 
     const run = await getPayrollRun(rid, input.runId)
@@ -486,9 +540,8 @@ export async function saveAdvance(raw: SaveAdvanceInput): Promise<SaveAdvanceRes
  * this re-checks the role anyway, because a server action is a public
  * endpoint and the route gate is not the check.
  *
- * These columns exist now because real auth exists. Phase 5 refused to
- * collect them for exactly that reason — the form must not ask for what
- * the app cannot yet protect.
+ * These columns exist now because the authenticated, role-gated identity
+ * path exists. The form must not ask for what the app cannot protect.
  */
 export async function updateStaffIdentity(
   staffId: string,

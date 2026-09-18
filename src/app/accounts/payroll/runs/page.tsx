@@ -9,6 +9,7 @@
 // SERVER read: changing the month must re-run the pay law in the database, not
 // adjust anything on screen.
 import { getRestaurant } from '@/server/queries'
+import Link from 'next/link'
 import { getPayrollDraft, listPayrollRuns } from '@/server/payroll-queries'
 import PayrollRunsList from '@/components/accountant/PayrollRunsList'
 import PrepareRun from '@/components/accountant/PrepareRun'
@@ -87,6 +88,7 @@ export default async function PayrollRunsPage({
           before anybody is paid.
         </p>
       </header>
+      <Link href="/accounts/payroll/runs/import" className="mb-3 inline-block rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-semibold text-stone-700 hover:bg-stone-50">Import payroll</Link>
 
       <ViewToggle
         param="view"

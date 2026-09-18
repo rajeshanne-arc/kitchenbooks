@@ -12,6 +12,7 @@ import type {
   SubCostRow,
   SupplierExposureRow,
   ProducibleRow,
+  RecipeVersionRow,
 } from '@/lib/types'
 
 /** Ordered by SECTION (the department a chef works in) or by FOOD COST
@@ -161,6 +162,30 @@ export async function getRecipeLines(recipeId: string): Promise<RecipeLineRow[]>
     left join recipe_costs src on src.recipe_id = rl.component_recipe_id
     where rl.recipe_id = ${recipeId}
     order by coalesce(i.name, sr.name) asc, rl.id asc`
+}
+
+export type RecipeSubstitutionRow = { id: string; recipe_line_id: string; primary_name: string; substitute_item_id: string; substitute_code: string; substitute_name: string; unit: string; quantity_ratio: string; note: string | null }
+export async function getRecipeSubstitutions(restaurantId: string, recipeId: string): Promise<RecipeSubstitutionRow[]> {
+  return tsql<RecipeSubstitutionRow[]>`
+    select s.id, s.recipe_line_id, pi.name as primary_name, s.substitute_item_id,
+           si.code as substitute_code, si.name as substitute_name, si.purchase_unit as unit,
+           s.quantity_ratio::text, s.note
+    from recipe_line_substitutions s
+    join recipe_lines rl on rl.restaurant_id = s.restaurant_id and rl.id = s.recipe_line_id and rl.recipe_id = ${recipeId}
+    join items pi on pi.restaurant_id = rl.restaurant_id and pi.id = rl.component_item_id
+    join items si on si.restaurant_id = s.restaurant_id and si.id = s.substitute_item_id
+    where s.restaurant_id = ${restaurantId}
+    order by pi.name, si.name`
+}
+
+export async function listRecipeVersions(restaurantId: string, recipeId: string): Promise<RecipeVersionRow[]> {
+  return tsql<RecipeVersionRow[]>`
+    select id, version_no, effective_from::text as effective_from,
+           effective_to::text as effective_to, recorded_by,
+           jsonb_array_length(coalesce(snapshot->'lines', '[]'::jsonb))::int as line_count
+    from recipe_versions
+    where restaurant_id = ${restaurantId} and recipe_id = ${recipeId}
+    order by version_no desc`
 }
 
 /** Typeahead over items ∪ existing sub-recipes for the lines editor */

@@ -1,6 +1,8 @@
 # Role SOPs: what to generate, what to write, and the seam between them
 
-**Status: a proposal for Rajesh. Nothing is built.**
+**Status: version 1 implemented.** Written role moments and live route links
+are available at `/sops/<role>`. Generated field/refusal inventories remain
+deliberately deferred to version 2.
 
 ## The honest answer to the question you asked
 
@@ -124,14 +126,15 @@ proves useful, and with two costs stated up front:
 for the vendor statement. An SOP page inherits it. One page per role, so it can
 go on a wall.
 
-**Language.** The en/te dictionary covers **labels on five staff-facing forms**.
-An SOP is prose, and translating prose is a genuine cost, not "adding data" the
-way a label is. Ship English, put the Telugu column in the same registry so it
-can be filled later, and do not pretend the machine can do it.
+**Language.** The en/te dictionary covers **labels on five staff-facing forms**,
+and the SOP registry now carries reviewed Telugu prose for all 17 role moments.
+The page reads the same language cookie as the forms, so the guide changes with
+the global EN/తెలుగు toggle. Any future language still belongs in the typed
+registry rather than being inferred at render time.
 
-**Who writes the prose.** You do, once, per moment — about forty short
-sentences across six roles. That is an afternoon, and it is the only part of
-this that is actually the SOP.
+**Who writes the prose.** The English and Telugu copy is written once per
+moment — 17 moments across six roles — and checked by the Phase A content gate.
+The linked screens remain the authority for live field and refusal details.
 
 **Where it lives in the nav.** Not a seventh tab in every group. One page under
 Owner, plus a quiet "Your day" link on each group's dashboard pointing at that

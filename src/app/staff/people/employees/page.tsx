@@ -104,14 +104,7 @@ export default async function StaffPage({
               ? `${roster.length} people, biggest salary first.`
               : `${roster.length} people, ordered by department, section, grade — never renumbered.`}
         </p>
-        {mayAdd && (
-          <Link
-            href="/staff/people/employees/new"
-            className="shrink-0 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
-          >
-            ＋ Add staff
-          </Link>
-        )}
+        {mayAdd && <span className="flex shrink-0 gap-2"><Link href="/staff/people/employees/import" className="rounded-xl border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Import</Link><Link href="/staff/people/employees/new" className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800">＋ Add staff</Link></span>}
       </div>
 
       <ViewToggle

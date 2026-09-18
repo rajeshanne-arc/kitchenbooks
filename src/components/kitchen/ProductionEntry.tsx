@@ -47,8 +47,8 @@ import { useLang } from '@/components/useLang'
 import { useBusinessToday } from '@/components/BusinessDay'
 import BackdatedCost from '@/components/BackdatedCost'
 
-type Line = { key: number; recipeId: string; qty: string }
-const newLine = (key: number): Line => ({ key, recipeId: '', qty: '' })
+type Line = { key: number; recipeId: string; qty: string; waste: string }
+const newLine = (key: number): Line => ({ key, recipeId: '', qty: '', waste: '0' })
 const cleanQty = (raw: string) => {
   const cleaned = raw.replace(/[^\d.]/g, '')
   const firstDot = cleaned.indexOf('.')
@@ -140,7 +140,7 @@ export default function ProductionEntry({
     if (last === null) return
     const usable = last.lines.filter((l) => byId.has(l.id))
     if (usable.length === 0) return
-    setLines(usable.map((l, i) => ({ key: nextKey + i, recipeId: l.id, qty: l.qty })))
+    setLines(usable.map((l, i) => ({ key: nextKey + i, recipeId: l.id, qty: l.qty, waste: '0' })))
     setNextKey((k) => k + usable.length)
   }
 
@@ -153,7 +153,7 @@ export default function ProductionEntry({
         date,
         sectionId,
         note: note.trim(),
-        lines: filled.map((l) => ({ recipeId: l.recipeId, outputQty: l.qty.trim() })),
+        lines: filled.map((l) => ({ recipeId: l.recipeId, outputQty: l.qty.trim(), wasteQty: l.waste.trim() || '0' })),
       })
       if (res.ok) {
         setSaved(res)
@@ -264,6 +264,7 @@ export default function ProductionEntry({
               <tr>
                 <th className={thCls}>Sub-recipe</th>
                 <th className={thNumCls}>Made</th>
+                <th className={thNumCls}>Waste</th>
                 <th className={thCls}>Unit</th>
                 <th className={thNumCls}>Value</th>
                 <th className={thCls}>
@@ -324,6 +325,16 @@ export default function ProductionEntry({
                         onChange={(e) => patchLine(l.key, { qty: cleanQty(e.target.value) })}
                         placeholder="0"
                         className={`${numCls} w-24 text-right`}
+                      />
+                    </td>
+                    <td className={tdNumCls}>
+                      <input
+                        inputMode="decimal"
+                        value={l.waste}
+                        onChange={(e) => patchLine(l.key, { waste: cleanQty(e.target.value) })}
+                        placeholder="0"
+                        className={`${numCls} w-20 text-right`}
+                        aria-label="Measured waste quantity"
                       />
                     </td>
                     <td className={tdCls}>

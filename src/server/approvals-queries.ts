@@ -1916,7 +1916,8 @@ export type Waiting = {
 }
 
 /**
- * FOUR THINGS WAIT ON RAJESH IN FOUR PLACES HE WOULD HAVE TO REMEMBER TO
+ * Several things can wait on Rajesh in separate places he would otherwise
+ * have to remember to
  * VISIT. This is the one page that says what is waiting — including for the
  * things it does not itself execute.
  *
@@ -1931,7 +1932,7 @@ export async function getWaiting(restaurantId: string): Promise<Waiting> {
   // awaiting_me, so a payment sitting approved-and-unrouted — which IS work,
   // and which the old filter dropped — appears on the page that claims to
   // list everything waiting.
-  const [approvals, elsewhere, decided, suggestions, payrollRuns] = await Promise.all([
+  const [approvals, elsewhere, decided, suggestions, payrollRuns, purchaseApprovals] = await Promise.all([
     listAwaiting(restaurantId, 'owner'),
     listElsewhere(restaurantId, 'owner'),
     listDecided(restaurantId),
@@ -1951,6 +1952,9 @@ export async function getWaiting(restaurantId: string): Promise<Waiting> {
       from payroll_runs r
       where r.restaurant_id = ${restaurantId} and r.status = 'draft'
       order by r.period_start`,
+    tsql<{ n: number }[]>`
+      select count(*)::int as n from purchase_order_approvals
+      where restaurant_id = ${restaurantId} and status = 'pending'`,
   ])
   return {
     approvals,
@@ -1958,7 +1962,7 @@ export async function getWaiting(restaurantId: string): Promise<Waiting> {
     decided,
     suggestions,
     payrollRuns,
-    total: approvals.length + suggestions.length + payrollRuns.length,
+    total: approvals.length + suggestions.length + payrollRuns.length + (purchaseApprovals[0]?.n ?? 0),
   }
 }
 
@@ -1983,7 +1987,9 @@ export async function countWaiting(restaurantId: string, tx?: postgres.Transacti
     select (select coalesce(sum(n), 0) from awaiting_me
              where restaurant_id = ${restaurantId} and role = 'owner')::int
          + (select count(*) from list_suggestions where restaurant_id = ${restaurantId} and status = 'pending')::int
-         + (select count(*) from payroll_runs where restaurant_id = ${restaurantId} and status = 'draft')::int
+      + (select count(*) from payroll_runs where restaurant_id = ${restaurantId} and status = 'draft')::int
+         + (select count(*) from purchase_order_approvals where restaurant_id = ${restaurantId} and status = 'pending')::int
+         + (select count(*) from stock_adjustment_requests where restaurant_id = ${restaurantId} and status = 'pending')::int
       as n`
   return row?.n ?? 0
 }

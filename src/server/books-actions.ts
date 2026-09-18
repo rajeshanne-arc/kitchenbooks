@@ -25,8 +25,9 @@ import { enteredBy, getSessionUser } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
 import { insertPayment } from '@/server/payment-write'
 import { getBill, getBillSheet, getDues, getItemDetail, getVendorDetail } from '@/server/books-queries'
-import { parseMoney } from '@/lib/money'
+import { parseMoney, paiseToString } from '@/lib/money'
 import { isCashMode } from '@/lib/payment-mode'
+import { postJournalEntryTx } from '@/server/journal'
 import type {
   CreateItemInput,
   CreateItemResult,
@@ -111,6 +112,32 @@ export async function voidBill(purchaseId: string): Promise<VoidBillResult> {
         insert into purchase_lines (restaurant_id, purchase_id, item_id, qty, rate, gst_amount, transport_alloc)
         select restaurant_id, ${rev.id}, item_id, -qty, rate, -gst_amount, -transport_alloc
         from purchase_lines where purchase_id = ${purchaseId}`
+      await tx`
+        insert into stock_lot_movements (restaurant_id, lot_id, quantity_delta, movement_date, movement_type, source_id, location_id, entered_by)
+        select l.restaurant_id, l.id, -l.initial_qty, ${orig.bill_date}, 'purchase_reversal', ${rev.id}, l.location_id, ${by}
+        from stock_lots l
+        where l.restaurant_id = ${rid}
+          and l.source_purchase_line_id in (select id from purchase_lines where restaurant_id = ${rid} and purchase_id = ${purchaseId})`
+      const originalJournal = await tx<{ account_id: string; debit: string; credit: string; description: string | null }[]>`
+        select l.account_id, l.debit::text as debit, l.credit::text as credit, l.description
+        from journal_entries e
+        join journal_lines l on l.restaurant_id = e.restaurant_id and l.journal_entry_id = e.id
+        where e.restaurant_id = ${rid} and e.source_type = 'purchase' and e.source_id = ${purchaseId}`
+      if (originalJournal.length > 0) {
+        await postJournalEntryTx(tx, rid, {
+          date: orig.bill_date,
+          sourceType: 'purchase',
+          sourceId: rev.id,
+          memo: `Reversal of purchase ${orig.bill_no ?? purchaseId}`,
+          postedBy: by ?? undefined,
+          lines: originalJournal.map((line) => ({
+            accountId: line.account_id,
+            description: line.description ?? undefined,
+            debit: line.credit,
+            credit: line.debit,
+          })),
+        })
+      }
       return { revId: rev.id, vendorId: orig.vendor_id, expectedLines: lineCount }
     })
 
@@ -173,13 +200,30 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
     // checkout while holding a connection is the shape that deadlocked the pool.
     const by = await enteredBy()
 
-    // A transaction only so the number and the row it numbers commit together —
-    // a failed insert must not burn a number out of the series. The insert
-    // itself lives in payment-write.ts, because the approval path writes the
-    // same row beside its own `paid` event and two statements for one table is
-    // how they drift.
-    const payment = await txn((tx) =>
-      insertPayment(tx, rid, {
+    // A transaction holds the document number, payment, and journal entry
+    // together. Missing account mappings refuse the payment before commit;
+    // otherwise the operational register and the ledger could disagree.
+    const payment = await txn(async (tx) => {
+      const [mapping] = await tx<{ payable_account_id: string | null; money_account_id: string | null; payable_type: string | null; money_type: string | null }[]>`
+        select m.account_id as payable_account_id,
+               ma.accounting_account_id as money_account_id,
+               payable.account_type as payable_type,
+               money.account_type as money_type
+        from money_accounts ma
+        left join accounting_accounts money
+          on money.restaurant_id = ma.restaurant_id and money.id = ma.accounting_account_id
+        left join accounting_posting_mappings m
+          on m.restaurant_id = ma.restaurant_id and m.mapping_key = 'vendor_payable'
+        left join accounting_accounts payable
+          on payable.restaurant_id = m.restaurant_id and payable.id = m.account_id
+        where ma.restaurant_id = ${rid} and ma.id = ${accountId} and ma.status = 'active'`
+      if (!mapping?.payable_account_id || !mapping.money_account_id) {
+        throw new BooksError('Configure the vendor-payable mapping and this money account’s ledger account before recording a payment')
+      }
+      if (mapping.payable_type !== 'liability' || mapping.money_type !== 'asset') {
+        throw new BooksError('Vendor payable must map to a liability account and the payment account must map to an asset account')
+      }
+      const row = await insertPayment(tx, rid, {
         vendorId: input.vendorId,
         paidDate: input.paidDate,
         amountPaise,
@@ -187,8 +231,21 @@ export async function recordPayment(raw: PaymentInput): Promise<PaymentResult> {
         note: input.note,
         accountId,
         enteredBy: by,
-      }),
-    )
+      })
+      await postJournalEntryTx(tx, rid, {
+        date: input.paidDate,
+        sourceType: 'vendor_payment',
+        sourceId: row.id,
+        memo: `Vendor payment ${row.doc_no ?? row.id}`,
+        postedBy: by ?? undefined,
+        lines: [
+          { accountId: mapping.payable_account_id, debit: paiseToString(amountPaise) },
+          { accountId: mapping.money_account_id, credit: paiseToString(amountPaise) },
+        ],
+      })
+      return row
+    })
+    if (!payment) throw new BooksError('Payment insert could not be verified')
 
     // READ THE FIGURE BACK, NEVER ECHO THE INPUT — both of them. The vendor's
     // balance and the account's are what the person needs to see, and both are

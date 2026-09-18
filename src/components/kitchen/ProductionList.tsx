@@ -71,6 +71,8 @@ export default function ProductionList({ rows }: { rows: ProductionRow[] }) {
                 </span>
                 <span className="block text-xs text-stone-500">
                   {fmtDate(r.prod_date)} · {r.section_code} · {r.output_qty} {r.output_unit}
+                  {r.expected_output_qty !== null && ` · expected ${r.expected_output_qty}`}
+                  {Number(r.waste_qty) > 0 && ` · waste ${r.waste_qty}`}
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-2">

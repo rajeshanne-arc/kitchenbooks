@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { BillPrefillLine, Category, ItemSel, SaveBillInput, SavedBill, Unit, VendorSel } from '@/lib/types'
 import {
-  decimalStringToPaise,
   formatMicro,
   formatPaise,
   lineValueMicro,

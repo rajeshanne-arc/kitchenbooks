@@ -23,7 +23,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const { id } = await params
     const restaurant = await getRestaurant()
     const row = await readAttachment(restaurant.id, id)
-    const { body, contentType } = await getObject(row.storage_key)
+    const { body, contentType } = await getObject(row.storage_key, row.mime_type ?? 'application/octet-stream')
 
     return new Response(body, {
       headers: {
