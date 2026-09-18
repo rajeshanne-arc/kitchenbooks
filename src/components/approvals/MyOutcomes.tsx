@@ -332,6 +332,24 @@ function words(row: OutcomeRow): { chip: string; what: string; nothingToDo: stri
             ? `Paid as an advance${mine ? ' by you' : ''}. It sits as credit with them until they bill against it.`
             : `Advanced${mine ? ' by you' : ''}. It comes back out of pay, not by being chased.`,
       }
+    // 'OTHER' IS THE CATCH-ALL KIND AND HAS ONE REAL USE: writing off what
+    // somebody owes. Its subject says which — an 'other' about anything else
+    // still falls to the neutral default, which is the point of a catch-all.
+    case 'other':
+      // An 'other' about anything else keeps the neutral default, which is the
+      // point of a catch-all: a wrong sentence reads as a fact and a dull one
+      // reads as a gap somebody can fill.
+      return row.entity_type !== 'staff'
+        ? {
+            chip: refused ? 'refused' : 'done',
+            what: row.from_name ?? row.from_code ?? 'a request',
+            nothingToDo: `This was applied${mine ? ' by you' : ''}. Nothing is waiting on you.`,
+          }
+        : {
+            chip: refused ? 'not written off' : 'written off',
+            what: row.from_name ?? 'somebody',
+            nothingToDo: `Written off${mine ? ' by you' : ''}. The money stays on the record as given and is now an expense — the business has lost it, and they can be retired.`,
+          }
     case 'discard':
       return {
         chip: refused ? 'not discarded' : 'discarded',

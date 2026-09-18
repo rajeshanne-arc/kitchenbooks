@@ -11869,15 +11869,26 @@ async function run() {
     // is assertPayableRange's own overlap query, which selects bills_from
     // perfectly legitimately. A total cannot tell which list a name belongs
     // to; the pairing can, and the pairing is the actual rule.
-    const lines = q.split('\n')
+    // COMMENTS BLANKED FIRST, AND LINE NUMBERS KEPT. This matched a COMMENT
+    // that quotes `a.amount::text as amount` while explaining this very rule —
+    // the file's strongest recorded fault, where careful prose about a rule
+    // satisfies a naive search for the rule being broken. The blanking is
+    // line-for-line rather than a strip, because the whole check is ADJACENCY
+    // and removing lines would shift every pairing.
+    const lines = q.split('\n').map((l) => (/^\s*(\/\/|\*|\/\*)/.test(l) ? '' : l))
     const selects = lines
       .map((l, i) => ({ l, i }))
-      .filter((x) => /a\.amount::text as amount/.test(x.l))
+      // A WORD BOUNDARY, NEVER A BARE PREFIX. `a.amount` is a SUBSTRING of
+      // `sa.amount`, so this matched a staff_advances select and reported a
+      // correct query as a missing range. Fourth instance of the prefix fault
+      // in this file's gates, after <DateLink/<DateLinkX, <SaveAck/<SaveAckX
+      // and <BillSheet — and the first where the prefix was a SQL alias.
+      .filter((x) => /\ba\.amount::text as amount/.test(x.l))
     assert.ok(selects.length > 0, 'no approval select list found — this check is looking at nothing')
     for (const { i } of selects) {
       assert.match(
         lines[i + 1] ?? '',
-        /a\.bills_from::text as bills_from/,
+        /\ba\.bills_from::text as bills_from/,
         `the select list at line ${i + 1} names the amount and not the range — that screen would render a blank`,
       )
     }
@@ -13832,8 +13843,12 @@ async function run() {
           pendingRefusal = (e as Error).message
         }
 
-        // Whether the DATABASE would also refuse — the app guard is under the
-        // advisory lock and is the only thing standing behind it today.
+        // AND THE DATABASE REFUSES IT TOO, which is the half the app guard
+        // cannot provide. The guard reads under the advisory lock and narrows
+        // the window; it cannot close it, exactly as the reconciliation_matches
+        // case in this file records. `staff_advances_one_per_request` is the
+        // backstop — partial, because an advance with no request behind it is
+        // legitimate and common.
         let dbRefused = false
         try {
           await tx`savepoint second_fulfilment`
@@ -13910,8 +13925,145 @@ async function run() {
       assert.ok(!String(m).includes('undefined'), `a refusal rendered "undefined": ${m}`)
     }
 
+    // NOT "does it refuse" BUT "IT REFUSES". The index is applied, so this is
+    // now an assertion rather than a report — and it fails if the index is
+    // ever dropped, which is the only way this could quietly regress.
+    assert.equal(
+      out.dbRefused,
+      true,
+      'a second staff_advances row naming the same approved request was ACCEPTED by the database — staff_advances_one_per_request is gone, and the app guard alone cannot close the race',
+    )
     console.log(
-      `      loan 40,000 @ 5,000 → 8 instalments to Apr 2027 · offered once then never again · refused by name · database ${out.dbRefused ? 'also refuses' : 'does NOT refuse — the app guard is the only backstop'}`,
+      '      loan 40,000 @ 5,000 → 8 instalments to Apr 2027 · offered once then never again · refused by name, and by the unique index behind it',
+    )
+  })
+
+  await check('a leaver who owes money is refused, and a write-off moves the P&L', async () => {
+    const { txn } = await import('../src/lib/db')
+    const { withTenant } = await import('../src/lib/tenant')
+    const { getStaffOwed, listAdvanceable } = await import('../src/server/advances-queries')
+    const { writeOffAdvances, WRITE_OFF_CATEGORY } = await import('../src/server/approvals-queries')
+    const probe = process.env.KB_PROBE_TENANT
+    if (probe === undefined || probe === '') {
+      console.log('      KB_PROBE_TENANT unset — the write-off is UNTESTED')
+      return
+    }
+
+    const out = await withTenant(probe, () =>
+      txn(async (tx) => {
+        const [who] = await listAdvanceable(probe, tx)
+        assert.ok(who !== undefined, 'the probe tenant has nobody to lend to')
+        const month = '2001-06-01'
+
+        await tx`
+          insert into staff_advances (restaurant_id, adv_date, staff_id, amount, entered_by)
+          values (${probe}, ${month}::date, ${who.id}, 30000, 'gate')`
+        const owedBefore = await getStaffOwed(probe, who.id, tx)
+
+        // WHAT THE P&L SAYS BEFORE. pnl_monthly is the reader that matters:
+        // an advance is an asset while it is owed and a COST the moment it is
+        // forgiven, and nothing else in this flow writes an expense.
+        const before = await tx<{ total_expenses: string }[]>`
+          select coalesce(total_expenses, 0)::text as total_expenses from pnl_monthly
+          where restaurant_id = ${probe} and month = date_trunc('month', ${month}::date)`
+
+        const res = await writeOffAdvances(tx, probe, who.id, 'gate', 'Zz left without notice')
+
+        const owedAfter = await getStaffOwed(probe, who.id, tx)
+        const after = await tx<{ total_expenses: string }[]>`
+          select coalesce(total_expenses, 0)::text as total_expenses from pnl_monthly
+          where restaurant_id = ${probe} and month = date_trunc('month', current_date)`
+
+        // THE MONEY STAYS ON THE RECORD AS GIVEN — a reversal, never a delete.
+        const [rows] = await tx<{ given: number; reversed: number }[]>`
+          select count(*) filter (where reverses_id is null)::int as given,
+                 count(*) filter (where reverses_id is not null)::int as reversed
+          from staff_advances where restaurant_id = ${probe} and staff_id = ${who.id}`
+
+        const [sugg] = await tx<{ n: number; status: string | null }[]>`
+          select count(*)::int as n, max(status) as status from list_suggestions
+          where restaurant_id = ${probe} and list_key = 'expense_category'
+            and lower(value) = ${WRITE_OFF_CATEGORY.toLowerCase()}`
+
+        const r = {
+          owedBefore: owedBefore === null ? '0' : owedBefore.outstanding,
+          owedAfter: owedAfter === null ? '0' : owedAfter.outstanding,
+          expBefore: before[0]?.total_expenses ?? '0',
+          expAfter: after[0]?.total_expenses ?? '0',
+          given: rows.given,
+          reversed: rows.reversed,
+          wroteOff: res.wroteOff ?? null,
+          amount: res.amount ?? null,
+          suggestions: sugg.n,
+          suggestionStatus: sugg.status,
+        }
+        throw Object.assign(new Error('KB_ROLLBACK'), { res: r })
+      }).catch((e: unknown) => {
+        if ((e as Error).message !== 'KB_ROLLBACK') throw e
+        return (e as { res: Record<string, unknown> }).res
+      }),
+    )
+
+    assert.equal(Number(out.owedBefore), 30000, 'the fixture advance is not owed')
+    // THE DEBT CLEARS…
+    assert.equal(Number(out.owedAfter), 0, `writing it off left ${out.owedAfter} still owed`)
+    // …BY REVERSAL, NOT DELETION. The money was genuinely given and the books
+    // must keep saying so.
+    assert.equal(out.given, 1, 'the original advance was deleted rather than reversed')
+    assert.equal(out.reversed, 1, 'no negative twin was written')
+    assert.equal(Number(out.amount), 30000, 'it wrote off something other than what was owed')
+
+    // AND THE P&L CARRIES THE LOSS. This is the one path where an advance
+    // becomes a cost, so it is proved by MOVING the total rather than by the
+    // expenses row existing.
+    assert.ok(
+      Number(out.expAfter) - Number(out.expBefore) >= 30000,
+      `the P&L did not move: expenses went ${out.expBefore} → ${out.expAfter}. A write-off that does not reach it is a loss the business never records.`,
+    )
+
+    // THE CATEGORY IS SUGGESTED, NOT INVENTED. No live expense_category fits a
+    // written-off advance, so it is typed and waits for the owner — LAW 2 as
+    // amended: entry never blocks, the decision stays deliberate.
+    assert.equal(out.suggestions, 1, 'the typed category was not noted as a suggestion')
+    assert.equal(out.suggestionStatus, 'pending', 'the category approved itself')
+
+    // NOTHING RENDERS "undefined".
+    assert.ok(!String(out.wroteOff).includes('undefined'), 'the write-off result named nobody')
+
+    // AND RETIRING SOMEBODY WHO OWES IS REFUSED, NAMING THE FIGURE.
+    //
+    // `updateStaff` reads the session, so the refusal is asserted in SOURCE —
+    // but the parts that could silently stop working are checked for real: the
+    // balance it names comes from getStaffOwed, and it must fire only on the
+    // TRANSITION out of active, or editing a retired person's phone number
+    // would be blocked by a debt that was already there.
+    const { readFileSync } = await import('node:fs')
+    const la = readFileSync('src/server/labour-actions.ts', 'utf8')
+    const at = la.indexOf('export async function updateStaff')
+    assert.ok(at > 0, 'updateStaff is gone')
+    const body = la.slice(at, la.indexOf('\n}\n', at))
+    assert.match(body, /getStaffOwed/, 'retiring somebody no longer checks what they owe')
+    assert.match(
+      body,
+      /input\.status !== 'active'/,
+      'the balance check does not key on the status being set',
+    )
+    assert.match(
+      body,
+      /was\.status === 'active'/,
+      'the check fires on any edit to a retired person, not on the transition — a debt that was already there would block changing a phone number',
+    )
+    assert.match(
+      body,
+      /formatMoneyString\(owed\.outstanding\)/,
+      'the refusal does not name the figure — "they owe money" is not something anybody can act on',
+    )
+    // AND IT NAMES BOTH WAYS OUT. A refusal with no next step is broken, which
+    // this file records for the nine account-refusing forms.
+    assert.match(body, /payroll run/, 'the refusal does not offer recovering it')
+    assert.match(body, /write it off/, 'the refusal does not offer writing it off')
+    console.log(
+      `      owed ${out.owedBefore} → ${out.owedAfter} · 1 given + 1 reversal, nothing deleted · expenses ${out.expBefore} → ${out.expAfter} · category pending`,
     )
   })
 

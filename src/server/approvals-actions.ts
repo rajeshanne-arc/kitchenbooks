@@ -44,6 +44,7 @@ import { getSessionUser } from '@/server/current-user'
 import { formatMoneyString } from '@/lib/money'
 import { withdrawnMessage } from '@/lib/waiting'
 import { addMonths } from '@/lib/advances'
+import { getStaffOwed } from '@/server/advances-queries'
 import { businessToday } from '@/server/business-day'
 import { insertPayment } from '@/server/payment-write'
 import { getVendorAging, listBillsOutstanding } from '@/server/aging-queries'
@@ -361,7 +362,25 @@ export async function decideApproval(raw: {
       return { ok: false, error: `Approved, but it could not be applied: ${failure}` }
     }
 
-    const r = applied as { from?: string; to?: string; moved?: Record<string, number>; discarded?: string }
+    const r = applied as {
+      from?: string
+      to?: string
+      moved?: Record<string, number>
+      discarded?: string
+      wroteOff?: string
+      amount?: string
+      reversed?: number
+    }
+    // THE COST IS SAID OUT LOUD. A write-off is the one approval here that
+    // moves the P&L, and the sentence names the amount the business has just
+    // lost rather than reporting that something was applied.
+    if (r.wroteOff !== undefined) {
+      return {
+        ok: true,
+        id: input.id,
+        message: `${formatMoneyString(r.amount ?? '0')} written off for ${r.wroteOff}. ${r.reversed ?? 0} advance row(s) reversed — the money stays on the record as given and is now an expense, so the P&L carries the loss. They can be retired.`,
+      }
+    }
     if (r.discarded !== undefined) {
       return { ok: true, id: input.id, message: `${r.discarded} is discarded. Nothing pointed at it.` }
     }
@@ -562,6 +581,103 @@ export async function requestReopen(raw: { periodCloseId: string; reason: string
       )
     }
     return res
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/* ── writing off what somebody owes ────────────────────────────────────── */
+
+/**
+ * ASKING TO FORGIVE A DEBT — kind 'other', subject 'staff'.
+ *
+ * It is raised from the refusal that stops somebody being retired while they
+ * owe money, and it is the larger of the two ways out: recovering it in a
+ * final payroll run costs nothing, and writing it off costs the business the
+ * whole balance and moves the P&L.
+ *
+ * SO IT IS THE OWNER'S, AND THE REASON IS REQUIRED. After a write-off there is
+ * a reversal and an expense to read, but neither says WHY — the sentence typed
+ * here is the only account of that, and it is what the owner decides on.
+ *
+ * NOT RAISED THROUGH `requestApproval`: that action's enum is MASTER_SUBJECTS,
+ * which excludes staff deliberately — a person is retired, never discarded or
+ * merged. This names the same person as a SUBJECT, which is a different claim.
+ *
+ * @scope not-a-figure
+ */
+export async function requestWriteOff(raw: {
+  staffId: string
+  reason: string
+}): Promise<ApprovalResult> {
+  try {
+    if (!UUID.test(raw.staffId)) throw new ApprovalRefusal('Malformed staff id')
+    const reason = raw.reason.trim()
+    if (reason === '') {
+      throw new ApprovalRefusal(
+        'Say why it is being written off — a reversal and an expense are all that is left afterwards, and neither of them says why',
+      )
+    }
+    const by = await assertRequester()
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+
+    return await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+
+      const [who] = await tx<{ name: string }[]>`
+        select name from staff where restaurant_id = ${rid} and id = ${raw.staffId}`
+      if (!who) throw new ApprovalRefusal('That person is not on this restaurant’s books')
+
+      // WHAT IS ACTUALLY OWED, read under the lock — the figure the owner is
+      // being asked to forgive, not what was lent.
+      const owed = await getStaffOwed(rid, raw.staffId, tx)
+      if (owed === null || !(Number(owed.outstanding) > 0)) {
+        throw new ApprovalRefusal(`${who.name} owes nothing — there is nothing to write off`)
+      }
+
+      // ONE STANDING REQUEST AT A TIME. Two open write-offs for one person
+      // would both be approved against the same balance and the second would
+      // find nothing left, which is a refusal nobody could have predicted.
+      const [open] = await tx<{ n: number }[]>`
+        select count(*)::int as n from approval_requests
+        where restaurant_id = ${rid} and kind = 'other' and entity_type = 'staff'
+          and entity_id = ${raw.staffId} and status in ('pending', 'approved')`
+      if (open.n > 0) {
+        throw new ApprovalRefusal(
+          `Somebody has already asked to write off what ${who.name} owes — it is with the owner`,
+        )
+      }
+
+      const [req] = await tx<{ id: string }[]>`
+        insert into approval_requests
+          (restaurant_id, kind, entity_type, entity_id, reason, amount, snapshot,
+           status, assigned_to, requested_by)
+        values (${rid}, 'other', 'staff', ${raw.staffId}, ${reason},
+                ${owed.outstanding}::numeric,
+                ${JSON.stringify({
+                  owedWhenAsked: owed.outstanding,
+                  monthsOfSalary: owed.months_of_salary,
+                })}::text::jsonb,
+                'pending', 'owner', ${by})
+        returning id`
+
+      await recordAct(tx, rid, {
+        id: req.id,
+        action: 'raised',
+        from: ['pending'],
+        status: 'pending',
+        by,
+        note: reason,
+        assignTo: 'owner',
+      })
+
+      return {
+        ok: true as const,
+        id: req.id,
+        message: `Asked the owner to write off ${formatMoneyString(owed.outstanding)} for ${who.name}. Nothing is forgiven yet — until he decides, they still owe it and still cannot be retired.`,
+      }
+    })
   } catch (e) {
     return fail(e)
   }

@@ -17,6 +17,7 @@ import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { getStaffOwed } from '@/server/advances-queries'
 import AdvanceRequest from '@/components/approvals/AdvanceRequest'
+import WriteOffRequest from '@/components/approvals/WriteOffRequest'
 import { REQUESTERS } from '@/server/approvals-queries'
 import { exposureText, loanProgress, monthLabel } from '@/lib/advances'
 import PeriodControl from '@/components/dashboard/PeriodControl'
@@ -722,6 +723,19 @@ export default async function StaffProfilePage({
               that goes wrong with lending to staff is lending more than can be
               recovered before somebody leaves, and nobody opens a central list
               before agreeing. */}
+          {/* THE EXPENSIVE WAY OUT, beside what they owe. Retiring somebody
+              with a balance is refused; this is the request that clears it,
+              and it is the owner's because it costs the business the money. */}
+          {owed !== null && Number(owed.outstanding) > 0 && (
+            <WriteOffRequest
+              staffId={staff.id}
+              staffName={staff.name}
+              outstanding={owed.outstanding}
+              monthsOfSalary={owed.months_of_salary}
+              canRequest={user !== null && REQUESTERS.includes(user.role)}
+            />
+          )}
+
           <AdvanceRequest
             subject="staff"
             subjectId={staff.id}

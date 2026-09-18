@@ -21,6 +21,7 @@
 
 import 'server-only'
 import type postgres from 'postgres'
+import { nextDocNo } from '@/server/doc-numbers'
 import { tsql } from '@/lib/db'
 import { getSessionUser } from '@/server/current-user'
 import type { Role } from '@/lib/roles'
@@ -1068,6 +1069,11 @@ export type ApplyResult = {
   moved?: Record<string, number>
   discarded?: string
   reopened?: string
+  /** a written-off advance: who, how much the business lost, and how many
+   *  advance rows were reversed to get there */
+  wroteOff?: string
+  amount?: string
+  reversed?: number
 }
 
 /**
@@ -1114,6 +1120,13 @@ export async function applyRequest(
   // to the CHECK from here lands on this refusal until somebody decides what
   // applying it means, which is the opposite of falling through to whatever
   // branch happens to be last.
+  // WRITING OFF WHAT SOMEBODY OWES — the one path where an advance becomes a
+  // COST. It is 'other' + 'staff' specifically, not 'other' generally: the
+  // catch-all kind must keep landing on the refusal below.
+  if (req.kind === 'other' && req.entity_type === 'staff') {
+    return writeOffAdvances(tx, restaurantId, req.entity_id, by, reason)
+  }
+
   const APPLIABLE = ['reopen_period', 'merge', 'discard']
   if (!APPLIABLE.includes(req.kind)) {
     throw new Error(
@@ -2278,4 +2291,140 @@ export async function assertAmountStillCovered(
     )
   }
   return scope
+}
+
+/**
+ * FORGIVING WHAT SOMEBODY OWES — a REVERSAL and an EXPENSE, never a delete.
+ *
+ * THE MONEY WAS GENUINELY GIVEN. Deleting the advance would make the books say
+ * it never happened, which is false and is the thing append-only exists to
+ * prevent. So every outstanding advance gets a negative twin carrying
+ * `reverses_id` — the same correction shape as every other event table — and
+ * `staff_owes` nets to zero because its sums already exclude a reversed pair.
+ *
+ * AND THE P&L FEELS IT. This is the ONE place an advance becomes a cost: while
+ * it is owed it is an asset sitting with somebody, and the moment it is
+ * forgiven the business has spent it. Nothing else in the advance flow writes
+ * an expenses row, and the gate proves this one moves the P&L rather than
+ * merely existing.
+ *
+ * THE CATEGORY IS SUGGESTED, NOT INVENTED. No live expense_category fits a
+ * written-off advance — Rent, GST, Electricity, Marketing, Staff Rent, and
+ * "Staff Rent" means housing — so the value is typed and lands in
+ * `list_suggestions` as pending, which is LAW 2 as amended: entry never
+ * blocks, and the owner decides later what becomes vocabulary. The expense
+ * cannot wait for that decision; the debt is being forgiven now.
+ */
+export const WRITE_OFF_CATEGORY = 'Advance written off'
+
+export async function writeOffAdvances(
+  tx: postgres.TransactionSql,
+  restaurantId: string,
+  staffId: string,
+  by: string,
+  reason: string,
+): Promise<ApplyResult> {
+  const [who] = await tx<{ name: string }[]>`
+    select name from staff where id = ${staffId} and restaurant_id = ${restaurantId}`
+  if (!who) throw new Error('that person is not on this restaurant’s books')
+
+  // EVERY ADVANCE STILL STANDING — not yet reversed, and not itself a
+  // reversal. The same pair test staff_owes uses, so the two cannot disagree
+  // about what is outstanding.
+  // ALIASED `sa`, NOT `a`. In this file `a` means `approval_requests` — the
+  // range gate keys on `a.amount::text as amount` and this select tripped it,
+  // which is the alias collision audit:schema already hit on
+  // `attendance_current`. The ruling then was to rename rather than blunt the
+  // instrument, and it is the same ruling here: a name that means two things
+  // in one file is confusing to a reader before it is confusing to a gate.
+  const open = await tx<{ id: string; amount: string; account_id: string | null }[]>`
+    select sa.id, sa.amount::text as amount, sa.account_id::text as account_id
+    from staff_advances sa
+    where sa.restaurant_id = ${restaurantId} and sa.staff_id = ${staffId}
+      and sa.reverses_id is null
+      and not exists (select 1 from staff_advances x where x.reverses_id = sa.id)`
+  if (open.length === 0) throw new Error(`${who.name} has no advance left to write off`)
+
+  // WHAT IS ACTUALLY STILL OWED, which is not the sum of the advances: some of
+  // it has already come back through payroll. Writing off more than remains
+  // would put money into the P&L that the business already recovered.
+  const [owed] = await tx<{ outstanding: string }[]>`
+    with advanced as (
+      select coalesce(sum(amount), 0) as total from staff_advances
+      where restaurant_id = ${restaurantId} and staff_id = ${staffId}
+    ),
+    recovered as (
+      select coalesce(sum(pl.advance_recovered), 0) as total
+      from payroll_lines pl join payroll_runs r on r.id = pl.run_id
+      where r.restaurant_id = ${restaurantId} and pl.staff_id = ${staffId}
+        and r.status <> 'cancelled'
+    )
+    select greatest((select total from advanced) - (select total from recovered), 0)::text as outstanding`
+  if (!(Number(owed.outstanding) > 0)) {
+    throw new Error(`${who.name} owes nothing — there is nothing to write off`)
+  }
+
+  // THE NEGATIVE TWINS, AND THEY NAME NO ACCOUNT. This is the opposite of the
+  // void rule and the difference is the whole of it.
+  //
+  // A VOID UNDOES A CASH MOVEMENT, so it must copy the original's account or
+  // that account is left permanently short — the fault this file records for
+  // the three void paths in expenses-actions. A WRITE-OFF UNDOES NOTHING: the
+  // money genuinely left when the advance was paid and is not coming back.
+  //
+  // `money_movements` reads `staff_advances` — measured, not assumed — so a
+  // reversal carrying the account would put the whole advance BACK into it as
+  // an inflow that never happened, and the balance would say the cash is still
+  // there. Null, so the one real outflow stands alone.
+  for (const a of open) {
+    await tx`
+      insert into staff_advances (restaurant_id, adv_date, staff_id, amount, account_id,
+                                  reverses_id, note, entered_by)
+      values (${restaurantId}, business_date(now()), ${staffId}, ${'-' + a.amount}::numeric,
+              null, ${a.id}, ${reason.slice(0, 300)}, ${by})`
+  }
+
+  // AND THE COST. The category is typed rather than chosen, so it is noted as
+  // a suggestion in the same breath — the owner classifies it later, and
+  // pnl_monthly needs that classification before it can split controllable
+  // from occupancy.
+  // AND THE EXPENSE NAMES NO ACCOUNT EITHER, for the same reason: the cash
+  // left once, at the advance. This row is a RECLASSIFICATION — a receivable
+  // becoming a cost — not a second payment, and giving it an account would
+  // show the money leaving twice. It therefore reaches the P&L and no cash or
+  // bank register, which is exactly the shape a tax deposit already has in
+  // `money_movements` by that view's own design.
+  //
+  // IT STILL TAKES AN EXP NUMBER. A document number is what a question names
+  // months later, and "why is there a thirty-thousand rupee expense in June"
+  // is precisely the question this row exists to answer.
+  // THE BUSINESS DAY, FROM THE DATABASE. `new Date()` is the browser's clock
+  // and is forbidden in this tree — at 00:30 it says tomorrow, which would put
+  // the write-off in the wrong financial year on exactly the nights nobody is
+  // testing. business_date reads the restaurant's own timezone and cutover,
+  // and can only be called inside a tenant-announcing transaction, which this
+  // is.
+  const [bd] = await tx<{ d: string }[]>`select business_date(now())::text as d`
+  const expNo = await nextDocNo(tx, restaurantId, 'EXP', bd.d)
+  await tx`
+    insert into expenses (restaurant_id, expense_date, category, payee, amount, paid_via, note,
+                          entered_by, account_id, doc_no)
+    values (${restaurantId}, business_date(now()), ${WRITE_OFF_CATEGORY}, ${who.name},
+            ${owed.outstanding}::numeric, 'Adjustment',
+            ${`written off: ${reason.slice(0, 250)}`}, ${by}, null, ${expNo})`
+
+  const [existing] = await tx<{ id: string; seen_count: number }[]>`
+    select id, seen_count from list_suggestions
+    where restaurant_id = ${restaurantId} and list_key = 'expense_category'
+      and lower(value) = ${WRITE_OFF_CATEGORY.toLowerCase()}`
+  if (existing) {
+    await tx`update list_suggestions set seen_count = ${existing.seen_count + 1}
+             where id = ${existing.id} and restaurant_id = ${restaurantId}`
+  } else {
+    await tx`
+      insert into list_suggestions (restaurant_id, list_key, value, suggested_by, seen_count, status)
+      values (${restaurantId}, 'expense_category', ${WRITE_OFF_CATEGORY}, ${by}, 1, 'pending')`
+  }
+
+  return { wroteOff: who.name, amount: owed.outstanding, reversed: open.length }
 }

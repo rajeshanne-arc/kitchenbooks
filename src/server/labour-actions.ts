@@ -11,6 +11,8 @@ import { tsql, txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { enteredBy, getSessionUser } from '@/server/current-user'
 import { getDaySheet, getStaffDetail } from '@/server/labour-queries'
+import { getStaffOwed } from '@/server/advances-queries'
+import { formatMoneyString } from '@/lib/money'
 import { IdentitySchema, identityIsEmpty, writeIdentity, type Identity } from '@/server/staff-identity'
 import type {
   AttendanceStatus,
@@ -181,6 +183,34 @@ export async function updateStaff(id: string, raw: StaffInput): Promise<StaffMut
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     await validateStaffRefs(rid, input, id)
+
+    // RETIRING SOMEBODY WHO OWES MONEY IS REFUSED, QUIETLY, NAMING THE FIGURE.
+    //
+    // Nobody thinks about this until it happens and then it is a fight. A
+    // person retired with a balance leaves a debt against somebody who no
+    // longer works here: the only recovery mechanism is a payroll run, and a
+    // retired person is not on one — so the money silently stops being
+    // recoverable while the ledger still says it is owed.
+    //
+    // IT IS A REFUSAL, NOT A WRITE-OFF. Whether to forgive the money is the
+    // owner's decision and it costs the P&L; doing it as a side effect of
+    // editing a staff record would be the largest decision in this flow taken
+    // by the smallest act. The two ways out are named on the refusal.
+    //
+    // ONLY ON THE TRANSITION. Editing a retired person's phone number must not
+    // be blocked by a debt that was already there.
+    if (input.status !== 'active') {
+      const [was] = await tsql<{ status: string; name: string }[]>`
+        select status, name from staff where id = ${id} and restaurant_id = ${rid}`
+      if (was !== undefined && was.status === 'active') {
+        const owed = await getStaffOwed(rid, id)
+        if (owed !== null && Number(owed.outstanding) > 0) {
+          throw new LabourError(
+            `${was.name} owes ${formatMoneyString(owed.outstanding)}. Settle it or write it off before retiring them — recover it in a final payroll run, or ask the owner to write it off, which costs the business the money.`,
+          )
+        }
+      }
+    }
 
     // Only the column-granted fields ever appear in this SET — code never does.
     const updated = await txn(async (tx) => {
