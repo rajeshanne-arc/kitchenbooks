@@ -250,6 +250,7 @@ export async function updateMeter(id: string, raw: SaveMeterInput): Promise<Save
 export type SaveReadingResult =
   | {
       ok: true
+      readingId: string
       meter: string
       unit: string
       reading: string
@@ -339,7 +340,11 @@ export async function saveMeterReading(raw: {
         insert into meter_readings (restaurant_id, meter_id, read_date, reading, note, entered_by)
         values (${rid}, ${input.meterId}, ${input.date}::date, ${readingStr},
                 ${input.note === '' ? null : input.note}, ${by})`
-      return { corrected: already !== undefined }
+      const [reading] = await tx<{ id: string }[]>`
+        select id from meter_readings
+        where restaurant_id = ${rid} and meter_id = ${input.meterId} and read_date = ${input.date}::date
+        order by created_at desc limit 1`
+      return { corrected: already !== undefined, readingId: reading.id }
     })
 
     // READ THE ANSWER BACK FROM THE VIEW, never echo the input. The span, the
@@ -363,6 +368,7 @@ export async function saveMeterReading(raw: {
 
     return {
       ok: true,
+      readingId: saved.readingId,
       meter: meter.name,
       unit: meter.unit,
       reading: readingStr,

@@ -21,6 +21,7 @@ import type {
   KitchenDayRow,
   KitchenWastageRow,
   ProductionRow,
+  ProductionVarianceRow,
   Section,
   WasteByReasonRow,
   RefillSet,
@@ -197,8 +198,9 @@ export async function getIndentDetail(restaurantId: string, id: string): Promise
 const PRODUCTION_SELECT = `
   select p.id, p.prod_date::text as prod_date, p.section_id,
          s.code as section_code, s.name as section_name,
-         p.recipe_id, r.code as recipe_code, r.name as recipe_name,
+         p.recipe_id, p.recipe_version_id, r.code as recipe_code, r.name as recipe_name,
          p.output_qty::text as output_qty, r.output_unit,
+         p.expected_output_qty::text as expected_output_qty, p.waste_qty::text as waste_qty,
          p.unit_cost::text as unit_cost, p.value::text as value,
          p.note, p.reverses_id,
          (p.reverses_id is not null) as is_reversal,
@@ -232,6 +234,28 @@ export async function getTodaysProductions(restaurantId: string, sectionId: stri
       and p.prod_date = ${date}::date and p.reverses_id is null
       and not exists (select 1 from productions x where x.reverses_id = p.id)
     order by p.created_at desc`
+}
+
+export async function getProductionVariance(restaurantId: string, monthStart: string): Promise<ProductionVarianceRow[]> {
+  return tsql<ProductionVarianceRow[]>`
+    select p.recipe_id, r.code as recipe_code, r.name as recipe_name, r.output_unit,
+           count(*)::int as batches,
+           sum(p.expected_output_qty)::text as expected_qty,
+           sum(p.output_qty)::text as made_qty,
+           sum(p.waste_qty)::text as waste_qty,
+           (sum(p.output_qty) + sum(p.waste_qty) - sum(p.expected_output_qty))::text as variance_qty,
+           coalesce(v.status, 'open') as review_status, v.note as review_note
+    from productions p
+    join recipes r on r.restaurant_id = p.restaurant_id and r.id = p.recipe_id
+    left join production_variance_reviews v on v.restaurant_id = p.restaurant_id and v.recipe_id = p.recipe_id and v.month_start = ${monthStart}::date
+    where p.restaurant_id = ${restaurantId}
+      and p.prod_date >= ${monthStart}::date
+      and p.prod_date < (${monthStart}::date + interval '1 month')
+      and p.expected_output_qty is not null
+      and p.reverses_id is null
+      and not exists (select 1 from productions v where v.restaurant_id = p.restaurant_id and v.reverses_id = p.id)
+    group by p.recipe_id, r.code, r.name, r.output_unit, v.status, v.note
+    order by abs(sum(p.output_qty) + sum(p.waste_qty) - sum(p.expected_output_qty)) desc, r.code`
 }
 
 /**

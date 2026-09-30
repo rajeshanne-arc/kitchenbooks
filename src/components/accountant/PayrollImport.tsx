@@ -1,0 +1,12 @@
+'use client'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { importPayrollCsv, previewPayrollCsv } from '@/server/payroll-import'
+import { btnCls, cardCls, inputCls, sectionHeadCls } from '@/components/ui'
+import { toast } from '@/components/Toasts'
+export default function PayrollImport({ contract }: { contract: string }) {
+  const router = useRouter(); const [csv, setCsv] = useState(''); const [busy, setBusy] = useState(false); const [preview, setPreview] = useState<{ periodStart: string; periodEnd: string; count: number } | null>(null)
+  async function previewFile() { if (busy) return; setBusy(true); setPreview(null); try { const result = await previewPayrollCsv({ csv }); if (!result.ok) toast(result.error, 'error'); else setPreview(result) } catch { toast('Could not reach the server — nothing was written', 'error') } finally { setBusy(false) } }
+  async function commit() { if (busy || !preview) return; setBusy(true); try { const result = await importPayrollCsv({ csv }); if (!result.ok) toast(result.error, 'error'); else { toast(String(result.count) + ' payroll lines imported', 'ok'); setCsv(''); setPreview(null); router.push('/accounts/payroll/runs/' + result.runId) } } catch { toast('Could not reach the server — nothing was imported', 'error') } finally { setBusy(false) } }
+  return <section className={cardCls + ' mt-4'}><h2 className={sectionHeadCls}>Import payroll</h2><p className="mt-1 text-sm text-stone-600">{contract} Preview resolves staff and validates without creating a draft.</p><textarea value={csv} onChange={(e) => { setCsv(e.target.value); setPreview(null) }} rows={10} spellCheck={false} className={inputCls + ' mt-3 min-h-48 w-full font-mono text-sm'} placeholder="period_start,period_end,staff_code,days_in_period,days_paid,base_salary,earned,overtime,advance_recovered,other_deduction,withholding,note" />{preview ? <p className="mt-2 text-sm text-green-700">Ready: {preview.count} payroll lines for {preview.periodStart} to {preview.periodEnd}. Nothing has been written.</p> : null}<div className="mt-3 flex gap-2"><button type="button" disabled={busy || csv.trim() === ''} onClick={() => void previewFile()} className={btnCls}>{busy ? 'Checking…' : 'Preview import'}</button><button type="button" disabled={busy || !preview} onClick={() => void commit()} className={btnCls}>{busy ? 'Importing…' : 'Commit import'}</button></div></section>
+}

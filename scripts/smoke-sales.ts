@@ -6,17 +6,14 @@
 // Proves: two-day filter, status whitelist (unknown surfaced never banked),
 // (date,id) keying with duplicate skip, latest-fetch-wins re-fetch, mapping
 // shrinks unmapped, section sales + margin land, dish qty-sold.
-// Test dates live in 2001 — real data is never touched. Prints created ids
-// for cleanup (the app role cannot DELETE).
+// Test dates are selected from unused days in 2001 — real data is never
+// touched. Evidence is retained because the app role cannot DELETE.
 //
 // Run: npm run smoke:sales
 import assert from 'node:assert/strict'
+import { withTenant } from '../src/lib/tenant'
 
 process.loadEnvFile('.env.local')
-
-const T = '2001-01-05'
-const T_PREV = '2001-01-04'
-const MONTH = '2001-01-01'
 
 type FixtureOrder = {
   orderID: string
@@ -77,11 +74,44 @@ const { businessYesterday } = await import('../src/server/business-day')
   const { getSectionCosts } = await import('../src/server/labour-queries')
   const { getSections } = await import('../src/server/store-queries')
   const { createRecipe } = await import('../src/server/recipes-actions')
-  const { sql } = await import('../src/lib/db')
+  const { sql, tsql } = await import('../src/lib/db')
 
+  const tenant = process.env.KB_PROBE_TENANT
+  if (!tenant) throw new Error('KB_PROBE_TENANT is not set — sales smoke writes append-only evidence and must use a probe tenant')
+  return withTenant(tenant, async () => {
   const restaurant = await getRestaurant()
   const rid = restaurant.id
   console.log('restaurant:', restaurant.name, '| yesterday IST:', await businessYesterday())
+
+  // The application role is append-only, so a successful smoke must leave
+  // its evidence behind. Choose an unused historical day rather than making
+  // repeated runs depend on manual cleanup or a destructive privilege.
+  let testDate: string | null = null
+  for (let offset = 0; offset < 120; offset += 1) {
+    const candidate = new Date(Date.UTC(2001, offset, 5)).toISOString().slice(0, 10)
+    const [existingMonth] = await tsql<{ exists: boolean }[]>`
+      select exists (
+        select 1 from sales_current
+        where restaurant_id = ${rid}
+          and business_date >= date_trunc('month', ${candidate}::date)::date
+          and business_date < (date_trunc('month', ${candidate}::date) + interval '1 month')::date
+      ) as exists`
+    if (!existingMonth.exists && (await getSalesDay(rid, candidate)) === null) {
+      testDate = candidate
+      break
+    }
+  }
+  assert.ok(testDate !== null, 'could not find an unused historical sales smoke date')
+  const T = testDate as string
+  const previous = new Date(`${T}T00:00:00Z`)
+  previous.setUTCDate(previous.getUTCDate() - 1)
+  const T_PREV = previous.toISOString().slice(0, 10)
+  const MONTH = `${T.slice(0, 7)}-01`
+  const I1 = `ZZT-${T}-1`
+  const I2 = `ZZT-${T}-2`
+  const I3 = `ZZT-${T}-3`
+  const I4 = `ZZT-${T}-4`
+  console.log('using unused historical smoke date:', T)
 
   // ---- 0. the whitelist is a whitelist
   assert.equal(classifyStatus('Success'), 'revenue')
@@ -91,24 +121,24 @@ const { businessYesterday } = await import('../src/server/business-day')
   assert.equal(classifyStatus('success '), 'revenue')
 
   const before = await getSalesDay(rid, T)
-  assert.equal(before, null, `expected no ${T} sales before the smoke — is an earlier run uncleaned?`)
+  assert.equal(before, null, `expected no ${T} sales before the smoke`)
 
   // ---- 1. one fetch: filter, classify, key, count
   const fixture = payload([
     { orderID: '41', order_date: T, status: 'Success', payment_type: 'Cash', no_of_persons: '4', total: '1000',
       items: [
-        { itemid: 'ZZT-1', name: 'Zz Paneer Tikka', quantity: '2', total: '700' },
-        { itemid: 'ZZT-2', name: 'Zz Dal', quantity: '1', total: '300' },
+        { itemid: I1, name: 'Zz Paneer Tikka', quantity: '2', total: '700' },
+        { itemid: I2, name: 'Zz Dal', quantity: '1', total: '300' },
       ] },
     { orderID: '55', order_date: T_PREV, status: 'Success', total: '492' }, // D-1 leak — must be filtered
     { orderID: '42', order_date: T, status: 'Cancelled', total: '200',
-      items: [{ itemid: 'ZZT-3', name: 'Zz Soup', quantity: '1', total: '200' }] },
+      items: [{ itemid: I3, name: 'Zz Soup', quantity: '1', total: '200' }] },
     { orderID: '43', order_date: T, status: 'Complimentary', no_of_persons: '2', total: '350',
-      items: [{ itemid: 'ZZT-1', name: 'Zz Paneer Tikka', quantity: '1', total: '350' }] },
+      items: [{ itemid: I1, name: 'Zz Paneer Tikka', quantity: '1', total: '350' }] },
     { orderID: '44', order_date: T, status: 'Held', total: '150',
-      items: [{ itemid: 'ZZT-4', name: 'Zz Mystery', quantity: '1', total: '150' }] },
+      items: [{ itemid: I4, name: 'Zz Mystery', quantity: '1', total: '150' }] },
     { orderID: 'C-9', order_date: T, status: 'Success', payment_type: 'UPI', total: '250',
-      items: [{ itemid: 'ZZT-2', name: 'Zz Dal', quantity: '1', total: '250' }] },
+      items: [{ itemid: I2, name: 'Zz Dal', quantity: '1', total: '250' }] },
     { orderID: '41', order_date: T, status: 'Success', total: '9999' }, // duplicate id — skipped
   ])
   const norm = normalizePayload(fixture, T)
@@ -143,15 +173,15 @@ const { businessYesterday } = await import('../src/server/business-day')
   const refetch = payload([
     { orderID: '41', order_date: T, status: 'Success', payment_type: 'Cash', no_of_persons: '4', total: '1100',
       items: [
-        { itemid: 'ZZT-1', name: 'Zz Paneer Tikka', quantity: '2', total: '800' },
-        { itemid: 'ZZT-2', name: 'Zz Dal', quantity: '1', total: '300' },
+        { itemid: I1, name: 'Zz Paneer Tikka', quantity: '2', total: '800' },
+        { itemid: I2, name: 'Zz Dal', quantity: '1', total: '300' },
       ] },
     { orderID: '43', order_date: T, status: 'Complimentary', no_of_persons: '2', total: '350',
-      items: [{ itemid: 'ZZT-1', name: 'Zz Paneer Tikka', quantity: '1', total: '350' }] },
+      items: [{ itemid: I1, name: 'Zz Paneer Tikka', quantity: '1', total: '350' }] },
     { orderID: '44', order_date: T, status: 'Held', total: '150',
-      items: [{ itemid: 'ZZT-4', name: 'Zz Mystery', quantity: '1', total: '150' }] },
+      items: [{ itemid: I4, name: 'Zz Mystery', quantity: '1', total: '150' }] },
     { orderID: 'C-9', order_date: T, status: 'Success', payment_type: 'UPI', total: '250',
-      items: [{ itemid: 'ZZT-2', name: 'Zz Dal', quantity: '1', total: '250' }] },
+      items: [{ itemid: I2, name: 'Zz Dal', quantity: '1', total: '250' }] },
   ])
   const f2 = await persistFetch(rid, T, normalizePayload(refetch, T))
   assert.equal(f2.insertedOrders, 4)
@@ -163,9 +193,9 @@ const { businessYesterday } = await import('../src/server/business-day')
 
   // ---- 3. mapping: biggest money first, picking a dish moves the needle
   const unmapped1 = await listUnmapped(rid)
-  const zzRows = unmapped1.filter((u) => u.pos_item_id.startsWith('ZZT-'))
+  const zzRows = unmapped1.filter((u) => [I1, I2, I3, I4].includes(u.pos_item_id))
   assert.equal(zzRows.length, 2, 'revenue lines only — cancelled/unknown items never reach the queue')
-  assert.deepEqual(zzRows.map((u) => u.pos_item_id), ['ZZT-1', 'ZZT-2'], 'ordered by revenue desc (800 then 550)')
+  assert.deepEqual(zzRows.map((u) => u.pos_item_id), [I1, I2], 'ordered by revenue desc (800 then 550)')
   assert.equal(Number(zzRows[0].revenue), 800)
   assert.equal(Number(zzRows[1].revenue), 550)
 
@@ -174,8 +204,8 @@ const { businessYesterday } = await import('../src/server/business-day')
   let createdRecipeId: string | null = null
   if (dishes.length === 0) {
     const sections = await getSections(rid)
-    const ch = sections.find((s) => s.code === 'CH')
-    assert.ok(ch, 'CH section must exist')
+    const ch = sections.find((s) => s.status === 'active') ?? sections[0]
+    assert.ok(ch, 'an active section must exist')
     const created = await createRecipe({
       kind: 'dish', name: 'Zz Smoke Dish', sectionId: ch.id, outputQty: '1', outputUnit: 'portion', sellingPrice: '100',
     })
@@ -185,17 +215,17 @@ const { businessYesterday } = await import('../src/server/business-day')
   }
   const dish = dishes[0]
 
-  const badMap = await mapPosItem({ posItemId: 'ZZT-1', itemName: 'Zz Paneer Tikka', recipeId: rid, itemId: '', sectionId: '' })
+  const badMap = await mapPosItem({ posItemId: I1, itemName: 'Zz Paneer Tikka', recipeId: rid, itemId: '', sectionId: '' })
   assert.ok(!badMap.ok && /dish/i.test(badMap.error), 'mapping to a non-dish id must refuse')
 
   const unmappedBefore = await countUnmapped(rid)
-  const mapRes = await mapPosItem({ posItemId: 'ZZT-1', itemName: 'Zz Paneer Tikka', recipeId: dish.id, itemId: '', sectionId: '' })
+  const mapRes = await mapPosItem({ posItemId: I1, itemName: 'Zz Paneer Tikka', recipeId: dish.id, itemId: '', sectionId: '' })
   assert.ok(mapRes.ok, `mapPosItem failed: ${mapRes.ok === false ? mapRes.error : ''}`)
   assert.equal(mapRes.map.recipe_code, dish.code)
   assert.equal(mapRes.unmappedLeft, unmappedBefore - 1, 'mapping one item shrinks the queue by one')
 
   // remap is the same move (upsert via the column-granted update)
-  const remap = await mapPosItem({ posItemId: 'ZZT-1', itemName: 'Zz Paneer Tikka', recipeId: dish.id, itemId: '', sectionId: '' })
+  const remap = await mapPosItem({ posItemId: I1, itemName: 'Zz Paneer Tikka', recipeId: dish.id, itemId: '', sectionId: '' })
   assert.ok(remap.ok)
   assert.equal(remap.unmappedLeft, unmappedBefore - 1)
 
@@ -203,10 +233,10 @@ const { businessYesterday } = await import('../src/server/business-day')
   const costs = await getSectionCosts(rid, MONTH)
   const secRow = costs.find((r) => r.section_code === dish.section_code)
   assert.ok(secRow, 'mapped dish section must appear')
-  assert.equal(Number(secRow.sales), 800, 'mapped ZZT-1 revenue lands on the dish section')
+  assert.equal(Number(secRow.sales), 800, 'mapped test item revenue lands on the dish section')
   assert.equal(Number(secRow.margin), 800, 'no 2001 consumption/labour — margin equals sales')
   const dash = costs.find((r) => r.section_code === '—')
-  assert.ok(dash, 'the — / Unmapped row must be loud while ZZT-2 is unmapped')
+  assert.ok(dash, 'the — / Unmapped row must be loud while the second test item is unmapped')
   assert.equal(Number(dash.sales), 550, 'unmapped revenue shows on the — row')
 
   // ---- 5. dish cards know their month
@@ -228,11 +258,12 @@ const { businessYesterday } = await import('../src/server/business-day')
       JSON.stringify({
         business_date: T,
         fetches: [f1.fetchId, f2.fetchId],
-        pos_item_ids: ['ZZT-1'],
+        pos_item_ids: [I1],
         recipe_id: createdRecipeId,
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

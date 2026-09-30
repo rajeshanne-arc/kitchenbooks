@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { listDishCosts, listSubCosts } from '@/server/recipes-queries'
 import { getQtySold } from '@/server/sales-queries'
+import { getSettingValue } from '@/server/settings'
 import { listSnapshots } from '@/server/counts-queries'
 import { formatMoneyString } from '@/lib/money'
 import { RetiredBadge } from '@/components/books/Badges'
@@ -109,12 +110,13 @@ export default async function RecipesPage({
   // must not SEE the section, not merely be refused when they click it.
   const user = await getSessionUser()
   const canPhotograph = user !== null && canAccess(user.role, '/owner/snapshots')
-  const [dishes, subs, sold, snapshots] = await Promise.all([
+  const [dishes, subs, posStockPolicy, snapshots] = await Promise.all([
     listDishCosts(restaurant.id, order),
     listSubCosts(restaurant.id),
-    getQtySold(restaurant.id, await businessMonthStart()),
+    getSettingValue(restaurant.id, 'pos_stock_policy'),
     listSnapshots(restaurant.id),
   ])
+  const sold = posStockPolicy === 'none' ? [] : await getQtySold(restaurant.id, await businessMonthStart())
   const soldByRecipe = new Map(sold.map((s) => [s.recipe_id, s]))
 
   // Grouped only under by-section: under by-food-cost the whole point is one

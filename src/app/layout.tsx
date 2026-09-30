@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { Archivo, IBM_Plex_Mono, IBM_Plex_Sans, Noto_Sans_Telugu } from "next/font/google";
 import TopNav from "@/components/TopNav";
 import Toasts from "@/components/Toasts";
 import { getSessionUser } from "@/server/current-user";
+import { listAvailableRestaurants } from "@/server/auth-core";
 import "./globals.css";
 
 // Three roles, all of them faces built for documents and systems rather than
@@ -58,15 +60,18 @@ export const metadata: Metadata = {
 
 export const viewport = { themeColor: "#2f6b47" };
 
-export default async function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
   const user = await getSessionUser();
+  const memberships = user !== null && process.env.KB_MEMBERSHIPS === 'true'
+    ? await listAvailableRestaurants(user.username)
+    : [];
   return (
     <html
       lang="en"
       className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} ${telugu.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <TopNav user={user} />
+        <TopNav user={user ? { ...user, memberships } : null} />
         {children}
         <Toasts />
       </body>

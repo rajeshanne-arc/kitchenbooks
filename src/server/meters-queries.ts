@@ -50,12 +50,12 @@ export const FUEL_CATEGORY = 'GAS'
 /**
  * EVERY READ HERE NAMES ITS TENANT, and that is not belt-and-braces.
  *
- * `meters`, `meter_readings` and `attachments` shipped with RLS DISABLED —
- * see migrations/meters_attachments_rls.sql, which is written and not yet
- * applied. Tier 2 of the tenancy gate exempts a read keyed by a uuid it was
- * handed, on the grounds that RLS makes a foreign row invisible first. On
- * these tables that is false today, so `where id = $1` alone would cross the
- * tenant boundary. Nothing below relies on the key.
+ * `meters`, `meter_readings` and `attachments` must all remain tenant-scoped;
+ * attachments_rls.sql records the attachment metadata boundary. Tier 2 of
+ * the tenancy gate can exempt a read keyed by a uuid only when RLS makes a
+ * foreign row invisible first. These readers still name `restaurant_id`
+ * explicitly, so they remain correct even if a future migration changes that
+ * protection. Nothing below relies on the key alone.
  */
 
 // ─────────────────────────── the metering mode ────────────────────────────

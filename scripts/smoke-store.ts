@@ -10,11 +10,13 @@ import assert from 'node:assert/strict'
 process.loadEnvFile('.env.local')
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
 const { businessMonthStart, businessToday } = await import('../src/server/business-day')
     const { getRestaurant } = await import('../src/server/queries')
   const { saveIssue, saveWastage, voidIssue, voidWastage } = await import('../src/server/store-actions')
-  const { getChecklist, getSections, getSectionsWithMonth, getStockSnaps, listStock, searchIssuableItems } = await import('../src/server/store-queries')
-  const { sql } = await import('../src/lib/db')
+  const { getAllSections, getChecklist, getSections, getSectionsWithMonth, getStockSnaps, listStock, searchIssuableItems } = await import('../src/server/store-queries')
+  const { sql, tsql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
   const today = await businessToday()
@@ -22,8 +24,11 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   console.log('restaurant:', restaurant.name, '| today IST:', today)
 
   const sections = await getSections(restaurant.id)
-  // 8 seeded in phase 3; phase 5 unified sections into 16 org units
-  assert.equal(sections.length, 16, 'expected the 16 unified org units')
+  // All org units still exist, but only receiving departments are issue
+  // destinations. Keep this assertion tied to the domain flag, not a stale
+  // count that included Accounts, Security, Store and Valet.
+  const allSections = await getAllSections(restaurant.id)
+  assert.equal(sections.length, allSections.filter((section) => section.receives_stock).length)
   const ch = sections.find((s) => s.code === 'CH')
   assert.ok(ch, 'Chinese section must exist')
 
@@ -91,7 +96,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   assert.ok(iVoid.ok, `voidIssue failed: ${iVoid.ok === false ? iVoid.error : ''}`)
   assert.equal(Number(iVoid.monthValue), 0)
   assert.equal(Number(iVoid.stock[0].on_hand_qty), 20)
-  const revLines = (await sql`
+  const revLines = (await tsql`
     select unit_cost::text as unit_cost, qty::text as qty
     from issue_lines where issue_id = ${iVoid.reversal.id}`) as unknown as { unit_cost: string; qty: string }[]
   assert.equal(revLines[0].unit_cost, issue.lines[0].unit_cost, 'issue reversal must copy unit_cost exactly')
@@ -113,6 +118,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

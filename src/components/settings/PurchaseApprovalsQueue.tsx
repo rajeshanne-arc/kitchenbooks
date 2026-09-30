@@ -1,0 +1,65 @@
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { decidePurchaseOrderApproval } from '@/server/po-actions'
+import { formatMoneyString } from '@/lib/money'
+import { btnCls, btnGhostCls, cardCls, inputCls, sectionHeadCls } from '@/components/ui'
+import type { PendingPurchaseApproval } from '@/server/po-queries'
+
+export default function PurchaseApprovalsQueue({ rows }: { rows: PendingPurchaseApproval[] }) {
+  const router = useRouter()
+  const [busy, setBusy] = useState<string | null>(null)
+  const [notes, setNotes] = useState<Record<string, string>>({})
+  const [error, setError] = useState<string | null>(null)
+
+  async function decide(row: PendingPurchaseApproval, decision: 'approved' | 'refused') {
+    const note = notes[row.id] ?? ''
+    if (decision === 'refused' && note.trim() === '') return
+    setBusy(row.id)
+    setError(null)
+    try {
+      const result = await decidePurchaseOrderApproval(row.purchase_order_id, decision, note)
+      if (result.ok) router.refresh()
+      else setError(result.error)
+    } catch {
+      setError('Could not reach the server — nothing was changed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <section className={cardCls}>
+      <h2 className={sectionHeadCls}>Purchase orders waiting for approval</h2>
+      <div className="mt-2 divide-y divide-rule-soft">
+        {rows.map((row) => (
+          <div key={row.id} className="py-3">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="font-medium text-stone-900">{row.doc_no ?? 'Purchase order'}</span>
+              <span className="text-sm text-stone-600">{row.vendor_name} · {formatMoneyString(row.amount)} · {row.lines} line(s)</span>
+              <span className="ml-auto text-xs text-stone-500">requested by {row.requested_by ?? '—'}</span>
+            </div>
+            <p className="mt-1 text-sm text-stone-700">{row.reason}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <input
+                value={notes[row.id] ?? ''}
+                onChange={(e) => setNotes((all) => ({ ...all, [row.id]: e.target.value }))}
+                placeholder="Decision note (required to refuse)"
+                maxLength={300}
+                className={`${inputCls} min-w-[240px] flex-1`}
+              />
+              <button type="button" disabled={busy !== null} onClick={() => void decide(row, 'approved')} className={btnCls}>
+                {busy === row.id ? 'Saving…' : 'Approve'}
+              </button>
+              <button type="button" disabled={busy !== null || (notes[row.id] ?? '').trim() === ''} onClick={() => void decide(row, 'refused')} className={btnGhostCls}>
+                Refuse
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {error !== null && <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>}
+    </section>
+  )
+}

@@ -25,9 +25,10 @@ import { z } from 'zod'
 import { txn } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
-import { getList } from '@/server/settings'
+import { getList, getSettingValue } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
 import { getStockSnaps } from '@/server/store-queries'
+import { recordAdjustmentLot } from '@/server/lot-ledger'
 import {
   AdjustmentRefusal,
   assertAdjustableItem,
@@ -130,7 +131,7 @@ export async function acceptCount(countId: string): Promise<AcceptCountResult> {
       // shelf disagreed with on the day — only the CORRECTION moves.
       //
       // `value` is GENERATED — absent from the column list by necessity.
-      const [{ n }] = await tx<{ n: number }[]>`
+      const inserted = await tx<{ id: string; item_id: string; qty: string; unit_cost: string }[]>`
         with prior as (
           -- >= rather than >, and this count's own rows excluded: created_at
           -- defaults to now(), which is the TRANSACTION timestamp and does
@@ -156,8 +157,12 @@ export async function acceptCount(countId: string): Promise<AcceptCountResult> {
           left join prior p on p.item_id = l.item_id
           where l.count_id = ${countId}
             and l.variance_qty - coalesce(p.already, 0) <> 0
-          returning 1
-        ) select count(*)::int as n from ins`
+          returning id, item_id, qty::text as qty, unit_cost::text as unit_cost
+        ) select id, item_id, qty, unit_cost from ins`
+      for (const row of inserted) {
+        await recordAdjustmentLot(tx, rid, row.id, row.item_id, row.qty, row.unit_cost, count.count_date, by)
+      }
+      const n = inserted.length
 
       const [stamped] = await tx<{ id: string }[]>`
         update stock_counts
@@ -250,6 +255,7 @@ export async function saveAdjustments(raw: SaveAdjustmentsInput): Promise<SaveAd
     const restaurant = await getRestaurant()
     const rid = restaurant.id
     const by = await actor(['store', 'manager', 'owner'], 'Correcting the book')
+    const user = await getSessionUser()
 
     // OUTSIDE the transaction, deliberately: noteListSuggestion opens its own
     // statement, and a tsql inside a txn() callback holds one connection while
@@ -257,6 +263,26 @@ export async function saveAdjustments(raw: SaveAdjustmentsInput): Promise<SaveAd
     const reasons = await getList(rid, 'adjustment_reason')
     if (!reasons.some((r) => r.toLowerCase() === input.reason.toLowerCase())) {
       await noteListSuggestion(rid, 'adjustment_reason', input.reason, by)
+    }
+
+    if (await getSettingValue(rid, 'stock_adjustment_approval_mode') === 'owner' && user?.role !== 'owner') {
+      const requestId = await txn(async (tx) => {
+        await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+        const [request] = await tx<{ id: string }[]>`
+          insert into stock_adjustment_requests
+            (restaurant_id, adj_date, reason, note, requested_by)
+          values (${rid}, ${input.date}, ${input.reason}, ${input.note === '' ? null : input.note}, ${by})
+          returning id`
+        for (const l of input.lines) {
+          const item = await assertAdjustableItem(tx, rid, l.itemId)
+          await tx`
+            insert into stock_adjustment_request_lines
+              (restaurant_id, request_id, item_id, qty, unit_cost)
+            values (${rid}, ${request.id}, ${item.id}, ${l.qty}::numeric, ${item.unitCost}::numeric)`
+        }
+        return request.id
+      })
+      return { ok: true, count: input.lines.length, reason: input.reason, stock: [], pending: true, requestId }
     }
 
     await txn(async (tx) => {
@@ -274,6 +300,7 @@ export async function saveAdjustments(raw: SaveAdjustmentsInput): Promise<SaveAd
                   ${input.reason}, null, ${input.note === '' ? null : input.note}, ${by})
           returning id`
         if (!row) throw new AdjustmentRefusal('The adjustment could not be saved')
+        await recordAdjustmentLot(tx, rid, row.id, item.id, l.qty, item.unitCost, input.date, by)
       }
     })
 
@@ -282,6 +309,67 @@ export async function saveAdjustments(raw: SaveAdjustmentsInput): Promise<SaveAd
     // says nothing a person can check against the shelf in front of them.
     const stock = await getStockSnaps(rid, input.lines.map((l) => l.itemId))
     return { ok: true, count: input.lines.length, reason: input.reason, stock }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/** The owner decision for a standalone correction. The request stores the
+ * frozen cost at submission, so approval never revalues an old shelf event. */
+export async function decideStockAdjustmentApproval(
+  requestId: string,
+  decision: 'approved' | 'refused',
+  note: string,
+): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
+  try {
+    if (!UUID.test(requestId)) throw new AdjustmentRefusal('Malformed request id')
+    const owner = await getSessionUser()
+    if (!owner || owner.role !== 'owner') throw new AdjustmentRefusal('Only an owner can decide stock adjustments')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const why = note.trim()
+    if (decision === 'refused' && why === '') throw new AdjustmentRefusal('Give a reason for refusing this correction')
+    const count = await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [request] = await tx<{ id: string; adj_date: string; reason: string }[]>`
+        select id, adj_date::text as adj_date, reason
+        from stock_adjustment_requests
+        where id = ${requestId} and restaurant_id = ${rid} and status = 'pending'
+        for update`
+      if (!request) throw new AdjustmentRefusal('That correction is no longer pending')
+      if (decision === 'refused') {
+        await tx`
+          update stock_adjustment_requests
+          set status = 'refused', decided_by = ${owner.username}, decided_at = now(),
+              decision_note = ${why}
+          where id = ${requestId} and restaurant_id = ${rid}`
+        return 0
+      }
+      const lines = await tx<{ item_id: string; qty: string; unit_cost: string }[]>`
+        select item_id, qty::text as qty, unit_cost::text as unit_cost
+        from stock_adjustment_request_lines
+        where restaurant_id = ${rid} and request_id = ${requestId}
+        order by id
+      `
+      for (const line of lines) {
+        const [adjustment] = await tx<{ id: string }[]>`
+          insert into stock_adjustments
+            (restaurant_id, adj_date, item_id, qty, unit_cost, reason, count_id, note, entered_by)
+          select ${rid}, ${request.adj_date}::date, ${line.item_id}, ${line.qty}::numeric,
+                 ${line.unit_cost}::numeric, ${request.reason}, null,
+                 ${why === '' ? null : why}, ${owner.username}
+          returning id`
+        if (!adjustment) throw new AdjustmentRefusal('The approved correction could not be saved')
+        await recordAdjustmentLot(tx, rid, adjustment.id, line.item_id, line.qty, line.unit_cost, request.adj_date, owner.username)
+      }
+      await tx`
+        update stock_adjustment_requests
+        set status = 'approved', decided_by = ${owner.username}, decided_at = now(),
+            decision_note = ${why === '' ? null : why}
+        where id = ${requestId} and restaurant_id = ${rid}`
+      return lines.length
+    })
+    return { ok: true, count }
   } catch (e) {
     return fail(e)
   }

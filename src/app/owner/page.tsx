@@ -27,7 +27,7 @@ import { decimalStringToPaise, formatMoneyString, formatPaise } from '@/lib/mone
 import { fmtDate } from '@/lib/format'
 import { readPeriodParam, monthLabel, resolvePeriod } from '@/lib/period'
 import { requires, UNASSESSABLE_URGENCY } from '@/lib/precondition'
-import { COVERAGE_FLOOR, totalVariance, type ZeroCostDish } from '@/lib/variance'
+import { totalVariance, type ZeroCostDish } from '@/lib/variance'
 import { countOrdersWithTime, getBusinessDayDisagreements } from '@/server/business-day'
 import { cardCls, heroNumCls, moneyCls, pageTitleCls, sectionHeadCls } from '@/components/ui'
 import Honesty, { HonestyPill } from '@/components/Honesty'

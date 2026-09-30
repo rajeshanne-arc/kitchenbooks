@@ -2,19 +2,16 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
 import { getLetterhead, getPurchaseOrder } from '@/server/po-queries'
-import { getSettingValue } from '@/server/settings'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate, fmtDateTime } from '@/lib/format'
 import { waLink, waOrderText } from '@/lib/wa'
 import { missingLetterheadFields } from '@/lib/letterhead'
-import { DOCUMENT_STYLES, type DocumentStyle } from '@/lib/types'
 import PoActions from '@/components/store/PoActions'
 import PoDraft from '@/components/store/PoDraft'
 import GapCell from '@/components/kitchen/GapCell'
 import Honesty from '@/components/Honesty'
 import {
   cardCls,
-  codeCls,
   dataTableCls,
   pageSubCls,
   pageTitleCls,
@@ -34,15 +31,11 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
   const restaurant = await getRestaurant()
   const found = await getPurchaseOrder(restaurant.id, id)
   if (found === null) notFound()
-  const { po, lines, fulfilment } = found
+  const { po, lines, fulfilment, matches } = found
 
-  const [letterhead, styleRaw] = await Promise.all([
+  const [letterhead] = await Promise.all([
     getLetterhead(restaurant.id),
-    getSettingValue(restaurant.id, 'document_style'),
   ])
-  const style: DocumentStyle = DOCUMENT_STYLES.includes(styleRaw as DocumentStyle)
-    ? (styleRaw as DocumentStyle)
-    : 'classic'
   const missing = missingLetterheadFields(letterhead)
 
   const anyRate = lines.some((l) => Number(l.rate) > 0)
@@ -80,14 +73,22 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           </p>
         </header>
         <div className="space-y-4">
-          <PoDraft
-            poId={po.id}
-            vendorId={po.vendor_id}
-            vendorName={po.vendor_name}
-            vendorPhone={po.vendor_phone}
-            today={po.po_date}
-            existing={{ poDate: po.po_date, expectedDate: po.expected_date, note: po.note, lines }}
-          />
+          {po.approval_status === 'pending' ? (
+            <section className={cardCls}>
+              <Honesty verdict="order frozen for approval" level="pending">
+                The order is complete and waiting for an owner. Its lines and amount cannot be changed while the decision is pending.
+              </Honesty>
+            </section>
+          ) : (
+            <PoDraft
+              poId={po.id}
+              vendorId={po.vendor_id}
+              vendorName={po.vendor_name}
+              vendorPhone={po.vendor_phone}
+              today={po.po_date}
+              existing={{ poDate: po.po_date, expectedDate: po.expected_date, note: po.note, lines }}
+            />
+          )}
           <section className={cardCls}>
             <h2 className={sectionHeadCls}>Send it</h2>
             {missing.length > 0 && (
@@ -102,6 +103,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
               <PoActions
                 id={po.id}
                 status={po.status}
+                approvalStatus={po.approval_status}
                 docNo={po.doc_no}
                 vendorName={po.vendor_name}
                 waHref={wa}
@@ -148,6 +150,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           <PoActions
             id={po.id}
             status={po.status}
+            approvalStatus={po.approval_status}
             docNo={po.doc_no}
             vendorName={po.vendor_name}
             waHref={wa}
@@ -214,6 +217,25 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           .
         </p>
       </section>
+      {matches.length > 0 && (
+        <section className={`${cardCls} mt-4`}>
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>Invoice matching</h2>
+            <span className="font-mono text-[11px] text-stone-400">purchase_invoice_matches</span>
+          </div>
+          <ul className="mt-2 divide-y divide-rule-soft">
+            {matches.slice(0, 12).map((match) => (
+              <li key={match.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <span>Purchase {match.purchase_id.slice(0, 8)} · {fmtDateTime(match.assessed_at)}</span>
+                <span className={match.status === 'exception' ? 'font-semibold text-red-700' : match.status === 'matched' ? 'font-semibold text-emerald-700' : 'font-semibold text-amber-700'}>
+                  {match.status}{match.quantity_exception ? ' · quantity' : ''}{match.price_exception ? ' · rate' : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-stone-500">This is an immutable assessment captured when each bill was received. Exceptions require review; the bill itself is never silently changed.</p>
+        </section>
+      )}
     </>
   )
 }

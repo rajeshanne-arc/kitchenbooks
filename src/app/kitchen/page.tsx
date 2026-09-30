@@ -13,6 +13,7 @@ import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
 import { getKitchenDay, getUnclosedDishes, getWasteByReason } from '@/server/kitchen-queries'
 import { getQtySold } from '@/server/sales-queries'
+import { getSettingValue } from '@/server/settings'
 import { listDishCosts } from '@/server/recipes-queries'
 import { getSectionConsumptionDaily } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
@@ -46,10 +47,10 @@ export default async function KitchenDashboardPage({
   const periodReq = readPeriodParam(periodParam, today)
   const period = resolvePeriod(periodReq.param, today)
   const month = period.reportMonth
-  const [day, wasteByReason, qtySold, dishCosts, consumption, unclosedDishes] = await Promise.all([
+  const [day, wasteByReason, posStockPolicy, dishCosts, consumption, unclosedDishes] = await Promise.all([
     getKitchenDay(restaurant.id, today),
     getWasteByReason(restaurant.id, month),
-    getQtySold(restaurant.id, month),
+    getSettingValue(restaurant.id, 'pos_stock_policy'),
     listDishCosts(restaurant.id),
     // the chef is accountable for what their departments consumed, so the
     // VALUE lives here — after the asking, never on the indent form
@@ -59,6 +60,7 @@ export default async function KitchenDashboardPage({
     // at closing. Produced and never closed means the record has no reader.
     getUnclosedDishes(restaurant.id, today),
   ])
+  const qtySold = posStockPolicy === 'none' ? [] : await getQtySold(restaurant.id, month)
 
   const perf = qtySold
     .map((q) => {

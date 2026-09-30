@@ -17,6 +17,7 @@ import type {
   SalesDayRow,
   UnknownOrderRow,
   UnmappedPosItem,
+  PosSyncRunRow,
 } from '@/lib/types'
 
 const DAY_SELECT = `
@@ -59,6 +60,16 @@ export async function getSalesDays(restaurantId: string, limit = 45): Promise<Sa
     ${sql.unsafe(DAY_SELECT)}
     where d.restaurant_id = ${restaurantId}
     order by d.business_date desc
+    limit ${limit}`
+}
+
+export async function listPosSyncRuns(restaurantId: string, limit = 20): Promise<PosSyncRunRow[]> {
+  return tsql<PosSyncRunRow[]>`
+    select id, business_date::text as business_date, status, attempt,
+           started_at::text as started_at, finished_at::text as finished_at, error
+    from pos_sync_runs
+    where restaurant_id = ${restaurantId}
+    order by started_at desc
     limit ${limit}`
 }
 
@@ -258,7 +269,7 @@ export async function listDishOptions(restaurantId: string): Promise<DishOption[
     select r.id, r.code, r.name, s.code as section_code
     from recipes r
     join sections s on s.id = r.section_id
-    where r.restaurant_id = ${restaurantId} and r.kind = 'dish' and r.status = 'active'
+    where r.restaurant_id = ${restaurantId} and r.kind = 'dish' and r.status = 'active' and s.status = 'active'
     order by s.sort_order asc, r.code asc`
 }
 

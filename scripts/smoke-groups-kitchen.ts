@@ -19,6 +19,8 @@ const D1 = '2001-06-10'
 const D2 = '2001-06-30'
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
   const { getRestaurant } = await import('../src/server/queries')
   const {
     saveIndent, cancelIndent, saveProduction, voidProduction,
@@ -207,6 +209,7 @@ async function main() {
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

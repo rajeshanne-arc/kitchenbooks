@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getRestaurant } from '@/server/queries'
+import { getSessionUser } from '@/server/current-user'
 import { listAttachments } from '@/server/attachments-queries'
 import { getBill, getBillLines, getVoidedBy } from '@/server/books-queries'
 import { listShortsForPurchase } from '@/server/shorts-queries'
@@ -20,6 +21,7 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
   const { id } = await params
   if (!UUID.test(id)) notFound()
   const restaurant = await getRestaurant()
+  const user = await getSessionUser()
   const bill = await getBill(restaurant.id, id)
   if (!bill) notFound()
 
@@ -166,7 +168,7 @@ export default async function BillDetailPage({ params }: { params: Promise<{ id:
           reconciliation in this app compares one query with another; this is
           the only thing that can be checked against something outside it. */}
       <section className={cardCls}>
-        <BillPhotos purchaseId={id} initial={photos} />
+        <BillPhotos purchaseId={id} initial={photos} canArchive={user !== null && ['manager', 'owner'].includes(user.role)} />
       </section>
 
       <BillShorts

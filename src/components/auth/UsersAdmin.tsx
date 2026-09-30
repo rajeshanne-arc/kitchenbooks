@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { AppUserRow, StaffRow } from '@/lib/types'
-import { createUserAction, resetPasswordAction, updateUserAction } from '@/server/auth-actions'
+import { createUserAction, issuePasswordResetLinkAction, issueRestaurantInvitationAction, resetPasswordAction, updateUserAction } from '@/server/auth-actions'
 import { ALL_ROLES } from '@/lib/roles'
 import { cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
 import { toast } from '@/components/Toasts'
@@ -109,6 +109,7 @@ function UserRow({ u, staff, self }: { u: AppUserRow; staff: StaffOpt[]; self: s
   const [newPw, setNewPw] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [resetLink, setResetLink] = useState<string | null>(null)
 
   async function save(status: 'active' | 'inactive') {
     setBusy(true)
@@ -147,6 +148,23 @@ function UserRow({ u, staff, self }: { u: AppUserRow; staff: StaffOpt[]; self: s
       }
     } catch {
       setError('Could not reach the server — nothing was saved.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function issueResetLink() {
+    setBusy(true)
+    setError(null)
+    setResetLink(null)
+    try {
+      const res = await issuePasswordResetLinkAction(u.id)
+      if (res.ok) {
+        setResetLink(`${window.location.origin}/reset-password?token=${encodeURIComponent(res.token)}`)
+        toast('One-time reset link created — copy it to the user')
+      } else setError(res.error)
+    } catch {
+      setError('Could not reach the server — no link was created.')
     } finally {
       setBusy(false)
     }
@@ -250,6 +268,14 @@ function UserRow({ u, staff, self }: { u: AppUserRow; staff: StaffOpt[]; self: s
               Reset password
             </button>
           </div>
+          {u.status === 'active' && (
+            <div className="mt-3">
+              <button type="button" onClick={() => void issueResetLink()} disabled={busy} className="rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:border-emerald-400 disabled:opacity-50">
+                {busy ? 'Creating…' : 'Create one-time reset link'}
+              </button>
+              {resetLink && <textarea readOnly value={resetLink} aria-label="One-time reset link" className={`${inputCls} mt-2 min-h-20 w-full text-xs`} onFocus={(e) => e.currentTarget.select()} />}
+            </div>
+          )}
           {error && <p className="mt-2 text-sm font-medium text-red-700">{error}</p>}
         </div>
       )}
@@ -258,6 +284,19 @@ function UserRow({ u, staff, self }: { u: AppUserRow; staff: StaffOpt[]; self: s
 }
 
 export default function UsersAdmin({ users, staff, self }: { users: AppUserRow[]; staff: StaffOpt[]; self: string }) {
+  const [invite, setInvite] = useState<{ username: string; displayName: string; role: string; staffId: string; link: string | null }>({ username: '', displayName: '', role: 'store', staffId: '', link: null })
+  const [inviteBusy, setInviteBusy] = useState(false)
+  const [inviteError, setInviteError] = useState<string | null>(null)
+  async function issueInvite() {
+    if (inviteBusy || invite.username.trim().length < 3 || invite.displayName.trim() === '') return
+    setInviteBusy(true); setInviteError(null); setInvite((p) => ({ ...p, link: null }))
+    try {
+      const result = await issueRestaurantInvitationAction(invite)
+      if (result.ok) { setInvite((p) => ({ ...p, link: `${window.location.origin}/invite?token=${encodeURIComponent(result.token)}` })); toast('Invitation created — copy the link to the person') }
+      else setInviteError(result.error)
+    } catch { setInviteError('Could not reach the server — no invitation was created.') }
+    finally { setInviteBusy(false) }
+  }
   return (
     <>
       <section className={`${cardCls} mt-4`}>
@@ -269,6 +308,19 @@ export default function UsersAdmin({ users, staff, self }: { users: AppUserRow[]
         </ul>
       </section>
       <CreateUser staff={staff} />
+      <section className={`${cardCls} mt-4`}>
+        <h2 className={sectionHeadCls}>Invite someone</h2>
+        <p className="mt-1 text-sm text-stone-600">Creates a 48-hour, one-use link. They choose their own password; the link is shown once.</p>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <input aria-label="Username" placeholder="username" value={invite.username} onChange={(e) => setInvite((p) => ({ ...p, username: e.target.value }))} autoCapitalize="none" className={inputCls} maxLength={30} />
+          <input aria-label="Display name" placeholder="display name" value={invite.displayName} onChange={(e) => setInvite((p) => ({ ...p, displayName: e.target.value }))} className={inputCls} maxLength={80} />
+          <select aria-label="Role" value={invite.role} onChange={(e) => setInvite((p) => ({ ...p, role: e.target.value }))} className={selectCls}>{ALL_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}</select>
+          <select aria-label="Staff link" value={invite.staffId} onChange={(e) => setInvite((p) => ({ ...p, staffId: e.target.value }))} className={selectCls}><option value="">No staff link</option>{staff.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}</select>
+        </div>
+        {inviteError && <p className="mt-2 text-sm font-medium text-red-700">{inviteError}</p>}
+        <button type="button" onClick={() => void issueInvite()} disabled={inviteBusy || invite.username.trim().length < 3 || invite.displayName.trim() === ''} className="mt-3 w-full rounded-xl bg-emerald-700 py-2.5 text-sm font-semibold text-white disabled:bg-stone-300">{inviteBusy ? 'Creating…' : 'Create invitation link'}</button>
+        {invite.link && <textarea readOnly value={invite.link} aria-label="Invitation link" className={`${inputCls} mt-2 min-h-20 w-full text-xs`} onFocus={(e) => e.currentTarget.select()} />}
+      </section>
     </>
   )
 }

@@ -115,8 +115,8 @@ export default function AdjustmentForm({ reasons }: { reasons: string[] }) {
       {saved !== null && (
         <SaveAck
           onDismiss={() => setSaved(null)}
-          headline={`Book corrected — ${saved.count} ${saved.count === 1 ? 'item' : 'items'}`}
-          sub={`${saved.reason} · a correction is a DIFFERENCE, never a new total — two counts taken before either was accepted both measure against the same book`}
+          headline={saved.pending ? `Sent for owner approval — ${saved.count} ${saved.count === 1 ? 'item' : 'items'}` : `Book corrected — ${saved.count} ${saved.count === 1 ? 'item' : 'items'}`}
+          sub={saved.pending ? `${saved.reason} · the book has not changed yet; the owner must approve this correction` : `${saved.reason} · a correction is a DIFFERENCE, never a new total — two counts taken before either was accepted both measure against the same book`}
           missing={
             saved.stock.filter((x) => Number(x.on_hand_qty) < 0).length > 0
               ? [

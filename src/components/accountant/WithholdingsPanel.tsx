@@ -138,7 +138,10 @@ setAck({ headline: `${formatMoneyString(amount)} withheld from ${party}`, sub: '
         toast(res.error, 'error')
         return
       }
-setAck({ headline: `Deposited ${fmtDate(depDate)}`, sub: 'A tax deposit reaches the expense register and no cash or bank one — the view gives it no account, so it can never be reconciled against a statement.' })
+      setAck({
+        headline: `Deposited ${fmtDate(depDate)}`,
+        sub: 'The deposit is recorded against the selected money account and remains available for cash/bank reconciliation.',
+      })
       toast(`Deposited ${fmtDate(depDate)}${depRef === '' ? '' : ` · ${depRef}`}`, 'ok')
       setDepositing(null)
       setDepRef('')

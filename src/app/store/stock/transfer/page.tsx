@@ -1,0 +1,8 @@
+import { getRestaurant } from '@/server/queries'
+import { businessToday } from '@/server/business-day'
+import { listActiveLocations } from '@/server/locations-queries'
+import { listTransferableItems, listTransfers } from '@/server/transfer-queries'
+import StockTransferForm from '@/components/store/StockTransferForm'
+import { cardCls, pageSubCls, pageTitleCls } from '@/components/ui'
+export const dynamic = 'force-dynamic'
+export default async function StockTransferPage() { const restaurant = await getRestaurant(); const [locations, items, transfers] = await Promise.all([listActiveLocations(restaurant.id), listTransferableItems(restaurant.id), listTransfers(restaurant.id)]); const today = await businessToday(); return <><header className="pb-4"><h1 className={pageTitleCls}>Stock transfers</h1><p className={pageSubCls}>{restaurant.name} — record stock moving from one storage location to another.</p></header><StockTransferForm today={today} locations={locations} items={items} /><section className={`${cardCls} mt-4`}><h2 className="font-display text-lg font-bold text-stone-900">Recent transfers</h2>{transfers.length === 0 ? <p className="mt-2 text-sm text-stone-600">No transfers have been recorded.</p> : <ul className="mt-2 divide-y divide-rule-soft">{transfers.map((transfer) => <li key={transfer.id} className="py-2 text-sm"><span className="font-mono text-xs text-stone-500">{transfer.transfer_date}</span> · {transfer.from_location} → {transfer.to_location} · {transfer.lines} {transfer.lines === 1 ? 'item' : 'items'}{transfer.note && <span className="text-stone-500"> · {transfer.note}</span>}</li>)}</ul>}</section></> }

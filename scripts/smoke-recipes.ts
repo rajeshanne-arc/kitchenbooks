@@ -15,6 +15,8 @@ const near = (a: string, b: number, msg: string) => {
 }
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
   const { getRestaurant, searchItems } = await import('../src/server/queries')
   const { saveBill } = await import('../src/server/save-bill')
   const { getSections } = await import('../src/server/store-queries')
@@ -147,6 +149,7 @@ async function main() {
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

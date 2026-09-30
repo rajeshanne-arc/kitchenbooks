@@ -18,4 +18,4 @@
 alter table approval_requests drop constraint if exists approval_requests_kind_check;
 
 alter table approval_requests add constraint approval_requests_kind_check
-  check (kind = any (array['discard', 'merge', 'reopen_period', 'payment', 'other']));
+  check (kind = any (array['discard', 'merge', 'reopen_period', 'payment', 'advance', 'other']));

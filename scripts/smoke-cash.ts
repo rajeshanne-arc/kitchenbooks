@@ -25,11 +25,13 @@ const D2 = '2001-02-02'
 const D3 = '2001-02-03'
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
   const { getRestaurant } = await import('../src/server/queries')
   const { closeDay, saveOtherIncomes, saveVouchers, setFirstOpening } = await import('../src/server/cash-actions')
   const { getClosePrefill, getLadder, getLadderDay, getOwnerNames, getOwnersOwed } =
     await import('../src/server/cash-queries')
-  const { sql } = await import('../src/lib/db')
+  const { sql, tsql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
@@ -37,9 +39,9 @@ async function main() {
   console.log('restaurant:', restaurant.name)
 
   // ---- preconditions: virgin cash state
-  const [{ n: closes }] = (await sql`select count(*)::int as n from day_closes where restaurant_id = ${rid}`) as unknown as { n: number }[]
+  const [{ n: closes }] = (await tsql`select count(*)::int as n from day_closes where restaurant_id = ${rid}`) as unknown as { n: number }[]
   assert.equal(closes, 0, 'expected zero day_closes — is an earlier smoke uncleaned or the feature already in use?')
-  const [setting] = (await sql`
+  const [setting] = (await tsql`
     select value from settings where restaurant_id = ${rid} and key = 'first_opening_cash'`) as unknown as { value: string }[]
   assert.equal(setting, undefined, 'expected no first_opening_cash setting yet')
 
@@ -163,6 +165,7 @@ async function main() {
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

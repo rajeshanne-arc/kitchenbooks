@@ -24,6 +24,7 @@ import {
 import { getList } from '@/server/settings'
 import { noteListSuggestion } from '@/server/settings-actions'
 import { parseQty } from '@/lib/money'
+import { allocateIssueLot, createReturnLot, recordWastageLot } from '@/server/lot-ledger'
 import type {
   SaveIssueInput,
   SaveIssueResult,
@@ -81,6 +82,9 @@ const IssueSchema = z.object({
 export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
   try {
     const input = IssueSchema.parse(raw)
+    if (new Set(input.lines.map((line) => line.itemId)).size !== input.lines.length) {
+      throw new StoreError('The same item appears twice — combine it into one issue line')
+    }
     assertRealDate(input.issueDate, 'Issue date')
     for (const [i, l] of input.lines.entries()) {
       const q = parseQty(l.qty)
@@ -160,6 +164,14 @@ export async function saveIssue(raw: SaveIssueInput): Promise<SaveIssueResult> {
         note: l.note === '' ? null : l.note,
       }))
       await tx`insert into issue_lines ${tx(lineRows, 'restaurant_id', 'issue_id', 'item_id', 'qty', 'unit_cost', 'note')}`
+      const inserted = await tx<{ id: string; item_id: string }[]>`select id, item_id from issue_lines where restaurant_id = ${rid} and issue_id = ${issue.id}`
+      // The database-generated line id is the immutable source for each FEFO
+      // allocation. Duplicate item lines are already rejected by the schema.
+      for (const line of input.lines) {
+        const lineRow = inserted.find((row) => row.item_id === line.itemId)
+        if (!lineRow) throw new StoreError('Could not identify the saved issue line for lot allocation')
+        await allocateIssueLot(tx, rid, line.itemId, line.qty, issue.id, lineRow.id, input.issueDate, by)
+      }
       return { issueId: issue.id }
     })
 
@@ -288,6 +300,8 @@ export async function saveReturn(raw: SaveReturnInput): Promise<SaveReturnResult
         reason: l.reason,
       }))
       await tx`insert into return_lines ${tx(lineRows, 'restaurant_id', 'return_id', 'item_id', 'qty', 'unit_cost', 'note', 'reason')}`
+      const savedLines = await tx<{ id: string; item_id: string; qty: string; unit_cost: string }[]>`select id, item_id, qty::text as qty, unit_cost::text as unit_cost from return_lines where restaurant_id = ${rid} and return_id = ${ret.id}`
+      for (const line of savedLines) await createReturnLot(tx, rid, ret.id, line.id, line.item_id, line.qty, line.unit_cost, input.returnDate, by)
       return { returnId: ret.id }
     })
 
@@ -341,6 +355,7 @@ export async function saveWastage(raw: SaveWastageInput): Promise<SaveWastageRes
         values (${rid}, ${input.wasteDate}, ${input.itemId}, ${input.qty.trim()}, ${rows[0].issue_cost},
                 ${input.reason}, ${input.note === '' ? null : input.note}, ${by})
         returning id`
+      await recordWastageLot(tx, rid, w.id, input.itemId, input.qty, input.wasteDate, by)
       return { wastageId: w.id }
     })
 
@@ -417,6 +432,7 @@ export async function saveStoreLosses(raw: SaveStoreLossesInput): Promise<SaveSt
                   ${l.reason}, ${note === '' ? null : note}, ${by})
           returning id`
         ids.push(w.id)
+        await recordWastageLot(tx, rid, w.id, l.itemId, l.qty, input.date, by)
       }
       return ids
     })
@@ -468,6 +484,10 @@ export async function voidIssue(issueId: string): Promise<VoidIssueResult> {
         insert into issue_lines (restaurant_id, issue_id, item_id, qty, unit_cost)
         select restaurant_id, ${rev.id}, item_id, -qty, unit_cost
         from issue_lines where issue_id = ${issueId}`
+      await tx`
+        insert into stock_lot_movements (restaurant_id, lot_id, quantity_delta, movement_date, movement_type, source_id, source_line_id, location_id, entered_by)
+        select restaurant_id, lot_id, -quantity_delta, ${orig.issue_date}, 'issue_reversal', ${rev.id}, source_line_id, location_id, ${by}
+        from stock_lot_movements where restaurant_id = ${rid} and source_id = ${issueId} and movement_type = 'issue'`
       return { revId: rev.id, issueDate: orig.issue_date, sectionId: orig.section_id, expectedLines: lineCount }
     })
 
@@ -523,6 +543,10 @@ export async function voidWastage(wastageId: string): Promise<VoidWastageResult>
         select restaurant_id, waste_date, item_id, -qty, unit_cost, reason, 'void', id, ${by}
         from wastage where id = ${wastageId}
         returning id`
+      await tx`
+        insert into stock_lot_movements (restaurant_id, lot_id, quantity_delta, movement_date, movement_type, source_id, source_line_id, location_id, entered_by)
+        select restaurant_id, lot_id, -quantity_delta, (select waste_date from wastage where id = ${wastageId}), 'wastage_reversal', ${rev.id}, source_line_id, location_id, ${by}
+        from stock_lot_movements where restaurant_id = ${rid} and source_id = ${wastageId} and movement_type = 'wastage'`
       return { revId: rev.id, itemId: orig.item_id }
     })
 

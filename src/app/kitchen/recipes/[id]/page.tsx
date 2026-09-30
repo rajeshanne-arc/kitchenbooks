@@ -7,6 +7,8 @@ import {
   getRecipeLines,
   getRecipeMedia,
   listCourses,
+  listRecipeVersions,
+  getRecipeSubstitutions,
 } from '@/server/recipes-queries'
 import { getQtySold } from '@/server/sales-queries'
 import { formatMoneyString } from '@/lib/money'
@@ -18,6 +20,8 @@ import MasterActions, { ClosedNote } from '@/components/books/MasterActions'
 import { pendingFor, REQUESTERS } from '@/server/approvals-queries'
 import { getSessionUser } from '@/server/current-user'
 import { businessMonthStart } from '@/server/business-day'
+import RecipeVersionHistory from '@/components/recipes/RecipeVersionHistory'
+import RecipeSubstitutions from '@/components/recipes/RecipeSubstitutions'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,7 +34,7 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
   const recipe = await getRecipeDetail(restaurant.id, id)
   if (!recipe) notFound()
 
-  const [lines, { units }, sold, card, media, courses, open, user] = await Promise.all([
+  const [lines, { units }, sold, card, media, courses, open, user, versions, substitutions] = await Promise.all([
     getRecipeLines(id),
     getMasters(),
     recipe.kind === 'dish' ? getQtySold(restaurant.id, await businessMonthStart()) : Promise.resolve([]),
@@ -39,6 +43,8 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
     recipe.kind === 'dish' ? listCourses(restaurant.id) : Promise.resolve([]),
     pendingFor(restaurant.id, id),
     getSessionUser(),
+    listRecipeVersions(restaurant.id, id),
+    getRecipeSubstitutions(restaurant.id, id),
   ])
   const soldRow = sold.find((s) => s.recipe_id === id) ?? null
 
@@ -84,6 +90,9 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
           <SubCardPanel recipe={recipe} />
         </div>
       )}
+
+      <RecipeVersionHistory rows={versions} />
+      <RecipeSubstitutions recipeId={recipe.id} lines={lines} initial={substitutions} />
 
       {/* A CLOSED CODE STAYS RESOLVABLE — CH-001 tells you which card absorbed
           it. A dish code carries its department forever, so a duplicate coded

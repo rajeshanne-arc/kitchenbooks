@@ -213,6 +213,39 @@ export async function listStock(
              s.on_hand_value desc, s.code asc`
 }
 
+export type StockLotBalanceRow = {
+  lot_code: string
+  item_code: string
+  item_name: string
+  available_qty: string
+  purchase_unit: string
+  expiry_date: string | null
+  location_name: string | null
+}
+
+export async function listLotBalances(restaurantId: string, limit = 80): Promise<StockLotBalanceRow[]> {
+  return tsql<StockLotBalanceRow[]>`
+    with balances as (
+      select l.id, l.restaurant_id, l.location_id, l.initial_qty as quantity
+      from stock_lots l where l.restaurant_id = ${restaurantId}
+      union all
+      select m.lot_id, m.restaurant_id, m.location_id, m.quantity_delta
+      from stock_lot_movements m where m.restaurant_id = ${restaurantId}
+    )
+    select l.lot_code, i.code as item_code, i.name as item_name,
+           sum(b.quantity)::text as available_qty,
+           i.purchase_unit, l.expiry_date::text as expiry_date, loc.name as location_name
+    from balances b
+    join stock_lots l on l.restaurant_id = b.restaurant_id and l.id = b.id
+    join items i on i.restaurant_id = l.restaurant_id and i.id = l.item_id
+    left join storage_locations loc on loc.restaurant_id = b.restaurant_id and loc.id = b.location_id
+    where l.restaurant_id = ${restaurantId}
+    group by l.id, i.code, i.name, i.purchase_unit, l.expiry_date, loc.name, b.location_id
+    having sum(b.quantity) > 0
+    order by (l.expiry_date is null), l.expiry_date asc nulls last, l.received_date asc, l.lot_code asc
+    limit ${limit}`
+}
+
 /** Items nobody has placed on a shelf. Counted for the store dashboard's
  *  readiness block, beside "no item carries a reorder level": a thing that is
  *  empty until somebody does it, and that blocks nothing until the first

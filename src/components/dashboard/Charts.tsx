@@ -213,6 +213,36 @@ export function HourlyLine({ points }: { points: { hour: number; revenue: string
    line is drawn solid and darker than the grid because it is the thing the
    reader compares against, and the bar's SIDE is the primary encoding. */
 
+function DivergingValueLabel({
+  x = 0,
+  y = 0,
+  width = 0,
+  height = 0,
+  value,
+}: {
+  x?: number | string
+  y?: number | string
+  width?: number | string
+  height?: number | string
+  value?: unknown
+}) {
+  const n = Number(value)
+  const text = labelSignedMoney(n)
+  const negative = n < 0
+  return (
+    <text
+      x={negative ? Number(x) + 8 : Number(x) + Number(width) + 8}
+      y={Number(y) + Number(height) / 2 + 4}
+      textAnchor="start"
+      fill={negative ? 'var(--color-cell)' : INK}
+      fontSize={10}
+      fontWeight={negative ? 600 : 400}
+    >
+      {text}
+    </text>
+  )
+}
+
 export function DivergingBars({
   rows,
   height = 176,
@@ -246,10 +276,11 @@ export function DivergingBars({
 }) {
   const fill = (v: number) =>
     polarity === 'higher-is-bad' ? (v > 0 ? RED : v < 0 ? GOLD : INK) : v < 0 ? RED : GREEN
+
   return (
-    <div className="w-full" style={{ height }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 0 }}>
+    <div className="min-w-0 w-full" style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <BarChart data={rows} layout="vertical" margin={{ top: 6, right: 76, bottom: 2, left: 4 }}>
           <CartesianGrid stroke={RULE} strokeWidth={1} horizontal={false} />
           <XAxis type="number" tick={axisTick} tickLine={false} axisLine={false} tickFormatter={rupeeTick} />
           <YAxis
@@ -258,7 +289,7 @@ export function DivergingBars({
             tick={axisTick}
             tickLine={false}
             axisLine={false}
-            width={92}
+            width={96}
           />
           <ReferenceLine x={0} stroke={INK} strokeWidth={1} />
           <Tooltip
@@ -276,7 +307,7 @@ export function DivergingBars({
             isAnimationActive={false}
             // the sign is printed beside every bar — colour is the third
             // encoding, never the only one
-            label={{ position: 'right', formatter: labelSignedMoney, fill: INK, fontSize: 11 }}
+            label={{ content: (props) => <DivergingValueLabel {...props} /> }}
           >
             {rows.map((r) => (
               <Cell key={r.label} fill={fill(r.value)} />

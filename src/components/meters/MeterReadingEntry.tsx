@@ -26,6 +26,7 @@ import Honesty from '@/components/Honesty'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
 import { btnCls, cardCls, fieldLabelCls, inputCls, sectionHeadCls, selectCls } from '@/components/ui'
+import MeterPhotos from '@/components/meters/MeterPhotos'
 
 type Ack = Extract<SaveReadingResult, { ok: true }>
 
@@ -38,6 +39,7 @@ export default function MeterReadingEntry({
   meters,
   unread,
   date,
+  canArchive,
 }: {
   /** active meters this restaurant may read — already filtered by the mode */
   meters: MeterRow[]
@@ -45,6 +47,7 @@ export default function MeterReadingEntry({
   unread: MeterRow[]
   /** the BUSINESS day, resolved server-side. Never a browser clock. */
   date: string
+  canArchive: boolean
 }) {
   const router = useRouter()
   // THE PICKER STARTS EMPTY when there is a choice to make. A question that
@@ -102,6 +105,7 @@ export default function MeterReadingEntry({
             missing={ackMissing(ack)}
             onDismiss={() => setAck(null)}
           />
+          <MeterPhotos readingId={ack.readingId} canArchive={canArchive} />
         </div>
       )}
 

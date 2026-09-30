@@ -3,6 +3,7 @@ import { getMasters, getRestaurant } from '@/server/queries'
 import { getSettingValue } from '@/server/settings'
 import { parsePriceThreshold } from '@/lib/price'
 import { pageSubCls, pageTitleCls } from '@/components/ui'
+import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,6 +37,7 @@ export default async function BillPage() {
         <p className={pageSubCls}>{restaurantName}</p>
       </header>
       <div className="mx-auto max-w-2xl px-4 sm:px-6">
+        <Link href="/store/purchasing/import" className="text-sm font-semibold text-emerald-700 hover:underline">Import a purchase CSV</Link>
       </div>
       <BillEntry categories={categories} units={units} thresholdPct={thresholdPct} />
     </>

@@ -78,6 +78,10 @@ export type ItemSel =
 // Server action payload / result
 export type SaveBillInput = {
   billDate: string
+  /** The supplier's printed invoice reference, when one exists. The system
+   *  doc_no remains the immutable KitchenBooks sequence; this is source
+   *  evidence, not a replacement for that sequence. */
+  billNo?: string
   /** The purchase order this delivery fulfils, when it fulfils one. Optional
    *  and staying that way: a bill citing no order is not wrong, it is
    *  uncompared — po_fulfilment counts only bills that name one. */
@@ -867,6 +871,56 @@ export type RecipeLineRow = {
   sub_uncosted_lines: number
 }
 
+export type RecipeVersionRow = {
+  id: string
+  version_no: number
+  effective_from: string
+  effective_to: string | null
+  recorded_by: string | null
+  line_count: number
+}
+
+export type JournalIntegrity = {
+  entries: number
+  unbalanced_entries: number
+  lines_without_entry: number
+}
+
+export type TrialBalanceRow = {
+  account_id: string
+  code: string
+  name: string
+  account_type: string
+  debits: string
+  credits: string
+  balance: string
+}
+
+export type AccountingStatementRow = {
+  account_id: string
+  code: string
+  name: string
+  account_type: AccountingAccount['account_type']
+  amount: string
+}
+
+export type CashFlowRow = {
+  entry_date: string
+  source_type: string
+  memo: string
+  account_name: string
+  direction: 'inflow' | 'outflow'
+  amount: string
+}
+
+export type AccountingAccount = {
+  id: string
+  code: string
+  name: string
+  account_type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
+  status: 'active' | 'inactive'
+}
+
 export type ComponentHit =
   | {
       kind: 'item'
@@ -1114,6 +1168,16 @@ export type FetchDayResult =
       unknownOrders: UnknownOrderRow[]
     }
   | { ok: false; error: string }
+
+export type PosSyncRunRow = {
+  id: string
+  business_date: string
+  status: 'running' | 'succeeded' | 'failed'
+  attempt: number
+  started_at: string
+  finished_at: string | null
+  error: string | null
+}
 
 /** One POS order billed and not (fully) collected, waiting for a person to
  *  say who owes it. Due Payment asks WHO; Part Payment asks WHO and HOW MUCH,
@@ -1858,7 +1922,19 @@ export type AppUserRow = {
   created_at: string
 }
 
-export type LoginResult = { ok: true; role: string } | { ok: false; error: string }
+export type LoginMembershipChoice = { restaurantId: string; restaurantName: string; role: string }
+export type RestaurantMembershipRow = {
+  membership_id: string
+  username: string
+  display_name: string
+  role: string
+  staff_id: string | null
+  status: 'active' | 'inactive' | 'invited'
+}
+export type LoginResult =
+  | { ok: true; role: string }
+  | { ok: 'choose-restaurant'; choices: LoginMembershipChoice[] }
+  | { ok: false; error: string }
 export type SetupResult = { ok: true; username: string } | { ok: false; error: string }
 export type UserMutationResult = { ok: true; user: AppUserRow } | { ok: false; error: string }
 export type ResetPasswordResult = { ok: true } | { ok: false; error: string }
@@ -1958,9 +2034,12 @@ export type ProductionRow = {
   section_code: string
   section_name: string
   recipe_id: string
+  recipe_version_id: string | null
   recipe_code: string
   recipe_name: string
   output_qty: string
+  expected_output_qty: string | null
+  waste_qty: string
   output_unit: string
   unit_cost: string
   value: string
@@ -1972,11 +2051,26 @@ export type ProductionRow = {
   created_at: string
 }
 
+export type ProductionVarianceRow = {
+  recipe_id: string
+  recipe_code: string
+  recipe_name: string
+  output_unit: string
+  batches: number
+  expected_qty: string
+  made_qty: string
+  waste_qty: string
+  variance_qty: string
+  review_status: 'open' | 'acknowledged' | 'correction_requested'
+  review_note: string | null
+}
+
 export type SaveProductionInput = {
   date: string
   sectionId: string
   recipeId: string
   outputQty: string
+  wasteQty?: string
   note: string
 }
 
@@ -2140,6 +2234,7 @@ export type MoneyAccount = {
   opening_date: string | null
   sort_order: number
   status: 'active' | 'inactive'
+  accounting_account_id: string | null
 }
 
 export type SaveMoneyAccountInput = {
@@ -3167,8 +3262,19 @@ export type SaveAdjustmentsInput = {
   lines: AdjustmentLineInput[]
 }
 export type SaveAdjustmentsResult =
-  | { ok: true; count: number; reason: string; stock: StockSnap[] }
+  | { ok: true; count: number; reason: string; stock: StockSnap[]; pending?: boolean; requestId?: string }
   | { ok: false; error: string }
+
+export type StockAdjustmentApprovalRow = {
+  id: string
+  adj_date: string
+  reason: string
+  note: string | null
+  requested_by: string | null
+  requested_at: string
+  lines: number
+  total_value: string
+}
 
 /** ACCEPTING A VARIANCE IS A JUDGEMENT, NOT A CONSEQUENCE. A variance can
  *  be a counting error as easily as a stock error, so the book is never
@@ -3415,7 +3521,7 @@ export type SaveStoreLossesResult =
   | { ok: true; rows: WastageDetail[]; stock: StockSnap[]; total: string }
   | { ok: false; error: string }
 
-export type ProductionLineInput = { recipeId: string; outputQty: string }
+export type ProductionLineInput = { recipeId: string; outputQty: string; wasteQty?: string }
 export type SaveProductionsInput = {
   date: string
   sectionId: string
@@ -3591,6 +3697,7 @@ export type CylinderStockRow = {
  * history all live here, so the order belongs where the stock is.
  */
 export type PoStatus = 'draft' | 'sent' | 'received' | 'closed' | 'cancelled'
+export type PoApprovalStatus = 'not_required' | 'pending' | 'approved' | 'refused' | 'cancelled'
 
 export const PO_STATUSES: PoStatus[] = ['draft', 'sent', 'received', 'closed', 'cancelled']
 
@@ -3611,6 +3718,10 @@ export type PurchaseOrderRow = {
   po_date: string
   expected_date: string | null
   status: PoStatus
+  approval_status: PoApprovalStatus
+  approval_requested_at: string | null
+  approval_decided_at: string | null
+  approval_decided_by: string | null
   note: string | null
   sent_at: string | null
   sent_by: string | null
@@ -3630,6 +3741,19 @@ export type PoLineRow = {
   rate: string
   amount: string
   note: string | null
+}
+
+export type PurchaseOrderApprovalRow = {
+  id: string
+  purchase_order_id: string
+  status: 'pending' | 'approved' | 'refused' | 'cancelled'
+  amount: string
+  reason: string
+  requested_by: string | null
+  requested_at: string
+  decided_by: string | null
+  decided_at: string | null
+  decision_note: string | null
 }
 
 /**
@@ -3669,6 +3793,18 @@ export type PoFulfilmentRow = {
   rate: string
   qty_delivered: string
   gap: string
+}
+
+export type PurchaseInvoiceMatchRow = {
+  id: string
+  purchase_id: string
+  purchase_order_id: string | null
+  status: 'unmatched' | 'matched' | 'partial' | 'exception'
+  quantity_exception: boolean
+  price_exception: boolean
+  snapshot: unknown
+  assessed_by: string | null
+  assessed_at: string
 }
 
 /** One line of a draft, offered from what the shelf says and what this vendor

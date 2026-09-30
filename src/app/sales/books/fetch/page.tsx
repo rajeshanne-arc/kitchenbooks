@@ -1,7 +1,7 @@
 import WhyNoRange from '@/components/books/WhyNoRange'
 import Link from 'next/link'
 import { getRestaurant } from '@/server/queries'
-import { getSalesDays } from '@/server/sales-queries'
+import { getSalesDays, listPosSyncRuns } from '@/server/sales-queries'
 import FetchDay from '@/components/sales/FetchDay'
 import { formatMoneyString } from '@/lib/money'
 import { fmtDate } from '@/lib/format'
@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function CashFetchPage() {
   const restaurant = await getRestaurant()
-  const days = await getSalesDays(restaurant.id)
+  const [days, syncRuns] = await Promise.all([getSalesDays(restaurant.id), listPosSyncRuns(restaurant.id)])
 
   return (
     <>
@@ -61,6 +61,26 @@ export default async function CashFetchPage() {
                     )}
                   </span>
                   <span className="tabular-nums text-sm font-semibold text-stone-900">{formatMoneyString(d.revenue)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className={cardCls}>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className={sectionHeadCls}>Sync attempts</h2>
+            <span className="font-mono text-[11px] text-stone-400">pos_sync_runs</span>
+          </div>
+          <p className="mt-1 text-sm text-stone-600">Every manual or scheduled attempt stays visible, including failures. A failed attempt is not a sales fetch.</p>
+          {syncRuns.length === 0 ? <p className="mt-2 text-sm text-stone-500">No sync has been attempted yet.</p> : (
+            <ul className="mt-2 divide-y divide-rule-soft">
+              {syncRuns.map((run) => (
+                <li key={run.id} className="flex flex-wrap items-baseline gap-x-2 py-2 text-sm">
+                  <span className="font-medium text-stone-900">{fmtDate(run.business_date)}</span>
+                  <span className={run.status === 'failed' ? 'text-red-700' : run.status === 'succeeded' ? 'text-emerald-700' : 'text-amber-700'}>{run.status}</span>
+                  <span className="text-xs text-stone-500">attempt {run.attempt}</span>
+                  {run.error !== null && <span className="basis-full text-xs text-red-700">{run.error}</span>}
                 </li>
               ))}
             </ul>

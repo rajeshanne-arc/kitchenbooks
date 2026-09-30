@@ -27,7 +27,7 @@ import { txn, tsql } from '@/lib/db'
 import { getRestaurant } from '@/server/queries'
 import { getSessionUser } from '@/server/current-user'
 import { nextDocNo } from '@/server/doc-numbers'
-import { PoLineRefusal, assertOneRowPerItem } from '@/server/po-queries'
+import { PoLineRefusal, assertOneRowPerItem, getPurchaseApprovalConfig } from '@/server/po-queries'
 import { parseMoney, parseQty } from '@/lib/money'
 import type { PurchaseOrderRow, SentVia } from '@/lib/types'
 
@@ -171,7 +171,6 @@ export async function updatePurchaseOrder(id: string, raw: SavePoInput): Promise
     if (!UUID.test(id)) throw new PoError('That order does not exist')
     const input = SaveSchema.parse(raw)
     if (input.expectedDate !== '') assertRealDate(input.expectedDate, 'The expected date')
-    await actor()
     const lines = parseLines(input.lines)
     const restaurant = await getRestaurant()
     const rid = restaurant.id
@@ -190,6 +189,12 @@ export async function updatePurchaseOrder(id: string, raw: SavePoInput): Promise
             ? 'That order was cancelled — raise a new one rather than editing it'
             : `${po.doc_no ?? 'That order'} has already been sent, so what was ordered is now what a short is measured against. Cancel it and raise a new one.`,
         )
+      }
+      const [approval] = await tx<{ approval_status: string }[]>`
+        select approval_status from purchase_orders
+        where id = ${id} and restaurant_id = ${rid}`
+      if (approval?.approval_status === 'pending') {
+        throw new PoError('This order is waiting for owner approval — it cannot be edited until they decide')
       }
       // Belt and braces with the missing UPDATE grant: a different vendor is a
       // different order, and the refusal says so rather than letting the
@@ -252,6 +257,7 @@ export async function sendPurchaseOrder(raw: { id: string; via: SentVia }): Prom
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
+    const config = await getPurchaseApprovalConfig(rid)
     const id = await txn(async (tx) => {
       const [po] = await tx<{ id: string; status: string; doc_no: string | null; lines: number }[]>`
         select p.id, p.status, p.doc_no,
@@ -269,6 +275,21 @@ export async function sendPurchaseOrder(raw: { id: string; via: SentVia }): Prom
       // learns only that we are not paying attention.
       if (po.lines === 0) throw new PoError('There is nothing on this order to send')
 
+      if (config.mode === 'threshold') {
+        const [approval] = await tx<{ approval_status: string }[]>`
+          select approval_status from purchase_orders
+          where id = ${input.id} and restaurant_id = ${rid}`
+        if (approval?.approval_status !== 'approved') {
+          const [total] = await tx<{ total: string }[]>`
+            select coalesce(sum(amount), 0)::text as total
+            from purchase_order_lines
+            where restaurant_id = ${rid} and purchase_order_id = ${input.id}`
+          if (Number(total?.total ?? 0) >= config.threshold) {
+            throw new PoError(`This order needs owner approval before it can be sent (approval threshold ${config.threshold.toFixed(2)})`)
+          }
+        }
+      }
+
       await tx`update purchase_orders
                set status = 'sent', sent_at = now(), sent_by = ${who.username}, sent_via = ${input.via}
                where id = ${input.id} and restaurant_id = ${rid}`
@@ -281,7 +302,9 @@ export async function sendPurchaseOrder(raw: { id: string; via: SentVia }): Prom
       select p.id, p.doc_no, p.vendor_id, v.code as vendor_code, v.name as vendor_name,
              v.phone as vendor_phone,
              p.po_date::text as po_date, p.expected_date::text as expected_date,
-             p.status, p.note, p.sent_at::text as sent_at, p.sent_by, p.sent_via,
+             p.status, p.approval_status, p.approval_requested_at::text as approval_requested_at,
+             p.approval_decided_at::text as approval_decided_at, p.approval_decided_by,
+             p.note, p.sent_at::text as sent_at, p.sent_by, p.sent_via,
              p.entered_by,
              (select count(*)::int from purchase_order_lines l where l.purchase_order_id = p.id) as lines,
              (select coalesce(sum(l.amount), 0)::text from purchase_order_lines l
@@ -296,6 +319,98 @@ export async function sendPurchaseOrder(raw: { id: string; via: SentVia }): Prom
   }
 }
 
+/** Submit a complete draft for owner review. It remains a draft, but the
+ * approval flag freezes its contents until the decision is recorded. */
+export async function requestPurchaseOrderApproval(id: string, reason: string): Promise<PoResult> {
+  try {
+    if (!UUID.test(id)) throw new PoError('That order does not exist')
+    const why = reason.trim()
+    if (why === '') throw new PoError('Explain why this purchase is needed')
+    const who = await actor()
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    return await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [po] = await tx<{ id: string; status: string; approval_status: string; doc_no: string | null; total: string; lines: number }[]>`
+        select p.id, p.status, p.approval_status, p.doc_no,
+               coalesce(sum(l.amount), 0)::text as total,
+               count(l.id)::int as lines
+        from purchase_orders p
+        left join purchase_order_lines l on l.restaurant_id = p.restaurant_id and l.purchase_order_id = p.id
+        where p.id = ${id} and p.restaurant_id = ${rid}
+        group by p.id
+        for update`
+      if (!po) throw new PoError('That order does not exist')
+      if (po.status !== 'draft') throw new PoError('Only a draft order can be submitted')
+      if (po.lines === 0) throw new PoError('There is nothing on this order to submit')
+      if (po.approval_status === 'pending') throw new PoError('This order is already waiting for owner approval')
+      await tx`
+        insert into purchase_order_approvals
+          (restaurant_id, purchase_order_id, amount, reason, requested_by)
+        values (${rid}, ${id}, ${po.total}, ${why}, ${who.username})`
+      await tx`
+        update purchase_orders
+        set approval_status = 'pending', approval_requested_at = now(),
+            approval_decided_at = null, approval_decided_by = null
+        where id = ${id} and restaurant_id = ${rid}`
+      return { ok: true as const, id, doc_no: po.doc_no }
+    })
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/** Owner decision. Approval unlocks the normal send path; refusal keeps the
+ * draft editable. Approval must not pretend to have contacted the vendor. */
+export async function decidePurchaseOrderApproval(
+  id: string,
+  decision: 'approved' | 'refused',
+  note: string,
+): Promise<PoResult> {
+  try {
+    if (!UUID.test(id)) throw new PoError('That order does not exist')
+    const owner = await getSessionUser()
+    if (!owner || owner.role !== 'owner') throw new PoError('Only an owner can decide purchase approvals')
+    const restaurant = await getRestaurant()
+    const rid = restaurant.id
+    const why = note.trim()
+    if (decision === 'refused' && why === '') throw new PoError('Give a reason for refusing this order')
+    return await txn(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('kitchenbooks:save:' || ${rid}, 0))`
+      const [approval] = await tx<{ approval_id: string; doc_no: string | null; status: string }[]>`
+        select a.id as approval_id, p.doc_no, a.status
+        from purchase_order_approvals a
+        join purchase_orders p on p.restaurant_id = a.restaurant_id and p.id = a.purchase_order_id
+        where a.restaurant_id = ${rid} and a.purchase_order_id = ${id}
+          and a.status = 'pending' and p.approval_status = 'pending'
+        for update`
+      if (!approval) throw new PoError('That approval is no longer pending')
+      const next = decision === 'approved' ? 'approved' : 'refused'
+      await tx`
+        update purchase_order_approvals
+        set status = ${next}, decided_by = ${owner.username}, decided_at = now(),
+            decision_note = ${why === '' ? null : why}
+        where id = ${approval.approval_id} and restaurant_id = ${rid}`
+      if (decision === 'approved') {
+        await tx`
+          update purchase_orders
+          set approval_status = 'approved', approval_decided_at = now(),
+              approval_decided_by = ${owner.username}
+          where id = ${id} and restaurant_id = ${rid}`
+      } else {
+        await tx`
+          update purchase_orders
+          set approval_status = 'refused', approval_decided_at = now(),
+              approval_decided_by = ${owner.username}
+          where id = ${id} and restaurant_id = ${rid}`
+      }
+      return { ok: true as const, id, doc_no: approval.doc_no }
+    })
+  } catch (e) {
+    return fail(e)
+  }
+}
+
 /** Cancel — the only correction available once an order has gone out, and the
  *  honest one. The row and its number stay on the record; `po_fulfilment`
  *  already excludes cancelled orders, so no shortfall is ever computed against
@@ -305,7 +420,7 @@ export async function cancelPurchaseOrder(id: string, reason: string): Promise<P
     if (!UUID.test(id)) throw new PoError('That order does not exist')
     const why = reason.trim()
     if (why === '') throw new PoError('Say why it is being cancelled — the reason is kept')
-    await actor()
+    const who = await actor()
     const restaurant = await getRestaurant()
     const rid = restaurant.id
 
@@ -322,6 +437,13 @@ export async function cancelPurchaseOrder(id: string, reason: string): Promise<P
       const note = [po.note, `Cancelled: ${why}`].filter((x) => x !== null && x !== '').join(' · ')
       await tx`update purchase_orders set status = 'cancelled', note = ${note}
                where id = ${id} and restaurant_id = ${rid}`
+      await tx`
+        update purchase_order_approvals
+        set status = 'cancelled', decided_by = ${who.username}, decided_at = now(), decision_note = ${why}
+        where restaurant_id = ${rid} and purchase_order_id = ${id} and status = 'pending'`
+      await tx`
+        update purchase_orders set approval_status = 'cancelled'
+        where id = ${id} and restaurant_id = ${rid} and approval_status = 'pending'`
       return { ok: true as const, id, doc_no: po.doc_no }
     })
   } catch (e) {

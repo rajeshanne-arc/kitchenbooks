@@ -183,22 +183,47 @@ async function main() {
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .replace(/'[^']*'/g, " '' ")
       .replace(/\bat\s+time\s+zone\b/gi, ' ')
-    const rels = relationsOf(clean).filter((r) => schema.has(r.name))
+    const parsedRels = relationsOf(clean)
+    const local = localNames(clean)
+    const rels = parsedRels.filter((r) => schema.has(r.name))
     if (rels.length === 0) continue
     checkedStmts++
-    const local = localNames(clean)
     const byAlias = new Map<string, string>()
+    const aliasRelations = new Map<string, Set<string>>()
     for (const r of rels) {
-      if (r.alias !== null) byAlias.set(r.alias, r.name)
+      if (r.alias !== null) {
+        const names = aliasRelations.get(r.alias) ?? new Set<string>()
+        names.add(r.name)
+        aliasRelations.set(r.alias, names)
+      }
       byAlias.set(r.name, r.name)
+    }
+    // CTEs are not present in information_schema, but their outer aliases
+    // still shadow aliases used inside the CTE body. Mark those aliases as
+    // ambiguous so a column projected by the CTE is never checked against
+    // the inner base table by accident.
+    for (const r of parsedRels) {
+      if (r.alias !== null && local.has(r.name)) {
+        const names = aliasRelations.get(r.alias) ?? new Set<string>()
+        names.add('__cte__')
+        aliasRelations.set(r.alias, names)
+      }
+    }
+    for (const [alias, candidates] of aliasRelations) {
+      if (candidates.size === 1) byAlias.set(alias, [...candidates][0])
     }
 
     // qualified: alias.column
     for (const m of clean.matchAll(/\b([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\b/gi)) {
       const alias = m[1].toLowerCase()
       const col = m[2].toLowerCase()
-      const rel = byAlias.get(alias)
-      if (rel === undefined) continue // a CTE, a function, or another schema
+      // An alias can be reused inside a CTE and in the outer query. The
+      // relation scanner intentionally does not pretend to understand full
+      // SQL scope, so an alias with more than one possible base relation is
+      // ambiguous and must not produce a false positive against one scope.
+      const candidates = aliasRelations.get(alias)
+      const rel = candidates?.size === 1 ? [...candidates][0] : byAlias.get(alias)
+      if (rel === undefined || (candidates !== undefined && candidates.size > 1)) continue // a CTE, function, or ambiguous shadowed alias
       const set = schema.get(rel)
       if (set === undefined) continue
       checkedCols++
@@ -212,7 +237,13 @@ async function main() {
     // select side, so skip the unqualified pass for writes entirely.
     const isWrite = /^\s*(insert|update|delete)\b/i.test(clean)
     const distinct = [...new Set(rels.map((r) => r.name))]
-    if (distinct.length === 1 && !isWrite && !/\bwith\b/i.test(clean)) {
+    // A query may join a relation that has not been migrated yet. In that
+    // case, checking unqualified words against the one legacy relation that
+    // happens to exist produces nonsense such as “money_accounts has no
+    // column accounting_accounts”. Keep qualified checks for known relations,
+    // but defer the unqualified pass until every referenced relation exists.
+    const everyRelationKnown = parsedRels.every((r) => schema.has(r.name))
+    if (distinct.length === 1 && everyRelationKnown && !isWrite && !/\bwith\b/i.test(clean)) {
       const rel = distinct[0]
       const set = schema.get(rel)!
       // THE WHOLE STATEMENT, not just the select list.

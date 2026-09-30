@@ -12,7 +12,7 @@
 import 'server-only'
 import type postgres from 'postgres'
 import { sql, tsql } from '@/lib/db'
-import type { CountAcceptance, StockAdjustmentRow } from '@/lib/types'
+import type { CountAcceptance, StockAdjustmentApprovalRow, StockAdjustmentRow } from '@/lib/types'
 
 /** A refusal the person at the keyboard is meant to read, as opposed to a
  *  fault. Lives here rather than in the actions file because the checks that
@@ -99,6 +99,20 @@ export async function listUnacceptedCounts(restaurantId: string): Promise<CountA
     ${sql.unsafe(ACCEPTANCE_SELECT)}
     where c.restaurant_id = ${restaurantId} and c.accepted_at is null
     order by c.count_date asc, c.created_at asc`
+}
+
+export async function listPendingStockAdjustmentApprovals(restaurantId: string): Promise<StockAdjustmentApprovalRow[]> {
+  return tsql<StockAdjustmentApprovalRow[]>`
+    select r.id, r.adj_date::text as adj_date, r.reason, r.note,
+           r.requested_by, r.requested_at::text as requested_at,
+           count(l.id)::int as lines,
+           coalesce(sum(l.qty * l.unit_cost), 0)::text as total_value
+    from stock_adjustment_requests r
+    join stock_adjustment_request_lines l
+      on l.restaurant_id = r.restaurant_id and l.request_id = r.id
+    where r.restaurant_id = ${restaurantId} and r.status = 'pending'
+    group by r.id
+    order by r.requested_at asc`
 }
 
 /**

@@ -1,0 +1,11 @@
+[Unit]
+Description=KitchenBooks demo tenant midnight reset
+After=kitchenbooks.service
+Wants=kitchenbooks.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/apps/kitchenbooks
+EnvironmentFile=%h/apps/kitchenbooks/.env.production
+Environment=PATH=%h/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/sh -c '/usr/bin/curl --fail --silent --show-error --request POST http://127.0.0.1:3120/api/cron/demo-reset --header "Authorization: Bearer $KB_DEMO_RESET_SECRET"'

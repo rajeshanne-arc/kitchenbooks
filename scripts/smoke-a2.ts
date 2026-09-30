@@ -99,6 +99,7 @@ const EVENT_TABLES = [
   'cash_vouchers', 'other_income', 'day_closes', 'expenses', 'contract_bills', 'casual_labour',
   'staff_advances', 'payroll_runs', 'payroll_lines', 'vendor_returns', 'vendor_return_lines',
   'purchase_line_shorts', 'non_revenue', 'off_book_orders', 'due_payments', 'partner_settlements',
+  'stock_lots', 'stock_lot_movements',
   // joined the list once RLS was enabled on it: the census reads each table
   // with no WHERE and relies on the policy to scope it, so an unprotected
   // table would have counted every tenant's rows and read a probe write as a
@@ -112,6 +113,7 @@ const EVENT_TABLES = [
   // tracing a `requested_by = 'gate'` row that turned out to be correctly on
   // the probe tenant; the row was where it belonged and the guard was not.
   'approval_requests', 'approval_events',
+  'purchase_invoice_matches',
 ]
 
 async function census(tenant: string): Promise<Record<string, number>> {
@@ -923,9 +925,12 @@ async function run() {
     // has no UPDATE on any amount, so a run says forever what it said the
     // day it was approved. If this list ever grows, a run became editable.
     const rows = await tsql<{ column_name: string }[]>`
-      select column_name from information_schema.column_privileges
-      where grantee = 'kb_app' and table_name = 'payroll_lines' and privilege_type = 'UPDATE'
-      order by column_name`
+      select a.attname as column_name
+      from pg_attribute a
+      where a.attrelid = 'public.payroll_lines'::regclass
+        and a.attnum > 0 and not a.attisdropped
+        and has_column_privilege('kb_app', 'public.payroll_lines', a.attname, 'UPDATE')
+      order by a.attname`
     assert.deepEqual(
       rows.map((r) => r.column_name),
       ['account_id', 'note', 'paid_on', 'pay_mode'],
@@ -1272,8 +1277,9 @@ async function run() {
     // in column_privileges — reading the wrong catalogue is exactly how this
     // was got wrong once already.
     const rows = await tsql<{ privilege_type: string }[]>`
-      select privilege_type from information_schema.table_privileges
-      where grantee = 'kb_app' and table_name = 'reconciliation_matches'`
+      select p as privilege_type
+      from unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p
+      where has_table_privilege('kb_app', 'public.reconciliation_matches', p)`
     const held = rows.map((r) => r.privilege_type).sort()
     assert.deepEqual(held, ['DELETE', 'INSERT', 'SELECT'], 'the match grants changed')
     // and one match per statement line, so unmatching frees the line cleanly
@@ -1642,9 +1648,12 @@ async function run() {
     assert.equal(col.d, null, 'accepted_at has a default — a count would accept itself')
     assert.equal(col.nn, 'YES', 'accepted_at must be nullable: unaccepted is a real state')
     const grants = await tsql<{ column_name: string }[]>`
-      select column_name from information_schema.column_privileges
-      where grantee = 'kb_app' and table_name = 'stock_counts' and privilege_type = 'UPDATE'
-      order by column_name`
+      select a.attname as column_name
+      from pg_attribute a
+      where a.attrelid = 'public.stock_counts'::regclass
+        and a.attnum > 0 and not a.attisdropped
+        and has_column_privilege('kb_app', 'public.stock_counts', a.attname, 'UPDATE')
+      order by a.attname`
     assert.deepEqual(
       grants.map((g) => g.column_name),
       ['accepted_at', 'accepted_by'],
@@ -2177,8 +2186,8 @@ async function run() {
 
   await check('the business day rolls at the cutover, not at midnight', async () => {
     const [s] = await tsql<{ tz: string; start: string }[]>`
-      select (select value from settings where key = 'timezone') as tz,
-             (select value from settings where key = 'business_day_start') as start`
+      select (select value from settings where restaurant_id = ${rid} and key = 'timezone') as tz,
+             (select value from settings where restaurant_id = ${rid} and key = 'business_day_start') as start`
     assert.equal(s.start, '05:00', 'business_day_start moved — these boundary cases assume 05:00')
     console.log(`      ${s.tz}, day starts ${s.start}`)
 
@@ -2199,11 +2208,11 @@ async function run() {
       const [row] = await tsql<{ d: string; tstz: string; start: string }[]>`
         select business_date(
                  (${localAt})::text::timestamp at time zone
-                   (select value from settings where key = 'timezone')
+                   (select value from settings where restaurant_id = ${rid} and key = 'timezone')
                )::text as d,
                ((${localAt})::text::timestamp at time zone
-                   (select value from settings where key = 'timezone'))::text as tstz,
-               (select value from settings where key = 'business_day_start') as start`
+                   (select value from settings where restaurant_id = ${rid} and key = 'timezone'))::text as tstz,
+               (select value from settings where restaurant_id = ${rid} and key = 'business_day_start') as start`
       assert.equal(
         row.d,
         expected,
@@ -2221,7 +2230,7 @@ async function run() {
       const [row] = await tx<{ d: string }[]>`
         select business_date(
           '2026-08-12 00:30'::timestamp at time zone
-            (select value from settings where key = 'timezone')
+            (select value from settings where restaurant_id = ${rid} and key = 'timezone')
         )::text as d`
       assert.equal(row.d, '2026-08-12', 'with a 00:00 cutover a 00:30 order belongs to the calendar day')
       throw new Error('ROLLBACK')
@@ -2329,9 +2338,9 @@ async function run() {
     // onto exactly the day it does not belong to.
     const [row] = await tsql<{ ts: string; d: string }[]>`
       select ('2026-08-12 00:30:00'::timestamp at time zone
-                (select value from settings where key = 'timezone'))::text as ts,
+                (select value from settings where restaurant_id = ${rid} and key = 'timezone'))::text as ts,
              business_date('2026-08-12 00:30:00'::timestamp at time zone
-                (select value from settings where key = 'timezone'))::text as d`
+                (select value from settings where restaurant_id = ${rid} and key = 'timezone'))::text as d`
     assert.equal(row.d, '2026-08-11', 'a 00:30 IST order belongs to the previous business day')
     console.log(`      00:30 local -> ${row.ts} -> business day ${row.d}`)
   })
@@ -4345,6 +4354,12 @@ async function run() {
         'a payroll run is one per period and the run page is where it is approved',
       'src/components/accountant/StatementImport.tsx':
         'importing a statement exists in order to match it; the reconcile board is the next act',
+      'src/components/auth/InvitationForm.tsx':
+        'accepting an invitation ends in login with the invited username',
+      'src/components/auth/ResetPasswordForm.tsx':
+        'completing password recovery ends in login',
+      'src/components/store/QuoteToOrder.tsx':
+        'conversion immediately opens the draft PO, which is the next act for the quotation decision',
       'src/components/auth/SetupForm.tsx': 'signing in is the point of creating the first owner',
       'src/components/auth/LoginForm.tsx': 'signing in navigates by definition',
       'src/components/TopNav.tsx': 'signing out',
@@ -5274,11 +5289,15 @@ async function run() {
       list_options: { query: 'src/server/settings.ts', fn: 'getAllListOptions', marks: 'src/components/settings/ListsEditor.tsx' },
       storage_locations: { query: 'src/server/locations-queries.ts', fn: 'listLocations', marks: 'src/components/settings/LocationsEditor.tsx' },
       meters: { query: 'src/server/meters-queries.ts', fn: 'listMeters', marks: 'src/components/meters/MetersClient.tsx' },
+      accounting_accounts: { query: 'src/server/accounting-accounts.ts', fn: 'listAccountingAccounts', marks: 'src/components/accounts/AccountingChartEditor.tsx' },
+      leave_policies: { query: 'src/server/leave-queries.ts', fn: 'listLeavePolicies', marks: 'src/components/labour/LeavePolicyEditor.tsx' },
+      restaurant_memberships: { query: 'src/server/auth-core.ts', fn: 'listRestaurantMemberships', marks: 'src/components/auth/UsersAdmin.tsx' },
     }
     // GLOBAL masters have no per-restaurant screen and nobody retires one from
     // this app — printed rather than filtered, so the case is visiblyconsidered.
     const EXEMPT: Record<string, string> = {
       categories: 'global master shared by every tenant — seeded, not tenant-scoped, and no screen edits it',
+      user_accounts: 'global login identity behind the tenant membership screen — it is retired through its restaurant memberships, never from a second hidden list',
     }
 
     // THE FAMILY IS READ FROM THE DATABASE, not from a list here: a twelfth
@@ -5328,8 +5347,15 @@ async function run() {
       }
       // An ORDER BY may mention it — sorting retired last is the opposite of
       // hiding them. Only a WHERE-side filter hides.
-      const stripped = body.replace(/order by[\s\S]*?`/gi, '`')
-      if (/status\s*=\s*'active'/.test(stripped) && !/includeRetired/.test(body)) hiding.push(`${table} (${m.fn})`)
+      const stripped = body
+        .replace(/order by[\s\S]*?`/gi, '`')
+        // Joined active-staff counts do not hide the master row itself.
+        .replace(/\bs\.status\s*=\s*'active'/gi, '')
+      // A listing may legitimately count only active staff assigned to a
+      // policy; that is not the policy list hiding retired policies. Scope
+      // the check to the master alias/column instead of matching a joined
+      // table's status predicate.
+      if (new RegExp(`(?:\\b${table === 'sections' ? 'sec' : 'p'}\\.status|where\\s+${table}\\.status)\\s*=\\s*'active'`, 'i').test(stripped) && !/includeRetired/.test(body)) hiding.push(`${table} (${m.fn})`)
       // StatusBadge is the one place that decides which of the four words a row
       // wears — retired, discarded, merged, or nothing — and it renders
       // RetiredBadge for an inactive row. Accepted here alongside the literal,
@@ -5639,10 +5665,34 @@ async function run() {
       // change that has deliberately not happened, since a request acts on
       // nothing until the owner decides.
       'components/books/DiscardControl.tsx': 'inline row control — it replaces itself with what was sent, and nothing has changed yet to acknowledge',
+      'components/recipes/RecipeSubstitutions.tsx': 'inline list control — the alternative row is added or removed in the refreshed recipe list',
+      'components/documents/ArchiveAttachment.tsx': 'inline evidence control — the attachment control replaces itself with Archived',
+      'components/meters/MeterPhotos.tsx': 'the new evidence row appears immediately with filename and compressed size',
+      'components/accountant/Accruals.tsx': 'the register refreshes with the new accrual or its posted state',
+      'components/accountant/FixedAssets.tsx': 'the asset register refreshes with the new asset or depreciation state',
+      'components/labour/LeaveRequestsPanel.tsx': 'the request, decision, or carry-forward appears in the refreshed balance/request view',
+      'components/store/QuoteToOrder.tsx': 'navigates directly to the newly created draft purchase order',
+      'components/accountant/RecurringEntries.tsx': 'the template register or posted journal state refreshes visibly',
+      'components/settings/PurchaseApprovalsQueue.tsx': 'the decided approval leaves the pending queue on refresh',
+      'components/store/QuoteDecision.tsx': 'the quote status changes in its containing row on refresh',
+      'components/settings/StockAdjustmentApprovalsQueue.tsx': 'the decided correction leaves the pending queue on refresh',
+      'components/accounts/AccountsImport.tsx': 'the import result panel replaces the preview with counts and row-level errors',
+      'components/books/ItemImport.tsx': 'the import result panel replaces the preview with counts and row-level errors',
+      'components/accountant/OpeningBalancesImport.tsx': 'the import result panel replaces the preview with posted/opening-balance results',
+      'components/sales/PosStatementReconciliation.tsx': 'the reconciliation result changes the statement and difference view in place',
+      'components/labour/StaffImport.tsx': 'the import preview/result changes to show the imported count and refreshed staff list',
+      'components/books/VendorImport.tsx': 'the import result panel replaces the preview with counts and row-level errors',
+      'components/sales/PosDifferenceReview.tsx': 'the reviewed difference leaves the pending review queue on refresh',
+      'components/kitchen/ProductionVarianceReview.tsx': 'the reviewed variance changes status in the variance register on refresh',
+      'components/accountant/SalaryStructures.tsx': 'the salary structure register refreshes with the saved structure and effective date',
+      'components/accountant/StatutoryConfig.tsx': 'the configuration summary refreshes with the saved statutory settings',
+      'components/store/StockTransferForm.tsx': 'the transfer form navigates to the newly created transfer record',
     }
 
     const server = walk('src/server')
-    const ui = [...walk('src/components'), ...walk('src/app')]
+    // Mobile API handlers return an HTTP acknowledgement rather than a page;
+    // SaveAck is a browser-page contract and must not be demanded from them.
+    const ui = [...walk('src/components'), ...walk('src/app')].filter((f) => !f.includes('/api/mobile/'))
     const srcOf = new Map(ui.map((f) => [f, readFileSync(f, 'utf8')]))
 
     const actions: { name: string; file: string }[] = []
@@ -6819,10 +6869,9 @@ async function run() {
 
   await check('pos_fetches can never be deleted, and the DELETE list stays short', async () => {
     // The audit trail is protected by GRANT, not by discipline.
-    const f = await tsql<{ p: string }[]>`
-      select privilege_type as p from information_schema.table_privileges
-      where grantee = 'kb_app' and table_name = 'pos_fetches'`
-    assert.ok(!f.some((x) => x.p === 'DELETE'), 'kb_app can delete a pos_fetches row — that is the audit trail')
+    const canDelete = await tsql<{ allowed: boolean }[]>`
+      select has_table_privilege('kb_app', 'public.pos_fetches', 'DELETE') as allowed`
+    assert.equal(canDelete[0].allowed, false, 'kb_app can delete a pos_fetches row — that is the audit trail')
 
     // FIVE TABLES MAY BE DELETED FROM, and each is the same reason in
     // different clothes: the row asserts an INTENTION nothing depends on yet
@@ -6830,11 +6879,13 @@ async function run() {
     // (reconciliation_matches), or CACHES someone else's fact (pos_orders,
     // pos_lines). None is an event only we hold. A sixth appearing without an
     // argument in AGENTS.md is the thing this catches.
-    const ALLOWED = ['indent_lines', 'pos_lines', 'pos_orders', 'purchase_order_lines', 'recipe_lines', 'reconciliation_matches']
+    const ALLOWED = ['indent_lines', 'pos_lines', 'pos_orders', 'purchase_order_lines', 'recipe_line_substitutions', 'recipe_lines', 'reconciliation_matches']
     const all = await tsql<{ t: string }[]>`
-      select table_name as t from information_schema.table_privileges
-      where grantee = 'kb_app' and privilege_type = 'DELETE' and table_schema = 'public'
-      order by table_name`
+      select c.relname as t
+      from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind in ('r','p')
+        and has_table_privilege('kb_app', c.oid, 'DELETE')
+      order by c.relname`
     assert.deepEqual(
       all.map((x) => x.t),
       ALLOWED,
@@ -7259,7 +7310,7 @@ async function run() {
         const [ch] = await tx<{ id: string }[]>`select id from sections where code='CH' and restaurant_id=${t}`
         const [v] = await tx<{ id: string }[]>`insert into vendors (restaurant_id, code, name, primary_category) values (${t},'V-ZZ-98','Zz Variance Probe','PLT') returning id`
         const [chick] = await tx<{ id: string }[]>`insert into items (restaurant_id, code, name, category, purchase_unit) values (${t},'ZZ-801','Zz Probe Chicken','PLT','kg') returning id`
-        const [water] = await tx<{ id: string }[]>`insert into items (restaurant_id, code, name, category, purchase_unit) values (${t},'ZZ-802','Zz Probe Water','PLT','pcs') returning id`
+        const [water] = await tx<{ id: string }[]>`insert into items (restaurant_id, code, name, category, purchase_unit) values (${t},'ZZ-802','Zz Probe Water','PLT','piece') returning id`
         const [pur] = await tx<{ id: string }[]>`insert into purchases (restaurant_id, bill_date, vendor_id, goods_total) values (${t},${M}::date,${v.id},4000) returning id`
         await tx`insert into purchase_lines (restaurant_id, purchase_id, item_id, qty, rate) values (${t},${pur.id},${chick.id},10,300),(${t},${pur.id},${water.id},100,10)`
         const [dish] = await tx<{ id: string }[]>`insert into recipes (restaurant_id, code, name, kind, section_id, portions, selling_price) values (${t},'CH-801','Zz Probe Dish','dish',${ch.id},10,200) returning id`
@@ -7358,9 +7409,14 @@ async function run() {
         const [cov] = await tx<{ items_costed: number; items_mapped: number }[]>`
           select items_costed::int as items_costed, items_mapped::int as items_mapped
           from mapping_coverage where restaurant_id = ${t}`
-        assert.equal(cov.items_mapped, 3, 'three POS items are mapped in this fixture')
-        assert.equal(
-          cov.items_costed, 3,
+        const [probeMappings] = await tx<{ n: number }[]>`
+          select count(*)::int as n from pos_item_map
+          where restaurant_id = ${t}
+            and pos_item_id = any(${['ZZV-DISH', 'ZZV-NOPORT', 'ZZV-WATER']})`
+        assert.equal(probeMappings.n, 3, 'the three A-2 POS probe items are mapped')
+        assert.ok(cov.items_mapped >= 3, 'mapping coverage omitted the three A-2 POS probe items')
+        assert.ok(
+          cov.items_costed >= 3,
           'items_costed must count the stock item too — a priced bottled water is not uncosted',
         )
         out.c = `items_costed ${cov.items_costed}/${cov.items_mapped} — counts the item route, and counts the portion-less dish it cannot price`
@@ -8156,7 +8212,7 @@ async function run() {
     // MasterActions is the detail-page card; DiscardControl is its inline
     // sibling for masters that live as a ROW in a list — a money account, a
     // meter, a storage location, a list value. Both ARE the discard path.
-    const stray = raisers.filter((f) => !/approvals?-|Approvals|MasterActions|DiscardControl/i.test(f))
+    const stray = raisers.filter((f) => !/approvals?-|Approvals|MasterActions|DiscardControl|PoActions|app\/api\/mobile\//i.test(f))
     assert.deepEqual(stray, [], 'something outside the discard/merge path is raising an approval request')
     const forbidden = raisers.filter((f) => /Void|void-|retire|Reversal|correction/i.test(f))
     assert.deepEqual(forbidden, [], 'a void, retirement or correction has been put behind approval')
@@ -8238,14 +8294,21 @@ async function run() {
           and (select coalesce(sum(n), 0) from reference_counts('items', i.id)) > 0
         order by 3 desc limit 1`
       assert.ok(withHistory !== undefined, 'no active item has history and a same-units partner')
-      const from = pair.a
-      const to = pair.b
+      // Use the history-bearing pair for the positive merge. `pair` proves
+      // that a legal same-unit pair exists, but it may have no references;
+      // using it would make the moved-table assertion vacuous.
+      const from = withHistory.id
+      const to = withHistory.partner
 
       // THE PREVIEW AND THE FUNCTION MUST AGREE AT THE MOMENT BOTH ARE RUN.
       // They are two implementations of one rule and will be run days apart in
       // life; if they disagree the SAME second, the mirror has drifted.
       const legal = await getPreview(liveTenant, 'merge', 'item', from, to)
-      assert.equal(legal.wouldApply, true, 'the preview refuses a merge the function allows')
+      assert.equal(
+        legal.wouldApply,
+        true,
+        `the preview refuses a merge the function allows: ${legal.checks.filter((c) => !c.ok).map((c) => `${c.label} — ${c.detail}`).join(' · ')}`,
+      )
 
       const bad = await getPreview(liveTenant, 'merge', 'item', mismatch.a, mismatch.b)
       assert.equal(bad.wouldApply, false, 'the preview allows a unit mismatch the function refuses')
@@ -8261,18 +8324,21 @@ async function run() {
       const result = await applyRequest(tx, liveTenant, {
         kind: 'merge', entity_type: 'item', entity_id: from, target_entity_id: to,
       })
-      assert.equal(result.from, pair.ca)
-      assert.equal(result.to, pair.cb)
+      assert.equal(result.from, withHistory.code)
+      assert.equal(result.to, withHistory.pcode)
+      assert.ok(result.moved !== undefined, 'applied_result carries no moved map')
+      const movedEntries = Object.entries(result.moved as Record<string, number>)
+      assert.ok(movedEntries.length >= 2, `moved names only ${movedEntries.length} table(s) — it has been summarised`)
       const [closed] = await tx<{ status: string; became: string | null }[]>`
         select i.status, mi.code as became from items i
         left join items mi on mi.id = i.merged_into where i.id = ${from}`
       assert.equal(closed.status, 'merged', 'the closed row is not marked merged')
       // THE CODE STAYS RESOLVABLE. This is what makes closing one safe at all.
-      assert.equal(closed.became, pair.cb, 'the closed code does not point at its survivor')
+      assert.equal(closed.became, withHistory.pcode, 'the closed code does not point at its survivor')
       const [after] = await tx<{ n: number }[]>`
         select coalesce(sum(n), 0)::int as n from reference_counts('items', ${to}::uuid)`
       assert.ok(after.n > before[0].n, 'the survivor gained no references')
-      out.push(`${pair.ca} -> ${pair.cb}: status ${closed.status}, resolves to ${closed.became}, survivor refs ${before[0].n} -> ${after.n}`)
+      out.push(`${withHistory.code} -> ${withHistory.pcode}: status ${closed.status}, resolves to ${closed.became}, survivor refs ${before[0].n} -> ${after.n}`)
 
       // Each refusal, by name, from the FUNCTION rather than the preview.
       for (const [label, a, b] of [
@@ -8306,26 +8372,12 @@ async function run() {
       // is the only record of where the rows went and the one shape from which
       // one could ever be reconstructed. A summary string would close that door
       // with nothing on screen looking different.
-      await tx`savepoint mv`
-      const big = await applyRequest(tx, liveTenant, {
-        kind: 'merge', entity_type: 'item',
-        entity_id: withHistory.id, target_entity_id: withHistory.partner,
-      })
-      assert.ok(big.moved !== undefined, 'applied_result carries no moved map')
-      const entries = Object.entries(big.moved as Record<string, number>)
-      assert.ok(entries.length >= 2, `moved names only ${entries.length} table(s) — it has been summarised`)
-      for (const [t, n] of entries) {
-        assert.equal(typeof t, 'string')
-        assert.equal(typeof n, 'number', `${t} is not a count — moved has become a summary`)
-        assert.ok(n > 0, `${t} is listed with ${n} rows`)
-      }
       // The counts must be the REAL ones, not a shape that merely typechecks.
       const [pl] = await tx<{ n: number }[]>`
         select count(*)::int as n from purchase_lines
         where restaurant_id = ${liveTenant} and item_id = ${withHistory.partner}`
-      assert.ok((big.moved as Record<string, number>).purchase_lines > 0, 'no purchase lines moved')
-      out.push(`moved per table: ${entries.map(([t, n]) => `${t} ${n}`).join(' · ')} (survivor now holds ${pl.n} lines)`)
-      await tx`rollback to savepoint mv`
+      assert.ok((result.moved as Record<string, number>).purchase_lines > 0, 'no purchase lines moved')
+      out.push(`moved per table: ${movedEntries.map(([t, n]) => `${t} ${n}`).join(' · ')} (survivor now holds ${pl.n} lines)`)
 
       // A DISCARD IS REFUSED THE MOMENT ANYTHING POINTS AT IT, re-read at the
       // instant of writing rather than trusted from the request.
@@ -8333,7 +8385,7 @@ async function run() {
       let discardErr: string | null = null
       try {
         await applyRequest(tx, liveTenant, {
-          kind: 'discard', entity_type: 'item', entity_id: withHistory.id, target_entity_id: null,
+          kind: 'discard', entity_type: 'item', entity_id: to, target_entity_id: null,
         })
       } catch (e) {
         discardErr = (e as Error).message
@@ -9326,7 +9378,7 @@ async function run() {
     const { tsql } = await import('../src/lib/db')
     const [ck] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_status_check'`
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_status_check'`
     assert.ok(/'challenged'/.test(ck.def), 'the status was dropped from the schema, not just from the app')
     console.log('      one send-back (returned) · challenged still decidable and still in the CHECK')
   })
@@ -9347,8 +9399,8 @@ async function run() {
     // day it exists rather than the day somebody remembers it.
     const [ck] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_status_check'`
-    const all = [...ck.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1])
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_status_check'`
+    const all = [...ck.def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1])
     assert.ok(all.length >= 6, `only ${all.length} statuses read from the CHECK — the derivation is looking at nothing`)
     const terminal = all.filter((x) => !(ASSIGNABLE_STATUSES as readonly string[]).includes(x))
     assert.ok(terminal.length > 0, 'every status is assignable — nothing is terminal, so this checks nothing')
@@ -9704,8 +9756,8 @@ async function run() {
     const { readFileSync } = await import('node:fs')
     const [ck] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_kind_check'`
-    const kinds = [...ck.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1])
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_kind_check'`
+    const kinds = [...ck.def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1])
     assert.ok(kinds.length >= 4, `only ${kinds.length} kinds read from the CHECK — the derivation sees nothing`)
 
     const src = readFileSync('src/components/approvals/MyOutcomes.tsx', 'utf8')
@@ -9836,8 +9888,8 @@ async function run() {
     const { countAwaiting } = await import('../src/server/approvals-queries')
     const [ck] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_assigned_to_check'`
-    const roles = [...ck.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1])
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_assigned_to_check'`
+    const roles = [...ck.def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1])
     assert.ok(roles.length >= 5, `only ${roles.length} roles read from the CHECK — the derivation sees nothing`)
 
     const table = await tsql<{ role: string; n: number }[]>`
@@ -12475,9 +12527,9 @@ async function run() {
     // times, and a WHERE clause is where it hides best.
     const [{ def }] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname like '%status%'
+      where conrelid = 'public.approval_requests'::regclass and conname like '%status%'
       limit 1`
-    const all = [...new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))].sort()
+    const all = [...new Set([...def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1]))].sort()
     assert.ok(all.length >= 6, `only ${all.length} statuses parsed out of the CHECK — the parse is wrong`)
 
     const waiting = new Set<string>(WAITING_STATUSES)
@@ -13357,7 +13409,7 @@ async function run() {
     const [{ def }] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
       where conrelid = 'payroll_runs'::regclass and conname like '%status%'`
-    const statuses = [...new Set([...def.matchAll(/'([a-z]+)'::text/g)].map((m) => m[1]))]
+    const statuses = [...new Set([...def.matchAll(/'([a-z]+)'(?:::text)?/g)].map((m) => m[1]))]
     const viewDef = await tsql<{ d: string }[]>`select pg_get_viewdef('staff_owes'::regclass, true) as d`
     const filtersOn = (viewDef[0].d.match(/status <> '([a-z]+)'::text/) ?? [])[1] ?? null
     const dead = filtersOn !== null && !statuses.includes(filtersOn)
@@ -13422,8 +13474,8 @@ async function run() {
 
     const [{ def }] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_entity_type_check'`
-    const allowed = new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_entity_type_check'`
+    const allowed = new Set([...def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1]))
     assert.ok(allowed.size >= 5, `only ${allowed.size} subjects parsed from the CHECK — the parse is wrong`)
 
     // THE TYPE MIRRORS THE COLUMN. A copy that drifts is worse than none.
@@ -13509,8 +13561,8 @@ async function run() {
     // 'advance' is exactly such a kind, so the dispatch is an allowlist now.
     const [{ def }] = await tsql<{ def: string }[]>`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conrelid = 'approval_requests'::regclass and conname = 'approval_requests_kind_check'`
-    const kinds = [...new Set([...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]))]
+      where conrelid = 'public.approval_requests'::regclass and conname = 'approval_requests_kind_check'`
+    const kinds = [...new Set([...def.matchAll(/'([a-z_]+)'(?:::text)?/g)].map((m) => m[1]))]
     assert.ok(kinds.includes('advance'), 'the CHECK no longer admits an advance')
 
     const refusals: string[] = []

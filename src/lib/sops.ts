@@ -1,0 +1,50 @@
+import type { Role } from '@/lib/roles'
+
+export type SopCopy = { title: string; when: string; why: string; ifWrong: string }
+export type SopMoment = SopCopy & { key: string; route: string; te: SopCopy }
+
+const moment = (
+  key: string,
+  title: string,
+  route: string,
+  when: string,
+  why: string,
+  ifWrong: string,
+  te: SopCopy,
+): SopMoment => ({ key, title, route, when, why, ifWrong, te })
+
+export const SOP_MOMENTS: Record<Role, SopMoment[]> = {
+  owner: [
+    moment('review', 'Review the exceptions', '/owner', 'At the start and end of the day.', 'See what the books can prove, and what they cannot yet prove.', 'Open the linked queue and ask the named role for the missing source record.', { title: 'మినహాయింపులను పరిశీలించండి', when: 'రోజు ప్రారంభంలో మరియు ముగింపులో.', why: 'పుస్తకాలు ఏ విషయాలను నిరూపిస్తున్నాయో, ఏవి ఇంకా నిరూపించలేవో చూడండి.', ifWrong: 'లింక్ చేసిన క్యూను తెరిచి, కనిపించని మూల రికార్డు గురించి సూచించిన బాధ్యతగల వ్యక్తిని అడగండి.' }),
+    moment('approvals', 'Decide pending approvals', '/owner/approvals', 'Before purchases, counts, or other corrections go forward.', 'Approval is your signature on a decision that changes the record.', 'Refuse it with the reason kept on the record, or leave it pending until the facts are clear.', { title: 'పెండింగ్ అనుమతులపై నిర్ణయం తీసుకోండి', when: 'కొనుగోళ్లు, లెక్కలు లేదా ఇతర సవరణలు ముందుకు వెళ్లే ముందు.', why: 'అనుమతి అంటే రికార్డును మార్చే నిర్ణయంపై మీ సంతకం.', ifWrong: 'కారణాన్ని రికార్డులో ఉంచి తిరస్కరించండి, లేదా విషయాలు స్పష్టమయ్యే వరకు పెండింగ్‌లో ఉంచండి.' }),
+    moment('close', 'Review the period before closing', '/accounts/close', 'At the end of the accounting period.', 'Closing says the period has been reviewed and prevents silent changes afterwards.', 'Resolve the exception first; do not close a period whose inputs are still missing.', { title: 'మూసే ముందు కాలాన్ని పరిశీలించండి', when: 'అకౌంటింగ్ కాలం ముగింపులో.', why: 'కాలాన్ని మూసివేయడం అంటే అది పరిశీలించబడిందని చెప్పడం; తరువాత జరిగే మౌన మార్పులను ఇది ఆపుతుంది.', ifWrong: 'ముందుగా మినహాయింపును పరిష్కరించండి; అవసరమైన వివరాలు లేని కాలాన్ని మూసివేయవద్దు.' }),
+  ],
+  manager: [
+    moment('kitchen', 'Check the kitchen round', '/kitchen', 'Before service and after the kitchen closes.', 'Production, waste, and closing values explain what the kitchen used.', 'Ask the chef to complete the missing record before judging the number.', { title: 'వంటగది రౌండ్‌ను పరిశీలించండి', when: 'సర్వీస్‌కు ముందు మరియు వంటగది మూసిన తరువాత.', why: 'ఉత్పత్తి, వృథా మరియు ముగింపు విలువలు వంటగది ఉపయోగించినదాన్ని వివరిస్తాయి.', ifWrong: 'సంఖ్యను అంచనా వేయకముందు కనిపించని రికార్డును పూర్తి చేయమని చెఫ్‌ను అడగండి.' }),
+    moment('store', 'Receive and issue stock', '/store', 'When goods arrive and whenever a department asks for stock.', 'A bill before shelving keeps the stock book tied to what physically arrived.', 'Keep the delivery unresolved instead of guessing the item, quantity, or vendor.', { title: 'స్టాక్‌ను స్వీకరించి జారీ చేయండి', when: 'సరుకు వచ్చినప్పుడు మరియు ఏ విభాగమైనా స్టాక్ అడిగినప్పుడు.', why: 'షెల్ఫ్‌లో పెట్టే ముందు బిల్లు నమోదు చేస్తే, స్టాక్ పుస్తకం నిజంగా వచ్చిన సరుకుతో సరిపోతుంది.', ifWrong: 'వస్తువు, పరిమాణం లేదా విక్రేతను ఊహించకుండా డెలివరీని పరిష్కరించని స్థితిలో ఉంచండి.' }),
+    moment('staff', 'Complete attendance', '/staff', 'Every day before payroll preparation.', 'Attendance is the source record for paid days; payroll should not invent them later.', 'Correct attendance with the manager’s reason while the day is still known.', { title: 'హాజరు పూర్తి చేయండి', when: 'ప్రతి రోజు పేరోల్ తయారీకి ముందు.', why: 'చెల్లింపు రోజుల మూల రికార్డు హాజరు; పేరోల్‌లో తరువాత ఊహించి రోజులు చేర్చకూడదు.', ifWrong: 'ఆ రోజు వివరాలు గుర్తున్నప్పుడే మేనేజర్ కారణంతో హాజరును సరిచేయండి.' }),
+  ],
+  chef: [
+    moment('indent', 'Raise the kitchen indent', '/kitchen/indent', 'Before the store issues what the next service needs.', 'The indent lets the store show asked versus given.', 'Describe the missing item or quantity; do not turn an unrecorded request into a guessed issue.', { title: 'వంటగది ఇండెంట్ వేయండి', when: 'తదుపరి సర్వీస్‌కు అవసరమైన సరుకును స్టోర్ జారీ చేయకముందు.', why: 'ఇండెంట్‌లో అడిగినది, ఇచ్చినది రెండూ స్టోర్‌కు కనిపిస్తాయి.', ifWrong: 'కనిపించని వస్తువు లేదా పరిమాణాన్ని వివరించండి; నమోదు కాని అభ్యర్థనను ఊహించి జారీగా మార్చవద్దు.' }),
+    moment('production', 'Record production', '/kitchen/production', 'Immediately after a batch is made.', 'Actual output and waste make the recipe cost and yield accountable.', 'Record the measured output and waste, or leave it open for the person who measured it.', { title: 'ఉత్పత్తిని నమోదు చేయండి', when: 'ఒక బ్యాచ్ తయారైన వెంటనే.', why: 'నిజమైన ఉత్పత్తి మరియు వృథా రెసిపీ ఖర్చు, దిగుబడికి బాధ్యతను చూపిస్తాయి.', ifWrong: 'కొలిచిన ఉత్పత్తి మరియు వృథాను నమోదు చేయండి; లేకపోతే కొలిచిన వ్యక్తి కోసం దాన్ని తెరిచి ఉంచండి.' }),
+    moment('closing', 'File the kitchen close', '/kitchen/shift/closing', 'At the end of the kitchen shift.', 'A close is a measured handover, not a zero-filled form.', 'Leave the value unclosed and tell the manager what could not be measured.', { title: 'వంటగది ముగింపును నమోదు చేయండి', when: 'వంటగది షిఫ్ట్ ముగింపులో.', why: 'ముగింపు అనేది కొలిచిన అప్పగింత; సున్నాలతో నింపిన ఫారమ్ కాదు.', ifWrong: 'విలువను ముగించకుండా, ఏది కొలవలేకపోయారో మేనేజర్‌కు చెప్పండి.' }),
+  ],
+  store: [
+    moment('issue', 'Issue stock to a department', '/store/issue', 'When a receiving department collects goods.', 'The issue is the physical handover and reduces the store book at the recorded cost.', 'Resolve the item, unit, or available-stock question before saving.', { title: 'విభాగానికి స్టాక్ జారీ చేయండి', when: 'సరుకు తీసుకునే విభాగం దాన్ని స్వీకరించినప్పుడు.', why: 'జారీ అనేది భౌతిక అప్పగింత; నమోదు చేసిన ఖర్చుతో స్టోర్ పుస్తకంలోని నిల్వను తగ్గిస్తుంది.', ifWrong: 'భద్రపరచే ముందు వస్తువు, యూనిట్ లేదా అందుబాటులో ఉన్న స్టాక్ ప్రశ్నను పరిష్కరించండి.' }),
+    moment('receive', 'Enter the purchase bill', '/store/purchasing/receive', 'When a vendor delivery and its bill are in front of you.', 'The bill gives new items a cost and puts the delivery on the stock book.', 'Keep the document unresolved; do not create a substitute item or rate.', { title: 'కొనుగోలు బిల్లును నమోదు చేయండి', when: 'విక్రేత డెలివరీ మరియు దాని బిల్లు మీ ముందున్నప్పుడు.', why: 'బిల్లు కొత్త వస్తువులకు ఖర్చును ఇచ్చి, వచ్చిన సరుకును స్టాక్ పుస్తకంలో చేర్చుతుంది.', ifWrong: 'పత్రాన్ని పరిష్కరించని స్థితిలో ఉంచండి; ప్రత్యామ్నాయ వస్తువు లేదా రేటును సృష్టించవద్దు.' }),
+    moment('count', 'Walk the stock count', '/store/stock/count', 'Daily for critical items and weekly for the full store.', 'A blind count compares the shelf with the book without steering the answer.', 'Record the physical count and let the variance queue decide what needs approval.', { title: 'స్టాక్ లెక్కను పరిశీలించండి', when: 'ముఖ్యమైన వస్తువులకు రోజూ, మొత్తం స్టోర్‌కు వారానికి ఒకసారి.', why: 'బ్లైండ్ కౌంట్ సమాధానాన్ని ప్రభావితం చేయకుండా షెల్ఫ్‌ను పుస్తకంతో పోలుస్తుంది.', ifWrong: 'భౌతిక లెక్కను నమోదు చేయండి; ఏదికి అనుమతి కావాలో వ్యత్యాస క్యూను నిర్ణయించనివ్వండి.' }),
+  ],
+  cashier: [
+    moment('sales', 'Bring in the sales day', '/sales', 'After service, once the POS day is available.', 'Sales are entered once, tied to the business day, and reconciled before the till is closed.', 'Leave unknown POS statuses visible and escalate the date or mapping question.', { title: 'సేల్స్ రోజును తీసుకురండి', when: 'సర్వీస్ తర్వాత POS రోజు అందుబాటులోకి వచ్చినప్పుడు.', why: 'సేల్స్ ఒక్కసారి నమోదు చేసి బిజినెస్ రోజుకు జతచేస్తారు; టిల్ మూసే ముందు సరిపోల్చాలి.', ifWrong: 'తెలియని POS స్థితులను కనిపించేలా ఉంచి, తేదీ లేదా మ్యాపింగ్ ప్రశ్నను పైస్థాయికి తెలియజేయండి.' }),
+    moment('close', 'Close the till', '/sales/close', 'At the end of every cashier day.', 'The close records expected cash against what was actually counted.', 'Record the difference and its note; never adjust expected cash to make it agree.', { title: 'టిల్‌ను మూసివేయండి', when: 'ప్రతి క్యాషియర్ రోజు ముగింపులో.', why: 'ముగింపు ఆశించిన నగదును నిజంగా లెక్కించిన నగదుతో పోల్చి నమోదు చేస్తుంది.', ifWrong: 'వ్యత్యాసాన్ని మరియు దాని గమనికను నమోదు చేయండి; సరిపడేలా ఆశించిన నగదును ఎప్పుడూ మార్చవద్దు.' }),
+  ],
+  accountant: [
+    moment('review', 'Work the accounting queue', '/accounts', 'Weekly, and before a period is closed.', 'The queue names what is missing, what needs asking, and what can close.', 'Raise a query against the source owner; do not repair an operational fact from the ledger screen.', { title: 'అకౌంటింగ్ క్యూను నిర్వహించండి', when: 'ప్రతి వారం మరియు కాలాన్ని మూసే ముందు.', why: 'ఏది కనిపించడం లేదో, దేని గురించి అడగాలో, ఏది మూసవచ్చో క్యూ చెబుతుంది.', ifWrong: 'మూల రికార్డు బాధ్యుడిని ప్రశ్నించండి; లెడ్జర్ స్క్రీన్ నుంచి ఆపరేషనల్ వాస్తవాన్ని సరిచేయవద్దు.' }),
+    moment('reconcile', 'Reconcile cash and bank', '/accounts/money', 'As statements arrive and before close.', 'The statement and the movement are two records that must be matched by a person.', 'Leave unmatched lines visible and attach the statement evidence instead of forcing a match.', { title: 'నగదు మరియు బ్యాంకును సరిపోల్చండి', when: 'స్టేట్‌మెంట్‌లు వచ్చినప్పుడు మరియు ముగింపుకు ముందు.', why: 'స్టేట్‌మెంట్, నగదు కదలిక రెండు వేర్వేరు రికార్డులు; వాటిని ఒక వ్యక్తి సరిపోల్చాలి.', ifWrong: 'సరిపోని పంక్తులను కనిపించేలా ఉంచి, బలవంతంగా సరిపోల్చకుండా స్టేట్‌మెంట్ ఆధారాన్ని జతచేయండి.' }),
+    moment('payroll', 'Prepare and review payroll', '/accounts/payroll', 'After attendance is complete for the period.', 'The accountant prepares frozen figures; the owner approves before payment.', 'Keep the run in draft and ask for the missing attendance, salary, or deduction fact.', { title: 'పేరోల్‌ను సిద్ధం చేసి పరిశీలించండి', when: 'కాలానికి హాజరు పూర్తైన తరువాత.', why: 'అకౌంటెంట్ స్థిరమైన గణాంకాలను సిద్ధం చేస్తారు; చెల్లింపుకు ముందు యజమాని అనుమతిస్తారు.', ifWrong: 'రన్‌ను డ్రాఫ్ట్‌లో ఉంచి, కనిపించని హాజరు, జీతం లేదా మినహాయింపు వివరాన్ని అడగండి.' }),
+  ],
+}
+
+export function isSopRole(value: string): value is Role {
+  return Object.prototype.hasOwnProperty.call(SOP_MOMENTS, value)
+}

@@ -18,7 +18,7 @@ export default async function OwnerGroupLayout({ children }: { children: React.R
   // sit under these six identical layouts, so the fix is here rather than in
   // any of them. Phone behaviour is unchanged — a max-width only caps.
   return (
-    <main className="mx-auto max-w-4xl px-4 pb-10 pt-6 sm:px-6">
+    <main className="mx-auto w-full max-w-4xl px-4 sm:px-6">
       <GroupTabs group="owner" />
       <BusinessDayProvider value={businessDay}>
         {/* Said once per group rather than per form: past midnight EVERY date on

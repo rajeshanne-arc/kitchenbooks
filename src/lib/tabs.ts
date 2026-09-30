@@ -86,6 +86,8 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
       // "Pay vendor" under Purchasing says vendor twice.
       chips: [
         { key: 'receive', label: 'Receive' },
+        { key: 'import', label: 'Import' },
+        { key: 'quotes', label: 'Quotes' },
         // ORDERS SECOND, and this was argued rather than picked. Rajesh asked
         // for it first; second is the recommendation, and he overrules it if
         // he disagrees. The reason is the frequency rule that ordered the tab
@@ -119,6 +121,8 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         { key: 'reorder', label: 'Reorder' },
         { key: 'count', label: 'Count' },
         { key: 'loss', label: 'Loss' },
+        { key: 'import', label: 'Import opening stock' },
+        { key: 'transfer', label: 'Transfers' },
       ],
     },
     {
@@ -297,6 +301,12 @@ export const TAB_DEFAULTS: Record<TabGroup, TabDef[]> = {
         // Export folded in too: every register downloads itself, which is
         // closer to the rows than a screen listing seven links to them.
         { key: 'tax', label: 'Tax' },
+        { key: 'pnl', label: 'P&L' },
+        { key: 'balance-sheet', label: 'Balance sheet' },
+        { key: 'cash-flow', label: 'Cash flow' },
+        { key: 'recurring', label: 'Recurring entries' },
+        { key: 'accruals', label: 'Accruals' },
+        { key: 'fixed-assets', label: 'Fixed assets' },
       ],
     },
     { key: 'parties', href: '/accounts/parties', label: 'Parties' },

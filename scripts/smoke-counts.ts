@@ -16,6 +16,8 @@ process.loadEnvFile('.env.local')
 const COUNT_DATE = '2001-03-01'
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
 const { businessToday } = await import('../src/server/business-day')
     const { getRestaurant } = await import('../src/server/queries')
   const { photographMenu, saveCount } = await import('../src/server/counts-actions')
@@ -23,7 +25,7 @@ const { businessToday } = await import('../src/server/business-day')
     await import('../src/server/counts-queries')
   const { saveIssue, voidIssue, saveWastage, voidWastage } = await import('../src/server/store-actions')
   const { getSections, getStockSnaps } = await import('../src/server/store-queries')
-  const { sql } = await import('../src/lib/db')
+  const { sql, tsql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
@@ -64,7 +66,7 @@ const { businessToday } = await import('../src/server/business-day')
   const [stock2] = await getStockSnaps(rid, [plt2.id])
   const book1 = Number(stock1.on_hand_qty)
   const book2 = Number(stock2.on_hand_qty)
-  const [{ cost1 }] = (await sql`
+  const [{ cost1 }] = (await tsql`
     select issue_cost::text as cost1 from item_costs where item_id = ${plt1.id}`) as unknown as { cost1: string }[]
 
   const counted1 = (book1 - 0.5).toString()
@@ -129,7 +131,7 @@ const { businessToday } = await import('../src/server/business-day')
   // ---- 5. photograph the menu
   const snapsBefore = await listSnapshots(rid)
   assert.ok(!snapsBefore.some((s) => s.snap_date === today), 'no photograph for today yet — is an earlier run uncleaned?')
-  const [{ live_dishes }] = (await sql`
+  const [{ live_dishes }] = (await tsql`
     select count(*)::int as live_dishes from dish_costs where restaurant_id = ${rid}`) as unknown as { live_dishes: number }[]
   const snap = await photographMenu()
   assert.ok(snap.ok, `photographMenu failed: ${snap.ok === false ? snap.error : ''}`)
@@ -138,7 +140,7 @@ const { businessToday } = await import('../src/server/business-day')
 
   const snapRows = await getSnapshot(rid, today)
   assert.equal(snapRows.length, live_dishes)
-  const [{ mismatches }] = (await sql`
+  const [{ mismatches }] = (await tsql`
     select count(*)::int as mismatches
     from dish_cost_snapshots s
     join dish_costs d on d.recipe_id = s.recipe_id
@@ -166,6 +168,7 @@ const { businessToday } = await import('../src/server/business-day')
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

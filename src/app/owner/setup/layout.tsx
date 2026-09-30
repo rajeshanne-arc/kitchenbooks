@@ -1,6 +1,5 @@
 import ChipRow from '@/components/ChipRow'
 import { chipsOf } from '@/lib/tabs'
-import { getRestaurant } from '@/server/queries'
 
 // THE BADGE IS WHY THIS TAB GETS OPENED. Four of the five chips are true
 // configuration — set once and forgotten — but Lists holds an APPROVAL QUEUE:
@@ -9,7 +8,6 @@ import { getRestaurant } from '@/server/queries'
 // otherwise a place nobody visits. Silent at zero, like every other badge in
 // this app: a "0" is a thing to read and dismiss every time.
 export default async function OwnerSetupLayout({ children }: { children: React.ReactNode }) {
-  const restaurant = await getRestaurant()
   return (
     <>
       {/* NO BADGE HERE ANY MORE. The pending queue moved to Owner › Approvals,

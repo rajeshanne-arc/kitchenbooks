@@ -3,7 +3,7 @@ import { Suspense } from 'react'
 import FilterInput from '@/components/books/FilterInput'
 import WhyNoRange from '@/components/books/WhyNoRange'
 import { getRestaurant } from '@/server/queries'
-import { issueContext, listStock, stockCategoryRollup, stockTotalValue } from '@/server/store-queries'
+import { issueContext, listLotBalances, listStock, stockCategoryRollup, stockTotalValue } from '@/server/store-queries'
 import { decimalStringToPaise, formatMoneyString } from '@/lib/money'
 import Honesty from '@/components/Honesty'
 import StockLine from '@/components/stock/StockLine'
@@ -84,13 +84,14 @@ export default async function StockView({
   // That is one added query on this view, and it is the price of the rule: an
   // expand that has to FETCH is worse than a link that moves you, because it
   // hangs where a link at least goes somewhere.
-  const [rows, total, rollup, ctx] = await Promise.all([
+  const [rows, total, rollup, ctx, lots] = await Promise.all([
     listStock(restaurant.id, q.slice(0, 60), flat ? view : 'by-value', cat),
     stockTotalValue(restaurant.id),
     flat
       ? Promise.resolve({ rows: [] as CategoryRollupRow[], reconciles: true, cardExact: '0', rollupExact: '0' })
       : stockCategoryRollup(restaurant.id),
     issueContext(restaurant.id),
+    listLotBalances(restaurant.id),
   ])
 
   const totalPaise = decimalStringToPaise(total)
@@ -277,6 +278,12 @@ export default async function StockView({
           the money, the middle, and the long tail. They set how often each is counted — weekly, fortnightly,
           monthly.
         </p>
+      )}
+      {lots.length > 0 && (
+        <section className={`${cardCls} mt-4`}>
+          <div className="flex items-baseline justify-between gap-3"><h3 className={sectionHeadCls}>Lot balances · earliest expiry first</h3><span className="font-mono text-[11px] text-stone-400">{lots.length} shown</span></div>
+          <ul className="mt-2 divide-y divide-rule-soft">{lots.map((lot) => <li key={lot.lot_code} className="flex items-center justify-between gap-3 py-2 text-sm"><span>{lot.item_code} · {lot.item_name}<span className="block text-xs text-stone-500">{lot.lot_code}{lot.location_name ? ` · ${lot.location_name}` : ''}{lot.expiry_date ? ` · expires ${lot.expiry_date}` : ' · legacy/no expiry'}</span></span><span className="shrink-0 font-semibold tabular-nums">{lot.available_qty} {lot.purchase_unit}</span></li>)}</ul>
+        </section>
       )}
     </section>
   )

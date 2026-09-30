@@ -5,16 +5,28 @@
 //
 // The id is printed for the cleanup pass, like every other row a smoke makes.
 export async function ensureSmokeAccount(restaurantId: string): Promise<string> {
-  const { sql } = await import('../src/lib/db')
+  const { tsql } = await import('../src/lib/db')
   const name = 'Zz Smoke Drawer'
-  const [existing] = (await sql`
-    select id from money_accounts
-    where restaurant_id = ${restaurantId} and name = ${name}`) as unknown as { id: string }[]
-  if (existing) return existing.id
-  const [row] = (await sql`
-    insert into money_accounts (restaurant_id, name, kind, sort_order, status)
-    values (${restaurantId}, ${name}, 'cash', 999, 'active')
-    returning id`) as unknown as { id: string }[]
+  const [mapped] = await tsql<{ account_id: string }[]>`
+    select account_id from accounting_posting_mappings
+    where restaurant_id = ${restaurantId} and mapping_key = 'pos_cash_asset'`
+  if (!mapped) throw new Error('The disposable tenant has no pos_cash_asset mapping for the smoke account')
+  const [existing] = await tsql<{ id: string; accounting_account_id: string | null }[]>`
+    select id, accounting_account_id from money_accounts
+    where restaurant_id = ${restaurantId} and name = ${name}`
+  if (existing) {
+    if (existing.accounting_account_id !== mapped.account_id) {
+      await tsql`
+        update money_accounts
+        set accounting_account_id = ${mapped.account_id}
+        where restaurant_id = ${restaurantId} and id = ${existing.id}`
+    }
+    return existing.id
+  }
+  const [row] = await tsql<{ id: string }[]>`
+    insert into money_accounts (restaurant_id, name, kind, sort_order, status, accounting_account_id)
+    values (${restaurantId}, ${name}, 'cash', 999, 'active', ${mapped.account_id})
+    returning id`
   console.log('created money_account (cleanup):', row.id, name)
   return row.id
 }

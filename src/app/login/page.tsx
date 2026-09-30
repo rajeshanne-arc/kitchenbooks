@@ -11,14 +11,24 @@ export const dynamic = 'force-dynamic'
 // past, because getRestaurant() refuses to guess between two with no session
 // to say which. Naming the tenant before knowing who is signing in was always
 // a single-tenant artefact; this is what the screen looks like without it.
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
-  const { next } = await searchParams
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; reset?: string; invited?: string }> }) {
+  const { next, reset, invited } = await searchParams
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-sm flex-col justify-center px-4 pb-24">
       <h1 className="text-center font-display text-[28px] font-bold leading-none tracking-[-0.02em] text-stone-900">
         KitchenBooks
       </h1>
       <p className={`mt-2 text-center ${sectionHeadCls}`}>sign in</p>
+      {reset === 'done' && (
+        <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-center text-sm text-emerald-800">
+          Password changed. Sign in with your new password.
+        </p>
+      )}
+      {typeof invited === 'string' && invited.length > 0 && (
+        <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-center text-sm text-emerald-800">
+          Account created. Sign in as @{invited}.
+        </p>
+      )}
       <LoginForm next={typeof next === 'string' && next.startsWith('/') ? next : '/'} />
     </main>
   )

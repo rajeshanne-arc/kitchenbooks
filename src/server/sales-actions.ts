@@ -13,6 +13,7 @@ import { normalizePayload, persistFetch, SalesIngestError } from '@/server/sales
 import { countUnmapped, getMappingCoverage, getSalesDay, listUnknownOrders } from '@/server/sales-queries'
 import type { FetchDayResult, MapItemResult, PosMapRow } from '@/lib/types'
 import { businessToday } from '@/server/business-day'
+import { getPetpoojaCredentials } from '@/server/pos-credentials-queries'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -38,45 +39,89 @@ function assertRealDate(s: string, label: string) {
   if (year < 2000 || year > 2100) throw new SalesError(`${label} is out of range`)
 }
 
+async function startSyncRun(restaurantId: string, businessDate: string): Promise<string> {
+  return txn(async (tx) => {
+    const [last] = await tx<{ attempt: number }[]>`
+      select coalesce(max(attempt), 0)::int as attempt
+      from pos_sync_runs
+      where restaurant_id = ${restaurantId} and business_date = ${businessDate}::date`
+    const [run] = await tx<{ id: string }[]>`
+      insert into pos_sync_runs (restaurant_id, business_date, attempt)
+      values (${restaurantId}, ${businessDate}::date, ${(last?.attempt ?? 0) + 1})
+      returning id`
+    return run.id
+  })
+}
+
+async function finishSyncRun(
+  restaurantId: string,
+  runId: string,
+  status: 'succeeded' | 'failed',
+  fetchId: string | null,
+  error: string | null,
+) {
+  await tsql`
+    update pos_sync_runs
+    set status = ${status}, finished_at = now(), fetch_id = ${fetchId},
+        error = ${error === null ? null : error.slice(0, 500)}
+    where id = ${runId} and restaurant_id = ${restaurantId}`
+}
+
 // ---------------------------------------------------------------- fetch day
 
 const FetchSchema = z.object({ date: z.string().regex(DATE_RE) })
 
 /** @scope not-a-figure */
 export async function fetchDay(raw: { date: string }): Promise<FetchDayResult> {
+  let runId: string | null = null
+  let restaurantId: string | null = null
   try {
     const input = FetchSchema.parse(raw)
     assertRealDate(input.date, 'Business date')
     if (input.date > await businessToday()) throw new SalesError('That date has not happened yet — pick today or earlier')
 
     const restaurant = await getRestaurant()
-    const payload = await fetchPetpoojaOrders(input.date)
-    const norm = normalizePayload(payload, input.date)
-    const persisted = await persistFetch(restaurant.id, input.date, norm)
+    restaurantId = restaurant.id
+    runId = await startSyncRun(restaurant.id, input.date)
+    try {
+      const credentials = await getPetpoojaCredentials(restaurant.id)
+      const payload = await fetchPetpoojaOrders(input.date, credentials ?? undefined)
+      const norm = normalizePayload(payload, input.date)
+      const persisted = await persistFetch(restaurant.id, input.date, norm)
+      await finishSyncRun(restaurant.id, runId, 'succeeded', persisted.fetchId, null)
 
-    // Post-save figures are read back from the DB, never echoed from input.
-    const day = await getSalesDay(restaurant.id, input.date)
-    const unknownOrders =
-      day !== null && day.unknown_status > 0
-        ? (await listUnknownOrders(restaurant.id)).filter((u) => u.business_date === input.date)
-        : []
+      // Post-save figures are read back from the DB, never echoed from input.
+      const day = await getSalesDay(restaurant.id, input.date)
+      const unknownOrders =
+        day !== null && day.unknown_status > 0
+          ? (await listUnknownOrders(restaurant.id)).filter((u) => u.business_date === input.date)
+          : []
 
-    return {
-      ok: true,
-      fetchId: persisted.fetchId,
-      businessDate: input.date,
-      apiOrderCount: norm.apiOrderCount,
-      insertedOrders: persisted.insertedOrders,
-      prunedOrders: persisted.prunedOrders,
-      skippedOtherDates: norm.skippedOtherDates,
-      duplicateIds: norm.duplicateIds,
-      compDisagreements: norm.compDisagreements,
-      note: norm.note,
-      census: norm.census,
-      day,
-      unknownOrders,
+      return {
+        ok: true,
+        fetchId: persisted.fetchId,
+        businessDate: input.date,
+        apiOrderCount: norm.apiOrderCount,
+        insertedOrders: persisted.insertedOrders,
+        prunedOrders: persisted.prunedOrders,
+        skippedOtherDates: norm.skippedOtherDates,
+        duplicateIds: norm.duplicateIds,
+        compDisagreements: norm.compDisagreements,
+        note: norm.note,
+        census: norm.census,
+        day,
+        unknownOrders,
+      }
+    } catch (e) {
+      await finishSyncRun(restaurant.id, runId, 'failed', null, e instanceof Error ? e.message : 'sync failed')
+      throw e
     }
   } catch (e) {
+    if (runId !== null && restaurantId !== null) {
+      // Best effort only: preserve the original user-facing error if the
+      // status write itself encounters a transient database failure.
+      try { await finishSyncRun(restaurantId, runId, 'failed', null, e instanceof Error ? e.message : 'sync failed') } catch { /* keep original error */ }
+    }
     return fail(e)
   }
 }

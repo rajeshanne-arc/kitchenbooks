@@ -20,6 +20,8 @@ process.loadEnvFile('.env.local')
 let ACCOUNT = ''
 
 async function main() {
+  const { withProbeTenant } = await import('./smoke-context')
+  return withProbeTenant(async () => {
 const { businessMonthStart, businessToday } = await import('../src/server/business-day')
     const { getRestaurant } = await import('../src/server/queries')
   const {
@@ -29,7 +31,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   const { normalizePayload, persistFetch } = await import('../src/server/sales-ingest')
   const { closeDay, setFirstOpening } = await import('../src/server/cash-actions')
   const { getClosePrefill } = await import('../src/server/cash-queries')
-  const { saveIssue, voidIssue, saveWastage, voidWastage } = await import('../src/server/store-actions')
+  const { saveIssue, saveWastage, voidWastage } = await import('../src/server/store-actions')
   const { saveKitchenWastage, voidKitchenWastage } = await import('../src/server/kitchen-actions')
   const { getKitchenSections } = await import('../src/server/kitchen-queries')
   const { getSections } = await import('../src/server/store-queries')
@@ -37,7 +39,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   const { formatPaise, decimalStringToPaise } = await import('../src/lib/money')
   const { DICT, t } = await import('../src/lib/i18n')
   const { buildCloseText, whatsappUrl } = await import('../src/lib/share')
-  const { sql } = await import('../src/lib/db')
+  const { sql, tsql } = await import('../src/lib/db')
 
   const restaurant = await getRestaurant()
   const rid = restaurant.id
@@ -48,7 +50,7 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   // Order-independent close target: on a virgin cash state, seed the opening
   // and use 2001-05-05; when earlier suites left a close chain, extend it by
   // one day so the D-1 law holds either way.
-  const [latest] = (await sql`
+  const [latest] = (await tsql`
     select max(close_date)::text as d from day_closes where restaurant_id = ${rid}`) as unknown as { d: string | null }[]
   let SALES_DATE = '2001-05-05'
   // the three cards are period-scoped now; the probe's window is the test era
@@ -149,15 +151,12 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
   const sections = await getSections(rid)
   const ch = sections.find((s) => s.code === 'CH')
   assert.ok(ch)
+  // Lot-ledger stock cannot be over-issued: the database rejects the write
+  // before a negative balance can be created. Negative legacy balances are
+  // still surfaced by the dashboard, but this probe now verifies the stronger
+  // production invariant at the write boundary.
   const over = await saveIssue({ issueDate: await businessToday(), sectionId: ch.id, lines: [{ itemId: plt2.id, qty: '25', note: '' }], session: 'Morning' })
-  assert.ok(over.ok, `over-issue failed: ${over.ok === false ? over.error : ''}`)
-  const alarms1 = await getStockAlarms(rid)
-  const alarm = alarms1.find((a) => a.code === 'PLT-002')
-  assert.ok(alarm, 'negative stock must appear on the alarm card')
-  assert.ok(Number(alarm.on_hand_qty) < 0)
-  const overVoid = await voidIssue(over.issue.id)
-  assert.ok(overVoid.ok)
-  assert.equal((await getStockAlarms(rid)).length, 0, 'void clears the alarm')
+  assert.ok(!over.ok && /Not enough lot-tracked stock/i.test(over.error), 'lot ledger must reject an over-issue')
 
   // ---- 7. waste this month: store + kitchen, voids net out
   const waste0 = await getWasteMonth(rid, monthStart)
@@ -199,12 +198,12 @@ const { businessMonthStart, businessToday } = await import('../src/server/busine
         sales_date: SALES_DATE,
         close_date: SALES_DATE,
         setting: 'first_opening_cash',
-        issues: [over.issue.id, overVoid.ok ? overVoid.reversal.id : null],
         wastage: [sw.wastage.id, swVoid.ok ? swVoid.reversal.id : null],
         kitchen_wastage: [kw.wastage.id, kwVoid.ok ? kwVoid.reversal.id : null],
       }),
   )
   await sql.end()
+  })
 }
 
 main().catch((e) => {

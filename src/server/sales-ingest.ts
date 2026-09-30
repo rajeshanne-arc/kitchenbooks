@@ -9,6 +9,8 @@
 import 'server-only'
 import { txn } from '@/lib/db'
 import type { PayloadCensus, StatusClass } from '@/lib/types'
+import { postJournalEntryTx } from '@/server/journal'
+import { posPaymentMappingKey } from '@/lib/accounting'
 
 export class SalesIngestError extends Error {}
 
@@ -299,7 +301,8 @@ export async function persistFetch(
                 -- dedupe (which is pos_order_id alone), so neither which fetch
                 -- wins nor how a re-fetch dedupes is affected.
                 ${o.order_time_local}::timestamp at time zone coalesce(
-                  (select value from settings where key = 'timezone'), 'UTC'),
+                  (select value from settings
+                     where restaurant_id = ${restaurantId} and key = 'timezone'), 'UTC'),
                 ${o.channel}, ${o.order_type}, ${o.payment_mode}, ${o.covers},
                 ${o.status_raw}, ${o.status_class}, ${o.subtotal}, ${o.discount}, ${o.tax},
                 ${o.service_charge}, ${o.container}, ${o.round_off}, ${o.order_total})
@@ -318,6 +321,76 @@ export async function persistFetch(
         await tx`insert into pos_lines ${tx(lineRows, 'restaurant_id', 'order_id', 'pos_item_id', 'item_name', 'qty', 'amount', 'tax', 'discount')}`
         insertedLines += lineRows.length
       }
+    }
+
+    const [revenueAccount] = await tx<{ account_id: string; account_type: string }[]>`
+      select m.account_id, a.account_type
+      from accounting_posting_mappings m
+      join accounting_accounts a on a.restaurant_id = m.restaurant_id and a.id = m.account_id
+      where m.restaurant_id = ${restaurantId} and m.mapping_key = 'sales_revenue' and a.status = 'active'`
+    const paymentTotals = await tx<{ payment_mode: string | null; amount: string; grand_total: string }[]>`
+      select payment_mode, sum(order_total)::text as amount,
+             sum(sum(order_total)) over ()::text as grand_total
+      from pos_orders
+      where restaurant_id = ${restaurantId} and fetch_id = ${fetch.id}
+        and status_class = 'revenue' and order_total is not null
+      group by payment_mode`
+    if (paymentTotals.length > 0) {
+      if (!revenueAccount || revenueAccount.account_type !== 'revenue') {
+        throw new SalesIngestError('Configure the sales-revenue ledger mapping before fetching POS sales')
+      }
+      const keys = [...new Set(paymentTotals.map((row) => posPaymentMappingKey(row.payment_mode)))]
+      const settlementAccounts = await tx<{ mapping_key: string; account_id: string; account_type: string }[]>`
+        select m.mapping_key, m.account_id, a.account_type
+        from accounting_posting_mappings m
+        join accounting_accounts a on a.restaurant_id = m.restaurant_id and a.id = m.account_id
+        where m.restaurant_id = ${restaurantId} and m.mapping_key = any(${keys}) and a.status = 'active'`
+      const byKey = new Map(settlementAccounts.map((row) => [row.mapping_key, row]))
+      const lines: { accountId: string; debit?: string; credit?: string; description: string }[] = []
+      for (const total of paymentTotals) {
+        const key = posPaymentMappingKey(total.payment_mode)
+        const account = byKey.get(key)
+        if (!account || account.account_type !== 'asset') {
+          throw new SalesIngestError(`Configure the ${key.replaceAll('_', ' ')} ledger mapping before fetching POS sales`)
+        }
+        lines.push({ accountId: account.account_id, debit: total.amount, description: `${total.payment_mode ?? 'Other'} settlement` })
+      }
+      const oldFetches = await tx<{ id: string }[]>`
+        select id from pos_fetches
+        where restaurant_id = ${restaurantId} and business_date = ${businessDate} and id <> ${fetch.id}`
+      for (const old of oldFetches) {
+        const oldLines = await tx<{ account_id: string; debit: string; credit: string; description: string | null }[]>`
+          select l.account_id, l.debit::text as debit, l.credit::text as credit, l.description
+          from journal_entries e join journal_lines l
+            on l.restaurant_id = e.restaurant_id and l.journal_entry_id = e.id
+          where e.restaurant_id = ${restaurantId} and e.source_type = 'pos_sales' and e.source_id = ${old.id}
+            and not exists (
+              select 1 from journal_entries r
+              where r.restaurant_id = e.restaurant_id
+                and r.source_type = 'pos_sales_reversal' and r.source_id = e.source_id
+            )`
+        if (oldLines.length > 0) {
+          await postJournalEntryTx(tx, restaurantId, {
+            date: businessDate,
+            sourceType: 'pos_sales_reversal',
+            sourceId: old.id,
+            memo: `Reversal of superseded POS fetch ${old.id}`,
+            lines: oldLines.map((line) => ({
+              accountId: line.account_id,
+              description: line.description ?? undefined,
+              debit: line.credit,
+              credit: line.debit,
+            })),
+          })
+        }
+      }
+      await postJournalEntryTx(tx, restaurantId, {
+        date: businessDate,
+        sourceType: 'pos_sales',
+        sourceId: fetch.id,
+        memo: `POS sales ${businessDate}`,
+        lines: [...lines, { accountId: revenueAccount.account_id, credit: paymentTotals[0].grand_total, description: 'POS revenue' }],
+      })
     }
 
     // ── PRUNE THE SUPERSEDED BODIES ──────────────────────────────────

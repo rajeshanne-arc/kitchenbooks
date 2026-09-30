@@ -40,6 +40,7 @@ const ROSTER_ORDER = `
  *  in the record, not a zero wage, and topping the list with it would read as
  *  the cheapest people. They sort LAST and the screen says the wage bill
  *  understates by however much they earn. */
+/** @scope now */
 export async function listRoster(
   restaurantId: string,
   order: 'by-department' | 'by-salary' = 'by-department',

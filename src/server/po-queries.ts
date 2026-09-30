@@ -31,6 +31,8 @@ import type {
   PoFulfilmentRow,
   PoLineRow,
   PurchaseOrderRow,
+  PurchaseOrderApprovalRow,
+  PurchaseInvoiceMatchRow,
 } from '@/lib/types'
 
 /**
@@ -130,7 +132,9 @@ export async function listPurchaseOrders(
     select p.id, p.doc_no, p.vendor_id, v.code as vendor_code, v.name as vendor_name,
            v.phone as vendor_phone,
            p.po_date::text as po_date, p.expected_date::text as expected_date,
-           p.status, p.note, p.sent_at::text as sent_at, p.sent_by, p.sent_via,
+           p.status, p.approval_status, p.approval_requested_at::text as approval_requested_at,
+           p.approval_decided_at::text as approval_decided_at, p.approval_decided_by,
+           p.note, p.sent_at::text as sent_at, p.sent_by, p.sent_via,
            p.entered_by,
            (select count(*)::int from purchase_order_lines l where l.purchase_order_id = p.id) as lines,
            (select coalesce(sum(l.amount), 0)::text from purchase_order_lines l
@@ -145,13 +149,15 @@ export async function listPurchaseOrders(
 export async function getPurchaseOrder(
   restaurantId: string,
   id: string,
-): Promise<{ po: PurchaseOrderRow; lines: PoLineRow[]; fulfilment: PoFulfilmentRow[] } | null> {
+): Promise<{ po: PurchaseOrderRow; lines: PoLineRow[]; fulfilment: PoFulfilmentRow[]; matches: PurchaseInvoiceMatchRow[] } | null> {
   return txn(async (tx) => {
     const [po] = await tx<PurchaseOrderRow[]>`
       select p.id, p.doc_no, p.vendor_id, v.code as vendor_code, v.name as vendor_name,
              v.phone as vendor_phone,
              p.po_date::text as po_date, p.expected_date::text as expected_date,
-             p.status, p.note, p.sent_at::text as sent_at, p.sent_by, p.sent_via,
+             p.status, p.approval_status, p.approval_requested_at::text as approval_requested_at,
+             p.approval_decided_at::text as approval_decided_at, p.approval_decided_by,
+             p.note, p.sent_at::text as sent_at, p.sent_by, p.sent_via,
              p.entered_by,
              (select count(*)::int from purchase_order_lines l where l.purchase_order_id = p.id) as lines,
              (select coalesce(sum(l.amount), 0)::text from purchase_order_lines l
@@ -180,8 +186,60 @@ export async function getPurchaseOrder(
       where restaurant_id = ${restaurantId} and po_id = ${id}
       order by item_name asc`
 
-    return { po, lines, fulfilment }
+    const approvals = await tx<PurchaseOrderApprovalRow[]>`
+      select id, purchase_order_id, status, amount::text as amount, reason,
+             requested_by, requested_at::text as requested_at,
+             decided_by, decided_at::text as decided_at, decision_note
+      from purchase_order_approvals
+      where restaurant_id = ${restaurantId} and purchase_order_id = ${id}
+      order by requested_at desc`
+
+    const matches = await tx<PurchaseInvoiceMatchRow[]>`
+      select id, purchase_id, purchase_order_id, status, quantity_exception,
+             price_exception, snapshot, assessed_by, assessed_at::text as assessed_at
+      from purchase_invoice_matches
+      where restaurant_id = ${restaurantId} and purchase_order_id = ${id}
+      order by assessed_at desc`
+
+    return { po, lines, fulfilment, approvals, matches }
   })
+}
+
+export async function getPurchaseApprovalConfig(restaurantId: string): Promise<{
+  mode: 'none' | 'threshold'
+  threshold: number
+}> {
+  const rows = await tsql<{ key: string; value: string | null }[]>`
+    select key, value from settings
+    where restaurant_id = ${restaurantId}
+      and key in ('purchase_approval_mode', 'purchase_approval_threshold')`
+  const values = Object.fromEntries(rows.map((r) => [r.key, r.value]))
+  const parsed = Number(values.purchase_approval_threshold ?? 0)
+  return {
+    mode: values.purchase_approval_mode === 'threshold' ? 'threshold' : 'none',
+    threshold: Number.isFinite(parsed) && parsed > 0 ? parsed : 0,
+  }
+}
+
+export type PendingPurchaseApproval = PurchaseOrderApprovalRow & {
+  doc_no: string | null
+  vendor_name: string
+  lines: number
+}
+
+export async function listPendingPurchaseApprovals(restaurantId: string): Promise<PendingPurchaseApproval[]> {
+  return tsql<PendingPurchaseApproval[]>`
+    select a.id, a.purchase_order_id, a.status, a.amount::text as amount, a.reason,
+           a.requested_by, a.requested_at::text as requested_at,
+           a.decided_by, a.decided_at::text as decided_at, a.decision_note,
+           p.doc_no, v.name as vendor_name,
+           (select count(*)::int from purchase_order_lines l
+            where l.restaurant_id = p.restaurant_id and l.purchase_order_id = p.id) as lines
+    from purchase_order_approvals a
+    join purchase_orders p on p.restaurant_id = a.restaurant_id and p.id = a.purchase_order_id
+    join vendors v on v.restaurant_id = p.restaurant_id and v.id = p.vendor_id
+    where a.restaurant_id = ${restaurantId} and a.status = 'pending'
+    order by a.requested_at asc`
 }
 
 /**
@@ -243,7 +301,9 @@ export async function listReceivablePos(
     select p.id, p.doc_no, p.vendor_id, v.code as vendor_code, v.name as vendor_name,
            v.phone as vendor_phone,
            p.po_date::text as po_date, p.expected_date::text as expected_date,
-           p.status, p.note, p.sent_at::text as sent_at, p.sent_by, p.sent_via,
+           p.status, p.approval_status, p.approval_requested_at::text as approval_requested_at,
+           p.approval_decided_at::text as approval_decided_at, p.approval_decided_by,
+           p.note, p.sent_at::text as sent_at, p.sent_by, p.sent_via,
            p.entered_by,
            (select count(*)::int from purchase_order_lines l where l.purchase_order_id = p.id) as lines,
            (select coalesce(sum(l.amount), 0)::text from purchase_order_lines l

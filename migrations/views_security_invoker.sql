@@ -42,6 +42,7 @@ alter view public.labour_cost_daily           set (security_invoker = on);
 alter view public.labour_hours_by_section     set (security_invoker = on);
 alter view public.labour_summary              set (security_invoker = on);
 alter view public.mapping_coverage            set (security_invoker = on);
+alter view public.pnl_monthly                 set (security_invoker = on);
 alter view public.sales_by_hour               set (security_invoker = on);
 alter view public.sales_by_section            set (security_invoker = on);
 alter view public.sales_current               set (security_invoker = on);

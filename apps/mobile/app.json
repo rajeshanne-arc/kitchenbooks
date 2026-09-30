@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "KitchenBooks",
+    "slug": "kitchenbooks",
+    "scheme": "kitchenbooks",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "in.etdemo.kitchenbooks",
+      "infoPlist": {
+        "NSCameraUsageDescription": "KitchenBooks uses the camera to attach private bill photos to recorded purchases."
+      }
+    },
+    "android": {
+      "package": "in.etdemo.kitchenbooks",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-sqlite",
+      "expo-notifications"
+    ]
+  }
+}
