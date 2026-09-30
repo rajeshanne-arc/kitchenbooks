@@ -329,20 +329,18 @@ responses, and release configuration now have connected project-side workflows.
 Expo SDK dependencies are aligned and Expo Doctor is green. iOS Release was
 built successfully from the complete checkout, installed, launched on the
 booted iOS 26.4 simulator, and captured a screenshot. The current iOS Debug
-attempt reached native compilation but failed because the source fallback Pod
-configuration has incomplete React Native header paths (`BufferedRuntimeExecutor.h`
-and `folly/json/dynamic-inl.h`); the earlier prebuilt path fails because the
-local RN debug archive is absent. This is a local native-toolchain gap, not an
-application TypeScript or API failure. Signed store distribution and Android
-device verification remain.
+build also succeeds from the complete checkout with React Native source mode;
+it was installed and launched with Metro on the booted iOS 26.4 simulator, and
+the sign-in screen rendered without the former “No script URL” failure. The
+earlier failure came from a partial checkout and exhausted disk space, not an
+application TypeScript or API failure. Android device verification and signed
+store distribution remain.
 
 ## Next exact work sequence
 
-1. Repair and verify the iOS Debug simulator path after the complete checkout
-   is open at `/Users/sunny/Desktop/kitchenbooks`; Release is verified.
-2. Run native Android build/device verification when an Android SDK/emulator or
+1. Run native Android build/device verification when an Android SDK/emulator or
    physical device is available.
-3. Run signed TestFlight/Play internal builds with the required store accounts.
+2. Run signed TestFlight/Play internal builds with the required store accounts.
 
 ## Files already involved
 

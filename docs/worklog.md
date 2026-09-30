@@ -1,5 +1,18 @@
 # Implementation worklog
 
+## 2026-09-30 — native iOS Debug verification
+
+- Confirmed the complete checkout is `/Users/sunny/Desktop/kitchenbooks`; the
+  old `Documents/AI_PROJECTS/kitchenbooks` path was only a partial mobile
+  workspace and caused broken CocoaPods header symlinks.
+- Rebuilt the iOS Debug target with React Native source mode, installed it on
+  simulator `RELE Dedicated Simulator`, launched it with Metro, and verified
+  the sign-in screen rendered. The former “No script URL provided” failure is
+  therefore resolved for the Debug development-client path.
+- The iOS Release target was already verified on the same simulator. Root
+  TypeScript, ESLint, mobile TypeScript, Expo Doctor (21/21), and diff checks
+  pass after the native verification.
+
 ## 2026-09-30 — manual, staging approvals, and local run instructions
 
 - Added `docs/kitchenbooks-user-manual.md` as the actual end-to-end operating
