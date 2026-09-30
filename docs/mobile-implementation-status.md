@@ -216,11 +216,11 @@ within the workspace and authorized server.
 - [x] Native iOS Release simulator build succeeds with the JavaScript bundle
   embedded, installs, and launches to the KitchenBooks sign-in screen without
   Metro. This is the correct standalone path for avoiding “No script URL”.
-- [ ] The Debug development client still requires Metro to be running when it
-  is launched; opening it without Metro will intentionally show the red
-  “No script URL provided” screen.
-- [x] Android JavaScript export succeeds. Native Android verification was
-  checked, but this Mac has no `adb` or configured Android emulator available.
+- [x] Verified the Debug development client with Metro running; a Debug client
+  without Metro is expected to show the development-only “No script URL” state.
+- [x] Android JavaScript export succeeds and the native ARM64 debug APK builds
+  successfully with the local Android SDK/NDK toolchain. Device launch remains
+  pending because no physical device or AVD is currently available.
 - [x] Final project checks pass: mobile TypeScript, Expo Doctor 21/21, iOS and
   Android bundle export, web TypeScript, ESLint, and `git diff --check`.
 - [x] The deployed web service is active and `https://kb.etdemo.in/login`
