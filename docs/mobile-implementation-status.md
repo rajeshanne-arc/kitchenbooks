@@ -339,12 +339,21 @@ the APK was produced at `apps/mobile/android/app/build/outputs/apk/debug/app-deb
 Android device launch remains unverified because no physical device or AVD is
 available and the ARM64 emulator image could not be installed within the
 current workstation disk capacity. Signed store distribution remains.
+An iPhone 15 Pro Max is now paired and visible to Xcode, but device installation
+is blocked until the Apple Developer account is added to Xcode: the keychain has
+an Apple Development certificate, but there is no local provisioning profile
+for `in.etdemo.kitchenbooks` and Xcode reports `No Account for Team
+96HZ4MAX3U`. This is an Apple-account/signing prerequisite, not an app build
+failure.
 
 ## Next exact work sequence
 
-1. Install or connect an Android device/ARM64 AVD when workstation storage is
+1. Add the Apple Developer account in Xcode, enable automatic signing for
+   `in.etdemo.kitchenbooks`, then install the Release build on the paired iPhone
+   and capture a launch/login check.
+2. Install or connect an Android device/ARM64 AVD when workstation storage is
    available, install the verified APK, and capture a launch/login check.
-2. Run signed TestFlight/Play internal builds with the required store accounts.
+3. Run signed TestFlight/Play internal builds with the required store accounts.
 
 ## Files already involved
 
