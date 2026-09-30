@@ -333,13 +333,17 @@ build also succeeds from the complete checkout with React Native source mode;
 it was installed and launched with Metro on the booted iOS 26.4 simulator, and
 the sign-in screen rendered without the former “No script URL” failure. The
 earlier failure came from a partial checkout and exhausted disk space, not an
-application TypeScript or API failure. Android device verification and signed
-store distribution remain.
+application TypeScript or API failure. Android ARM64 debug APK compilation also
+passes with Java 17, Android API 36, NDK 27.1, and `-PreactNativeArchitectures=arm64-v8a`;
+the APK was produced at `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`.
+Android device launch remains unverified because no physical device or AVD is
+available and the ARM64 emulator image could not be installed within the
+current workstation disk capacity. Signed store distribution remains.
 
 ## Next exact work sequence
 
-1. Run native Android build/device verification when an Android SDK/emulator or
-   physical device is available.
+1. Install or connect an Android device/ARM64 AVD when workstation storage is
+   available, install the verified APK, and capture a launch/login check.
 2. Run signed TestFlight/Play internal builds with the required store accounts.
 
 ## Files already involved

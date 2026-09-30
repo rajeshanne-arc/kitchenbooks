@@ -13,6 +13,18 @@
   TypeScript, ESLint, mobile TypeScript, Expo Doctor (21/21), and diff checks
   pass after the native verification.
 
+## 2026-09-30 — Android native build verification
+
+- Generated the Android native project with Expo prebuild and configured the
+  local SDK path through the ignored `apps/mobile/android/local.properties`.
+- Installed Android API 36, build-tools 36, platform-tools, emulator tooling,
+  NDK 27.1, and CMake 3.22.1. Gradle 9.3.1 then built the ARM64 debug APK
+  successfully with Java 17 and `-PreactNativeArchitectures=arm64-v8a`.
+- The x86 build was intentionally not used on this Apple-Silicon workstation:
+  it exhausted disk during native C++ compilation. The remaining emulator
+  image download was stopped when the host fell below safe free space; no
+  Android device/AVD launch is claimed yet.
+
 ## 2026-09-30 — manual, staging approvals, and local run instructions
 
 - Added `docs/kitchenbooks-user-manual.md` as the actual end-to-end operating
