@@ -21,6 +21,10 @@ Stack: Next.js App Router, Tailwind, Vercel Node runtime, and Supabase Postgres.
 
 ## Local development
 
+The user-facing operating instructions are in
+[`docs/kitchenbooks-user-manual.md`](docs/kitchenbooks-user-manual.md). It
+also includes the VS Code, iOS, and Android run instructions.
+
 Copy `.env.example` to `.env.local`, then fill in the server-only values:
 
 ```text

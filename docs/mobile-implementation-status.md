@@ -326,12 +326,18 @@ Purchasing receiving, stock, kitchen, attendance, sales/cash, purchase
 approvals, purchase-order creation, private attachments, offline mutation
 history, owner/accountant review, session expiry, deep links, notification
 responses, and release configuration now have connected project-side workflows.
-Only native simulator/device builds and signed store distribution remain.
+Expo SDK dependencies are aligned and Expo Doctor is green. Native simulator /
+device builds and signed store distribution remain. The current iOS Debug
+attempt reached native compilation but failed because the source fallback Pod
+configuration has incomplete React Native header paths (`BufferedRuntimeExecutor.h`
+and `folly/json/dynamic-inl.h`); the earlier prebuilt path fails because the
+local RN debug archive is absent. This is a local native-toolchain gap, not an
+application TypeScript or API failure.
 
 ## Next exact work sequence
 
-1. Keep the verified iOS Debug/Release simulator build paths available for
-   local testing.
+1. Repair and verify the iOS Debug/Release simulator build paths after the
+   complete checkout is open at `/Users/sunny/Desktop/kitchenbooks`.
 2. Run native Android build/device verification when an Android SDK/emulator or
    physical device is available.
 3. Run signed TestFlight/Play internal builds with the required store accounts.

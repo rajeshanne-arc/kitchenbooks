@@ -1,5 +1,18 @@
 # Implementation worklog
 
+## 2026-09-30 — manual, staging approvals, and local run instructions
+
+- Added `docs/kitchenbooks-user-manual.md` as the actual end-to-end operating
+  manual. The existing `/sops/<role>` pages remain role-specific quick guides;
+  they are not a replacement for this manual.
+- Documented hosted demo accounts, role workflows, append-only correction
+  rules, honest warning states, Petpooja demo boundaries, VS Code web/mobile
+  startup, native build commands, and common runtime failures.
+- Applied `migrations/financial_ledger_views.sql` to the isolated staging
+  database after `/owner/approvals` reported the missing `vendor_aging` view.
+  The approvals web route and mobile approvals API now return HTTP 200; the
+  production database was not changed.
+
 ## 2026-09-13 — full hosted demo environment and midnight reset
 
 - Added a dedicated demo-environment migration with a guarded tenant reset
